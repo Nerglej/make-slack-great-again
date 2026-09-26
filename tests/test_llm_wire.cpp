@@ -395,3 +395,68 @@ TEST_CASE("audioMimeForExtension covers what Slack serves", "[stt]") {
     CHECK(audioMimeForExtension("xyz").isEmpty());
     CHECK(audioMimeForExtension({}).isEmpty());
 }
+
+TEST_CASE("buildTranscription: prompt, keywords[] and languages[] for gpt-* models", "[stt]") {
+    TranscriptionInput in;
+    in.audio     = "RIFFxxxxWAVE";
+    in.fileName  = "voice.wav";
+    in.mimeType  = "audio/wav";
+    in.model     = "gpt-transcribe";
+    in.prompt    = "Clean transcript.\nConversation: backend";
+    in.keywords  = {"  llm_wire.cpp ", "Qt6", "qt6", "", "<script>", "a>b", "two\nlines", "k8s"};
+    in.languages = {"sv", " EN ", "en", ""};
+    const HttpRequest r = buildTranscription(openAiProper(), in, "B");
+    const QByteArray &b = r.body;
+
+    CHECK(b.contains(
+        "Content-Disposition: form-data; name=\"prompt\"\r\n\r\n"
+        "Clean transcript.\nConversation: backend\r\n"
+    ));
+    // One field per keyword, trimmed and deduped case-insensitively (first
+    // spelling wins); the ones OpenAI would reject the whole request for are gone.
+    CHECK(b.count("name=\"keywords[]\"") == 3);
+    CHECK(b.contains("name=\"keywords[]\"\r\n\r\nllm_wire.cpp\r\n"));
+    CHECK(b.contains("name=\"keywords[]\"\r\n\r\nQt6\r\n"));
+    CHECK(b.contains("name=\"keywords[]\"\r\n\r\nk8s\r\n"));
+    CHECK_FALSE(b.contains("qt6"));
+    CHECK_FALSE(b.contains("<script>"));
+    CHECK_FALSE(b.contains("a>b"));
+    CHECK_FALSE(b.contains("two\nlines"));
+    CHECK(b.count("name=\"languages[]\"") == 2);
+    CHECK(b.contains("name=\"languages[]\"\r\n\r\nsv\r\n"));
+    CHECK(b.contains("name=\"languages[]\"\r\n\r\nen\r\n"));
+    // Still well-formed: the file part comes last.
+    CHECK(b.endsWith("RIFFxxxxWAVE\r\n--B--\r\n"));
+}
+
+TEST_CASE("buildTranscription: Whisper-style models get the prompt only", "[stt]") {
+    TranscriptionInput in;
+    in.audio           = "x";
+    in.fileName        = "voice.wav";
+    in.model           = "whisper-1";
+    in.prompt          = "Earlier: deploy the llm_wire.cpp fix.";
+    in.keywords        = {"llm_wire.cpp"};
+    in.languages       = {"en"};
+    const QByteArray b = buildTranscription(openAiCompat(), in, "B").body;
+    CHECK(b.contains("name=\"prompt\"\r\n\r\nEarlier: deploy the llm_wire.cpp fix.\r\n"));
+    CHECK_FALSE(b.contains("keywords[]"));
+    CHECK_FALSE(b.contains("languages[]"));
+
+    // Nothing set → no optional fields at all (the pre-existing request shape).
+    in.prompt = "   ";
+    in.model  = "gpt-transcribe";
+    in.keywords.clear();
+    in.languages.clear();
+    const QByteArray b2 = buildTranscription(openAiCompat(), in, "B").body;
+    CHECK_FALSE(b2.contains("name=\"prompt\""));
+    CHECK_FALSE(b2.contains("keywords[]"));
+    CHECK_FALSE(b2.contains("languages[]"));
+}
+
+TEST_CASE("sanitizeTranscriptionKeywords", "[stt]") {
+    CHECK(
+        sanitizeTranscriptionKeywords({" Foo ", "foo", "FOO", "bar\r", "<b>", "", "  ", "Baz"}) ==
+        QStringList{"Foo", "Baz"}
+    );
+    CHECK(sanitizeTranscriptionKeywords({}).isEmpty());
+}

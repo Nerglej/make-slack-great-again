@@ -253,6 +253,15 @@ std::vector<Message> MessageListWidget::threadRoots() const {
     return roots;
 }
 
+std::vector<Message> MessageListWidget::recentMessages(int max) const {
+    std::vector<Message> out;
+    for (auto it = _items.rbegin(); it != _items.rend() && int(out.size()) < max; ++it)
+        if (!it->msg.pending)
+            out.push_back(it->msg);
+    std::reverse(out.begin(), out.end());
+    return out;
+}
+
 void MessageListWidget::clear() {
     _loading = false;
     _loadingAnim.stop();
@@ -3720,7 +3729,9 @@ void MessageListWidget::startTranscription(const File &file, const Message &msg)
     const QString who      = _session ? _session->userDisplayName(msg.author) : QString();
     const QString when     = TimeFmt::formatTime(msg.date / 1000000);
     QString       subtitle = who.isEmpty() ? when : tr("%1 at %2").arg(who, when);
-    if (const auto *prov = LlmService::instance().activeProvider())
+    // The provider that will actually transcribe: an OpenAI-compatible one can
+    // do it while the default chat provider (e.g. Anthropic) cannot.
+    if (const auto *prov = LlmService::instance().sttProvider())
         subtitle = tr("%1 · transcribed by %2").arg(subtitle, prov->displayName());
     auto *dlg = new TranscriptDialog(subtitle, window());
     dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -3736,8 +3747,8 @@ void MessageListWidget::startTranscription(const File &file, const Message &msg)
     // Hand the bytes to the AI layer. The dialog is the callbacks' context: a
     // closed dialog drops them, the transcript is still cached for next time.
     const QPointer<MessageListWidget> self(this);
-    const QString provider = LlmService::instance().activeProvider()
-                                 ? LlmService::instance().activeProvider()->displayName()
+    const QString provider = LlmService::instance().sttProvider()
+                                 ? LlmService::instance().sttProvider()->displayName()
                                  : QString();
     auto run = [guard, self, provider, file](const QByteArray &data, const QString &sourceUrl) {
         if (!guard)
@@ -3775,19 +3786,17 @@ void MessageListWidget::startTranscription(const File &file, const Message &msg)
     };
 
     // Fail fast — no download when nothing could consume it.
-    const auto *prov = LlmService::instance().activeProvider();
-    if (!prov) {
-        dlg->setFailed(
-            tr("Transcription needs an AI provider. Connect one in Settings → AI assistance.")
-        );
-        return;
-    }
-    if (!prov->supportsTranscription()) {
-        dlg->setFailed(
-            tr("%1 does not support speech-to-text. Pick an OpenAI-compatible provider in "
-               "Settings → AI assistance.")
-                .arg(prov->displayName())
-        );
+    if (!LlmService::instance().sttProvider()) {
+        if (const auto *active = LlmService::instance().activeProvider())
+            dlg->setFailed(
+                tr("%1 does not support speech-to-text. Pick an OpenAI-compatible provider in "
+                   "Settings → AI assistance.")
+                    .arg(active->displayName())
+            );
+        else
+            dlg->setFailed(
+                tr("Transcription needs an AI provider. Connect one in Settings → AI assistance.")
+            );
         return;
     }
 

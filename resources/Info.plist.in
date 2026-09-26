@@ -51,6 +51,13 @@
     <key>LSMinimumSystemVersion</key>
     <string>${MSGA_MACOS_MIN_VERSION}</string>
 
+    <!-- Shown in the system prompt the first time voice input records
+         (src/media/audio_recorder_mac.mm). Without it macOS kills the app on
+         microphone access. Signed releases also need the audio-input
+         entitlement (resources/msga.entitlements). -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>msga uses the microphone for voice input when you dictate a message.</string>
+
     <!-- Register the msga:// URL scheme (OAuth redirect handler). -->
     <key>CFBundleURLTypes</key>
     <array>

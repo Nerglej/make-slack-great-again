@@ -54,8 +54,15 @@ public:
 
     // Routes to activeProvider(). Calls onError immediately if none connected.
     void chat(const Llm::Request &req, Llm::OnResponse onResponse, Llm::OnError onError);
-    // Speech-to-text through activeProvider(); onError immediately when none is
-    // connected or it has no transcription endpoint (Anthropic).
+    // The provider transcribe() routes to: activeProvider() when it has a
+    // speech-to-text endpoint, otherwise the first connected provider that
+    // does (so an Anthropic default still transcribes through a connected
+    // OpenAI key), otherwise nullptr. Changes are signalled by
+    // availabilityChanged(), like activeProvider().
+    [[nodiscard]] LlmProvider *sttProvider() const;
+
+    // Speech-to-text through sttProvider(); onError immediately when no
+    // connected provider has a transcription endpoint.
     void transcribe(LlmWire::TranscriptionInput in, Llm::OnText onText, Llm::OnError onError);
 
 signals:

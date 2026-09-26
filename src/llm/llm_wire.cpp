@@ -206,6 +206,20 @@ buildTranscription(const Endpoint &ep, const TranscriptionInput &in, const QByte
     QByteArray &body = out.body;
     addFormField(body, boundary, "model", in.model.toUtf8());
     addFormField(body, boundary, "response_format", "json");
+    if (!in.prompt.trimmed().isEmpty())
+        addFormField(body, boundary, "prompt", in.prompt.toUtf8());
+    if (in.model.startsWith(QLatin1String("gpt-"))) {
+        for (const QString &k : sanitizeTranscriptionKeywords(in.keywords))
+            addFormField(body, boundary, "keywords[]", k.toUtf8());
+        QStringList seen;
+        for (const QString &raw : in.languages) {
+            const QString lang = raw.trimmed().toLower();
+            if (lang.isEmpty() || seen.contains(lang) || lang.contains('\r') || lang.contains('\n'))
+                continue;
+            seen << lang;
+            addFormField(body, boundary, "languages[]", lang.toUtf8());
+        }
+    }
     // Quotes in the file name would break the header; the id-based names the
     // caller passes never carry any, but be safe.
     QByteArray fileName = in.fileName.toUtf8();
@@ -218,6 +232,24 @@ buildTranscription(const Endpoint &ep, const TranscriptionInput &in, const QByte
         "\r\n\r\n";
     body += in.audio + "\r\n";
     body += "--" + boundary + "--\r\n";
+    return out;
+}
+
+QStringList sanitizeTranscriptionKeywords(const QStringList &keywords) {
+    QStringList out;
+    QStringList seenLower;
+    for (const QString &raw : keywords) {
+        if (raw.contains('<') || raw.contains('>') || raw.contains('\r') || raw.contains('\n'))
+            continue;
+        const QString k = raw.trimmed();
+        if (k.isEmpty())
+            continue;
+        const QString lower = k.toLower();
+        if (seenLower.contains(lower))
+            continue;
+        seenLower << lower;
+        out << k;
+    }
     return out;
 }
 

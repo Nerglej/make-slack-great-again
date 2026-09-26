@@ -5,6 +5,7 @@
 #include "attachment_strip.h"
 #include "edit_mode_banner.h"
 #include "undo_send_pill.h"
+#include "voice_recording_strip.h"
 #include "ui/emoji_picker/emoji_picker_popup.h"
 #include "ui/gif_picker/gif_picker_popup.h"
 #include "network/gif_search.h"
@@ -189,6 +190,16 @@ static QString tip(const QString &label, Ui::Shortcut id) {
 
 static QString tip(const QString &label, const QString &hint) {
     return label + " (" + hint + ")";
+}
+
+// Bottom-bar icon buttons at rest (the mic button while recording has its own).
+static QString bottomBarToolBtnQss() {
+    return QString(
+               "QToolButton { border: none; border-radius: 3px; background: transparent; }"
+               "QToolButton:hover   { background: %1; }"
+               "QToolButton:pressed { background: %2; }"
+    )
+        .arg(Th::qss(Th::c().divider.def), Th::qss(Th::c().surface.highlightStrong));
 }
 
 static QFrame *makeVSep(QWidget *parent) {
@@ -523,6 +534,17 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
 
     boxLayout->addWidget(_edit, 1);
 
+    // ── Voice input status (hidden until a dictation starts here) ─────────────
+    _voiceStrip = new VoiceRecordingStrip(_box);
+    connect(_voiceStrip, &VoiceRecordingStrip::cancelClicked, this, [this] {
+        if (_voiceStrip->mode() == VoiceRecordingStrip::Mode::Error)
+            _voiceStrip->setMode(VoiceRecordingStrip::Mode::Hidden);
+        else
+            cancelVoiceInputIfMine();
+        _edit->setFocus();
+    });
+    boxLayout->addWidget(_voiceStrip);
+
     // ── Bottom action bar ─────────────────────────────────────────────────────
     _bottomBar = new QWidget(_box);
     _bottomBar->setFixedHeight(36);
@@ -572,6 +594,15 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
     bbLayout->addWidget(gifBtn);
     bbLayout->addWidget(mentionBtn);
     bbLayout->addStretch();
+
+    // Voice input, beside the send group. Shown by updateMicVisibility() once a
+    // host supplies a context source and a speech-to-text provider exists; its
+    // tooltip and look follow the recording state (updateVoiceUi).
+    _micBtn = makeBbBtn(":/ui/mic.svg", tip(tr("Voice input"), Ui::Shortcut::VoiceInput));
+    _micBtn->setObjectName("composerMicBtn");
+    _micBtn->hide();
+    connect(_micBtn, &QToolButton::clicked, this, &ComposerWidget::toggleVoiceInput);
+    bbLayout->addWidget(_micBtn);
 
     _sendBtn = new QPushButton(_bottomBar);
     _sendBtn->setFixedSize(38, 28);
@@ -729,17 +760,13 @@ void ComposerWidget::applyTheme() {
             sep, QString("QFrame { color: %1; }").arg(Th::qss(Th::c().composer.toolbarBorder))
         );
 
-    // Re-apply bottom-bar tool button styles
-    const QString bbToolBtnStyle =
-        QString(
-            "QToolButton { border: none; border-radius: 3px; background: transparent; }"
-            "QToolButton:hover   { background: %1; }"
-            "QToolButton:pressed { background: %2; }"
-        )
-            .arg(Th::qss(Th::c().divider.def), Th::qss(Th::c().surface.highlightStrong));
-    const auto toolBtns = _bottomBar->findChildren<QToolButton *>();
+    // Re-apply bottom-bar tool button styles (the mic button's own below).
+    const QString bbToolBtnStyle = bottomBarToolBtnQss();
+    const auto    toolBtns       = _bottomBar->findChildren<QToolButton *>();
     for (auto *btn : toolBtns)
-        Th::setStyleSheetIfChanged(btn, bbToolBtnStyle);
+        if (btn != _micBtn)
+            Th::setStyleSheetIfChanged(btn, bbToolBtnStyle);
+    updateVoiceUi();
 
     // Send-button colors come from updateSendState — force a restyle with the
     // new theme's palette (also fixes the pill keeping stale colors until the
@@ -1033,8 +1060,12 @@ void ComposerWidget::clearPendingFiles() {
 }
 
 void ComposerWidget::recolorBottomBarIcons(const QColor &color) {
-    for (auto &[btn, path] : _iconBtns)
+    for (auto &[btn, path] : _iconBtns) {
+        // A recording mic button wears the stop icon (updateVoiceUi).
+        if (btn == _micBtn && _voiceStrip->mode() == VoiceRecordingStrip::Mode::Recording)
+            continue;
         btn->setIcon(svgIcon(path, btn->iconSize(), color));
+    }
 }
 
 void ComposerWidget::setFocused(bool focused) {
@@ -1088,6 +1119,11 @@ void ComposerWidget::moveEvent(QMoveEvent *event) {
 
 void ComposerWidget::hideEvent(QHideEvent *event) {
     withdrawUndoSend();
+    // A dictation is for the composer on screen: hidden (thread panel closed,
+    // another page shown) means abandoned. Minimizing is spontaneous and
+    // leaves it running.
+    if (!event->spontaneous())
+        cancelVoiceInputIfMine();
     QWidget::hideEvent(event);
 }
 
@@ -1204,6 +1240,7 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
             setFocused(true);
         } else if (t == QEvent::FocusOut) {
             setFocused(false);
+            _pttArmed = false; // the shortcut's release goes elsewhere now
             // _mentionPopup is a plain child widget (no separate window) so it
             // never steals focus — don't dismiss it here; checkMentionPopup()
             // handles its lifetime via text/cursor state.
@@ -1213,6 +1250,25 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
             auto      *ke  = static_cast<QKeyEvent *>(event);
             const auto mod = ke->modifiers();
             const int  key = ke->key();
+
+            // Voice input first: while a dictation of ours is in flight, Esc
+            // cancels it ahead of every other Esc meaning (popups, edit mode).
+            if (key == Qt::Key_Escape && (mod & ~Qt::KeypadModifier) == Qt::NoModifier &&
+                voiceActiveHere()) {
+                cancelVoiceInputIfMine();
+                return true;
+            }
+            if (Ui::Shortcuts::matches(Ui::Shortcut::VoiceInput, ke) && _micBtn->isVisible()) {
+                if (!ke->isAutoRepeat()) {
+                    const bool wasActive = voiceActiveHere();
+                    toggleVoiceInput();
+                    // Push-to-talk only for a press that started a recording.
+                    _pttArmed = !wasActive && voiceActiveHere();
+                    if (_pttArmed)
+                        _pttHeld.start();
+                }
+                return true;
+            }
 
             // Mention popup intercepts navigation keys first
             if (_mentionPopup && _mentionPopup->isOpen()) {
@@ -1400,6 +1456,18 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                                    key == Qt::Key_Down || key == Qt::Key_Left ||
                                    key == Qt::Key_Right || key == Qt::Key_Escape ||
                                    key == Qt::Key_Return || key == Qt::Key_Tab;
+            // Push-to-talk: letting go of the voice shortcut's key after
+            // holding it stops the recording; a quick tap leaves it running
+            // (toggle). Auto-repeat releases are the key still being held.
+            if (_pttArmed && key == Ui::Shortcuts::sequence(Ui::Shortcut::VoiceInput)[0].key()) {
+                if (ke->isAutoRepeat())
+                    return true;
+                _pttArmed = false;
+                if (_pttHeld.elapsed() >= kPushToTalkMs && voiceActiveHere() &&
+                    VoiceInput::instance().state() == VoiceInput::State::Recording)
+                    VoiceInput::instance().stop();
+                return true;
+            }
             if (!isNonText) {
                 QTimer::singleShot(0, this, [this] {
                     checkMentionPopup(); // handles @ trigger
@@ -1637,6 +1705,11 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                 // Rebuilt per hover: its key follows the Ctrl+Enter option,
                 // which can change while the composer lives.
                 text = tip(tr("Send message"), Ui::Shortcut::SendMessage);
+            } else if (w == _micBtn) {
+                // Follows the recording state.
+                const bool recording = _voiceStrip->mode() == VoiceRecordingStrip::Mode::Recording;
+                text = recording ? tip(tr("Stop and transcribe"), Ui::Shortcut::VoiceInput)
+                                 : tip(tr("Voice input"), Ui::Shortcut::VoiceInput);
             } else if (w == _gifBtn && !net::GifSearch::configured()) {
                 // Same reason: the key can be set (in Settings, or in the
                 // picker itself) at any point after the button was built.
@@ -1649,6 +1722,150 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
     }
 
     return QWidget::eventFilter(obj, event);
+}
+
+// ── Voice input ───────────────────────────────────────────────────────────────
+
+ComposerWidget::~ComposerWidget() {
+    // VoiceInput is app-wide and would otherwise keep recording (and later
+    // transcribe) for a composer that no longer exists.
+    cancelVoiceInputIfMine();
+}
+
+void ComposerWidget::setVoiceContextSource(std::function<Voice::Context()> source) {
+    _voiceSource = std::move(source);
+    if (_voiceSource && !_voiceWired) {
+        _voiceWired = true;
+        auto &vi    = VoiceInput::instance();
+        connect(&vi, &VoiceInput::availabilityChanged, this, &ComposerWidget::updateMicVisibility);
+        connect(&vi, &VoiceInput::stateChanged, this, &ComposerWidget::updateVoiceUi);
+        connect(&vi, &VoiceInput::level, this, [this](float peak) {
+            if (voiceActiveHere())
+                _voiceStrip->pushLevel(peak);
+            else if (_voiceStrip->mode() == VoiceRecordingStrip::Mode::Recording)
+                updateVoiceUi(); // another composer took the microphone
+        });
+        connect(&vi, &VoiceInput::finished, this, [this](QObject *owner, const QString &text) {
+            if (owner == this)
+                insertVoiceText(text);
+        });
+        connect(&vi, &VoiceInput::failed, this, [this](QObject *owner, const QString &error) {
+            if (owner != this)
+                return;
+            _pttArmed = false;
+            _voiceStrip->setMode(VoiceRecordingStrip::Mode::Error, error);
+            updateVoiceUi();
+        });
+    }
+    if (!_voiceSource)
+        cancelVoiceInputIfMine();
+    updateMicVisibility();
+    updateVoiceUi();
+}
+
+bool ComposerWidget::voiceActiveHere() const {
+    if (!_voiceWired)
+        return false;
+    const auto &vi = VoiceInput::instance();
+    return vi.owner() == this && vi.state() != VoiceInput::State::Idle;
+}
+
+void ComposerWidget::toggleVoiceInput() {
+    if (!_voiceSource)
+        return;
+    auto &vi = VoiceInput::instance();
+    if (voiceActiveHere()) {
+        // Transcription / clean-up can only be cancelled (Esc, ×), not stopped.
+        if (vi.state() == VoiceInput::State::Recording)
+            vi.stop();
+        return;
+    }
+    // Dismissed here rather than left to time out: a new attempt is starting.
+    if (_voiceStrip->mode() == VoiceRecordingStrip::Mode::Error)
+        _voiceStrip->setMode(VoiceRecordingStrip::Mode::Hidden);
+    vi.start(this, _voiceSource());
+    // Keeps Esc (cancel) and the shortcut (stop) within reach.
+    _edit->setFocus();
+}
+
+void ComposerWidget::cancelVoiceInputIfMine() {
+    _pttArmed = false;
+    if (voiceActiveHere())
+        VoiceInput::instance().cancel();
+}
+
+void ComposerWidget::updateMicVisibility() {
+    const bool show = _voiceSource && VoiceInput::instance().isAvailable();
+    _micBtn->setVisible(show);
+    if (!show)
+        _tooltip->hide();
+}
+
+void ComposerWidget::updateVoiceUi() {
+    using Mode       = VoiceRecordingStrip::Mode;
+    Mode       mode  = Mode::Hidden;
+    const bool mine  = voiceActiveHere();
+    const auto state = mine ? VoiceInput::instance().state() : VoiceInput::State::Idle;
+    switch (state) {
+    case VoiceInput::State::Recording:
+        mode = Mode::Recording;
+        break;
+    case VoiceInput::State::Transcribing:
+        mode = Mode::Transcribing;
+        break;
+    case VoiceInput::State::Cleaning:
+        mode = Mode::Cleaning;
+        break;
+    case VoiceInput::State::Idle:
+        break;
+    }
+    // A failure shown in the strip stays until it times out, is dismissed or
+    // a new recording starts (toggleVoiceInput clears it first) — whatever
+    // state changes arrive around failed(), in whichever order.
+    if (_voiceStrip->mode() != Mode::Error && mode != _voiceStrip->mode())
+        _voiceStrip->setMode(mode);
+    if (!mine)
+        _pttArmed = false;
+
+    // The mic button: a red round stop button while recording, otherwise one
+    // of the bottom bar's icons (tinted with the rest by setFocused).
+    static constexpr QSize kMicIcon{18, 18};
+    if (_voiceStrip->mode() == Mode::Recording) {
+        Th::setStyleSheetIfChanged(
+            _micBtn,
+            QString(
+                "QToolButton { border: none; border-radius: %1px; background: %2; }"
+                "QToolButton:hover   { background: %3; }"
+                "QToolButton:pressed { background: %3; }"
+            )
+                .arg(_micBtn->width() / 2)
+                .arg(Th::qss(Th::c().danger.def), Th::qss(Th::c().danger.hover))
+        );
+        _micBtn->setIcon(svgIcon(":/ui/mic-stop.svg", kMicIcon, Qt::white));
+    } else {
+        Th::setStyleSheetIfChanged(_micBtn, bottomBarToolBtnQss());
+        const QColor tint =
+            _edit->hasFocus() ? Th::c().composer.toolbarIconActive : Th::c().composer.toolbarIcon;
+        _micBtn->setIcon(svgIcon(":/ui/mic.svg", kMicIcon, tint));
+    }
+}
+
+void ComposerWidget::insertVoiceText(const QString &text) {
+    const QString t = text.trimmed();
+    if (t.isEmpty())
+        return;
+    auto        cursor = _edit->textCursor();
+    // Judged by the character left of what the text replaces (as for a GIF
+    // pill): "hello" + dictation reads "hello world", not "helloworld".
+    const int   at     = cursor.selectionStart();
+    const QChar prev   = at > 0 ? _edit->document()->characterAt(at - 1) : QChar();
+    // Plain format: never inherit a mention pill's char format at its edge.
+    if (!prev.isNull() && !prev.isSpace())
+        cursor.insertText(QStringLiteral(" "), QTextCharFormat());
+    cursor.insertText(t, QTextCharFormat());
+    _edit->setTextCursor(cursor);
+    _edit->setFocus();
+    updateSendState();
 }
 
 // ── Sending ───────────────────────────────────────────────────────────────────
@@ -1940,6 +2157,10 @@ ComposerDraft ComposerWidget::takeDraft() {
     // drop that text into whatever chat is shown next.
     withdrawUndoSend();
     setSuggestion({}); // it belongs to the conversation being left
+    // A dictation still running would land its text in the next conversation.
+    cancelVoiceInputIfMine();
+    if (_voiceStrip->mode() == VoiceRecordingStrip::Mode::Error)
+        _voiceStrip->setMode(VoiceRecordingStrip::Mode::Hidden);
 
     ComposerDraft draft;
     draft.text  = currentText();

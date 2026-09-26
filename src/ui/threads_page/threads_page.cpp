@@ -4,6 +4,7 @@
 #include "backend/backend.h"
 #include "session/session.h"
 #include "ui/composer/composer_widget.h"
+#include "ui/composer/voice_context.h"
 #include "ui/icon_utils.h"
 #include "ui/image_cache.h"
 #include "ui/message_list/message_render.h"
@@ -473,6 +474,14 @@ private:
         _composer->setConvKind(c ? c->kind : ConvKind::PublicChannel);
         _composer->setScheduleVisible(false);
         _composer->setPlaceholderText(tr("Reply in thread…"));
+        // Voice input context: the thread as this card shows it (root plus the
+        // replies loaded into it).
+        _composer->setVoiceContextSource([this] {
+            std::vector<Message> msgs{_item.root};
+            for (const ThreadMsgRow *row : _rows)
+                msgs.push_back(row->message());
+            return VoiceContext::build(_session, _item.conv, msgs);
+        });
         connect(_composer, &ComposerWidget::sendRequested, this, [this](const QString &text) {
             if (!_session)
                 return;

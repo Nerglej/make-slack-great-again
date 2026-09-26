@@ -134,6 +134,18 @@ const std::vector<ShortcutDef> kDefs = {
      QT_TRANSLATE_NOOP("Ui::Shortcuts", "Search earlier prompts"),
      false},
 
+    // Only where a speech-to-text provider is connected (the mic button shows).
+    // Tap to start/stop, or hold for push-to-talk (released after 400 ms →
+    // stop). Chosen clear of the IME toggles: Ctrl+Space (fcitx, Windows CJK),
+    // Super+Space (IBus), Shift+Space (full/half width), Ctrl+Cmd+Space (macOS
+    // character viewer); ⌘⇧Space has no macOS system binding.
+    {Shortcut::VoiceInput,
+     ShortcutScope::Composer,
+     "Ctrl+Shift+Space",
+     kNoStd,
+     QT_TRANSLATE_NOOP("Ui::Shortcuts", "Voice input"),
+     false},
+
     // ── Not advertised in the help panel ──────────────────────────────────────
     {Shortcut::Underline,
      ShortcutScope::Composer,

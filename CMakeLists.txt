@@ -144,6 +144,8 @@ add_executable(msga MACOSX_BUNDLE WIN32
     src/llm/llm_service.cpp
     src/llm/discussion_summary.cpp
     src/llm/audio_transcriber.cpp
+    src/llm/voice_input.cpp
+    src/llm/voice_prompt.cpp
 
     # Backend port, registry + factory (neutral). Optional backends add their
     # sources below (MSGA_BACKEND_*); builtin_backends.cpp registers them.
@@ -197,6 +199,9 @@ add_executable(msga MACOSX_BUNDLE WIN32
     src/media/audio_player.cpp
     # Listed so AUTOMOC processes the Q_OBJECT (impl TUs are platform-suffixed).
     src/media/audio_engine.h
+    # Microphone capture for voice input (platform backend TU added below).
+    src/media/audio_recorder.cpp
+    src/media/audio_recorder.h
 
     # Cache
     src/cache/workspace_cache.cpp
@@ -231,6 +236,8 @@ add_executable(msga MACOSX_BUNDLE WIN32
     src/ui/composer/edit_mode_banner.cpp
     src/ui/composer/undo_send_pill.cpp
     src/ui/composer/composer_widget.cpp
+    src/ui/composer/voice_context.cpp
+    src/ui/composer/voice_recording_strip.cpp
     src/ui/emoji_picker/emoji_picker_popup.cpp
     src/ui/gif_picker/gif_picker_popup.cpp
     src/ui/composer/mention_completer.cpp
@@ -629,13 +636,18 @@ endif()
 # vendored miniaudio (third_party/miniaudio, public domain — MP3/WAV/FLAC/
 # Vorbis, `ffmpeg` on PATH for anything else) and pipes raw PCM into the
 # desktop's sound-server CLI (pw-cat / paplay / aplay).
+#
+# Voice-input capture (src/media/audio_recorder_*) sits beside it with the same
+# split: AVAudioRecorder (AVFoundation, already linked), waveIn (winmm, linked
+# for the notification sound above), and on Linux the sound server's capture
+# CLI (pw-record / parecord / arecord) — no new libraries anywhere.
 if(APPLE)
-    target_sources(msga PRIVATE src/media/audio_engine_mac.mm)
-    set_source_files_properties(src/media/audio_engine_mac.mm
+    target_sources(msga PRIVATE src/media/audio_engine_mac.mm src/media/audio_recorder_mac.mm)
+    set_source_files_properties(src/media/audio_engine_mac.mm src/media/audio_recorder_mac.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     target_link_libraries(msga PRIVATE "-framework AVFoundation")
 elseif(WIN32)
-    target_sources(msga PRIVATE src/media/audio_engine_win.cpp)
+    target_sources(msga PRIVATE src/media/audio_engine_win.cpp src/media/audio_recorder_win.cpp)
     target_link_libraries(msga PRIVATE mfplay ole32)
 else()
     enable_language(C)
@@ -643,7 +655,7 @@ else()
     target_include_directories(msga_miniaudio SYSTEM PUBLIC third_party/miniaudio)
     target_compile_options(msga_miniaudio PRIVATE -w)
     target_link_libraries(msga_miniaudio PUBLIC m)
-    target_sources(msga PRIVATE src/media/audio_engine_linux.cpp)
+    target_sources(msga PRIVATE src/media/audio_engine_linux.cpp src/media/audio_recorder_linux.cpp)
     target_link_libraries(msga PRIVATE msga_miniaudio)
 endif()
 

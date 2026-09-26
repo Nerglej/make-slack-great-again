@@ -3,9 +3,11 @@
 #pragma once
 
 #include "backend/domain.h"
+#include "llm/voice_input.h"
 #include "ui/composer/composer_draft.h"
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QList>
 #include <QPair>
@@ -35,6 +37,7 @@ class AttachmentStrip;
 class EditModeBanner;
 class StyledLineEdit;
 class UndoSendPill;
+class VoiceRecordingStrip;
 
 // Slack-style composer: formatting toolbar + text area + bottom action bar.
 // Enter sends and Shift+Enter inserts a newline — or, with the "send with
@@ -52,6 +55,8 @@ class ComposerWidget : public QWidget {
 #endif
 public:
     explicit ComposerWidget(QWidget *parent = nullptr);
+    // Cancels a dictation this composer started (VoiceInput outlives it).
+    ~ComposerWidget() override;
 
     void setPlaceholderText(const QString &text);
 
@@ -71,6 +76,16 @@ public:
     // past the newest, empties the editor again. Asked each time ↑ starts from
     // an empty editor; an empty list leaves ↑ to editLastRequested.
     void setPromptHistorySource(std::function<QStringList()> source);
+
+    // Voice input: what the host knows about the conversation the dictated
+    // text goes to (its name, members and the last ~30 messages, see
+    // VoiceContext::build), asked each time a recording starts. The mic button
+    // in the bottom bar shows only while a source is set AND
+    // VoiceInput::isAvailable() — a host that never sets one (the forward
+    // dialog) has no voice input. An empty function takes it away again.
+    // Ui::Shortcut::VoiceInput toggles recording (hold it for push-to-talk),
+    // Esc cancels; the transcript lands at the cursor.
+    void setVoiceContextSource(std::function<Voice::Context()> source);
 
     // Optional subject line for email backends (decision §3 #3): shown only when
     // the backend declares Capabilities::messageSubjects. The value travels to
@@ -222,6 +237,19 @@ private:
     // → / Tab in the empty editor: the suggestion becomes the editor's text.
     bool acceptSuggestion();
 
+    // Voice input (see setVoiceContextSource). voiceActiveHere(): a dictation
+    // this composer started is recording, transcribing or cleaning up.
+    bool voiceActiveHere() const;
+    void toggleVoiceInput();
+    void cancelVoiceInputIfMine();
+    // Mic button visibility (source set + a speech-to-text provider).
+    void updateMicVisibility();
+    // Mic button look + recording strip mode from VoiceInput's state.
+    void updateVoiceUi();
+    // A finished transcript: plain text at the cursor, space-separated from
+    // the word before it.
+    void insertVoiceText(const QString &text);
+
     QFrame            *_box          = nullptr;
     StyledLineEdit    *_subject      = nullptr; // email subject line (optional)
     QFrame            *_subjectSep   = nullptr; // horizontal rule under the subject
@@ -232,6 +260,7 @@ private:
     QWidget           *_bottomBar    = nullptr; // bottom action bar
     QToolButton       *_gifBtn       = nullptr; // GIF picker button (tooltip varies)
     QPushButton       *_sendBtn      = nullptr;
+    QToolButton       *_micBtn       = nullptr; // voice input; hidden unless available
     QPushButton       *_dropBtn      = nullptr; // schedule-send dropdown
     QWidget           *_sendGroup    = nullptr; // pill container for send+drop
     QWidget           *_linkPopup    = nullptr; // LinkPopup instance, created lazily
@@ -278,4 +307,15 @@ private:
     QTimer                _undoTimer;
     std::function<void()> _undoSend;
     ComposerDraft         _lastSent;
+
+    // Voice input. _voiceWired: VoiceInput's signals are connected — done on
+    // the first setVoiceContextSource so composers without voice input never
+    // instantiate it. Push-to-talk: _pttArmed while the shortcut that started
+    // a recording is still held; releasing it after kPushToTalkMs stops.
+    VoiceRecordingStrip            *_voiceStrip = nullptr;
+    std::function<Voice::Context()> _voiceSource;
+    bool                            _voiceWired = false;
+    bool                            _pttArmed   = false;
+    QElapsedTimer                   _pttHeld;
+    static constexpr int            kPushToTalkMs = 400;
 };

@@ -72,10 +72,19 @@ HttpRequest buildListModels(const Endpoint &ep);
 // ── Speech-to-text ────────────────────────────────────────────────────
 
 struct TranscriptionInput {
-    QByteArray audio;
-    QString    fileName; // with the real extension — servers sniff the format by it
-    QString    mimeType; // part Content-Type ("audio/mpeg"); empty → octet-stream
-    QString    model;    // "gpt-transcribe", "whisper-1", …
+    QByteArray  audio;
+    QString     fileName; // with the real extension — servers sniff the format by it
+    QString     mimeType; // part Content-Type ("audio/mpeg"); empty → octet-stream
+    QString     model;    // "gpt-transcribe", "whisper-1", …
+    // Context that steers recognition. `prompt` is sent to every server (for
+    // Whisper it reads as the transcript preceding the audio; the gpt-*
+    // transcribe family follows it as instructions). `keywords` (terms to
+    // spell exactly) and `languages` (ISO 639-1 hints) exist only on OpenAI's
+    // gpt-*-transcribe models, so they are sent only when `model` starts with
+    // "gpt-" — Whisper-style servers don't know them.
+    QString     prompt;
+    QStringList keywords;
+    QStringList languages;
 };
 
 struct TranscriptionResult {
@@ -87,11 +96,18 @@ struct TranscriptionResult {
 // Whether the format has a transcription endpoint at all (OpenAiChat only).
 bool        supportsTranscription(Format format);
 // Multipart POST <base>/audio/transcriptions with `model`, `file` and
-// `response_format=json`. `boundary` is generated when empty (tests pin it).
+// `response_format=json`, plus `prompt` when set and — gpt-* models only —
+// one `keywords[]` field per sanitised keyword and one `languages[]` field per
+// language. `boundary` is generated when empty (tests pin it).
 // Precondition: supportsTranscription(ep.format).
 HttpRequest buildTranscription(
     const Endpoint &ep, const TranscriptionInput &in, const QByteArray &boundary = {}
 );
+// Speech-to-text keywords as OpenAI accepts them: trimmed, empty and
+// case-insensitive duplicates dropped (first spelling wins), and any term
+// containing '<', '>', CR or LF dropped — one such term makes OpenAI reject
+// the whole request.
+QStringList         sanitizeTranscriptionKeywords(const QStringList &keywords);
 // {"text": …} on success; a 200 that isn't JSON is taken as the plain text
 // (servers that ignore response_format).
 TranscriptionResult parseTranscription(int httpStatus, const QByteArray &body);

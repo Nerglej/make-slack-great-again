@@ -166,6 +166,11 @@ public:
     // are not roots.
     std::vector<Message> threadRoots() const;
 
+    // The newest `max` loaded messages, oldest → newest (a thread view: the
+    // root and its replies). Confirmed messages only — optimistic copies still
+    // in flight are left out. Feeds the composer's voice-input context.
+    std::vector<Message> recentMessages(int max) const;
+
     // Move the focus to a specific message: scroll it into view and flash it, so
     // the eye finds it among its neighbours. The target is remembered when it
     // isn't loaded yet — a jump issued right after opening a conversation still

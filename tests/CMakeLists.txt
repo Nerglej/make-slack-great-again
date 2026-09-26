@@ -53,13 +53,17 @@ set(TEST_SYSTEM_INCLUDES
 #
 # Inline audio player: Media::AudioPlayer's platform engine TU is picked the
 # same way the top-level CMakeLists does.
+# The voice-input recorder's platform TU likewise.
 if(APPLE)
-    set(_audio_engine ${CMAKE_SOURCE_DIR}/src/media/audio_engine_mac.mm)
+    set(_audio_engine ${CMAKE_SOURCE_DIR}/src/media/audio_engine_mac.mm
+        ${CMAKE_SOURCE_DIR}/src/media/audio_recorder_mac.mm)
     set_source_files_properties(${_audio_engine} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 elseif(WIN32)
-    set(_audio_engine ${CMAKE_SOURCE_DIR}/src/media/audio_engine_win.cpp)
+    set(_audio_engine ${CMAKE_SOURCE_DIR}/src/media/audio_engine_win.cpp
+        ${CMAKE_SOURCE_DIR}/src/media/audio_recorder_win.cpp)
 else()
-    set(_audio_engine ${CMAKE_SOURCE_DIR}/src/media/audio_engine_linux.cpp)
+    set(_audio_engine ${CMAKE_SOURCE_DIR}/src/media/audio_engine_linux.cpp
+        ${CMAKE_SOURCE_DIR}/src/media/audio_recorder_linux.cpp)
 endif()
 
 set(MSGA_TEST_SUPPORT_SRCS
@@ -132,8 +136,11 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/llm/llm_token_store.cpp
     ${CMAKE_SOURCE_DIR}/src/llm/llm_wire.cpp
     ${CMAKE_SOURCE_DIR}/src/llm/oauth_loopback.cpp
+    ${CMAKE_SOURCE_DIR}/src/llm/voice_input.cpp
+    ${CMAKE_SOURCE_DIR}/src/llm/voice_prompt.cpp
 
     ${CMAKE_SOURCE_DIR}/src/media/audio_player.cpp
+    ${CMAKE_SOURCE_DIR}/src/media/audio_recorder.cpp
 
     ${CMAKE_SOURCE_DIR}/src/network/gif_search.cpp
     ${CMAKE_SOURCE_DIR}/src/network/http_queue.cpp
@@ -159,6 +166,8 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/ui/composer/formatting_toolbar.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer/mention_completer.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer/undo_send_pill.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/composer/voice_context.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/composer/voice_recording_strip.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/context_menu/context_menu.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/conv_list/conv_list_widget.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/conv_list/named_conversation.cpp
@@ -238,7 +247,7 @@ target_link_libraries(msga_test_support PRIVATE
 if(APPLE)
     target_link_libraries(msga_test_support PRIVATE "-framework AVFoundation")
 elseif(WIN32)
-    target_link_libraries(msga_test_support PRIVATE mfplay ole32)
+    target_link_libraries(msga_test_support PRIVATE mfplay ole32 winmm)
 else()
     target_link_libraries(msga_test_support PRIVATE msga_miniaudio)
 endif()
@@ -432,6 +441,11 @@ add_msga_test(test_llm_wire)
 # QCoreApplication for the event loop and a redirected QSettings path).
 add_msga_test(test_llm_service)
 
+# Voice input: prompt/keyword/clean-up shaping (pure) and the VoiceInput state
+# machine (fake recorder + FakeHttpServer, redirected QSettings).
+add_msga_test(test_voice_prompt)
+add_msga_test(test_voice_input)
+
 add_msga_test(test_fake_backend)
 
 # --demo fixture loader, tour script parser and demo backend. Only where the
@@ -595,3 +609,8 @@ endif()
 # platform engine's decode path (Linux: miniaudio on a generated WAV, never
 # played — no sound server needed under ctest).
 add_msga_test(test_audio_player)
+
+# Voice-input recorder: WAV wrapping + the MSGA_VOICE_FAKE_WAV fake recorder;
+# on Linux also the capture-helper chain's "nothing installed" path. A real
+# microphone capture runs only when MSGA_TEST_LIVE_MIC=1.
+add_msga_test(test_audio_recorder)

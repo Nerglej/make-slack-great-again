@@ -30,6 +30,8 @@
         <file alias="ui/star-solid.svg">../gfx/ui/star-solid.svg</file>
         <file alias="ui/send.svg">../gfx/ui/send.svg</file>
         <file alias="ui/paperclip.svg">../gfx/ui/paperclip.svg</file>
+        <file alias="ui/mic.svg">../gfx/ui/mic.svg</file>
+        <file alias="ui/mic-stop.svg">../gfx/ui/mic-stop.svg</file>
         <file alias="ui/smile.svg">../gfx/ui/smile.svg</file>
         <file alias="ui/leaf.svg">../gfx/ui/leaf.svg</file>
         <file alias="ui/apple.svg">../gfx/ui/apple.svg</file>

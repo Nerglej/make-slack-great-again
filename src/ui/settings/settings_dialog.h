@@ -25,6 +25,7 @@ class QRadioButton;
 class QPushButton;
 class QSpinBox;
 class QLineEdit;
+class QPlainTextEdit;
 class Dropdown;
 class StyledButton;
 class StyledLineEdit;
@@ -140,6 +141,12 @@ private:
     // also offers the returned ids in the model dropdown.
     void                   probeAiEditor(bool fillModels);
     LlmProviderConfig      aiEditorConfig() const;
+    QString                aiEditorSttModel(const LlmProviderConfig &cfg) const;
+    // Voice input section: glossary + clean-up from VoiceInput's settings, and
+    // the "needs a speech-to-text provider" hint from its availability.
+    void                   loadVoiceInput();
+    void                   saveVoiceGlossary();
+    void                   refreshVoiceHint();
     void                   applyTheme();
     void                   refreshModeHint();
     void                   refreshCustomEditor(); // show the editor iff a Custom card is picked
@@ -245,6 +252,14 @@ private:
     int             _aiProbeSeq      = 0; // ignore replies of superseded probes
     Dropdown       *_aiLanguage      = nullptr;
     QLabel         *_aiError         = nullptr;
+    // Speech-to-text model row in the provider editor (OpenAI-wire providers).
+    QWidget        *_aiSttRow        = nullptr;
+    StyledLineEdit *_aiSttModel      = nullptr;
+    // Voice input section.
+    QPlainTextEdit *_voiceGlossary   = nullptr;
+    QTimer         *_voiceSaveTimer  = nullptr; // debounces typing → setGlossary
+    QCheckBox      *_voiceCleanup    = nullptr;
+    QLabel         *_voiceNoProvider = nullptr;
 
     // Storage controls
     QLabel   *_cacheSize = nullptr;

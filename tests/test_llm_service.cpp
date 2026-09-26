@@ -433,6 +433,72 @@ TEST_CASE("transcribe: multipart round trip through a custom provider, default S
     svc.removeCustom(p->id());
 }
 
+TEST_CASE("sttProvider: an Anthropic default still transcribes through another provider") {
+    auto &svc = LlmService::instance();
+    svc.updateProvider("anthropic", svc.provider("anthropic")->config(), "sk-ant-stt-test");
+    svc.setDefaultProviderId("anthropic");
+    REQUIRE(svc.activeProvider() == svc.provider("anthropic"));
+    CHECK(svc.sttProvider() == nullptr); // nothing else connected
+
+    // Refused up front, naming the provider that can't do it — no HTTP.
+    bool    called = false;
+    QString err;
+    svc.transcribe(
+        {},
+        [&](QString) { called = true; },
+        [&](QString e) {
+            err    = std::move(e);
+            called = true;
+        }
+    );
+    CHECK(called);
+    CHECK(err.contains("Anthropic does not support speech-to-text"));
+
+    // Connecting an OpenAI-compatible server: chat stays on Anthropic,
+    // speech-to-text goes to the server, and availabilityChanged tells the UI.
+    int     changes = 0;
+    QObject ctx;
+    QObject::connect(&svc, &LlmService::availabilityChanged, &ctx, [&] { ++changes; });
+    FakeHttpServer srv;
+    auto          *p = customFor(srv, "stt-key");
+    CHECK(changes >= 1);
+    CHECK(svc.activeProvider() == svc.provider("anthropic"));
+    CHECK(svc.sttProvider() == p);
+
+    srv.enqueue(R"({"text":"routed"})");
+    LlmWire::TranscriptionInput in;
+    in.audio     = "RIFF";
+    in.fileName  = "a.wav";
+    bool    done = false;
+    QString text;
+    svc.transcribe(
+        in,
+        [&](QString t) {
+            text = std::move(t);
+            done = true;
+        },
+        [&](QString e) {
+            err  = std::move(e);
+            done = true;
+        }
+    );
+    waitFor(done);
+    CHECK(text == "routed");
+    REQUIRE(srv.requestPaths.size() == 1);
+    CHECK(srv.requestPaths[0] == "/v1/audio/transcriptions");
+    CHECK(srv.requestHeaders[0].contains("Authorization: Bearer stt-key"));
+
+    // A default that can transcribe is preferred over earlier-listed ones.
+    svc.setDefaultProviderId(p->id());
+    CHECK(svc.sttProvider() == p);
+
+    svc.removeCustom(p->id());
+    CHECK(svc.sttProvider() == nullptr);
+    svc.disconnectProvider("anthropic");
+    CHECK(svc.activeProvider() == nullptr);
+    CHECK(svc.sttProvider() == nullptr);
+}
+
 TEST_CASE("transcribe: Anthropic has no speech endpoint — refused before any HTTP") {
     auto &svc       = LlmService::instance();
     auto *anthropic = svc.provider("anthropic");

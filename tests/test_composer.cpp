@@ -22,12 +22,17 @@
 #include <QFocusEvent>
 #include <QFrame>
 #include <QMimeData>
+#include <QSettings>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTextEdit>
+#include <QToolButton>
 #include <QWindow>
 
 #include "ui/composer/composer_widget.h"
 #include "ui/composer/undo_send_pill.h"
+#include "ui/composer/voice_recording_strip.h"
+#include "llm/voice_input.h"
 #include "ui/history_search/history_search_popup.h"
 #include "ui/shortcuts.h"
 #include "session/session.h"
@@ -41,6 +46,12 @@ MSGA_TEST_MAIN(argc, argv) {
     QApplication app(argc, argv);
     app.setApplicationName("msga-test-composer");
     app.setOrganizationName("msga-test");
+    // The voice-input tests reach LlmService / VoiceInput, which read (and on
+    // start-up scrub) QSettings("msga", "msga") — keep the real user config,
+    // and the API keys stored in it on Linux/Windows, out of reach.
+    QTemporaryDir settingsDir;
+    QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, settingsDir.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDir.path());
     return msga_test::runCatch(argc, argv);
 }
 
@@ -1747,4 +1758,123 @@ TEST_CASE(
     CHECK_FALSE(box->property("focused").toBool());
     CHECK(borderColor() == Th::c().composer.border);
     CHECK(box->styleSheet() == sheet);
+}
+
+// ── Voice input ───────────────────────────────────────────────────────────────
+// Driven through VoiceInput's public signals only, so the tests hold for any
+// implementation behind it (no recorder, no provider needed).
+
+static QToolButton *micOf(ComposerWidget *c) {
+    return c->findChild<QToolButton *>("composerMicBtn");
+}
+
+static VoiceRecordingStrip *voiceStripOf(ComposerWidget *c) {
+    return c->findChild<VoiceRecordingStrip *>("voiceStrip");
+}
+
+static Voice::Context emptyVoiceContext() {
+    return {};
+}
+
+TEST_CASE("voice input: no mic button without a context source", "[composer][voice]") {
+    // The forward dialog's composer never sets one.
+    ComposerWidget c;
+    REQUIRE(micOf(&c));
+    CHECK(micOf(&c)->isHidden());
+}
+
+TEST_CASE(
+    "voice input: the mic button follows availability once a source is set", "[composer][voice]"
+) {
+    ComposerWidget c;
+    c.setVoiceContextSource(emptyVoiceContext);
+    CHECK(micOf(&c)->isHidden() == !VoiceInput::instance().isAvailable());
+    c.setVoiceContextSource({});
+    CHECK(micOf(&c)->isHidden());
+}
+
+TEST_CASE("voice input: the transcript lands at the cursor, space-separated", "[composer][voice]") {
+    ComposerWidget c;
+    c.setVoiceContextSource(emptyVoiceContext);
+    QTextEdit *ed = editOf(&c);
+
+    typeText(&c, "hello");
+    emit VoiceInput::instance().finished(&c, QStringLiteral(" world \n"));
+    CHECK(c.currentText() == "hello world");
+
+    // Mid-text, right after a word: separated from it, the rest untouched.
+    typeText(&c, "ab cd");
+    auto cur = ed->textCursor();
+    cur.setPosition(2);
+    ed->setTextCursor(cur);
+    emit VoiceInput::instance().finished(&c, QStringLiteral("X"));
+    CHECK(c.currentText() == "ab X cd");
+
+    // After a space or at the start: no extra space.
+    typeText(&c, "hi ");
+    emit VoiceInput::instance().finished(&c, QStringLiteral("there"));
+    CHECK(c.currentText() == "hi there");
+    c.setText({});
+    emit VoiceInput::instance().finished(&c, QStringLiteral("first"));
+    CHECK(c.currentText() == "first");
+
+    // An empty transcript changes nothing.
+    emit VoiceInput::instance().finished(&c, QStringLiteral("  "));
+    CHECK(c.currentText() == "first");
+}
+
+TEST_CASE("voice input: only the owning composer reacts", "[composer][voice]") {
+    ComposerWidget a;
+    ComposerWidget b;
+    a.setVoiceContextSource(emptyVoiceContext);
+    b.setVoiceContextSource(emptyVoiceContext);
+
+    emit VoiceInput::instance().finished(&b, QStringLiteral("for b"));
+    CHECK(a.currentText().isEmpty());
+    CHECK(b.currentText() == "for b");
+
+    emit VoiceInput::instance().failed(&b, QStringLiteral("No microphone"));
+    CHECK(voiceStripOf(&a)->mode() == VoiceRecordingStrip::Mode::Hidden);
+    CHECK(voiceStripOf(&b)->mode() == VoiceRecordingStrip::Mode::Error);
+    CHECK_FALSE(voiceStripOf(&b)->isHidden());
+
+    // Leaving the conversation clears the error with the rest of the input.
+    (void)b.takeDraft();
+    CHECK(voiceStripOf(&b)->mode() == VoiceRecordingStrip::Mode::Hidden);
+    CHECK(voiceStripOf(&b)->isHidden());
+}
+
+TEST_CASE(
+    "voice input: a start that fails on the spot shows the error, nothing stays armed",
+    "[composer][voice]"
+) {
+    // Settings are redirected to an empty dir: no provider is connected, so
+    // VoiceInput::start() emits failed() synchronously, from inside the click.
+    REQUIRE_FALSE(VoiceInput::instance().isAvailable());
+    ComposerWidget c;
+    c.setVoiceContextSource(emptyVoiceContext);
+    typeText(&c, "draft");
+    micOf(&c)->click(); // hidden (unavailable), but a click still reaches the slot
+    CHECK(VoiceInput::instance().state() == VoiceInput::State::Idle);
+    CHECK(VoiceInput::instance().owner() == nullptr);
+    CHECK(voiceStripOf(&c)->mode() == VoiceRecordingStrip::Mode::Error);
+    CHECK(c.currentText() == "draft");
+
+    // A second attempt replaces the error with a fresh one, not a stuck state.
+    micOf(&c)->click();
+    CHECK(voiceStripOf(&c)->mode() == VoiceRecordingStrip::Mode::Error);
+    CHECK(VoiceInput::instance().state() == VoiceInput::State::Idle);
+}
+
+TEST_CASE("voice input: the recording strip clock reads m:ss", "[composer][voice]") {
+    VoiceRecordingStrip strip;
+    CHECK(strip.elapsedText() == "0:00");
+    strip.setMode(VoiceRecordingStrip::Mode::Recording);
+    CHECK(strip.elapsedText() == "0:00");
+    CHECK_FALSE(strip.isHidden());
+    strip.pushLevel(0.5f);
+    strip.setMode(VoiceRecordingStrip::Mode::Transcribing);
+    CHECK_FALSE(strip.isHidden());
+    strip.setMode(VoiceRecordingStrip::Mode::Hidden);
+    CHECK(strip.isHidden());
 }

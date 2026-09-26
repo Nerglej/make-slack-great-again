@@ -4,6 +4,7 @@
 #include "backend/backend.h"
 #include "ui/message_list/message_list.h"
 #include "ui/composer/composer_widget.h"
+#include "ui/composer/voice_context.h"
 #include "ui/file_dialog_utils.h"
 #include "ui/icon_button/icon_button.h"
 #include "ui/icon_utils.h"
@@ -145,6 +146,12 @@ ThreadPanel::ThreadPanel(ImageCache *imgCache, QWidget *parent) : QWidget(parent
     _composer->setThreadMode(true);
     _composer->setImageCache(imgCache);
     _composer->setEnabled(false);
+    // Voice input context: the channel, and the thread's root + replies.
+    _composer->setVoiceContextSource([this] {
+        return VoiceContext::build(
+            _session, _conv, _msgList->recentMessages(2 * VoiceContext::kMaxMessages)
+        );
+    });
     layout->addWidget(_composer);
 
     _broadcastRow         = new QWidget(this);

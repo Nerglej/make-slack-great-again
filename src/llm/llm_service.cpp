@@ -177,6 +177,16 @@ LlmProvider *LlmService::activeProvider() const {
     return nullptr;
 }
 
+LlmProvider *LlmService::sttProvider() const {
+    auto *active = activeProvider();
+    if (active && active->supportsTranscription())
+        return active;
+    for (auto *p : _providers)
+        if (p->isConnected() && p->supportsTranscription())
+            return p;
+    return nullptr;
+}
+
 void LlmService::chat(const Llm::Request &req, Llm::OnResponse onResponse, Llm::OnError onError) {
     auto *p = activeProvider();
     if (!p) {
@@ -190,10 +200,16 @@ void LlmService::chat(const Llm::Request &req, Llm::OnResponse onResponse, Llm::
 void LlmService::transcribe(
     LlmWire::TranscriptionInput in, Llm::OnText onText, Llm::OnError onError
 ) {
-    auto *p = activeProvider();
+    auto *p = sttProvider();
     if (!p) {
-        if (onError)
-            onError(tr("No AI provider connected — connect one in Settings → AI assistance"));
+        if (onError) {
+            if (const auto *active = activeProvider())
+                onError(tr("%1 does not support speech-to-text — connect an OpenAI-compatible "
+                           "provider in Settings → AI assistance")
+                            .arg(active->displayName()));
+            else
+                onError(tr("No AI provider connected — connect one in Settings → AI assistance"));
+        }
         return;
     }
     p->transcribe(std::move(in), std::move(onText), std::move(onError));

@@ -10,6 +10,7 @@
 #include "popup_tooltip/popup_tooltip.h"
 #include "message_list/message_list.h"
 #include "composer/composer_widget.h"
+#include "composer/voice_context.h"
 #include "typing_indicator/typing_indicator.h"
 #include "conv_list/conv_list_widget.h"
 #include "conv_footer/conv_footer_widget.h"
@@ -1316,6 +1317,15 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
     // ↑ in a Claude Code session: its prompt history, as in Claude Code itself.
     _composer->setPromptHistorySource([this] {
         return _session ? _session->promptHistory(_currentConvId) : QStringList();
+    });
+    // Voice input: the open conversation and the messages loaded for it (the
+    // builder skips system rows, so ask for some slack beyond the 30 it keeps).
+    _composer->setVoiceContextSource([this] {
+        if (!_session || !_messageList)
+            return Voice::Context{};
+        return VoiceContext::build(
+            _session, _currentConvId, _messageList->recentMessages(2 * VoiceContext::kMaxMessages)
+        );
     });
     connect(_composer, &ComposerWidget::editLastRequested, this, [this] {
         // Only where the backend can edit: Claude Code and email have no edit,

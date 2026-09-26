@@ -5,6 +5,7 @@
 #include "theme_preview_card.h"
 #include "custom_theme_editor.h"
 #include "backend/domain.h"
+#include "ui/control_metrics.h"
 #include "ui/dropdown/dropdown.h"
 #include "ui/icon_button/icon_button.h"
 #include "ui/update_checker/update_checker.h"
@@ -17,6 +18,7 @@
 #include "llm/llm_service.h"
 #include "llm/llm_provider.h"
 #include "llm/llm_wire.h"
+#include "llm/voice_input.h"
 #include "cache/cache_evictor.h"
 #include "util/presence_settings.h"
 #include "util/time_format.h"
@@ -51,6 +53,7 @@
 #include <QGroupBox>
 #include <QSpinBox>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <algorithm>
 #include <QDirIterator>
 #include <QStandardPaths>
@@ -120,6 +123,7 @@ void SettingsDialog::open() {
     refreshAiProviders();
     if (_aiError)
         _aiError->clear();
+    loadVoiceInput();
     refreshCacheSize();
     {
         const QSignalBlocker block(_cacheCap); // don't save/sweep on load
@@ -147,6 +151,10 @@ void SettingsDialog::showEvent(QShowEvent *e) {
 
 void SettingsDialog::hideEvent(QHideEvent *e) {
     _ramTimer->stop();
+    if (_voiceSaveTimer && _voiceSaveTimer->isActive()) {
+        _voiceSaveTimer->stop();
+        saveVoiceGlossary();
+    }
     QWidget::hideEvent(e);
     emit visibilityChanged(false);
 }
@@ -1642,6 +1650,38 @@ QWidget *SettingsDialog::buildAiPage() {
     pickSub->addWidget(_aiModelPick, 1);
     el->addLayout(pickSub);
 
+    // Speech-to-text model (voice input, audio transcripts): per provider,
+    // since each server names its Whisper differently. Only OpenAI-format
+    // endpoints have /audio/transcriptions, so the row hides for Anthropic.
+    // [label | edit] over a hint indented to the field, like the URL row.
+    _aiSttRow    = new QWidget(_aiEditor);
+    auto *sttCol = new QVBoxLayout(_aiSttRow);
+    sttCol->setContentsMargins(0, 0, 0, 0);
+    sttCol->setSpacing(sp.xs);
+    auto *sttLine = new QHBoxLayout;
+    sttLine->setContentsMargins(0, 0, 0, 0);
+    sttLine->setSpacing(sp.md);
+    //: Settings → AI provider editor: the speech-to-text model field's label
+    auto *sttLabel = new QLabel(tr("Speech model"), _aiSttRow);
+    sttLabel->setObjectName("aiFieldLabel");
+    sttLabel->setFixedWidth(kLabelW);
+    sttLine->addWidget(sttLabel);
+    _aiSttModel = new StyledLineEdit(_aiSttRow);
+    _aiSttModel->setSize(StyledLineEdit::Size::Small);
+    sttLine->addWidget(_aiSttModel, 1);
+    sttCol->addLayout(sttLine);
+    auto *sttHint = new QLabel(
+        tr("Speech-to-text model for voice input and audio transcripts. Leave empty for the "
+           "default."),
+        _aiSttRow
+    );
+    sttHint->setObjectName("aiDesc");
+    sttHint->setWordWrap(true);
+    sttHint->setContentsMargins(kLabelW + sp.md, 0, 0, 0);
+    sttCol->addWidget(sttHint);
+    el->addWidget(_aiSttRow);
+    connect(_aiSttModel, &StyledLineEdit::returnPressed, this, &SettingsDialog::saveAiEditor);
+
     _aiProbeStatus = new QLabel(_aiEditor);
     _aiProbeStatus->setObjectName("aiDesc");
     _aiProbeStatus->setWordWrap(true);
@@ -1732,6 +1772,79 @@ QWidget *SettingsDialog::buildAiPage() {
         if (idx >= 0)
             LlmService::instance().setNativeLanguage(_aiLanguage->currentData().toString());
     });
+
+    // ── Voice input ───────────────────────────────────────────────────
+    auto *voiceHeading = new QLabel(tr("Voice input"), page);
+    voiceHeading->setObjectName("sectionHeading");
+    lay->addWidget(voiceHeading);
+
+    auto *voiceDesc = new QLabel(
+        tr("Dictate messages with the microphone button in the message box. When you dictate, "
+           "the recording and the conversation's recent messages are sent to your AI provider.\n"
+           "The speech-to-text model is set in each provider's settings above."),
+        page
+    );
+    voiceDesc->setObjectName("aiDesc");
+    voiceDesc->setWordWrap(true);
+    lay->addWidget(voiceDesc);
+
+    _voiceNoProvider = new QLabel(
+        tr("Voice input needs an OpenAI or OpenAI-compatible provider with speech-to-text."), page
+    );
+    _voiceNoProvider->setObjectName("aiError");
+    _voiceNoProvider->setWordWrap(true);
+    lay->addWidget(_voiceNoProvider);
+
+    auto *glossaryCol = new QVBoxLayout;
+    glossaryCol->setSpacing(sp.xs);
+    auto *glossaryLabel = new QLabel(tr("Glossary"), page);
+    glossaryLabel->setObjectName("aiFieldLabel");
+    glossaryCol->addWidget(glossaryLabel);
+    auto *glossaryDesc =
+        new QLabel(tr("Names, product terms and jargon to spell correctly, one per line."), page);
+    glossaryDesc->setObjectName("aiDesc");
+    glossaryDesc->setWordWrap(true);
+    glossaryCol->addWidget(glossaryDesc);
+    _voiceGlossary = new QPlainTextEdit(page);
+    _voiceGlossary->setObjectName("voiceGlossary");
+    _voiceGlossary->setPlaceholderText(tr("gRPC\nTerraform\nnginx"));
+    _voiceGlossary->setTabChangesFocus(true);
+    // Five lines of the caption-sized text plus padding: a fixed box keeps
+    // the page from reflowing while typing (control_metrics has no text-area
+    // height, so it is two small controls tall).
+    _voiceGlossary->setFixedHeight(2 * Ui::kControlHeight + Ui::kControlHeightXSmall);
+    glossaryCol->addWidget(_voiceGlossary);
+    lay->addLayout(glossaryCol);
+    _voiceSaveTimer = new QTimer(this);
+    _voiceSaveTimer->setSingleShot(true);
+    _voiceSaveTimer->setInterval(500);
+    connect(_voiceSaveTimer, &QTimer::timeout, this, &SettingsDialog::saveVoiceGlossary);
+    connect(_voiceGlossary, &QPlainTextEdit::textChanged, _voiceSaveTimer, [this] {
+        _voiceSaveTimer->start();
+    });
+
+    auto *cleanupCol = new QVBoxLayout;
+    cleanupCol->setSpacing(sp.xs);
+    _voiceCleanup = new QCheckBox(tr("Clean up with AI"), page);
+    _voiceCleanup->setObjectName("voiceCleanup");
+    cleanupCol->addWidget(_voiceCleanup);
+    auto *cleanupDesc =
+        new QLabel(tr("Removes filler words and false starts using your AI provider."), page);
+    cleanupDesc->setObjectName("aiDesc");
+    cleanupDesc->setWordWrap(true);
+    cleanupCol->addWidget(cleanupDesc);
+    lay->addLayout(cleanupCol);
+    connect(_voiceCleanup, &QCheckBox::toggled, this, [](bool on) {
+        VoiceInput::setCleanupEnabled(on);
+    });
+
+    connect(
+        &VoiceInput::instance(),
+        &VoiceInput::availabilityChanged,
+        this,
+        &SettingsDialog::refreshVoiceHint
+    );
+    loadVoiceInput();
 
     lay->addStretch();
 
@@ -1844,6 +1957,39 @@ void SettingsDialog::refreshAiProviders() {
         langIdx = std::max(0, _aiLanguage->findData(QStringLiteral("en")));
     const QSignalBlocker langBlocker(_aiLanguage);
     _aiLanguage->setCurrentIndex(langIdx);
+
+    refreshVoiceHint();
+}
+
+void SettingsDialog::loadVoiceInput() {
+    if (!_voiceGlossary)
+        return;
+    {
+        const QSignalBlocker block(_voiceGlossary); // loading is not an edit
+        _voiceGlossary->setPlainText(VoiceInput::glossary().join('\n'));
+    }
+    _voiceSaveTimer->stop();
+    {
+        const QSignalBlocker block(_voiceCleanup);
+        _voiceCleanup->setChecked(VoiceInput::cleanupEnabled());
+    }
+    refreshVoiceHint();
+}
+
+void SettingsDialog::saveVoiceGlossary() {
+    QStringList terms;
+    const auto  lines = _voiceGlossary->toPlainText().split('\n');
+    for (const QString &line : lines) {
+        const QString term = line.trimmed();
+        if (!term.isEmpty() && !terms.contains(term))
+            terms << term;
+    }
+    VoiceInput::setGlossary(terms);
+}
+
+void SettingsDialog::refreshVoiceHint() {
+    if (_voiceNoProvider)
+        _voiceNoProvider->setVisible(!VoiceInput::instance().isAvailable());
 }
 
 void SettingsDialog::showAiEditor(const QString &providerId) {
@@ -1905,6 +2051,13 @@ void SettingsDialog::showAiEditor(const QString &providerId) {
         }
     }
     _aiKeyHint->setVisible(!_aiKeyHint->text().isEmpty());
+
+    // New custom servers speak the OpenAI wire, so they get the row too.
+    const LlmProviderConfig sttCfg = p ? p->config() : LlmProviderConfig::newCustom();
+    _aiSttRow->setVisible(LlmWire::supportsTranscription(sttCfg.wire));
+    _aiSttModel->setText(sttCfg.sttModel);
+    _aiSttModel->setPlaceholderText(sttCfg.defaultSttModel);
+
     _aiEditor->show();
     (preset ? _aiKey : _aiName)->lineEdit()->setFocus();
 }
@@ -1913,6 +2066,15 @@ void SettingsDialog::hideAiEditor() {
     _aiEditingId.clear();
     ++_aiProbeSeq;
     _aiEditor->hide();
+}
+
+// The editor's speech-to-text model for `cfg`: empty (= the provider's
+// default) when left blank, typed as the default, or not applicable.
+QString SettingsDialog::aiEditorSttModel(const LlmProviderConfig &cfg) const {
+    if (!LlmWire::supportsTranscription(cfg.wire))
+        return cfg.sttModel;
+    const QString typed = _aiSttModel->text().trimmed();
+    return typed == cfg.defaultSttModel ? QString() : typed;
 }
 
 LlmProviderConfig SettingsDialog::aiEditorConfig() const {
@@ -1927,12 +2089,14 @@ LlmProviderConfig SettingsDialog::aiEditorConfig() const {
         // Preset default → store empty so a future default change follows.
         if (p->isPreset() && cfg.model == cfg.defaultModel)
             cfg.model.clear();
+        cfg.sttModel = aiEditorSttModel(cfg);
         return cfg;
     }
     LlmProviderConfig cfg = LlmProviderConfig::newCustom();
     cfg.name              = _aiName->text().trimmed();
     cfg.baseUrl           = LlmWire::normalizeOpenAiBaseUrl(_aiUrl->text());
     cfg.model             = _aiModel->text().trimmed();
+    cfg.sttModel          = aiEditorSttModel(cfg);
     if (cfg.name.isEmpty())
         cfg.name = QUrl(cfg.baseUrl).host();
     return cfg;
@@ -2283,6 +2447,24 @@ void SettingsDialog::applyTheme() {
                 .arg(Th::qss(th.text.danger))
         );
     }
+    if (_voiceCleanup)
+        Th::setStyleSheetIfChanged(_voiceCleanup, checkQss);
+    if (_voiceGlossary)
+        Th::setStyleSheetIfChanged(
+            _voiceGlossary,
+            QString(
+                "QPlainTextEdit { border: 1px solid %1; border-radius: %2px; "
+                "background: %3; color: %4; font-size: %5px; padding: 4px; }"
+                "QPlainTextEdit:focus { border-color: %6; }"
+            )
+                    .arg(Th::qss(th.composer.border))
+                    .arg(Ui::kControlRadius)
+                    .arg(Th::qss(th.surface.raised))
+                    .arg(Th::qss(th.text.primary))
+                    .arg(th.fonts.md)
+                    .arg(Th::qss(th.composer.borderFocus)) +
+                Th::scrollBarQss()
+        );
     applyAiTheme();
 
     // ── Storage page ──────────────────────────────────────────────────
