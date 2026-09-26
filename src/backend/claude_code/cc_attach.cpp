@@ -385,7 +385,7 @@ void AttachAnswer::settle() {
             return;
         }
         _phase = Phase::Submitting;
-        _limit->start(kSubmitMs);
+        _limit->start(submitMs);
         _pty->write(QByteArrayLiteral("\r"));
         break;
     }
