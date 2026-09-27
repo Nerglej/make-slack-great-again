@@ -240,7 +240,7 @@ void TeammatePage::setFolder(const QString &dir) {
     _folder  = dir;
     _blocker = _session ? _session->backend()->agentSessionBlocker(dir) : QString();
     _folderLabel->setText(
-        tr("New sessions start in %1").arg("<b>" + homeRelative(dir).toHtmlEscaped() + "</b>")
+        tr("Start new session in %1").arg("<b>" + homeRelative(dir).toHtmlEscaped() + "</b>")
     );
     emit folderChanged();
 }

@@ -5087,8 +5087,8 @@ nginx</translation>
     </message>
     <message>
         <location filename="../src/ui/teammate_page/teammate_page.cpp" line="240"/>
-        <source>New sessions start in %1</source>
-        <translation>New sessions start in %1</translation>
+        <source>Start new session in %1</source>
+        <translation>Start new session in %1</translation>
     </message>
     <message numerus="yes">
         <location filename="../src/ui/teammate_page/teammate_page.cpp" line="281"/>

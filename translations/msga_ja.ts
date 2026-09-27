@@ -4242,8 +4242,8 @@ It follows the app language until you pick one here.</source>
     </message>
     <message>
         <location filename="../src/ui/teammate_page/teammate_page.cpp" line="240"/>
-        <source>New sessions start in %1</source>
-        <translation>新しいセッションは %1 で始まります</translation>
+        <source>Start new session in %1</source>
+        <translation>%1 で新しいセッションを開始</translation>
     </message>
     <message numerus="yes">
         <location filename="../src/ui/teammate_page/teammate_page.cpp" line="281"/>
