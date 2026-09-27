@@ -616,8 +616,55 @@ std::vector<UserId> notificationRawMentions(const Message &msg) {
     return ids;
 }
 
+// A URL for a single-quoted href attribute. Qt's rich-text parser takes quoted
+// attribute values verbatim — it doesn't decode entities there (the same quirk
+// as img src, see registerDocImage) — so HTML-escaping would make "&" arrive as
+// "&amp;" and open a broken URL. Only the characters that could close the
+// attribute or the tag are percent-encoded instead.
+static QString hrefAttr(const QString &url) {
+    QString out = url;
+    out.replace('\'', QLatin1String("%27"))
+        .replace('"', QLatin1String("%22"))
+        .replace('<', QLatin1String("%3C"))
+        .replace('>', QLatin1String("%3E"));
+    return out;
+}
+
 static QString escapeAndBr(const QString &s) {
     return s.toHtmlEscaped().replace("\n", "<br>");
+}
+
+// Inline code is literal text, but a URL quoted in backticks is still meant to
+// be followed: escape the span and turn each http(s) URL in it into an anchor
+// that keeps the code's monospace look, coloured as a link.
+static QString linkCodeUrls(const QString &raw, const InlineStyle &style) {
+    static const QRegularExpression kUrl(QStringLiteral("https?://[^\\s<>\"'`]+"));
+    QString                         html;
+    int                             last = 0;
+    for (auto it = kUrl.globalMatch(raw); it.hasNext();) {
+        const auto m     = it.next();
+        const int  start = int(m.capturedStart());
+        QString    url   = m.captured();
+        // Sentence punctuation after a URL isn't part of it, nor is a ")"
+        // closing a parenthesis the URL sits in.
+        while (!url.isEmpty()) {
+            const QChar c = url.back();
+            if (QStringLiteral(".,;:!?*_~").contains(c) ||
+                (c == QLatin1Char(')') &&
+                 url.count(QLatin1Char('(')) < url.count(QLatin1Char(')'))))
+                url.chop(1);
+            else
+                break;
+        }
+        if (url.size() <= 8) // "https://" alone
+            continue;
+        html += raw.mid(last, start - last).toHtmlEscaped();
+        html += "<a href='" + hrefAttr(url) + "' style='color:" +
+                Th::qss(style.linkColor.isValid() ? style.linkColor : Th::c().text.link) +
+                ";text-decoration:none'>" + url.toHtmlEscaped() + "</a>";
+        last = start + int(url.size());
+    }
+    return html + raw.mid(last).toHtmlEscaped();
 }
 
 // Render the entities listed in `nodes` (indices into `ents`, all spanning
@@ -689,7 +736,7 @@ static QString renderRange(
             html += "<span style='background:" + Th::qss(Th::c().message.codeBlockBg) +
                     ";color:" + Th::qss(Th::c().danger.text) +
                     ";font-family:monospace;font-size:0.88em;padding:1px 3px;border-radius:3px'>" +
-                    inner + "</span>";
+                    linkCodeUrls(rawInner, style) + "</span>";
             break;
         case EntityType::Pre: {
             // A single-cell table, not <pre>: Qt paints a <pre> CSS background as a
@@ -735,7 +782,7 @@ static QString renderRange(
                 // as a "GIF" badge — a pill like a mention — with the link's own
                 // title after it when it has one.
                 const bool titled = !LinkLabels::isUrlLabel(rawInner, e.data);
-                html += "<a href='" + e.data.toHtmlEscaped() +
+                html += "<a href='" + hrefAttr(e.data) +
                         "' style='color:" + Th::qss(Th::c().message.mentionText) +
                         ";background:" + Th::qss(Th::c().message.mentionBg) +
                         ";border-radius:3px;padding:0 4px;text-decoration:none'><b>" +
@@ -752,7 +799,7 @@ static QString renderRange(
                 LinkLabels::isShortenedUrlLabel(rawInner, e.data)
                     ? LinkLabels::expandedLabel(e.data, kMaxLinkLabelChars).toHtmlEscaped()
                     : inner;
-            html += "<a href='" + e.data.toHtmlEscaped() + "' style='color:" +
+            html += "<a href='" + hrefAttr(e.data) + "' style='color:" +
                     Th::qss(style.linkColor.isValid() ? style.linkColor : Th::c().text.link) +
                     (style.fontPx > 0 ? ";font-size:" + QString::number(style.fontPx) + "px"
                                       : QString()) +
@@ -1972,7 +2019,7 @@ buildAttachHtml(const Attachment &att, const Session *session, const GifRenderCo
             // resolved plain text (anchors can't nest) — except emoji, which
             // substitute their glyph/img inline.
             html += "<p style='margin:0;font-weight:bold'><a href='" +
-                    MrkdwnParser::decodeEntities(att.titleLink).toHtmlEscaped() +
+                    hrefAttr(MrkdwnParser::decodeEntities(att.titleLink)) +
                     "' style='color:" + Th::qss(Th::c().text.link) + ";text-decoration:none'>" +
                     emojiOnlyHtml(title, session) + "</a></p>";
         else

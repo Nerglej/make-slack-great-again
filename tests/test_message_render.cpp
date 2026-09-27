@@ -87,6 +87,36 @@ TEST_CASE("fallback links do not override authoritative rich text", "[render][li
     CHECK_FALSE(MsgRender::buildMsgHtml(msg, nullptr).contains(url));
 }
 
+TEST_CASE("URLs inside inline code are clickable", "[render][links]") {
+    const QString url = "https://gmailmcp.googleapis.com/mcp/v1?a=1&b=2";
+    const QString html =
+        MsgRender::toHtml(MrkdwnParser::parse("URL `" + url + "`). And `(see https://x.io/a).`"));
+    QTextDocument document;
+    document.setHtml(html);
+    const auto hit = document.find("gmailmcp.googleapis.com");
+    REQUIRE_FALSE(hit.isNull());
+    CHECK(hit.charFormat().anchorHref().toStdString() == url.toStdString());
+    // Still monospace code, not a plain link.
+    CHECK(hit.charFormat().fontFamilies().toStringList().join(',').contains("monospace"));
+    // A closing paren/full stop around the URL stays outside it.
+    CHECK(html.contains("href='https://x.io/a'"));
+    CHECK(document.toPlainText().contains("(see https://x.io/a)."));
+}
+
+TEST_CASE("link href keeps a literal ampersand", "[render][links]") {
+    const QString url = "https://example.com/?a=1&b=2";
+    QTextDocument document;
+    document.setHtml(MsgRender::toHtml(MrkdwnParser::parse("<" + url + "|here>")));
+    const auto hit = document.find("here");
+    REQUIRE_FALSE(hit.isNull());
+    CHECK(hit.charFormat().anchorHref().toStdString() == url.toStdString());
+}
+
+TEST_CASE("inline code without a URL has no anchor", "[render][links]") {
+    const QString html = MsgRender::toHtml(MrkdwnParser::parse("`https:// nope` `ftp://x.y`"));
+    CHECK_FALSE(html.contains("href="));
+}
+
 // ── resolveEmojiRich ──────────────────────────────────────────────────────────
 
 static const QHash<QString, QString> kMap = {
@@ -719,7 +749,8 @@ TEST_CASE("buildAttachHtml resolves Slack tokens in the title", "[render][attach
     CHECK(!html.contains("1782976500")); // raw ts gone
     CHECK(html.contains("font-weight:bold"));
     CHECK(html.contains("Hitta Mer Stand-Up</a>")); // event link is clickable
-    CHECK(html.contains("https://outlook.office365.com/owa/?itemid=AAk&amp;exvsurl=1"));
+    // The href holds a literal "&": Qt doesn't decode entities in attributes.
+    CHECK(html.contains("href='https://outlook.office365.com/owa/?itemid=AAk&exvsurl=1"));
 }
 
 TEST_CASE(
