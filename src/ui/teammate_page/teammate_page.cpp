@@ -106,7 +106,9 @@ TeammatePage::TeammatePage(ImageCache *imgCache, QWidget *parent)
     _footer->setObjectName("teammateFooter");
     _footer->setAttribute(Qt::WA_StyledBackground);
     auto *footerLayout = new QVBoxLayout(_footer);
-    footerLayout->setContentsMargins(sp.xxl, sp.md, sp.xxl, sp.md);
+    // No bottom margin: the composer below already opens with its own sp.md top
+    // margin, so the gap under the row matches the one above it.
+    footerLayout->setContentsMargins(sp.xxl, sp.md, sp.xxl, 0);
     footerLayout->setSpacing(sp.sm);
     auto *folderRow = new QHBoxLayout();
     folderRow->setContentsMargins(0, 0, 0, 0);
