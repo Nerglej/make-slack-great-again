@@ -3470,6 +3470,72 @@ TEST_CASE("deleting a message in a session", "[claude][backend][delete]") {
     CHECK_FALSE(f.readAll().contains("banana"));
 }
 
+TEST_CASE("reactions stay in msga", "[claude][backend][reactions]") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    home.append(
+        linked(prompt("hi", "2026-09-25T09:00:00.000Z"), "q1", nullptr) +
+        linked(answer("Hello!", "m9", "2026-09-25T09:00:01.000Z"), "q2", "q1") +
+        linked(turnEnd("2026-09-25T09:00:02.000Z"), "q3", "q2")
+    );
+
+    claude_code::Backend backend(Credentials{});
+    std::vector<Event>   events;
+    rpl::lifetime        lt;
+    backend.events() | rpl::on_next([&](Event e) { events.push_back(std::move(e)); }, lt);
+    backend.connectRealtime();
+    REQUIRE(collect(backend.loadConversations())[0].size() == 1);
+    CHECK(backend.capabilities().reactions);
+
+    const ConversationId conv{"S1"};
+    const auto           msgs = collect(backend.loadHistory(conv, std::nullopt))[0].messages;
+    REQUIRE(msgs.size() == 2);
+    const Ts answerTs = msgs[1].ts;
+
+    events.clear();
+    backend.addReaction(conv, answerTs, "tada");
+    backend.addReaction(conv, answerTs, "tada"); // once is enough
+    backend.addReaction(conv, answerTs, "heart");
+    CHECK(std::count_if(events.begin(), events.end(), [&](const Event &e) {
+              const auto *r = std::get_if<EvReactionAdded>(&e);
+              return r && r->conv == conv && r->ts == answerTs;
+          }) == 2);
+
+    // Served again with the history (a chat reloaded after a switch)…
+    auto again = collect(backend.loadHistory(conv, std::nullopt))[0].messages;
+    REQUIRE(again.size() == 2);
+    REQUIRE(again[1].reactions.size() == 2);
+    CHECK(again[1].reactions[0].name == "tada");
+    CHECK(again[1].reactions[0].count == 1);
+    CHECK(again[1].reactions[0].users == std::vector<UserId>{UserId{"me"}});
+    CHECK(again[0].reactions.empty());
+
+    // …not news when the transcript grows, and never written to it.
+    events.clear();
+    home.append(linked(prompt("more", "2026-09-25T09:01:00.000Z"), "q4", "q3"));
+    REQUIRE(QTest::qWaitFor([&] {
+        return std::any_of(events.begin(), events.end(), [](const Event &e) {
+            return std::holds_alternative<EvMessageNew>(e);
+        });
+    }));
+    CHECK_FALSE(std::any_of(events.begin(), events.end(), [](const Event &e) {
+        return std::holds_alternative<EvMessageChanged>(e);
+    }));
+    QFile transcript(home.transcript);
+    REQUIRE(transcript.open(QIODevice::ReadOnly));
+    CHECK_FALSE(transcript.readAll().contains("tada"));
+
+    events.clear();
+    backend.removeReaction(conv, answerTs, "tada");
+    backend.removeReaction(conv, answerTs, "tada");
+    CHECK(std::count_if(events.begin(), events.end(), [](const Event &e) {
+              return std::holds_alternative<EvReactionRemoved>(e);
+          }) == 1);
+    again = collect(backend.loadHistory(conv, std::nullopt))[0].messages;
+    REQUIRE(again[1].reactions.size() == 1);
+    CHECK(again[1].reactions[0].name == "heart");
+}
+
 // ── Finding sessions ("Find a session") ───────────────────────────────────────
 
 namespace {

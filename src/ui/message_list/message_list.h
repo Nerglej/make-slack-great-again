@@ -629,8 +629,9 @@ private:
     // Rect of toolbar button i for the given row top/height, in viewport coords.
     QRect   toolbarButtonRect(int btn, int rowTop, int rowH) const;
     // The hover toolbar's buttons, left to right. Emoji is only offered where
-    // the workspace has reactions, Save where it can hold saved items
-    // (Capabilities::messageReminders): toolbarButtons() is the visible row.
+    // the workspace has reactions (in an agent session, on the agent's messages
+    // only), Save where it can hold saved items
+    // (Capabilities::messageReminders): toolbarButtons() is the hovered row's.
     enum class ToolbarBtn { Emoji, Forward, Save, More };
     std::vector<ToolbarBtn> toolbarButtons() const;
     int                     toolbarButtonCount() const;

@@ -71,8 +71,10 @@ public:
     // Takes a prompt or an answer out of the session's transcript, so Claude
     // doesn't have it either when the session goes on (removeFromTranscript).
     void deleteMessage(ConversationId, Ts) override;
-    void addReaction(ConversationId, Ts, QString) override {}
-    void removeReaction(ConversationId, Ts, QString) override {}
+    // Your reactions, for you alone: Claude never hears of them, and they're
+    // kept in memory only — gone when msga quits.
+    void addReaction(ConversationId, Ts, QString emoji) override;
+    void removeReaction(ConversationId, Ts, QString emoji) override;
     void markRead(ConversationId, Ts) override;
     // "Remove from msga": hides the session here — Claude Code keeps it — and
     // stops it if it's a background one (with all it runs, see Launcher::stop).
@@ -241,6 +243,10 @@ private:
     void                  watchLive();
     void                  pumpTyping();
     std::vector<Message>  visibleMessages(Tracked &t);
+    // Puts the user's reactions (_reactions) on `conv`'s messages.
+    void                  applyReactions(const QString &conv, std::vector<Message> &msgs) const;
+    // A reaction changed: the announced copies take it, so the next diff has no news.
+    void                  reactionChanged(const QString &conv, const Ts &ts);
     Conversation          conversationFor(const Tracked &t) const;
     User                  assistantUser(const Tracked &t) const;
     QString               titleOf(const Tracked &t) const;          // Claude Code's name for it
@@ -313,6 +319,8 @@ private:
     QHash<QString, bool>        _roleBusy;        // by role: announced as working
     QHash<QString, bool>        _roleUnavailable; // by role: announced as yellow
     QJsonObject                 _account;         // the login, as Claude Code last reported it
+    // The user's reactions, by conversation then message (addReaction).
+    QHash<QString, QHash<Ts, std::vector<Reaction>>> _reactions;
 };
 
 // Whether Claude Code trusts `dir` (it or a parent folder was accepted in its

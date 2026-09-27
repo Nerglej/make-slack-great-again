@@ -264,6 +264,7 @@ Capabilities Backend::capabilities() const {
     c.deleteMessage       = true;
     c.deleteAnyMessage    = true;
     c.botButtons          = true; // a permission question's options (pressBotButton)
+    c.reactions           = true; // on Claude's messages, kept by msga alone (addReaction)
     return c;
 }
 
@@ -909,6 +910,7 @@ std::vector<Message> Backend::visibleMessages(Tracked &t) {
     }
     if (branched)
         std::stable_sort(out.begin(), out.end(), MessageDateLess{});
+    applyReactions(t.convId, out);
     return out;
 }
 
@@ -1019,7 +1021,69 @@ std::vector<Message> Backend::threadMessages(Tracked &f) {
         out.push_back(std::move(m));
     }
     appendOutgoing(f, out, f.forkRoot);
+    applyReactions(f.forkOf, out);
     return out;
+}
+
+// ── Reactions ───────────────────────────────────────────────────────────────
+// Only msga has them: nothing goes to Claude or into the transcript.
+
+void Backend::applyReactions(const QString &conv, std::vector<Message> &msgs) const {
+    const auto byTs = _reactions.constFind(conv);
+    if (byTs == _reactions.cend())
+        return;
+    for (auto &m : msgs)
+        if (const auto r = byTs->constFind(m.ts); r != byTs->cend())
+            m.reactions = *r;
+}
+
+void Backend::reactionChanged(const QString &conv, const Ts &ts) {
+    const auto reactions = _reactions.value(conv).value(ts);
+    for (auto it = _sessions.begin(); it != _sessions.end(); ++it) {
+        Tracked &t = *it.value();
+        if ((asThread(t) ? t.forkOf : t.convId) != conv)
+            continue;
+        if (const auto m = t.announced.find(ts); m != t.announced.end())
+            m->reactions = reactions;
+    }
+}
+
+void Backend::addReaction(ConversationId conv, Ts ts, QString emoji) {
+    auto &reactions = _reactions[conv.value][ts];
+    auto  r         = std::find_if(reactions.begin(), reactions.end(), [&](const Reaction &x) {
+        return x.name == emoji;
+    });
+    if (r == reactions.end())
+        reactions.push_back(Reaction{emoji, 1, {_me}});
+    else if (std::find(r->users.begin(), r->users.end(), _me) == r->users.end()) {
+        r->users.push_back(_me);
+        r->count = int(r->users.size());
+    } else
+        return;
+    reactionChanged(conv.value, ts);
+    _events.fire(EvReactionAdded{conv, ts, emoji, _me});
+}
+
+void Backend::removeReaction(ConversationId conv, Ts ts, QString emoji) {
+    const auto byTs = _reactions.find(conv.value);
+    if (byTs == _reactions.end())
+        return;
+    const auto msg = byTs->find(ts);
+    if (msg == byTs->end())
+        return;
+    auto &reactions = *msg;
+    auto  r         = std::find_if(reactions.begin(), reactions.end(), [&](const Reaction &x) {
+        return x.name == emoji;
+    });
+    if (r == reactions.end() || !std::erase(r->users, _me))
+        return;
+    r->count = int(r->users.size());
+    if (r->count == 0)
+        reactions.erase(r);
+    if (reactions.empty())
+        byTs->erase(msg);
+    reactionChanged(conv.value, ts);
+    _events.fire(EvReactionRemoved{conv, ts, emoji, _me});
 }
 
 void Backend::appendOutgoing(
@@ -2033,6 +2097,7 @@ rpl::producer<MessagePage> Backend::loadThread(ConversationId id, Ts root, std::
                 std::stable_sort(page.messages.begin() + 1, page.messages.end(), MessageDateLess{});
             }
         }
+        applyReactions(id.value, page.messages); // the subagent's own messages too
         consumer.put_next(std::move(page));
         consumer.put_done();
         return rpl::lifetime();
@@ -2609,6 +2674,7 @@ void Backend::hideSession(const QString &convId) {
             stopRemoved(t.info.sessionId, t.info.cwd);
     }
     clearOutputs(convId); // the copies of the files it made
+    _reactions.remove(convId);
     _sessions.erase(it);
 }
 

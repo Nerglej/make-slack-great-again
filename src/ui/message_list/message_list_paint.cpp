@@ -2411,7 +2411,11 @@ std::vector<MessageListWidget::ToolbarBtn> MessageListWidget::toolbarButtons() c
     using Btn               = ToolbarBtn;
     const Capabilities caps = _session ? _session->capabilities() : Capabilities{};
     std::vector<Btn>   out;
-    if (caps.reactions)
+    // An agent session takes reactions on the agent's messages only.
+    const bool         ownInAgentSession = caps.agentSessions && _hoveredRow >= 0 &&
+                                           _hoveredRow < (int)_items.size() &&
+                                           _items[_hoveredRow].msg.author == _session->meUserId();
+    if (caps.reactions && !ownInAgentSession)
         out.push_back(Btn::Emoji);
     out.push_back(Btn::Forward);
     if (caps.messageReminders)
