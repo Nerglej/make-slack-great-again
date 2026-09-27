@@ -5007,6 +5007,13 @@ void MainWindow::openMembersPopup(const QRect &anchorGlobal) {
 void MainWindow::openDmWith(UserId user) {
     if (!_session)
         return;
+    // A teammate (an agent's avatar in a Claude Code session) has no DM of its
+    // own: its page is where writing to it starts a session.
+    for (const AgentRole &r : _session->backend()->agentRoles())
+        if (r.user == user) {
+            openTeammateView(r.id);
+            return;
+        }
     _session->openDm(
         user,
         [this](ConversationId conv) { _convList->selectConversation(conv); },
