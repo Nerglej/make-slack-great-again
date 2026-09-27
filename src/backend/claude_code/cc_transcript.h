@@ -171,10 +171,11 @@ QString typedPrompt(const QString &prompt, QString *relayTo = nullptr);
 
 // Claude Code's prompt history — history.jsonl, the list its prompt box steps
 // through with ↑ — for the sessions of folder `project`, newest first: session
-// `sessionId`'s own prompts, then the folder's other sessions'. Up to `max`, as
-// many as Claude Code offers. msga's prompts are in it too (they're typed into
-// the session) and come back as typed (typedPrompt); long pastes come back
-// whole (inline, or <pasteDir>/<contentHash>.txt); pasted images are dropped.
+// `sessionId`'s own prompts, then the folder's other sessions' (no `sessionId`:
+// all the folder's prompts alike). Up to `max`, as many as Claude Code offers.
+// msga's prompts are in it too (they're typed into the session) and come back
+// as typed (typedPrompt); long pastes come back whole (inline, or
+// <pasteDir>/<contentHash>.txt); pasted images are dropped.
 QStringList promptHistory(
     const QString &historyPath,
     const QString &pasteDir,

@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMouseEvent>
 #include <QUrl>
 #include <QImage>
 #include <QFocusEvent>
@@ -704,6 +705,44 @@ TEST_CASE("without a history Ctrl+R opens nothing", "[composer][history][search]
     h.history.clear(); // a Slack chat: the backend keeps no prompt history
     h.ctrlR(editOf(h.c));
     CHECK(h.popup() == nullptr);
+}
+
+TEST_CASE("the history search dims the area above the composer", "[composer][history][search]") {
+    SearchHost h;
+    typeText(h.c, "half-typed");
+    h.ctrlR(editOf(h.c));
+    REQUIRE(h.popup() != nullptr);
+    // The panel sits on the composer's box, as wide as it, no gap between.
+    const auto *box = h.c->findChild<QFrame *>("composerBox");
+    REQUIRE(box != nullptr);
+    const QRect boxRect(box->mapTo(&h.host, QPoint(0, 0)), box->size());
+    CHECK(h.popup()->geometry().bottom() + 1 == boxRect.top());
+    CHECK(h.popup()->geometry().left() == boxRect.left());
+    CHECK(h.popup()->width() == boxRect.width());
+    // The shade: the panel's sibling, just under it, down to the composer's box.
+    const QRect above(0, 0, h.host.width(), boxRect.top());
+    QWidget    *shade = nullptr;
+    for (QWidget *w : h.host.findChildren<QWidget *>(Qt::FindDirectChildrenOnly))
+        if (w != h.popup() && w != h.c && w->isVisible() && w->geometry() == above)
+            shade = w;
+    REQUIRE(shade != nullptr);
+    CHECK(shade->testAttribute(Qt::WA_NoSystemBackground)); // see-through, as Ctrl+F's
+    const auto kids = h.host.children();
+    CHECK(kids.indexOf(shade) == kids.indexOf(h.popup()) - 1);
+
+    // A click on it closes the panel and leaves the draft alone.
+    QMouseEvent press(
+        QEvent::MouseButtonPress,
+        QPointF(10, 10),
+        shade->mapToGlobal(QPointF(10, 10)),
+        Qt::LeftButton,
+        Qt::LeftButton,
+        Qt::NoModifier
+    );
+    QApplication::sendEvent(shade, &press);
+    CHECK_FALSE(h.popup()->isOpen());
+    CHECK_FALSE(shade->isVisible());
+    CHECK(h.c->currentText() == "half-typed");
 }
 
 TEST_CASE("switching conversations closes the history search", "[composer][history][search]") {

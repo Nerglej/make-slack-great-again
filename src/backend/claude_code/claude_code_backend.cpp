@@ -2175,6 +2175,17 @@ QStringList Backend::promptHistory(ConversationId conv) {
     );
 }
 
+QStringList Backend::folderPromptHistory(const QString &dir) {
+    if (dir.isEmpty())
+        return {};
+    return claude_code::promptHistory(
+        _paths.home + QStringLiteral("/history.jsonl"),
+        _paths.home + QStringLiteral("/paste-cache"),
+        dir,
+        QString()
+    );
+}
+
 // ── Commands ────────────────────────────────────────────────────────────────
 
 std::vector<SlashCommand> Backend::conversationCommands(ConversationId conv) {

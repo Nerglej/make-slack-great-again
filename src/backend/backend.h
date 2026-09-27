@@ -471,6 +471,9 @@ public:
     // service keeps a history of what was typed to it (Claude Code's prompt
     // history). Empty: ↑ edits your last message instead, where that's possible.
     virtual QStringList               promptHistory(ConversationId) { return {}; }
+    // The same for a session not started yet (a teammate's page): the prompts
+    // typed in the given folder's sessions, newest first.
+    virtual QStringList               folderPromptHistory(const QString &) { return {}; }
     // Runs a local command (SlashCommand::local) in a conversation — Claude
     // Code's /status (rows for a dialog), /clear (a fresh session to open).
     virtual LocalCommandResult

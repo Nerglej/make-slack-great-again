@@ -895,7 +895,9 @@ QStringList promptHistory(
         text = typedPrompt(text).trimmed();
         if (text.isEmpty())
             continue;
-        (o.value(QLatin1String("sessionId")).toString() == sessionId ? own : others) << text;
+        const bool mine =
+            !sessionId.isEmpty() && o.value(QLatin1String("sessionId")).toString() == sessionId;
+        (mine ? own : others) << text;
     }
     QStringList out;
     for (const QStringList *part : {&own, &others}) {

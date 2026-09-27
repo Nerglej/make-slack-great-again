@@ -1316,8 +1316,14 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
         }
     );
     // ↑ in a Claude Code session: its prompt history, as in Claude Code itself.
+    // On a teammate's page, before any session: the prompts of the folder the
+    // new session starts in.
     _composer->setPromptHistorySource([this] {
-        return _session ? _session->promptHistory(_currentConvId) : QStringList();
+        if (!_session)
+            return QStringList();
+        if (teammateViewOpen())
+            return _session->backend()->folderPromptHistory(_teammatePage->folder());
+        return _session->promptHistory(_currentConvId);
     });
     // Voice input: the open conversation and the messages loaded for it (the
     // builder skips system rows, so ask for some slack beyond the 30 it keeps).

@@ -518,6 +518,19 @@ TEST_CASE("the prompt history is the folder's, this session's first", "[claude][
              }
     );
     CHECK(promptHistory(f.fileName(), pastes, "/src/app", "S1", 2).size() == 2);
+    // No session yet (a teammate's page): the folder's prompts, newest first.
+    CHECK(
+        promptHistory(f.fileName(), pastes, "/src/app", QString()) ==
+        QStringList{
+            "again",
+            "Which page?",
+            "what's wrong here?",
+            "see pasted from the cache",
+            "PASTE and inline",
+            "mine, older",
+            "other session, older",
+        }
+    );
     CHECK(promptHistory(dir.filePath("missing.jsonl"), pastes, "/src/app", "S1").isEmpty());
 }
 

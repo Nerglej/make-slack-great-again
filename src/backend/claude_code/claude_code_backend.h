@@ -151,6 +151,7 @@ public:
     // Claude Code's own prompt history for the session's folder, this
     // session's prompts first — what ↑ shows in its prompt box.
     QStringList               promptHistory(ConversationId) override;
+    QStringList               folderPromptHistory(const QString &dir) override;
     // /status: what msga knows of the session and the login, for a dialog.
     // /clear: a fresh session in the same folder, with the same permission
     // setting (the old one stays as it is).

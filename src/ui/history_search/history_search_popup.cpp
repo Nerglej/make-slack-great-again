@@ -19,6 +19,7 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QTextLayout>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -26,16 +27,18 @@
 #include <vector>
 
 namespace {
-constexpr int kMargins   = 4;
-constexpr int kListMaxH  = 320;
-constexpr int kPadX      = 10;
-constexpr int kPadY      = 6;
-constexpr int kMaxLines  = 2; // of a prompt, per row
-constexpr int kPageRows  = 5; // PageUp / PageDown
+constexpr int kMargins     = 4;
+constexpr int kListMaxH    = 320;
+constexpr int kPadX        = 10;
+constexpr int kPadY        = 6;
+constexpr int kMaxLines    = 2; // of a prompt, per row
+constexpr int kPageRows    = 5; // PageUp / PageDown
 // A match further into a long prompt than this (in characters) would be out of
 // sight in two lines, so the row starts shortly before it instead.
-constexpr int kLateMatch = 100;
-constexpr int kLeadIn    = 30;
+constexpr int kLateMatch   = 100;
+constexpr int kLeadIn      = 30;
+// The shade over the message area fades in as Ctrl+F's does (SearchWidget).
+constexpr int kScrimFadeMs = 350;
 
 QStringList queryWords(const QString &query) {
     static const QRegularExpression kSpace(QStringLiteral("\\s+"));
@@ -220,6 +223,56 @@ private:
     int                 _hover = -1;
 };
 
+// ── The shade behind the panel ────────────────────────────────────────────────
+
+// Covers the parent above the composer while the panel is open — the same
+// see-through dimming as Ctrl+F's search. A click on it closes the panel like
+// Esc: the focus goes back to the composer, as nothing else took it.
+class HistorySearchScrim : public QWidget {
+public:
+    HistorySearchScrim(HistorySearchPopup *popup, QWidget *parent)
+        : QWidget(parent), _popup(popup) {
+        // Not erased first (the stylesheet's background would fill it): the
+        // shade composites over the message list, as SearchWidget's does.
+        setAttribute(Qt::WA_NoSystemBackground);
+        setFocusPolicy(Qt::NoFocus);
+        _fade = new QVariantAnimation(this);
+        _fade->setDuration(kScrimFadeMs);
+        _fade->setEasingCurve(QEasingCurve::OutCubic);
+        connect(_fade, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            _alpha = v.toInt();
+            update();
+        });
+        hide();
+    }
+
+    void fadeIn() {
+        _fade->stop();
+        _alpha = 0;
+        _fade->setStartValue(0);
+        _fade->setEndValue(Th::c().surface.overlay.alpha());
+        show();
+        _fade->start();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *e) override {
+        QPainter(this).fillRect(e->rect(), QColor(0, 0, 0, _alpha));
+    }
+
+    void hideEvent(QHideEvent *) override { _fade->stop(); }
+
+    void mousePressEvent(QMouseEvent *) override {
+        _popup->dismiss();
+        emit _popup->cancelled();
+    }
+
+private:
+    HistorySearchPopup *_popup;
+    QVariantAnimation  *_fade  = nullptr;
+    int                 _alpha = 0;
+};
+
 // ── The panel ─────────────────────────────────────────────────────────────────
 
 HistorySearchPopup::HistorySearchPopup(QWidget *parent) : QFrame(parent) {
@@ -258,8 +311,10 @@ HistorySearchPopup::HistorySearchPopup(QWidget *parent) : QFrame(parent) {
             dismiss();
     });
     // The composer it hangs over moves with the window: start again from there.
-    if (parent)
+    if (parent) {
         parent->installEventFilter(this);
+        _scrim = new HistorySearchScrim(this, parent);
+    }
 
     hide();
     applyTheme();
@@ -291,6 +346,23 @@ void HistorySearchPopup::applyTheme() {
     );
     if (isVisible())
         place();
+}
+
+void HistorySearchPopup::showEvent(QShowEvent *event) {
+    QFrame::showEvent(event);
+    // Down to the composer, not over it: it stays as it is, next to the panel.
+    if (_scrim && parentWidget()) {
+        _scrim->setGeometry(0, 0, parentWidget()->width(), std::max(_anchor.top(), 0));
+        _scrim->raise();
+        raise(); // over the shade
+        _scrim->fadeIn();
+    }
+}
+
+void HistorySearchPopup::hideEvent(QHideEvent *event) {
+    QFrame::hideEvent(event);
+    if (_scrim)
+        _scrim->hide();
 }
 
 void HistorySearchPopup::open(
@@ -360,7 +432,7 @@ void HistorySearchPopup::place() {
 
     const QRect  bounds(0, 0, par->width(), par->height());
     const QPoint pos =
-        Ui::placePopup(_anchor, size(), bounds, Ui::Edge::Above, 4, Ui::Align::Start);
+        Ui::placePopup(_anchor, size(), bounds, Ui::Edge::Above, 0, Ui::Align::Start); // on it
     move(pos);
     if (layout())
         layout()->activate(); // the viewport's size, for the scroll below

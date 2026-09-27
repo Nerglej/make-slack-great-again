@@ -1935,11 +1935,12 @@ bool ComposerWidget::openHistorySearch() {
             _edit->setFocus();
         });
     }
-    // What's typed so far is where the search starts; picking replaces it.
+    // What's typed so far is where the search starts; picking replaces it. The
+    // panel sits on the box itself, not above the composer's margin: no gap.
     _historySearch->open(
         history,
         _edit->toPlainText().simplified(),
-        QRect(mapTo(parentWidget(), QPoint(0, 0)), size())
+        QRect(_box->mapTo(parentWidget(), QPoint(0, 0)), _box->size())
     );
     return true;
 }

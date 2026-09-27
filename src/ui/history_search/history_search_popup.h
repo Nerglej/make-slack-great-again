@@ -7,7 +7,8 @@
 // newest at the bottom, and the search field under them, next to the composer.
 // So ↑ (and Ctrl+R again) goes to older prompts, as ↑ does in the composer
 // itself. Enter takes the selected prompt into the editor (it isn't sent), Esc
-// or a click elsewhere closes the panel and leaves the draft alone.
+// or a click elsewhere closes the panel and leaves the draft alone. While it's
+// open the message area above the composer is dimmed, so the list stands out.
 //
 // Generic: it searches whatever list it is given. The composer asks its
 // history source (Backend::promptHistory), so the panel only opens where the
@@ -33,6 +34,7 @@ QList<QPair<int, int>> matchRanges(const QString &text, const QString &query);
 } // namespace HistorySearch
 
 class HistorySearchList;
+class HistorySearchScrim;
 
 class HistorySearchPopup : public QFrame {
     Q_OBJECT
@@ -40,7 +42,7 @@ public:
     explicit HistorySearchPopup(QWidget *parent);
 
     // Show `entries` (newest first; repeats keep only the newest) filtered by
-    // `query`, just above `anchor` (the composer, in parent coordinates), and
+    // `query`, on top of `anchor` (the composer's box, in parent coordinates), and
     // put the keyboard focus in the search field.
     void open(const QStringList &entries, const QString &query, const QRect &anchor);
     void dismiss();
@@ -59,21 +61,25 @@ signals:
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
     friend class HistorySearchList;
+    friend class HistorySearchScrim;
     void refilter();
     void select(int match); // index into _matches
     void pick();
     void place();
     void applyTheme();
 
-    StyledLineEdit    *_search = nullptr;
-    QScrollArea       *_scroll = nullptr;
-    HistorySearchList *_list   = nullptr;
-    QLabel            *_empty  = nullptr;
-    QStringList        _entries;
-    QList<int>         _matches;      // into _entries, newest first
-    int                _selected = 0; // into _matches
-    QRect              _anchor;
+    StyledLineEdit     *_search = nullptr;
+    QScrollArea        *_scroll = nullptr;
+    HistorySearchList  *_list   = nullptr;
+    QLabel             *_empty  = nullptr;
+    HistorySearchScrim *_scrim  = nullptr; // under the panel, over the parent above the composer
+    QStringList         _entries;
+    QList<int>          _matches;      // into _entries, newest first
+    int                 _selected = 0; // into _matches
+    QRect               _anchor;
 };
