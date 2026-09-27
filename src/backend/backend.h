@@ -337,6 +337,9 @@ public:
     // Why no agent session can be started in `directory` right now, for the
     // UI to say before anything is typed; "" = one can.
     virtual QString                agentSessionBlocker(const QString                &/*directory*/) { return {}; }
+    // The folder an agent session works in (its real path, unlike the
+    // display-only Conversation::description); "" = not one of its sessions.
+    virtual QString                agentSessionFolder(ConversationId) { return {}; }
     // The team sessions are started with (AgentRole), in the order to list
     // them; empty where the backend has none.
     virtual std::vector<AgentRole> agentRoles() { return {}; }

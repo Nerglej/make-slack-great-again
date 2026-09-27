@@ -51,7 +51,9 @@ private:
     void rebuild();
     void scheduleRebuild();
     void setFolder(const QString &dir);
-    void chooseFolder();
+    void showFolderMenu(); // recent folders + "Browse…"
+    void chooseFolder();   // the folder dialog
+    void pickFolder(const QString &dir);
     void updateAvatar();
 
     Session    *_session  = nullptr;

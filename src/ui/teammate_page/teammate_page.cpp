@@ -4,15 +4,18 @@
 #include "backend/backend.h"
 #include "session/session.h"
 #include "ui/browse_channels_dialog/browse_list_view.h"
+#include "ui/context_menu/context_menu.h"
 #include "ui/file_dialog_utils.h"
 #include "ui/image_cache.h"
 #include "ui/styled_button/styled_button.h"
 #include "ui/theme.h"
 #include "ui/theme_manager.h"
 #include "ui/user_avatar.h"
+#include "util/recent_folders.h"
 #include "util/relative_time.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -111,14 +114,14 @@ TeammatePage::TeammatePage(ImageCache *imgCache, QWidget *parent)
     _folderLabel = new QLabel(_footer);
     _folderLabel->setTextFormat(Qt::PlainText);
     folderRow->addWidget(_folderLabel, 1);
-    _folderBtn = new StyledButton(tr("Change folder…"), StyledButton::Variant::Ghost, _footer);
+    _folderBtn = new StyledButton(tr("Change folder"), StyledButton::Variant::Ghost, _footer);
     _folderBtn->setSize(StyledButton::Size::Small);
     _folderBtn->setFocusPolicy(Qt::NoFocus);
     folderRow->addWidget(_folderBtn);
     footerLayout->addLayout(folderRow);
     root->addWidget(_footer);
 
-    connect(_folderBtn, &QPushButton::clicked, this, [this] { chooseFolder(); });
+    connect(_folderBtn, &QPushButton::clicked, this, [this] { showFolderMenu(); });
     if (_imgCache)
         connect(_imgCache, &ImageCache::loaded, this, [this](const QString &url) {
             if (url == _mate.avatarUrl)
@@ -238,14 +241,73 @@ void TeammatePage::setFolder(const QString &dir) {
     emit folderChanged();
 }
 
+// The folders sessions were last started in or work in, newest first, then
+// "Browse…" for any other. Built on every open: sessions come and go.
+void TeammatePage::showFolderMenu() {
+    std::vector<RecentFolders::SessionFolder> sessions;
+    if (_session)
+        for (const Conversation &c : _session->currentConversations()) {
+            if (c.kind != ConvKind::Im)
+                continue;
+            const QString dir = _session->backend()->agentSessionFolder(c.id);
+            if (dir.isEmpty())
+                continue;
+            const qint64 micros = std::max(
+                c.latestTs.isEmpty() ? 0 : decimalTsToMicros(c.latestTs),
+                c.lastRead.isEmpty() ? 0 : decimalTsToMicros(c.lastRead)
+            );
+            sessions.push_back({dir, micros / 1000000});
+        }
+    QSettings  s("msga", "msga");
+    const auto isDir = [](const QString &p) { return QFileInfo(p).isDir(); };
+    auto       choices =
+        RecentFolders::rank(RecentFolders::load(s, RecentFolders::kClaudeCodeKey), sessions, isDir);
+    // The current one is always there to see (e.g. home, never picked).
+    const QString current = RecentFolders::normalized(_folder);
+    if (!current.isEmpty() &&
+        std::none_of(
+            choices.begin(), choices.end(), [&](const auto &c) { return c.path == current; }
+        ) &&
+        isDir(current))
+        choices.insert(choices.begin(), RecentFolders::Choice{current});
+
+    auto *menu = new ContextMenu(this);
+    for (const RecentFolders::Choice &c : choices) {
+        ContextMenu::Item it;
+        it.text     = homeRelative(c.path);
+        it.selected = c.path == current;
+        QStringList hint;
+        if (c.sessions > 0)
+            hint << tr("%Ln session(s)", "", c.sessions);
+        if (c.lastUsed > 0)
+            hint << relativeTime(c.lastUsed);
+        it.hint   = hint.join(QStringLiteral(" · "));
+        it.action = [this, path = c.path] { pickFolder(path); };
+        menu->addItem(std::move(it));
+    }
+    menu->addSeparator();
+    menu->addItem(tr("Browse…"), [this] {
+        // After the menu is gone: the dialog runs its own loop.
+        QTimer::singleShot(0, this, [this] { chooseFolder(); });
+    });
+    menu->popup(_folderBtn->mapToGlobal(QPoint(0, _folderBtn->height() + 2)));
+}
+
 void TeammatePage::chooseFolder() {
     const QString dir = Ui::getExistingDirectory(
         this, tr("Folder for new sessions with the %1").arg(_mate.name), _folder
     );
-    if (dir.isEmpty())
+    if (!dir.isEmpty())
+        pickFolder(dir);
+}
+
+// Today's default for this teammate, and the most recent pick for all of them.
+void TeammatePage::pickFolder(const QString &dir) {
+    if (_mate.id.isEmpty())
         return;
     QSettings s("msga", "msga");
     s.setValue(folderKey(_mate.id), dir);
+    RecentFolders::bump(s, RecentFolders::kClaudeCodeKey, dir);
     setFolder(dir);
 }
 

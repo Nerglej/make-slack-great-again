@@ -104,6 +104,7 @@ public:
     QString agentSessionBlocker(const QString &directory) override {
         return cannotStartIn(directory);
     }
+    QString                agentSessionFolder(ConversationId conv) override;
     // The team (cc_roles): the generalist, the specialists, and teammates the
     // user added — editable, kept in msga's app data.
     std::vector<AgentRole> agentRoles() override;

@@ -44,6 +44,11 @@ ContextMenu::ContextMenu(QWidget *parent)
 // NOTE (V1 limitation): icon QPixmaps stored in Item::icon are rasterised with
 // the theme color at addItem() time. They will NOT live-update when the theme
 // changes — the menu is recreated on each popup() call so this is acceptable.
+// What a row shows right-aligned: its shortcut, else its secondary text.
+static const QString &rightText(const ContextMenu::Item &it) {
+    return it.shortcut.isEmpty() ? it.hint : it.shortcut;
+}
+
 static QPixmap loadMenuIcon(const QString &path) {
     if (path.isEmpty())
         return {};
@@ -94,6 +99,12 @@ void ContextMenu::addItem(
     it.destructive = destructive;
     it.icon        = loadMenuIcon(iconPath);
     _items.push_back(std::move(it));
+}
+
+void ContextMenu::addItem(Item item) {
+    if (item.selected)
+        _hasChecked = true;
+    _items.push_back(std::move(item));
 }
 
 void ContextMenu::addSeparator() {
@@ -156,8 +167,8 @@ void ContextMenu::updateGeometry(const QPoint &globalPos) {
         const int iconW = it.icon.isNull() ? 0 : (kIconSize + kIconGap);
         int       itemW =
             kPadH + checkInset + iconW + fm.horizontalAdvance(it.text) + kLabelSlack + kPadH;
-        if (!it.shortcut.isEmpty())
-            itemW += kShortcutGap + sfm.horizontalAdvance(it.shortcut) + kPadH;
+        if (const QString &right = rightText(it); !right.isEmpty())
+            itemW += kShortcutGap + sfm.horizontalAdvance(right) + kPadH;
         if (it.submenu)
             itemW += kShortcutGap + sfm.horizontalAdvance("›") + kPadH;
         w = std::max(w, itemW);
@@ -315,14 +326,15 @@ void ContextMenu::paintEvent(QPaintEvent *) {
             p.drawLine(cx - 1, cy + 4, cx + 5, cy - 3);
         }
 
-        // Right-side hint (shortcut or submenu arrow)
-        if (!_items[i].shortcut.isEmpty()) {
+        // Right-side hint (shortcut, secondary text or submenu arrow)
+        const QString &right = rightText(_items[i]);
+        if (!right.isEmpty()) {
             p.setFont(shortcutFont);
             p.setPen(Th::c().contextMenu.itemTextDim);
             p.drawText(
                 QRect(ir.left(), ir.top(), ir.width() - kPadH, ir.height()),
                 Qt::AlignVCenter | Qt::AlignRight,
-                _items[i].shortcut
+                right
             );
         } else if (_items[i].submenu) {
             p.setFont(shortcutFont);
@@ -360,9 +372,8 @@ void ContextMenu::paintEvent(QPaintEvent *) {
         p.setFont(baseFont);
         p.setPen(textColor);
         const int rightHintW =
-            !_items[i].shortcut.isEmpty()
-                ? kShortcutGap + sfm.horizontalAdvance(_items[i].shortcut)
-                : (_items[i].submenu ? kShortcutGap + sfm.horizontalAdvance("›") : 0);
+            !right.isEmpty() ? kShortcutGap + sfm.horizontalAdvance(right)
+                             : (_items[i].submenu ? kShortcutGap + sfm.horizontalAdvance("›") : 0);
         const int availW = ir.width() - kPadH - checkInset - iconW - kPadH - rightHintW;
         p.drawText(
             QRect(contentX + iconW, ir.top(), availW, ir.height()),

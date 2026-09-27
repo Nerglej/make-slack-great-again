@@ -32,6 +32,9 @@ public:
         bool                  selected    = false; // checkmark + accent color
         bool                  disabled    = false; // greyed out, not clickable
         QPixmap               icon; // optional 16×16 icon rendered to the left of text
+        // Right-aligned secondary text in the shortcut's place ("2 hours ago"),
+        // drawn like one but never read as a key binding. Ignored with a shortcut.
+        QString               hint;
     };
 
     // Controls how the menu width is chosen.
@@ -66,6 +69,8 @@ public:
         bool                  submenu     = false,
         const QString        &iconPath    = {}
     );
+    // A fully specified row (e.g. a checked one with a hint).
+    void addItem(Item item);
     void addSeparator();
 
     // Greyed-out row that can't be hovered or clicked (an option that doesn't

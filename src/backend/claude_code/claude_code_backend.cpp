@@ -2883,6 +2883,11 @@ Backend::createSession(const QString &directory, bool skipPermissionChecks, cons
     return c;
 }
 
+QString Backend::agentSessionFolder(ConversationId conv) {
+    const Tracked *t = find(conv.value);
+    return t ? t->info.cwd : QString();
+}
+
 void Backend::startAgentSession(
     const QString                      &directory,
     bool                                skipPermissionChecks,

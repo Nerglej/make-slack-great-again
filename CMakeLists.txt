@@ -190,6 +190,7 @@ add_executable(msga MACOSX_BUNDLE WIN32
     src/util/emoji_pixmap.cpp
     src/util/fuzzy_match.cpp
     src/util/mailto_link.cpp
+    src/util/recent_folders.cpp
     src/util/relative_time.cpp
     src/util/avatar_glyphs.cpp
     src/util/sound_player.cpp

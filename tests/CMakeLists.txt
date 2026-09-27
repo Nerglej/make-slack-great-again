@@ -207,6 +207,7 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/ui/theme_custom.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/theme_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/fonts.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/teammate_page/teammate_page.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/thread_panel/thread_export_job.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/thread_panel/thread_panel.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/transcript_dialog/transcript_dialog.cpp
@@ -229,6 +230,7 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/util/emoji_pixmap.cpp
     ${CMAKE_SOURCE_DIR}/src/util/fuzzy_match.cpp
     ${CMAKE_SOURCE_DIR}/src/util/mailto_link.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/recent_folders.cpp
     ${CMAKE_SOURCE_DIR}/src/util/relative_time.cpp
     ${CMAKE_SOURCE_DIR}/src/util/secret_store.cpp
     ${CMAKE_SOURCE_DIR}/src/util/secret_store_qsettings.cpp
@@ -336,6 +338,9 @@ endfunction()
 add_msga_test(test_emoji)
 
 add_msga_test(test_fuzzy_match)
+
+# Recent-folder MRU behind the teammate page's folder menu.
+add_msga_test(test_recent_folders)
 
 add_msga_test(test_nav_history)
 
@@ -491,6 +496,9 @@ add_msga_widget_test(test_tray_icon)
 add_msga_widget_test(test_user_profile_card)
 
 add_msga_widget_test(test_context_menu)
+
+# Teammate page's folder menu: recent folders + sessions' folders, pick → default.
+add_msga_widget_test(test_teammate_page)
 
 add_msga_widget_test(test_popup_tooltip)
 

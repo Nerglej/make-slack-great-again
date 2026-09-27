@@ -64,6 +64,7 @@
 
 #include "ui/icon_utils.h"
 #include "util/desktop_notifier.h"
+#include "util/recent_folders.h"
 #include "util/slack_links.h"
 #include "util/sound_player.h"
 #ifdef Q_OS_MACOS
@@ -2206,6 +2207,13 @@ void MainWindow::renameConversation(ConversationId id) {
     updateHeaderForConv(id);
 }
 
+// A session actually started in `dir`: first among the teammate page's recent
+// folders (RecentFolders).
+static void bumpRecentAgentFolder(const QString &dir) {
+    QSettings s("msga", "msga");
+    RecentFolders::bump(s, RecentFolders::kClaudeCodeKey, dir);
+}
+
 // "+" in an agent workspace: pick the directory the new session works in, and
 // open its conversation (already listed when onSuccess runs). The session
 // itself starts with the first message sent there.
@@ -2225,7 +2233,8 @@ void MainWindow::startAgentSession(bool skipPermissionChecks) {
         dir,
         skipPermissionChecks,
         {}, // the generalist; a specialist is written to on its page
-        [this](ConversationId id) {
+        [this, dir](ConversationId id) {
+            bumpRecentAgentFolder(dir);
             if (_convList && _convList->selectConversation(id))
                 focusComposerIfActive();
         },
@@ -4004,7 +4013,8 @@ void MainWindow::startSessionWithTeammate(const QString &text, const QStringList
         dir,
         false,
         role,
-        [this, text, filePaths](ConversationId id) {
+        [this, dir, text, filePaths](ConversationId id) {
+            bumpRecentAgentFolder(dir);
             // Listed by now (the backend announces a session before this):
             // open it, then the text is its first message.
             if (!_session || !_convList || !_convList->selectConversation(id))

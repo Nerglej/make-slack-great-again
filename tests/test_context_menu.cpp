@@ -290,3 +290,43 @@ TEST_CASE(
     CHECK(fired);
     delete m;
 }
+
+// ── Hint: secondary text, not a key binding ───────────────────────────────────
+
+TEST_CASE("ContextMenu: a hint widens the row like a shortcut", "[context_menu][hint]") {
+    auto *plain = makeMenu();
+    plain->addItem("~/src/project", [] {});
+    showMenu(plain);
+
+    auto             *hinted = makeMenu();
+    ContextMenu::Item it;
+    it.text     = "~/src/project";
+    it.hint     = "3 sessions · 2 hours ago";
+    it.selected = true;
+    it.action   = [] {};
+    hinted->addItem(std::move(it));
+    showMenu(hinted);
+
+    CHECK(hinted->width() > plain->width());
+    delete plain;
+    delete hinted;
+}
+
+TEST_CASE("ContextMenu: typing a hint's text fires nothing", "[context_menu][hint]") {
+    auto             *m     = makeMenu();
+    bool              fired = false;
+    ContextMenu::Item it;
+    it.text   = "~/src/project";
+    it.hint   = "3";
+    it.action = [&fired] { fired = true; };
+    m->addItem(std::move(it));
+    showMenu(m);
+
+    QTest::keyClick(m, Qt::Key_3);
+    QApplication::processEvents();
+    CHECK_FALSE(fired);
+
+    click(m, QPoint(menuCenterX(m), itemCenterY({'I'}, 0)));
+    CHECK(fired);
+    delete m;
+}
