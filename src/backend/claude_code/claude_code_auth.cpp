@@ -2,6 +2,7 @@
 // Copyright (C) 2026  Vladimir Osipov
 #include "claude_code_auth.h"
 
+#include "cc_launcher.h"
 #include "cc_roster.h"
 
 #include <QCoreApplication>
@@ -63,7 +64,29 @@ QString findClaudeExecutable() {
     return {};
 }
 
+QString notInstalledMessage() {
+    return QCoreApplication::translate(
+        "claude_code",
+        "Claude Code isn't installed on this computer (msga can't find the claude command). "
+        "Install it (https://code.claude.com/docs/en/setup), run `claude` once in a terminal "
+        "to log in, then try again."
+    );
+}
+
+QString notLoggedInMessage() {
+    return QCoreApplication::translate(
+        "claude_code",
+        "Claude Code isn't logged in on this computer. Run `claude` in a terminal and log in "
+        "with /login, then try again."
+    );
+}
+
 void AuthStrategy::start() {
+    const QString claude = findClaudeExecutable();
+    if (claude.isEmpty()) {
+        emit failed(notInstalledMessage());
+        return;
+    }
     const Paths paths = Paths::detect();
     if (!QFileInfo(paths.home).isDir()) {
         emit failed(
@@ -76,9 +99,16 @@ void AuthStrategy::start() {
         );
         return;
     }
-    // Without the CLI the workspace still shows every session; only starting
-    // and continuing sessions from msga needs it.
-    emit succeeded(toRecord(Credentials{findClaudeExecutable()}));
+    // A login that can't be read (an old CLI) lets the workspace in: a session
+    // that then finds none says so (see TranscriptItem::loginError).
+    auto *launcher = new Launcher(claude, paths, this);
+    launcher->checkLogin([this, launcher, claude](Login login) {
+        launcher->deleteLater();
+        if (login == Login::Out)
+            emit failed(notLoggedInMessage());
+        else
+            emit succeeded(toRecord(Credentials{claude}));
+    });
 }
 
 } // namespace claude_code

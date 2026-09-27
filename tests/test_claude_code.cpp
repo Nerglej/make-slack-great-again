@@ -25,6 +25,7 @@
 
 #include "backend/claude_code/cc_attach.h"
 #include "backend/claude_code/cc_catalog.h"
+#include "backend/claude_code/cc_launcher.h"
 #include "backend/claude_code/cc_outputs.h"
 #include "backend/claude_code/cc_roster.h"
 #include "backend/claude_code/cc_transcript.h"
@@ -1158,7 +1159,10 @@ TEST_CASE("files sent to a session go with its prompt", "[claude][backend]") {
     {
         QFile f(cli);
         REQUIRE(f.open(QIODevice::WriteOnly));
-        f.write("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CLAUDE_CONFIG_DIR/calls.log\"\nexit 1\n");
+        f.write(
+            "#!/bin/sh\n[ \"$1\" = auth ] && exit 1\n" // "can't tell": a login isn't required
+            "printf '%s\\n' \"$*\" >> \"$CLAUDE_CONFIG_DIR/calls.log\"\nexit 1\n"
+        );
         f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
     }
     QImage img(4, 4, QImage::Format_RGB32);
@@ -1171,7 +1175,7 @@ TEST_CASE("files sent to a session go with its prompt", "[claude][backend]") {
     backend.events() | rpl::on_next([&](Event e) { events.push_back(std::move(e)); }, lt);
     ConversationId conv;
     backend.startAgentSession(work.path(), false, {}, [&](ConversationId id) { conv = id; }, {});
-    REQUIRE_FALSE(conv.value.isEmpty());
+    REQUIRE(QTest::qWaitFor([&] { return !conv.value.isEmpty(); }, 5000));
 
     std::optional<bool> ok;
     backend.uploadFiles(
@@ -1191,10 +1195,18 @@ TEST_CASE("files sent to a session go with its prompt", "[claude][backend]") {
     CHECK(m.files[0].name == "pasted.png");
     // Claude Code gets the cached copy's mention before the text.
     const QString log = home.dir.path() + "/calls.log";
-    REQUIRE(QTest::qWaitFor([&] { return QFileInfo::exists(log); }, 5000));
-    QFile f(log);
-    REQUIRE(f.open(QIODevice::ReadOnly));
-    const QString call = QString::fromUtf8(f.readAll());
+    QString       call;
+    // The whole line: the shell creates the file before it writes to it.
+    REQUIRE(
+        QTest::qWaitFor(
+            [&] {
+                QFile f(log);
+                call = f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+                return call.endsWith('\n');
+            },
+            5000
+        )
+    );
     CHECK(call.contains("-- @" + uploadsDir() + '/'));
     CHECK(call.trimmed().endsWith("/pasted.png look"));
 
@@ -1782,6 +1794,7 @@ TEST_CASE(
         REQUIRE(f.open(QIODevice::WriteOnly));
         f.write(R"SH(#!/bin/sh
 H="$CLAUDE_CONFIG_DIR"
+if [ "$1" = auth ]; then echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
 if [ "$1" = attach ]; then # typing into a live worker: see the terminal UI test
   printf '%s\n' "$*" >> "$H/attach.log"
   [ -n "$FAKE_ATTACH" ] && exec "$FAKE_ATTACH" "$2"
@@ -1846,6 +1859,7 @@ echo "backgrounded · $short"
 
     ConversationId conv;
     backend.startAgentSession(work.path(), false, {}, [&](ConversationId id) { conv = id; }, {});
+    REQUIRE(QTest::qWaitFor([&] { return !conv.value.isEmpty(); }, 5000));
     REQUIRE(conv.value.startsWith("new-")); // Claude Code picks the id on the first message
     const auto listed = collect(backend.loadConversations());
     CHECK(std::any_of(listed[0].begin(), listed[0].end(), [&](const Conversation &c) {
@@ -1969,6 +1983,7 @@ echo "backgrounded · $short"
     // Skipping permission checks is a start option, saved with the session.
     ConversationId noChecks;
     backend.startAgentSession(work.path(), true, {}, [&](ConversationId id) { noChecks = id; }, {});
+    REQUIRE(QTest::qWaitFor([&] { return !noChecks.value.isEmpty(); }, 5000));
     OutgoingMessage out;
     out.text = {"go", {}};
     backend.sendMessage(noChecks, out, {});
@@ -2022,7 +2037,7 @@ echo "backgrounded · $short"
     backend.startAgentSession(
         work.path(), false, "engineer", [&](ConversationId id) { engineer = id; }, {}
     );
-    REQUIRE_FALSE(engineer.value.isEmpty());
+    REQUIRE(QTest::qWaitFor([&] { return !engineer.value.isEmpty(); }, 5000));
     const auto convs = collect(backend.loadConversations());
     CHECK(std::any_of(convs[0].begin(), convs[0].end(), [&](const Conversation &c) {
         return c.id == engineer && c.agentRole == "engineer";
@@ -2081,6 +2096,7 @@ echo "backgrounded · $short"
     backend.startAgentSession(
         work.path(), false, "copywriter", [&](ConversationId id) { cw = id; }, {}
     );
+    REQUIRE(QTest::qWaitFor([&] { return !cw.value.isEmpty(); }, 5000));
     out.text = {"tagline", {}};
     backend.sendMessage(cw, out, {});
     REQUIRE(waitFor(cw, "echo tagline"));
@@ -2096,6 +2112,7 @@ echo "backgrounded · $short"
     backend.startAgentSession(
         work.path(), false, "copywriter", [&](ConversationId id) { cw2 = id; }, {}
     );
+    REQUIRE(QTest::qWaitFor([&] { return !cw2.value.isEmpty(); }, 5000));
     out.text = {"fresh", {}};
     backend.sendMessage(cw2, out, {});
     REQUIRE(waitFor(cw2, "echo fresh"));
@@ -2164,6 +2181,7 @@ TEST_CASE("Stop cuts a session's turn short and drops what waits", "[claude][bac
         REQUIRE(f.open(QIODevice::WriteOnly));
         f.write(R"SH(#!/bin/sh
 H="$CLAUDE_CONFIG_DIR"
+if [ "$1" = auth ]; then echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
 if [ "$1" = attach ]; then # typing into a live worker: see the terminal UI test
   printf '%s\n' "$*" >> "$H/attach.log"
   [ -n "$FAKE_ATTACH" ] && exec "$FAKE_ATTACH" "$2"
@@ -2216,7 +2234,7 @@ echo "backgrounded · $short"
 
     ConversationId conv;
     backend.startAgentSession(work.path(), false, {}, [&](ConversationId id) { conv = id; }, {});
-    REQUIRE_FALSE(conv.value.isEmpty());
+    REQUIRE(QTest::qWaitFor([&] { return !conv.value.isEmpty(); }, 5000));
     CHECK_FALSE(backend.canStopAgentSession(conv)); // nothing sent yet
 
     const QString sid   = "abcdef11-0000-4000-8000-000000000001";
@@ -2657,6 +2675,7 @@ TEST_CASE(
         REQUIRE(f.open(QIODevice::WriteOnly));
         f.write(R"SH(#!/bin/sh
 H="$CLAUDE_CONFIG_DIR"
+if [ "$1" = auth ]; then echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
 if [ "$1" = attach ]; then
   printf '%s\n' "$*" >> "$H/attach.log"
   exec "$FAKE_ATTACH" "$2"
@@ -2706,6 +2725,7 @@ echo "backgrounded · $short"
     backend.connectRealtime();
     ConversationId conv;
     backend.startAgentSession(work.path(), false, {}, [&](ConversationId id) { conv = id; }, {});
+    REQUIRE(QTest::qWaitFor([&] { return !conv.value.isEmpty(); }, 5000));
     auto send = [&](const QString &text) {
         OutgoingMessage out;
         out.text = {text, {}};
@@ -3842,4 +3862,150 @@ TEST_CASE(
 
     backend.leaveConversation(conv); // "Remove from msga"
     CHECK_FALSE(QFileInfo::exists(outputsDir(conv.value)));
+}
+
+TEST_CASE("the CLI's login status", "[claude][login]") {
+    // `claude auth status` (verified 2.1.283): JSON, exit code 1 when logged out.
+    CHECK(parseLoginStatus(R"({"loggedIn": true, "authMethod": "claude.ai"})", 0) == Login::In);
+    CHECK(parseLoginStatus(R"({"loggedIn": true, "authMethod": "api_key"})", 0) == Login::In);
+    CHECK(parseLoginStatus(R"({"loggedIn": false, "authMethod": "none"})", 1) == Login::Out);
+    CHECK(parseLoginStatus("a warning first\n{\"loggedIn\": false}\n", 1) == Login::Out);
+    CHECK(
+        parseLoginStatus("Not logged in. Run claude auth login to authenticate.\n", 1) == Login::Out
+    );
+    // A CLI without `auth status` can't tell: that never blocks anything.
+    CHECK(parseLoginStatus("error: unknown command 'auth'\n", 1) == Login::Unknown);
+    CHECK(parseLoginStatus("", 0) == Login::Unknown);
+}
+
+TEST_CASE("a turn that failed for want of a login says how to log in", "[claude][login]") {
+    // As Claude Code 2.1.283 records it.
+    TranscriptParser p;
+    p.feed(prompt("say hi", "2026-09-26T21:21:17.200Z"));
+    p.feed(line({
+        {"type", "assistant"},
+        {"timestamp", "2026-09-26T21:21:17.500Z"},
+        {"isApiErrorMessage", true},
+        {"error", "authentication_failed"},
+        {"message",
+         QJsonObject{
+             {"model", "<synthetic>"},
+             {"content",
+              QJsonArray{
+                  QJsonObject{{"type", "text"}, {"text", "Not logged in · Please run /login"}}
+              }},
+         }},
+    }));
+    p.feed(turnEnd("2026-09-26T21:21:17.600Z"));
+    REQUIRE(p.items().size() == 2);
+    const TranscriptItem &answer = p.items()[1];
+    CHECK(answer.kind == Kind::AssistantText);
+    CHECK(answer.loginError);
+    CHECK(p.loginFailedAt() == answer.date);
+    const Message m = toMessage(answer, UserId{"me"}, UserId{"claude"});
+    CHECK(m.rawText == notLoggedInMessage());
+    CHECK(m.text.text.contains("/login"));
+
+    // Any other answer is Claude's own.
+    TranscriptParser ok;
+    ok.feed(assistantText("hi", "2026-09-26T21:21:17.500Z"));
+    REQUIRE(ok.items().size() == 1);
+    CHECK_FALSE(ok.items()[0].loginError);
+    CHECK(ok.loginFailedAt() == 0);
+}
+
+namespace {
+
+// A `claude` that only answers `auth status`, as logged in or not; anything
+// else is logged to calls.log (nothing may get that far when logged out).
+QString fakeLoginCli(const QString &dir, bool loggedIn) {
+    const QString cli = dir + "/claude";
+    QFile         f(cli);
+    if (!f.open(QIODevice::WriteOnly))
+        return {};
+    f.write(
+        QByteArray("#!/bin/sh\n") +
+        (loggedIn ? "[ \"$1\" = auth ] && { echo '{\"loggedIn\":true}'; exit 0; }\n"
+                  : "[ \"$1\" = auth ] && { echo '{\"loggedIn\":false}'; exit 1; }\n") +
+        "printf '%s\\n' \"$*\" >> \"$CLAUDE_CONFIG_DIR/calls.log\"\nexit 1\n"
+    );
+    f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
+    return cli;
+}
+
+} // namespace
+
+TEST_CASE("no session starts while Claude Code is logged out", "[claude][login][backend]") {
+    FakeClaudeHome home;
+    QTemporaryDir  work;
+    {
+        QFile f(home.dir.path() + "/.claude.json");
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write(QJsonDocument(
+                    QJsonObject{
+                        {"projects",
+                         QJsonObject{
+                             {QDir(work.path()).absolutePath(),
+                              QJsonObject{{"hasTrustDialogAccepted", true}}}
+                         }},
+                    }
+        )
+                    .toJson());
+    }
+    const QString cli = fakeLoginCli(work.path(), false);
+    REQUIRE_FALSE(cli.isEmpty());
+    claude_code::Backend backend(Credentials{cli});
+    QString              error;
+    ConversationId       conv;
+    backend.startAgentSession(
+        work.path(), false, {}, [&](ConversationId id) { conv = id; }, [&](QString e) { error = e; }
+    );
+    REQUIRE(QTest::qWaitFor([&] { return !error.isEmpty(); }, 5000));
+    CHECK(error == notLoggedInMessage());
+    CHECK(conv.value.isEmpty());
+    CHECK_FALSE(QFileInfo::exists(home.dir.path() + "/calls.log"));
+}
+
+TEST_CASE("adding the workspace needs the CLI and its login", "[claude][login][auth]") {
+    FakeClaudeHome   home;
+    QTemporaryDir    bin, fakeHome;
+    // Only `bin` is searched: PATH, and the installers' folders under HOME.
+    const QByteArray path = qgetenv("PATH"), realHome = qgetenv("HOME");
+    qputenv("PATH", bin.path().toUtf8());
+    qputenv("HOME", fakeHome.path().toUtf8());
+    struct Restore {
+        QByteArray path, home;
+        ~Restore() {
+            qputenv("PATH", path);
+            qputenv("HOME", home);
+        }
+    } restore{path, realHome};
+    if (!findClaudeExecutable().isEmpty())
+        SKIP("a claude outside PATH and HOME (/usr/local/bin, /opt/homebrew/bin)");
+
+    struct Outcome {
+        std::optional<QString> failed, claudePath;
+    };
+    auto add = [] {
+        Outcome                   o;
+        claude_code::AuthStrategy s;
+        QObject::connect(&s, &auth::AuthStrategy::failed, [&](QString why) { o.failed = why; });
+        QObject::connect(&s, &auth::AuthStrategy::succeeded, [&](TokenStore::WorkspaceRecord r) {
+            o.claudePath = fromRecord(r).claudePath;
+        });
+        s.start();
+        QTest::qWaitFor([&] { return o.failed || o.claudePath; }, 5000);
+        return o;
+    };
+
+    CHECK(add().failed == notInstalledMessage());
+
+    REQUIRE_FALSE(fakeLoginCli(bin.path(), false).isEmpty());
+    CHECK(add().failed == notLoggedInMessage());
+
+    const QString cli = fakeLoginCli(bin.path(), true);
+    REQUIRE_FALSE(cli.isEmpty());
+    const Outcome added = add();
+    CHECK_FALSE(added.failed);
+    CHECK(added.claudePath == cli);
 }

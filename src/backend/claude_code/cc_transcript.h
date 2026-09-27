@@ -16,6 +16,7 @@
 //     task notifications and other system injections are hidden;
 //   • what a command Claude Code runs itself prints (/context, /compact) →
 //     AssistantText, ending the turn;
+//   • Claude Code's "Not logged in" answer → AssistantText marked loginError;
 //   • assistant text → AssistantText, marked Progress when the same turn goes on
 //     to call tools (no notification for those), Final when the turn ends after
 //     it, and Pending while that isn't known yet (the last text of a live turn);
@@ -63,6 +64,10 @@ struct TranscriptItem {
     QString     relayTo; // UserPrompt: a reply in this subagent's thread (text = the reply alone)
     QStringList images;  // UserPrompt: pasted images and sent files, in msga's cache (paths)
     QStringList imageNames; // parallel to images: "Image 3.png", after Claude Code's paste number
+    // AssistantText: Claude Code's own answer to a turn it couldn't run for want
+    // of a login ("Not logged in · Please run /login") — shown as msga's
+    // explanation, since /login can't be run from msga.
+    bool        loginError = false;
     // UserPrompt, AssistantText: the transcript record it was read from, which
     // removeFromTranscript takes out; "" for the rest (a tool call can't go
     // without its result).
@@ -89,6 +94,9 @@ public:
 
     // The session's own title, when Claude Code generated one ("ai-title").
     const QString &aiTitle() const { return _aiTitle; }
+
+    // Epoch micros of the latest turn that failed for want of a login; 0 = none.
+    qint64 loginFailedAt() const { return _loginFailedAt; }
 
     // Epoch micros of the newest record seen (any type) — "last activity".
     qint64                     lastActivity() const { return _lastActivity; }
@@ -138,6 +146,7 @@ private:
     int           _commandOutput = -1; // index of the latest command output, -1 when none
     bool          _turnOpen      = false;
     qint64        _turnStartedAt = 0;
+    qint64        _loginFailedAt = 0;
     QString       _aiTitle;
     QString       _version;
     QString       _model;

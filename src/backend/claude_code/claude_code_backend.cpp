@@ -57,6 +57,9 @@ const QString kNewPrefix = QStringLiteral("new-"); // conversation id of a "+" s
 // A turn msga sent that shows no sign of life (no prompt in the transcript, no
 // busy worker) is given up on after this long.
 constexpr qint64 kLaunchTimeoutMs = 60'000;
+// How long a login `claude auth status` confirmed is taken as still there
+// before a send checks again. One found missing is checked again every time.
+constexpr qint64 kLoginFreshMs    = 5 * 60'000;
 // After our prompt landed: a session that went quiet without writing the turn's
 // end (interrupted, crashed) stops counting as busy after this long.
 constexpr qint64 kQuietTurnMs     = 15'000;
@@ -91,6 +94,12 @@ QString knownSessionsPath() {
 // question ("blocked" with the question as needs) is answered by message.
 bool awaitsApproval(const SessionInfo &s) {
     return s.kind == SessionInfo::Kind::Background && s.needs.startsWith(QLatin1String("approve "));
+}
+
+// A background session whose turn failed for want of a login reads "blocked" +
+// "login required — run /login" (verified 2.1.283): not a question for the user.
+bool needsLogin(const SessionInfo &s) {
+    return s.needs.startsWith(QLatin1String("login required"));
 }
 
 // Whether the question on a session's screen is the one its `needs` names
@@ -429,7 +438,8 @@ bool Backend::working(const Tracked &t) const {
 }
 
 bool Backend::needsUser(const Tracked &t) const {
-    return !t.sending && t.info.running && statusNeedsUser(t.info.status) && !working(t);
+    return !t.sending && t.info.running && statusNeedsUser(t.info.status) && !needsLogin(t.info) &&
+           !working(t);
 }
 
 QString Backend::roleOf(const Tracked &t) const {
@@ -535,10 +545,7 @@ QString Backend::readOnlyReason(const Tracked &t) const {
         );
     }
     if (_creds.claudePath.isEmpty())
-        return QCoreApplication::translate(
-            "claude_code",
-            "Install the claude command-line tool to write to Claude Code sessions from here."
-        );
+        return notInstalledMessage();
     return {};
 }
 
@@ -553,6 +560,8 @@ User Backend::assistantUser(const Tracked &t) const {
     u.unavailable = !u.isActive && unavailable(t);
     if (needsUser(t))
         u.statusText = QCoreApplication::translate("claude_code", "Waiting for you");
+    else if (!t.sending && t.info.running && needsLogin(t.info))
+        u.statusText = QCoreApplication::translate("claude_code", "Not logged in");
     else if (busy(t))
         u.statusText = QCoreApplication::translate("claude_code", "Working");
     else if (t.info.running && statusHasShell(t.info.status))
@@ -1203,6 +1212,30 @@ void Backend::failSends(Tracked &t, const QString &reason) {
     _events.fire(EvSendFailed{ConversationId{asThread(t) ? t.forkOf : t.convId}, reason});
 }
 
+bool Backend::loginKnownGood() const {
+    return _loginCheckedMs > 0 && _login != Login::Out && nowMs() - _loginCheckedMs < kLoginFreshMs;
+}
+
+void Backend::whenLoggedIn(LoginWaiter then) {
+    if (loginKnownGood()) {
+        then(true);
+        return;
+    }
+    _loginWaiters.push_back(std::move(then));
+    if (std::exchange(_loginChecking, true))
+        return; // on its way
+    _launcher->checkLogin([this](Login login) {
+        _loginChecking  = false;
+        _login          = login;
+        _loginCheckedMs = nowMs();
+        if (login == Login::Out)
+            qInfo("claude code: not logged in");
+        // Unknown lets it through: the turn says so itself if a login is missing.
+        for (auto &w : std::exchange(_loginWaiters, {}))
+            w(login != Login::Out);
+    });
+}
+
 bool Backend::typesLive(const Tracked &t) const {
     // A live background worker is typed to (Launcher::sendLive), busy or not:
     // stopping it to resume would end what it runs — a subagent, a background
@@ -1447,17 +1480,33 @@ void Backend::pressBotButton(
 void Backend::dispatch(Tracked &t) {
     if (t.outbox.isEmpty() || t.stopping || t.launching)
         return;
-    if (typesLive(t)) {
-        typeLive(t);
-        return;
-    }
+    const bool live = typesLive(t);
     // Otherwise one turn at a time: the next message goes once Claude is done
     // with the last (and a session waiting on an approval takes nothing until
     // it's given). A background command still running waits too: sending
     // stops the worker, which would kill the command.
-    if (t.sending || busy(t) || awaitsApproval(t.info) ||
-        (t.info.running && statusHasShell(t.info.status)))
+    if (!live && (t.sending || busy(t) || awaitsApproval(t.info) ||
+                  (t.info.running && statusHasShell(t.info.status))))
         return;
+    // Without a login the turn only gets "Not logged in" back: that is a
+    // failed send, said before anything starts.
+    if (!loginKnownGood()) {
+        const QString convId = t.convId;
+        whenLoggedIn([this, convId](bool loggedIn) {
+            Tracked *t = find(convId);
+            if (!t)
+                return;
+            if (loggedIn)
+                dispatch(*t);
+            else if (!t->sending && !t->launching && !t->flying)
+                failSends(*t, notLoggedInMessage());
+        });
+        return;
+    }
+    if (live) {
+        typeLive(t);
+        return;
+    }
     Tracked::Outgoing next = t.outbox.takeFirst();
     t.sending              = true;
     t.launching            = true;
@@ -1727,6 +1776,13 @@ void Backend::refresh() {
                 parentsToDiff.insert(t.forkOf); // its root's reply count
         }
         t.wasLive = live;
+
+        // A turn that failed for want of a login: the login is checked again
+        // before the next send, which is then told why.
+        if (t.parser.loginFailedAt() > _loginFailedSeen) {
+            _loginFailedSeen = t.parser.loginFailedAt();
+            _loginCheckedMs  = 0;
+        }
 
         // msga's turn is over once its end is in the transcript — or, failing
         // that, once the session has sat idle and silent for a while since our
@@ -2352,6 +2408,25 @@ void Backend::startFork(
     Tracked &parent, const QString &question, std::function<void(bool, QString)> done
 ) {
     const QString parentConv = parent.convId;
+    whenLoggedIn([this, parentConv, question, done](bool loggedIn) {
+        Tracked *t = find(parentConv);
+        if (loggedIn && t) {
+            launchFork(*t, question, done);
+            return;
+        }
+        const QString error =
+            !t ? QCoreApplication::translate("claude_code", "The session was removed from msga.")
+               : notLoggedInMessage();
+        _events.fire(EvSendFailed{ConversationId{parentConv}, error});
+        if (done)
+            done(false, error);
+    });
+}
+
+void Backend::launchFork(
+    Tracked &parent, const QString &question, std::function<void(bool, QString)> done
+) {
+    const QString parentConv = parent.convId;
     const QString cwd        = parent.info.cwd;
     const QString folder     = QDir(cwd).absolutePath();
     _forkingIn.insert(folder); // the branch mustn't flash up in the list meanwhile
@@ -2774,9 +2849,7 @@ ConversationId Backend::addFoundSession(const QString &sessionId) {
 
 QString Backend::cannotStartIn(const QString &directory) const {
     if (_creds.claudePath.isEmpty())
-        return QCoreApplication::translate(
-            "claude_code", "The claude command-line tool wasn't found on this computer."
-        );
+        return notInstalledMessage();
     if (!QFileInfo(directory).isDir())
         return QCoreApplication::translate("claude_code", "%1 isn't a folder.").arg(directory);
     // Background sessions refuse a folder Claude Code hasn't trusted; say so now
@@ -2822,9 +2895,17 @@ void Backend::startAgentSession(
             onError(why);
         return;
     }
-    const Conversation c = createSession(directory, skipPermissionChecks, role);
-    if (onSuccess)
-        onSuccess(c.id);
+    // Checked now, not on the first message: nothing gets started without it.
+    whenLoggedIn([this, directory, skipPermissionChecks, role, onSuccess, onError](bool loggedIn) {
+        if (!loggedIn) {
+            if (onError)
+                onError(notLoggedInMessage());
+            return;
+        }
+        const Conversation c = createSession(directory, skipPermissionChecks, role);
+        if (onSuccess)
+            onSuccess(c.id);
+    });
 }
 
 // ── Search / emoji / files ──────────────────────────────────────────────────

@@ -168,6 +168,7 @@ public:
 
 private:
     struct Tracked;
+    using LoginWaiter = std::function<void(bool loggedIn)>;
 
     User me() const;
     void loadProfile();
@@ -228,12 +229,21 @@ private:
     // the upload's: the Session reports it from `done`).
     void
     send(ConversationId, OutgoingMessage, std::function<void(bool, QString)> done, bool announce);
+    // A /btw branch, once the login is known to be there (launchFork starts it).
     void
     startFork(Tracked &parent, const QString &question, std::function<void(bool, QString)> done);
+    void
+    launchFork(Tracked &parent, const QString &question, std::function<void(bool, QString)> done);
     void                  dispatch(Tracked &t);
     bool                  typesLive(const Tracked &t) const;
     void                  typeLive(Tracked &t);
     void                  failSends(Tracked &t, const QString &reason);
+    // Whether the CLI is logged in, as a `claude auth status` of the last few
+    // minutes says (see kLoginFreshMs).
+    bool                  loginKnownGood() const;
+    // `then(loggedIn)` once that's known: at once when it is, else after a check
+    // (one at a time; "can't tell" counts as logged in).
+    void                  whenLoggedIn(LoginWaiter then);
     // Reads the options of the permission question the session waits on off
     // its screen, for the buttons (a few tries per question).
     void                  readApproval(Tracked &t);
@@ -296,7 +306,13 @@ private:
     // Typing into live workers (typeLive): misses in a row, and off until when.
     int                    _typeLiveMisses     = 0;
     qint64                 _typeLiveOffUntilMs = 0;
-    bool                   _zen                = false;
+    // The CLI's login (whenLoggedIn): the last check's answer and when it came.
+    Login                  _login              = Login::Unknown;
+    qint64                 _loginCheckedMs     = 0; // 0 = never, or to be checked again
+    bool                   _loginChecking      = false;
+    QList<LoginWaiter>     _loginWaiters;
+    qint64                 _loginFailedSeen = 0; // newest parser loginFailedAt seen
+    bool                   _zen             = false;
     QString                _myName;       // "" = the login name
     QString                _myAvatarPath; // a copy in app data; "" = initials
     // Subagent transcripts are only re-parsed when they grow.

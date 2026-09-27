@@ -3,7 +3,8 @@
 // Adding the Claude Code workspace. There is nothing to sign in to: the
 // workspace is "the Claude Code sessions on this machine", read from Claude
 // Code's state directory, plus the `claude` CLI for the sessions msga starts
-// itself. The add flow only checks both exist and records where the CLI is.
+// itself. The add flow checks both exist and that the CLI is logged in (msga
+// can't log it in: that's interactive), and records where the CLI is.
 #pragma once
 
 #include "auth/auth_strategy.h"
@@ -31,6 +32,11 @@ Credentials                 fromRecord(const TokenStore::WorkspaceRecord &rec);
 // The `claude` CLI: PATH first, then where its installers put it. On Windows
 // an npm install is `claude.cmd`, the native one `claude.exe`. Empty if absent.
 QString findClaudeExecutable();
+
+// What to tell the user when the CLI isn't there, and when it isn't logged in:
+// both are fixed outside msga, so both say how.
+QString notInstalledMessage();
+QString notLoggedInMessage();
 
 class AuthStrategy : public auth::AuthStrategy {
     Q_OBJECT

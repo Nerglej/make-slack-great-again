@@ -1550,13 +1550,13 @@ Create a free one — it takes a minute — then paste it below. You can change 
     </message>
     <message>
         <location filename="../src/ui/message_list/message_list.cpp" line="2618"/>
-        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2445"/>
+        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2449"/>
         <source>Remove from saved</source>
         <translation>保存済みから削除</translation>
     </message>
     <message>
         <location filename="../src/ui/message_list/message_list.cpp" line="2630"/>
-        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2446"/>
+        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2450"/>
         <source>Save for later</source>
         <translation>後で見るために保存</translation>
     </message>
@@ -1572,7 +1572,7 @@ Create a free one — it takes a minute — then paste it below. You can change 
     </message>
     <message>
         <location filename="../src/ui/message_list/message_list.cpp" line="2668"/>
-        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2442"/>
+        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2446"/>
         <source>Forward message</source>
         <translation>メッセージを転送</translation>
     </message>
@@ -1780,13 +1780,13 @@ Create a free one — it takes a minute — then paste it below. You can change 
         <translation>ファイルを読み込めませんでした</translation>
     </message>
     <message>
-        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2440"/>
+        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2444"/>
         <source>Add reaction</source>
         <translation>リアクションを追加</translation>
     </message>
     <message>
         <location filename="../src/ui/message_list/message_list.cpp" line="4321"/>
-        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2450"/>
+        <location filename="../src/ui/message_list/message_list_paint.cpp" line="2454"/>
         <source>More actions</source>
         <translation>その他の操作</translation>
     </message>
@@ -4892,277 +4892,283 @@ It follows the app language until you pick one here.</source>
         <translation>スキル</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/cc_launcher.cpp" line="258"/>
+        <location filename="../src/backend/claude_code/cc_launcher.cpp" line="299"/>
         <source>Claude Code exited (code %1).</source>
         <translation>Claude Code が終了しました（コード %1）。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/cc_launcher.cpp" line="353"/>
+        <location filename="../src/backend/claude_code/cc_launcher.cpp" line="394"/>
         <source>Claude Code started a copy of this session instead of continuing it.</source>
         <translation>Claude Code はこのセッションを続ける代わりにコピーを開始しました。</translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="958"/>
+        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="969"/>
         <source>%n tool call(s)</source>
         <translation>
             <numerusform>ツール呼び出し %n 件</numerusform>
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="962"/>
+        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="973"/>
         <source>… %n earlier</source>
         <translation>
             <numerusform>… それ以前に %n 件</numerusform>
         </translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="987"/>
+        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="998"/>
         <source>Subagent: %1</source>
         <translation>サブエージェント: %1</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_auth.cpp" line="70"/>
+        <location filename="../src/backend/claude_code/claude_code_auth.cpp" line="68"/>
+        <source>Claude Code isn&apos;t installed on this computer (msga can&apos;t find the claude command). Install it (https://code.claude.com/docs/en/setup), run `claude` once in a terminal to log in, then try again.</source>
+        <translation>このコンピューターには Claude Code がインストールされていません（msga が claude コマンドを見つけられません）。インストール（https://code.claude.com/docs/en/setup）してからターミナルで一度 `claude` を実行してログインし、もう一度お試しください。</translation>
+    </message>
+    <message>
+        <location filename="../src/backend/claude_code/claude_code_auth.cpp" line="77"/>
+        <source>Claude Code isn&apos;t logged in on this computer. Run `claude` in a terminal and log in with /login, then try again.</source>
+        <translation>このコンピューターの Claude Code はログインしていません。ターミナルで `claude` を実行して /login でログインしてから、もう一度お試しください。</translation>
+    </message>
+    <message>
+        <location filename="../src/backend/claude_code/claude_code_auth.cpp" line="93"/>
         <source>Claude Code doesn&apos;t seem to be set up on this computer: %1 doesn&apos;t exist. Run `claude` once in a terminal, then add the workspace again.</source>
         <translation>このコンピューターでは Claude Code が設定されていないようです（%1 がありません）。ターミナルで一度 `claude` を実行してから、もう一度ワークスペースを追加してください。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="525"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="536"/>
         <source>This session is running in a terminal — reply there. Once it ends, you can continue it here.</source>
         <translation>このセッションはターミナルで動いています。返信はそちらでどうぞ。終了すれば、ここから続けられます。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="530"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="541"/>
         <source>Another program is driving this session. Once it ends, you can continue it here.</source>
         <translation>このセッションは別のプログラムが操作しています。終了すれば、ここから続けられます。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="537"/>
-        <source>Install the claude command-line tool to write to Claude Code sessions from here.</source>
-        <translation>ここから Claude Code セッションに書き込むには、claude コマンドラインツールをインストールしてください。</translation>
-    </message>
-    <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="659"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="669"/>
         <source> · no permission checks</source>
         <translation> · 権限の確認なし</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="880"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="890"/>
         <source>Run “claude attach %1” in a terminal to answer it.</source>
         <translation>ターミナルで「claude attach %1」を実行して答えてください。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1218"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1315"/>
         <source>Claude Code&apos;s session didn&apos;t take the message: %1</source>
         <translation>Claude Codeのセッションがメッセージを受け取りませんでした: %1</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1332"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1429"/>
         <source>Claude isn&apos;t waiting for that approval any more.</source>
         <translation>Claude はもうこの承認を待っていません。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1341"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1438"/>
         <source>The answer is on its way.</source>
         <translation>回答を送信中です。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2089"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2209"/>
         <source>Ask a side question in a thread; the session itself isn&apos;t touched</source>
         <translation>スレッドで横道の質問をします。セッション自体には影響しません</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2092"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2212"/>
         <source>&lt;question&gt;</source>
         <translation>&lt;質問&gt;</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2099"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2219"/>
         <source>Show the session&apos;s Claude Code version, model, account and folder</source>
         <translation>セッションの Claude Code のバージョン、モデル、アカウント、フォルダーを表示</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2110"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2230"/>
         <source>Start a new session in the same folder; this one stays as it is</source>
         <translation>同じフォルダーで新しいセッションを開始します。このセッションはそのまま残ります</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2154"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2274"/>
         <source>Version</source>
         <translation>バージョン</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2155"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2275"/>
         <source>Session name</source>
         <translation>セッション名</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2157"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2277"/>
         <source>Teammate</source>
         <translation>チームメイト</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2159"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2279"/>
         <source>%1 (no longer on the team)</source>
         <translation>%1（チームから外れています）</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2162"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2282"/>
         <source>Session ID</source>
         <translation>セッション ID</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2165"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2285"/>
         <source>Background</source>
         <translation>バックグラウンド</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2167"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2287"/>
         <source>Ended</source>
         <translation>終了済み</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2169"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2289"/>
         <source>Interactive, in a terminal</source>
         <translation>対話型（ターミナル）</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2171"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2291"/>
         <source>Driven by another program</source>
         <translation>別のプログラムが操作中</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2172"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2292"/>
         <source>Session kind</source>
         <translation>セッションの種類</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2174"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2294"/>
         <source>Peer address</source>
         <translation>ピアアドレス</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2176"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2296"/>
         <source>Folder</source>
         <translation>フォルダー</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2178"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2298"/>
         <source>Login method</source>
         <translation>ログイン方法</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2180"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2300"/>
         <source>%1 account</source>
         <translation>%1 アカウント</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2181"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2301"/>
         <source>Organization</source>
         <translation>組織</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2183"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2303"/>
         <source>Email</source>
         <translation>メールアドレス</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2185"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2305"/>
         <source>Model</source>
         <translation>モデル</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2186"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2306"/>
         <source>Permission mode</source>
         <translation>権限モード</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2225"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2345"/>
         <source>This subagent can&apos;t be written to until it has started.</source>
         <translation>このサブエージェントには、開始するまで書き込めません。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2239"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2359"/>
         <source>Type your question after /btw.</source>
         <translation>/btw の後に質問を入力してください。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2241"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2361"/>
         <source>Send the session its first message before asking on the side.</source>
         <translation>横道の質問をする前に、まずセッションに最初のメッセージを送ってください。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2719"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2857"/>
         <source>Claude Code doesn&apos;t trust %1 yet. Run `claude` in that folder once and accept its trust prompt, then start the session again.</source>
         <translation>Claude Code はまだ %1 を信頼していません。そのフォルダーで一度 `claude` を実行して信頼の確認を承認してから、もう一度セッションを開始してください。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="554"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="562"/>
         <source>Waiting for you</source>
         <translation>あなたの対応待ち</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="556"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="564"/>
+        <source>Not logged in</source>
+        <translation>未ログイン</translation>
+    </message>
+    <message>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="566"/>
         <source>Working</source>
         <translation>作業中</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="849"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="859"/>
         <source>Waiting for you in the terminal.</source>
         <translation>ターミナルであなたの対応を待っています。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="850"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="860"/>
         <source>Waiting for your approval: %1</source>
         <translation>あなたの承認待ち: %1</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1686"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1805"/>
         <source>Claude Code didn&apos;t pick up the message.</source>
         <translation>Claude Code がメッセージを受け取りませんでした。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="81"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="84"/>
         <source>You</source>
         <translation>あなた</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="558"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="568"/>
         <source>Running a background command</source>
         <translation>バックグラウンドでコマンドを実行中</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2217"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2337"/>
         <source>This session no longer exists.</source>
         <translation>このセッションはもう存在しません。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2543"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2682"/>
         <source>Couldn&apos;t copy the picture.</source>
         <translation>画像をコピーできませんでした。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2301"/>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2599"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2417"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2440"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2738"/>
         <source>The session was removed from msga.</source>
         <translation>セッションはmsgaから削除されました。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2711"/>
-        <source>The claude command-line tool wasn&apos;t found on this computer.</source>
-        <translation>このコンピューターに claude コマンドラインツールが見つかりませんでした。</translation>
-    </message>
-    <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2715"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2853"/>
         <source>%1 isn&apos;t a folder.</source>
         <translation>%1 はフォルダーではありません。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2806"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2952"/>
         <source>Couldn&apos;t read %1.</source>
         <translation>%1 を読み込めませんでした。</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2826"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2972"/>
         <source>The file isn&apos;t there anymore.</source>
         <translation>ファイルはもうありません。</translation>
     </message>

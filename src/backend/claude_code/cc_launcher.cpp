@@ -189,6 +189,47 @@ void Launcher::listCommands(
     p->closeWriteChannel();
 }
 
+Login parseLoginStatus(const QByteArray &output, int exitCode) {
+    // The JSON may come after a warning line or two.
+    const qsizetype   brace = output.indexOf('{');
+    const QJsonObject o =
+        brace < 0 ? QJsonObject() : QJsonDocument::fromJson(output.mid(brace)).object();
+    if (const QJsonValue v = o.value(QLatin1String("loggedIn")); v.isBool())
+        return v.toBool() ? Login::In : Login::Out;
+    if (exitCode != 0 && output.contains("Not logged in"))
+        return Login::Out; // the --text form
+    return Login::Unknown;
+}
+
+void Launcher::checkLogin(std::function<void(Login)> done) {
+    QString     program;
+    QStringList argv = {QStringLiteral("auth"), QStringLiteral("status")};
+    auto       *p    = newProcess({}, program, argv);
+    p->setStandardInputFile(QProcess::nullDevice());
+    p->setStandardErrorFile(QProcess::nullDevice()); // unread, it could fill up
+    auto settled = std::make_shared<bool>(false);    // finished and errorOccurred can both fire
+    connect(p, &QProcess::finished, this, [p, done, settled](int code, QProcess::ExitStatus st) {
+        if (std::exchange(*settled, true))
+            return;
+        done(
+            st == QProcess::NormalExit ? parseLoginStatus(p->readAllStandardOutput(), code)
+                                       : Login::Unknown
+        );
+        p->deleteLater();
+    });
+    connect(p, &QProcess::errorOccurred, this, [p, done, settled](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart || std::exchange(*settled, true))
+            return;
+        done(Login::Unknown);
+        p->deleteLater();
+    });
+    QTimer::singleShot(15'000, p, [p] {
+        if (p->state() != QProcess::NotRunning)
+            p->kill();
+    });
+    p->start(program, argv);
+}
+
 QString Launcher::sessionIdForShort(const QString &shortId) const {
     QFile f(_paths.jobsDir() + QLatin1Char('/') + shortId + QStringLiteral("/state.json"));
     if (!f.open(QIODevice::ReadOnly))

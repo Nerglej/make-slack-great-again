@@ -2,6 +2,7 @@
 // Copyright (C) 2026  Vladimir Osipov
 #include "cc_transcript.h"
 #include "cc_roles.h"
+#include "claude_code_auth.h"
 
 #include "text/markdown_compose.h"
 #include "text/mrkdwn_parser.h"
@@ -446,6 +447,13 @@ void TranscriptParser::handleLine(const QByteArray &line) {
         content.toArray().first().toObject().value(QLatin1String("text")).toString().trimmed() ==
             QLatin1String("No response requested."))
         return;
+    // An API error Claude Code reports as the answer (verified 2.1.283):
+    // {"type":"assistant","isApiErrorMessage":true,"error":"authentication_failed",…}.
+    const bool loginError =
+        o.value(QLatin1String("isApiErrorMessage")).toBool() &&
+        o.value(QLatin1String("error")).toString() == QLatin1String("authentication_failed");
+    if (loginError)
+        _loginFailedAt = std::max(_loginFailedAt, micros);
     for (const auto &v : content.toArray()) {
         const QJsonObject b  = v.toObject();
         const QString     bt = b.value(QLatin1String("type")).toString();
@@ -457,11 +465,12 @@ void TranscriptParser::handleLine(const QByteArray &line) {
             resolvePendingText(TranscriptItem::State::Progress);
             closeToolGroup();
             TranscriptItem item;
-            item.kind  = TranscriptItem::Kind::AssistantText;
-            item.state = TranscriptItem::State::Pending;
-            item.ts    = nextTs(micros, &item.date);
-            item.text  = text;
-            item.uuid  = _lineUuid;
+            item.kind       = TranscriptItem::Kind::AssistantText;
+            item.state      = TranscriptItem::State::Pending;
+            item.ts         = nextTs(micros, &item.date);
+            item.text       = text;
+            item.uuid       = _lineUuid;
+            item.loginError = loginError;
             _items.push_back(std::move(item));
             _pendingText = int(_items.size()) - 1;
             openTurn(micros);
@@ -938,14 +947,16 @@ Message toMessage(const TranscriptItem &item, const UserId &me, const UserId &cl
             m.files.push_back(std::move(f));
         }
         break;
-    case TranscriptItem::Kind::AssistantText:
-        m.author  = claude;
-        m.rawText = item.text;
-        m.text    = renderMarkdown(item.text);
-        m.blocks  = markdownBlocks(item.text);
+    case TranscriptItem::Kind::AssistantText: {
+        m.author           = claude;
+        const QString text = item.loginError ? notLoggedInMessage() : item.text;
+        m.rawText          = text;
+        m.text             = renderMarkdown(text);
+        m.blocks           = markdownBlocks(text);
         if (item.state == TranscriptItem::State::Progress)
             m.subtype = QString::fromLatin1(kProgressSubtype);
         break;
+    }
     case TranscriptItem::Kind::ToolGroup: {
         m.author                = claude;
         m.subtype               = QString::fromLatin1(kProgressSubtype);

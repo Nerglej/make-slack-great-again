@@ -49,6 +49,11 @@ class QProcess;
 
 namespace claude_code {
 
+// Whether the CLI is logged in (`claude auth status`). Unknown: it couldn't be
+// told — the CLI didn't start, or is too old for `auth status` — which never
+// blocks anything; a turn that then fails for want of a login says so itself.
+enum class Login { In, Out, Unknown };
+
 class Launcher : public QObject {
     Q_OBJECT
 public:
@@ -115,6 +120,10 @@ public:
     // is waited for up to 10 s).
     void stop(const QString &sessionId, const QString &cwd, std::function<void()> done);
 
+    // `claude auth status`: a claude.ai login and an API key (from the
+    // environment or settings) both count. Takes a fraction of a second.
+    void checkLogin(std::function<void(Login)> done);
+
     // The full session id of background job `shortId` (from its state.json).
     QString sessionIdForShort(const QString &shortId) const;
 
@@ -157,6 +166,10 @@ private:
 std::vector<SlashCommand> parseCommandList(const QByteArray &output);
 // The login in that answer ({} when absent).
 QJsonObject               parseAccount(const QByteArray &output);
+
+// `claude auth status` output (JSON with "loggedIn", verified 2.1.283; exit
+// code 1 when logged out) → whether the CLI is logged in.
+Login parseLoginStatus(const QByteArray &output, int exitCode);
 
 // "backgrounded · 1a2b3c4d · title" → "1a2b3c4d"; empty when absent.
 QString parseBackgroundedShortId(const QString &output);
