@@ -112,7 +112,7 @@ TeammatePage::TeammatePage(ImageCache *imgCache, QWidget *parent)
     folderRow->setContentsMargins(0, 0, 0, 0);
     folderRow->setSpacing(sp.md);
     _folderLabel = new QLabel(_footer);
-    _folderLabel->setTextFormat(Qt::PlainText);
+    _folderLabel->setTextFormat(Qt::RichText);
     folderRow->addWidget(_folderLabel, 1);
     _folderBtn = new StyledButton(tr("Change folder"), StyledButton::Variant::Ghost, _footer);
     _folderBtn->setSize(StyledButton::Size::Small);
@@ -237,7 +237,9 @@ void TeammatePage::rebuild() {
 void TeammatePage::setFolder(const QString &dir) {
     _folder  = dir;
     _blocker = _session ? _session->backend()->agentSessionBlocker(dir) : QString();
-    _folderLabel->setText(tr("New sessions start in %1").arg(homeRelative(dir)));
+    _folderLabel->setText(
+        tr("New sessions start in %1").arg("<b>" + homeRelative(dir).toHtmlEscaped() + "</b>")
+    );
     emit folderChanged();
 }
 
