@@ -325,9 +325,14 @@ private:
     // (no-cursor) page and therefore the channel head, so a local row newer than
     // its newest message was deleted, not merely not-yet-fetched; a cursored
     // (older) page is a middle slice, so deletion reconciliation is capped at its
-    // newest message.
+    // newest message. fromStart=true means nothing is older than `incoming`
+    // (MessagePage::fromStart): a local row below its oldest message is gone
+    // too — a cached row that missed its deletion while the chat wasn't open.
     void mergeNetworkMessages(
-        const std::vector<Message> &incoming, bool fromHeadPage, quint64 requestRevision
+        const std::vector<Message> &incoming,
+        bool                        fromHeadPage,
+        quint64                     requestRevision,
+        bool                        fromStart = false
     );
     void cacheMergedPage(const std::vector<Message> &incoming, quint64 requestRevision);
     // Re-fetch the newest page of the open conversation/thread and merge it,
@@ -341,11 +346,13 @@ private:
     // unless `conv` is the open conversation. `authoritative` forwards to
     // mergeNetworkMessages' fromHeadPage: true only when `messages` really is the
     // newest page, so a local row above it can be treated as deleted.
+    // `fromStart` forwards likewise (the page reaches the first message).
     void mergeHeadPage(
         const ConversationId       &conv,
         const std::vector<Message> &messages,
         bool                        authoritative,
-        quint64                     requestRevision
+        quint64                     requestRevision,
+        bool                        fromStart = false
     );
     // Thread-mode counterpart of the EvHeadRefresh merge. The safety poll fetches
     // conversations.history, which NEVER contains thread replies, so that page

@@ -485,7 +485,9 @@ void MessageListWidget::openConversation(ConversationId conv, const Ts &lastRead
                     const bool wasAtBottom =
                         verticalScrollBar()->value() >= verticalScrollBar()->maximum() - 4;
                     const bool retarget = _scrollToBottomPending || !_pendingJumpTs.isEmpty();
-                    mergeNetworkMessages(page.messages, /*fromHeadPage=*/true, revision);
+                    mergeNetworkMessages(
+                        page.messages, /*fromHeadPage=*/true, revision, page.fromStart
+                    );
                     if (retarget) {
                         applyPendingScroll();
                         // The network page is authoritative — if the saved or
@@ -500,7 +502,9 @@ void MessageListWidget::openConversation(ConversationId conv, const Ts &lastRead
                     }
                 } else {
                     // No cached data was shown — normal first-load path.
-                    mergeNetworkMessages(page.messages, /*fromHeadPage=*/true, revision);
+                    mergeNetworkMessages(
+                        page.messages, /*fromHeadPage=*/true, revision, page.fromStart
+                    );
                     _initialPageDone = true;
                     emit initialPageLoaded();
                     QTimer::singleShot(0, this, [this, conv] {
@@ -886,7 +890,7 @@ struct ItemDateLess {
 } // namespace
 
 void MessageListWidget::mergeNetworkMessages(
-    const std::vector<Message> &incoming, bool fromHeadPage, quint64 requestRevision
+    const std::vector<Message> &incoming, bool fromHeadPage, quint64 requestRevision, bool fromStart
 ) {
     // Unknown request order must never be treated as newer than all live data.
     if (!requestRevision)
@@ -951,7 +955,9 @@ void MessageListWidget::mergeNetworkMessages(
             oldest = std::min(oldest, msg.date);
             newest = std::max(newest, msg.date);
         }
-        const qint64 lower   = haveRange ? oldest : std::numeric_limits<qint64>::min();
+        // A page nothing is older than covers everything below it as well.
+        const qint64 lower =
+            haveRange && !(fromHeadPage && fromStart) ? oldest : std::numeric_limits<qint64>::min();
         const qint64 upper   = fromHeadPage ? std::numeric_limits<qint64>::max() : newest;
         bool         removed = false;
         for (int i = static_cast<int>(_items.size()) - 1; i >= 0; --i) {
@@ -4713,19 +4719,22 @@ void MessageListWidget::backfillAfterReconnect() {
     const auto revision      = _session->nextMessageRevision();
     auto producer = threadMode ? _session->backend()->loadThread(conv, _threadRootTs, std::nullopt)
                                : _session->backend()->loadHistory(conv, std::nullopt);
-    std::move(producer) |
-        rpl::on_next(
-            [this, conv, threadMode, revision](MessagePage page) {
-                // (mergeNetworkMessages dedups by ts, so racing the initial open
-                // load can't produce twins.) mergeHeadPage guards _currentConv.
-                // A no-cursor loadHistory page IS the channel head; a thread page
-                // is authoritative only when it came back whole.
-                mergeHeadPage(
-                    conv, page.messages, !threadMode || threadPageIsComplete(page), revision
-                );
-            },
-            _eventLifetime
-        );
+    std::move(producer) | rpl::on_next(
+                              [this, conv, threadMode, revision](MessagePage page) {
+                                  // (mergeNetworkMessages dedups by ts, so racing the initial open
+                                  // load can't produce twins.) mergeHeadPage guards _currentConv.
+                                  // A no-cursor loadHistory page IS the channel head; a thread page
+                                  // is authoritative only when it came back whole.
+                                  mergeHeadPage(
+                                      conv,
+                                      page.messages,
+                                      !threadMode || threadPageIsComplete(page),
+                                      revision,
+                                      page.fromStart
+                                  );
+                              },
+                              _eventLifetime
+                          );
 }
 
 Ts MessageListWidget::newestConfirmedTs() const {
@@ -4770,7 +4779,9 @@ void MessageListWidget::refreshOpenThread(
                 // Thread could have been closed or swapped mid-flight.
                 if (!_isThreadMode || _threadRootTs != root)
                     return;
-                mergeHeadPage(conv, page.messages, threadPageIsComplete(page), revision);
+                mergeHeadPage(
+                    conv, page.messages, threadPageIsComplete(page), revision, page.fromStart
+                );
             },
             _eventLifetime
         );
@@ -4800,7 +4811,8 @@ void MessageListWidget::mergeHeadPage(
     const ConversationId       &conv,
     const std::vector<Message> &messages,
     bool                        authoritative,
-    quint64                     requestRevision
+    quint64                     requestRevision,
+    bool                        fromStart
 ) {
     // Conversation changed out from under an in-flight fetch. (Channel history and
     // thread replies must never be merged into each other's view; that's the
@@ -4810,7 +4822,7 @@ void MessageListWidget::mergeHeadPage(
     const bool wasAtBottom = verticalScrollBar()->value() >= verticalScrollBar()->maximum() - 4;
     // A no-cursor (head) fetch is authoritative for the head, so it also
     // reconciles deletions missed during the socket gap.
-    mergeNetworkMessages(messages, /*fromHeadPage=*/authoritative, requestRevision);
+    mergeNetworkMessages(messages, /*fromHeadPage=*/authoritative, requestRevision, fromStart);
     cacheMergedPage(messages, requestRevision);
     // Reveal anything that landed during the gap, but only if the user was already
     // pinned to the bottom (don't yank them out of scrollback they're reading).

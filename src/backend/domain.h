@@ -1123,6 +1123,10 @@ inline bool isThreadBroadcast(const Message &m) {
 struct MessagePage {
     std::vector<Message>   messages;
     std::optional<QString> olderCursor; // pass to next loadHistory call
+    // Nothing is older: the page starts at the conversation's first message.
+    // Only a backend that knows says so (no cursor alone doesn't: some
+    // conversations can't be paged at all).
+    bool                   fromStart                             = false;
     bool                   operator==(const MessagePage &) const = default;
 };
 

@@ -60,6 +60,7 @@ struct StubBackend : msga_test::StubBackendBase {
     std::vector<Message>   _historyPage;
     std::vector<Message>   _threadPage;
     std::optional<QString> _olderCursor;
+    bool                   _fromStart = false;
 
     // When set, a no-cursor loadHistory answers nothing until deliverHistory()
     // is called — the "conversation opened, its first page still in flight"
@@ -74,10 +75,13 @@ struct StubBackend : msga_test::StubBackendBase {
             return rpl::variable<MessagePage>(MessagePage{}).value();
         if (_deferHistory)
             return _historyStream.events();
-        return rpl::variable<MessagePage>(MessagePage{_historyPage, _olderCursor}).value();
+        return rpl::variable<MessagePage>(MessagePage{_historyPage, _olderCursor, _fromStart})
+            .value();
     }
-    void deliverHistory() { _historyStream.fire(MessagePage{_historyPage, _olderCursor}); }
-    bool _deferThread = false;
+    void deliverHistory() {
+        _historyStream.fire(MessagePage{_historyPage, _olderCursor, _fromStart});
+    }
+    bool                           _deferThread = false;
     rpl::event_stream<MessagePage> _threadStream;
     rpl::producer<MessagePage>     loadThread(ConversationId, Ts, std::optional<QString>) override {
         if (_deferThread)
@@ -302,6 +306,49 @@ TEST_CASE(
 
     const auto view = liveView(list, f.session.get(), kConv.id);
     CHECK(view.empty());
+}
+
+TEST_CASE(
+    "reopen clears a cached row older than a history with nothing before it",
+    "[message_list][delete]"
+) {
+    Fixture f;
+
+    // Seen 2026-09-27 in a Claude Code session: msga's own copy of a sent
+    // message (timed when it was sent) was cached, the prompt it became landed
+    // (timed a moment later, when Claude Code wrote it) while the chat wasn't
+    // on screen — and the copy showed above it on every open, as a twin.
+    const std::vector<Message> cached = {
+        makeMessage("1000.000001", "hi (msga's copy)"),
+        makeMessage("1000.000002", "hi"),
+    };
+    f.session->cacheMessages(kConv.id, cached);
+    f.stub->_historyPage = {cached[1]};
+
+    bool olderExists = false;
+    SECTION("the page is the whole history") {
+        f.stub->_fromStart = true;
+    }
+    SECTION("the row may be older history") {
+        olderExists = true;
+    }
+    MessageListWidget list(f.session.get(), nullptr);
+    list.openConversation(kConv.id);
+
+    const auto view = liveView(list, f.session.get(), kConv.id);
+    CHECK(containsTs(view, "1000.000002"));
+    CHECK(containsTs(view, "1000.000001") == olderExists);
+}
+
+TEST_CASE("a message deleted while its chat is closed leaves the cache", "[message_list][delete]") {
+    Fixture f;
+    f.session->cacheMessages(
+        kConv.id, {makeMessage("1000.000001", "one"), makeMessage("1000.000002", "two")}
+    );
+    f.stub->_events.fire(EvMessageDeleted{kConv.id, "1000.000002"});
+    const auto cached = f.session->cachedMessages(kConv.id);
+    CHECK(containsTs(cached, "1000.000001"));
+    CHECK_FALSE(containsTs(cached, "1000.000002"));
 }
 
 TEST_CASE(

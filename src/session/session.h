@@ -45,13 +45,13 @@ public:
     // The backend's conversation list has arrived at least once — an empty one
     // (a Claude Code workspace with no sessions yet) is then really empty, not
     // still loading.
-    bool conversationsLoaded() const { return _conversationsLoaded; }
-    rpl::producer<std::vector<User>>         users() const;
-    rpl::producer<Event>                     events() const;
-    rpl::producer<AuthState>                 authState() const;
+    bool                             conversationsLoaded() const { return _conversationsLoaded; }
+    rpl::producer<std::vector<User>> users() const;
+    rpl::producer<Event>             events() const;
+    rpl::producer<AuthState>         authState() const;
     // Fires with a human-readable message whenever a network operation fails
     // without a caller-provided error handler. Subscribe in the UI to show errors.
-    rpl::producer<QString>                   errors() const;
+    rpl::producer<QString>           errors() const;
     // Fires when Slack keeps evicting our shared Socket Mode connection because
     // the same compiled-in app keys are running on another device. The UI shows
     // a persistent, dismissable notice (not the transient error banner) — the
@@ -745,6 +745,9 @@ private:
     // echo (chat.postMessage response + realtime) or a Socket Mode envelope
     // redelivery. Remembers the last 512 sightings.
     bool firstSighting(const ConversationId &conv, const Ts &ts);
+    // A message deleted while its chat isn't on screen leaves that chat's cache
+    // too; the next open would show it again otherwise.
+    void forgetCachedMessage(const ConversationId &conv, const Ts &ts);
 
     // Apply a new message to in-memory state (latest cursor, unread/mention
     // badges, mark-read while reading, optimistic-ghost removal) and report

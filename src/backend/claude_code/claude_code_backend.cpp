@@ -2087,6 +2087,7 @@ rpl::producer<MessagePage> Backend::loadHistory(ConversationId id, std::optional
             page.messages.assign(msgs.begin() + begin, msgs.begin() + end);
             if (begin > 0)
                 page.olderCursor = QString::number(n - begin);
+            page.fromStart = begin == 0;
         }
         consumer.put_next(std::move(page));
         consumer.put_done();

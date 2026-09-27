@@ -361,6 +361,13 @@ void Session::start() {
                         QCoreApplication::translate("Session", "Couldn't send message: %1")
                             .arg(friendlySendError(ev->reason))
                     );
+                } else if (auto *ev = std::get_if<EvMessageDeleted>(&e)) {
+                    // The open chat drops the row itself, but a chat left before
+                    // the deletion came keeps it in its cache — shown again on the
+                    // next open, and older than the history page that no longer
+                    // has it, so that page never takes it back (a Claude Code
+                    // session's copy of a sent message, cached on its way).
+                    forgetCachedMessage(ev->conv, ev->ts);
                 } else if (auto *ev = std::get_if<EvHuddleChanged>(&e)) {
                     // Patch live-huddle state; the conversations() producer
                     // re-fires, so the huddle banner and conv-list indicator
@@ -2337,6 +2344,12 @@ bool Session::firstSighting(const ConversationId &conv, const Ts &ts) {
     while (_seenMsgOrder.size() > 512)
         _seenMsgKeys.remove(_seenMsgOrder.dequeue());
     return true;
+}
+
+void Session::forgetCachedMessage(const ConversationId &conv, const Ts &ts) {
+    auto msgs = cachedMessages(conv);
+    if (std::erase_if(msgs, [&](const Message &m) { return m.ts == ts; }))
+        cacheMessages(conv, msgs);
 }
 
 Backend *Session::backend() const {

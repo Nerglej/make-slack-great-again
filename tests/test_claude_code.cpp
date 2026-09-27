@@ -949,6 +949,7 @@ TEST_CASE(
     REQUIRE(history.size() == 1);
     REQUIRE(history[0].messages.size() == 1);
     CHECK(history[0].messages[0].author == UserId{"me"});
+    CHECK(history[0].fromStart); // the whole session: a cached row older than it is stale
 
     // The turn ends: the answer is announced (once), and the dot goes idle.
     home.append(turnEnd("2026-09-25T10:00:02.000Z"));
