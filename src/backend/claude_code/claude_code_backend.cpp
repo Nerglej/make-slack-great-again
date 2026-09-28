@@ -5,6 +5,7 @@
 #include "cc_catalog.h"
 #include "cc_outputs.h"
 #include "cc_roles.h"
+#include "cc_worktrees.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -1567,13 +1568,15 @@ void Backend::dispatch(Tracked &t) {
         Tracked *t = find(convId);
         if (!t) {
             // Removed from msga while the CLI was starting the turn: stop it
-            // there, and keep it away — its worktree too, if it's msga's.
-            if (!sessionId.isEmpty()) {
-                QString worktree;
-                if (fresh || startedByMsga(sessionId))
-                    if (const auto job = readJob(_paths, sessionId))
-                        worktree = job->worktreePath;
-                stopRemoved(sessionId, cwd, worktree);
+            // there, and keep it away — deleted with its worktrees if msga's.
+            if (sessionId.isEmpty())
+                return;
+            if (fresh || startedByMsga(sessionId)) {
+                const auto cleanup = std::make_shared<Cleanup>();
+                removeOwned(sessionId, {}, cwd, true, cleanup);
+                release(cleanup);
+            } else {
+                stopRemoved(sessionId, cwd);
             }
             return;
         }
@@ -2791,28 +2794,33 @@ void Backend::leaveConversation(ConversationId conv) {
     if (!_sessions.contains(conv.value))
         return;
     // Its /btw threads go with it — they would otherwise turn up as sessions.
+    // Their worktrees are deleted once all have stopped: a thread works in
+    // its parent's, which must not look in use for the parent's worker.
+    const auto  cleanup = std::make_shared<Cleanup>();
     QStringList forks;
     for (auto it = _sessions.cbegin(); it != _sessions.cend(); ++it)
         if (it.value()->forkOf == conv.value && asThread(*it.value()))
             forks << it.key();
     for (const auto &f : forks)
-        hideSession(f);
-    hideSession(conv.value);
+        hideSession(f, cleanup);
+    hideSession(conv.value, cleanup);
+    release(cleanup);
     watchLive();
     pumpTyping();
     saveKnown();
 }
 
-void Backend::hideSession(const QString &convId) {
+void Backend::hideSession(const QString &convId, const std::shared_ptr<Cleanup> &cleanup) {
     const auto it = _sessions.find(convId);
     if (it == _sessions.end())
         return;
     Tracked &t = *it.value();
-    // Messages still waiting here are dropped, and a background session msga
-    // started is stopped with all it runs: nothing of it goes on once it's out
-    // of sight. (A turn being launched right now is stopped once it has:
-    // dispatch.) A terminal's session is the terminal's, and a background one
-    // started elsewhere is whoever's started it: it only leaves msga's list.
+    // Messages still waiting here are dropped, and a session msga started is
+    // deleted with all it runs and every worktree it used: nothing of it goes
+    // on once it's out of sight. (A turn being launched right now is dealt
+    // with once it has: dispatch.) A terminal's session is the terminal's,
+    // and a background one started elsewhere is whoever's started it: it only
+    // leaves msga's list.
     failSends(t, QCoreApplication::translate("claude_code", "The session was removed from msga."));
     if (!t.info.sessionId.isEmpty()) {
         QString transcript = t.transcriptPath;
@@ -2822,10 +2830,14 @@ void Backend::hideSession(const QString &convId) {
         h.seenSize = sizeOf(transcript);
         _hidden.insert(t.info.sessionId, h);
         _convOf.remove(t.info.sessionId);
-        // One with a worktree loses that too, worker running or not.
-        if (t.info.kind == SessionInfo::Kind::Background && !t.stopping &&
-            (t.info.running || !t.info.worktreePath.isEmpty()) && startedByMsga(t.info.sessionId))
-            stopRemoved(t.info.sessionId, t.info.cwd, t.info.worktreePath);
+        if (startedByMsga(t.info.sessionId))
+            removeOwned(
+                t.info.sessionId,
+                t.info.jobId,
+                t.info.cwd,
+                t.info.kind == SessionInfo::Kind::Background,
+                cleanup
+            );
     }
     clearOutputs(convId); // the copies of the files it made
     _reactions.remove(convId);
@@ -2892,14 +2904,19 @@ bool Backend::startedByMsga(const QString &sessionId, QSet<QString> &seen) const
     return false;
 }
 
-void Backend::stopRemoved(const QString &sessionId, const QString &cwd, const QString &worktree) {
+struct Backend::Cleanup {
+    int                      pending = 1; // the remover's own hold
+    std::vector<WorktreeRef> refs;
+};
+
+void Backend::stopRemoved(const QString &sessionId, const QString &cwd) {
     if (!_hidden.contains(sessionId)) {
         Hidden h{nowMs(), _paths.findTranscript(sessionId)};
         h.seenSize = sizeOf(h.transcript);
         _hidden.insert(sessionId, h);
     }
     _hidden[sessionId].stopping = true;
-    auto stopped                = [this, sessionId] {
+    _launcher->stop(sessionId, cwd, [this, sessionId] {
         // The worker writes its last records as it exits; that is no new
         // activity to bring the session back for.
         if (const auto h = _hidden.find(sessionId); h != _hidden.end()) {
@@ -2910,36 +2927,105 @@ void Backend::stopRemoved(const QString &sessionId, const QString &cwd, const QS
             h->seenSize = sizeOf(h->transcript);
             saveKnown();
         }
+    });
+}
+
+void Backend::removeOwned(
+    const QString                  &sessionId,
+    const QString                  &jobId,
+    const QString                  &cwd,
+    bool                            background,
+    const std::shared_ptr<Cleanup> &cleanup
+) {
+    if (!_hidden.contains(sessionId)) {
+        Hidden h{nowMs(), _paths.findTranscript(sessionId)};
+        h.seenSize = sizeOf(h.transcript);
+        _hidden.insert(sessionId, h);
+    }
+    // The job's worktree is read now: `claude rm` drops the job.
+    const QString job  = jobId.isEmpty() ? sessionId.left(8) : jobId;
+    auto          refs = worktreesOfJob(readJobState(_paths, job));
+    ++cleanup->pending;
+    auto stopped = [this, sessionId, cwd, refs, cleanup]() mutable {
+        QString transcript;
+        if (const auto h = _hidden.find(sessionId); h != _hidden.end()) {
+            // The worker writes its last records as it exits; that is no new
+            // activity to bring the session back for.
+            h->stopping = false;
+            h->atMs     = nowMs();
+            if (h->transcript.isEmpty())
+                h->transcript = _paths.findTranscript(sessionId);
+            h->seenSize = sizeOf(h->transcript);
+            transcript  = h->transcript;
+            saveKnown();
+        }
+        if (transcript.isEmpty())
+            transcript = _paths.findTranscript(sessionId);
+        for (auto &ref : worktreesOfTranscript(transcript))
+            addWorktree(refs, std::move(ref));
+        for (auto &ref : refs) {
+            if (ref.origin.isEmpty())
+                ref.origin = cwd; // where to find its repository, if it's gone
+            addWorktree(cleanup->refs, std::move(ref));
+        }
+        release(cleanup);
     };
-    if (worktree.isEmpty()) {
-        _launcher->stop(sessionId, cwd, stopped);
+    if (!background) { // a terminal's: nothing to stop, and a live one's
+        stopped();     // worktree is kept (it's in use)
         return;
     }
-    // `claude rm` deletes the worktree; no process of its own should sit in it
-    // (on Windows that would hold the folder), so it runs from beside it.
-    const QString inside = QDir::cleanPath(worktree);
-    const QString here   = QDir::cleanPath(cwd);
-    const QString from   = here == inside || here.startsWith(inside + QLatin1Char('/'))
-                               ? QFileInfo(inside).absolutePath()
-                               : cwd;
-    _launcher->remove(sessionId, from, [this, sessionId, worktree, stopped](QString refusal) {
+    _hidden[sessionId].stopping = true;
+    // No process of msga's should sit in a worktree being deleted (on Windows
+    // that holds the folder), nor in a folder that's gone (it won't start).
+    QString from                = cwd;
+    for (const auto &ref : refs)
+        if (pathWithin(from, ref.path))
+            from = QFileInfo(ref.origin).isDir() ? ref.origin : QFileInfo(ref.path).absolutePath();
+    if (!QFileInfo(from).isDir())
+        from = QDir::homePath();
+    _launcher->remove(sessionId, jobId, from, [sessionId, stopped](QString refusal) mutable {
+        // Claude Code keeps a worktree with changes in it; msga deletes it all
+        // the same (stopped), and the session stays removed.
+        if (!refusal.isEmpty())
+            qInfo(
+                "claude code: rm kept %s: %s", qPrintable(sessionId.left(8)), qPrintable(refusal)
+            );
         stopped();
-        if (refusal.isEmpty())
-            return;
-        // It stays where it is, with its job; the session stays removed.
-        qInfo(
-            "claude code: kept worktree %s of %s: %s",
-            qPrintable(worktree),
-            qPrintable(sessionId.left(8)),
-            qPrintable(refusal)
-        );
-        _events.fire(
-            EvNotice{QCoreApplication::translate(
-                         "claude_code", "Claude Code kept the session's worktree: %1"
-            )
-                         .arg(refusal)}
-        );
     });
+}
+
+void Backend::release(const std::shared_ptr<Cleanup> &cleanup) {
+    if (--cleanup->pending > 0)
+        return;
+    std::vector<WorktreeRef> refs;
+    for (const auto &ref : cleanup->refs)
+        // Never anything of Claude Code's own (transcripts, jobs), whatever a
+        // record says.
+        if (!pathWithin(ref.path, _paths.home) && !pathWithin(_paths.home, ref.path) &&
+            !_reaping.contains(QDir::cleanPath(ref.path))) {
+            _reaping.insert(QDir::cleanPath(ref.path));
+            refs.push_back(ref);
+        }
+    if (refs.empty())
+        return;
+    reapWorktrees(
+        _ctx,
+        refs,
+        [paths = _paths](const QString &path) { return worktreeInUse(paths, path); },
+        [this, refs](QStringList notDeleted) {
+            for (const auto &ref : refs)
+                _reaping.remove(QDir::cleanPath(ref.path));
+            if (notDeleted.isEmpty())
+                return;
+            qWarning("claude code: worktrees not deleted: %s", qPrintable(notDeleted.join(", ")));
+            _events.fire(
+                EvNotice{QCoreApplication::translate(
+                             "claude_code", "Couldn't delete the session's worktree: %1"
+                )
+                             .arg(notDeleted.join(QStringLiteral(", ")))}
+            );
+        }
+    );
 }
 
 void Backend::findAgentSessions(std::function<void(std::vector<FoundSession>)> done) {

@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
@@ -30,6 +31,7 @@
 #include "backend/claude_code/cc_roster.h"
 #include "backend/claude_code/cc_transcript.h"
 #include "backend/claude_code/cc_vt.h"
+#include "backend/claude_code/cc_worktrees.h"
 #include "backend/claude_code/claude_code_backend.h"
 
 using namespace claude_code;
@@ -975,6 +977,57 @@ TEST_CASE("claude rm says why it kept a session", "[claude][launcher]") {
     CHECK_FALSE(parseRemoveRefusal("", 1).isEmpty());
 }
 
+TEST_CASE("the worktrees a session used are found in its records", "[claude][worktrees]") {
+    const auto job = worktreesOfJob(
+        R"({"sessionId":"S","worktreePath":"/r/.claude/worktrees/a","worktreeBranch":"wt-a",)"
+        R"("originCwd":"/r"})"
+    );
+    REQUIRE(job.size() == 1);
+    CHECK(job[0] == WorktreeRef{"/r/.claude/worktrees/a", "wt-a", "/r"});
+    CHECK(worktreesOfJob(R"({"sessionId":"S","worktreePath":null})").empty());
+
+    QTemporaryDir dir;
+    const QString t = dir.path() + "/S.jsonl";
+    writeFile(
+        t,
+        R"({"type":"user","message":{"role":"user","content":"worktree-state"}})"
+        "\n"
+        R"({"type":"worktree-state","worktreeSession":{"worktreePath":"/r/w/b","worktreeBranch":"wt-b","originalCwd":"/r"}})"
+        "\n"
+        R"({"type":"worktree-state","worktreeSession":null})"
+        "\n"
+        R"({"type":"worktree-state","worktreeSession":{"worktreePath":"/r/w/b/","originalCwd":"/r"}})"
+        "\n"
+        R"({"type":"worktree-state","worktreeSession":{"worktreePath":"/r/w/c","worktreeBranch":"wt-c"}})"
+    );
+    writeFile(
+        dir.path() + "/S/subagents/agent-x.meta.json",
+        R"({"agentType":"x","worktreePath":"/r/w/d","worktreeBranch":"wt-d"})"
+    );
+    writeFile(dir.path() + "/S/subagents/agent-y.meta.json", R"({"agentType":"y"})");
+    const auto seen = worktreesOfTranscript(t);
+    REQUIRE(seen.size() == 3);
+    CHECK(seen[0] == WorktreeRef{"/r/w/b", "wt-b", "/r"}); // named twice: once
+    CHECK(seen[1] == WorktreeRef{"/r/w/c", "wt-c", ""});
+    CHECK(seen[2] == WorktreeRef{"/r/w/d", "wt-d", ""});
+
+    CHECK(pathWithin("/r/w/b/src", "/r/w/b"));
+    CHECK(pathWithin("/r/w/b", "/r/w/b/"));
+    CHECK_FALSE(pathWithin("/r/w/bc", "/r/w/b"));
+    CHECK_FALSE(pathWithin("/r", "/r/w/b"));
+
+    const auto list = parseWorktreeList(
+        "worktree /r\nHEAD 1\nbranch refs/heads/master\n\n"
+        "worktree /r/w/b\nHEAD 2\nbranch refs/heads/wt-b\n\n"
+        "worktree /r/w/e\nHEAD 3\ndetached\nprunable gitdir file points to non-existent location\n"
+    );
+    REQUIRE(list.size() == 3);
+    CHECK(list[0].path == "/r");
+    CHECK(list[0].branch == "master");
+    CHECK(list[1].branch == "wt-b");
+    CHECK(list[2].branch.isEmpty());
+}
+
 TEST_CASE("a session title names the teammates it mentions", "[claude][backend]") {
     FakeClaudeHome home;
     home.writeSession("idle", "Ask @claude:role:engineer and @claude:agent");
@@ -1253,7 +1306,7 @@ TEST_CASE("a background worker is paired with its job by job id", "[claude][rost
 
 #if defined(Q_OS_LINUX)
 TEST_CASE(
-    "removing a session stops it only when msga, or a session of msga's, started it",
+    "removing a session deletes it only when msga, or a session of msga's, started it",
     "[claude][backend][bg]"
 ) {
     FakeClaudeHome home;
@@ -1340,70 +1393,145 @@ printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
     // Started elsewhere: it only leaves the list.
     backend.leaveConversation(ConversationId{other});
     QTest::qWait(1500);
-    CHECK(calls().filter("stop").isEmpty());
+    CHECK(calls().filter("cccc3333").isEmpty());
     CHECK(isProcessAlive(workers[2]));
 
-    // Started by msga's session: stopped, its lingering worker too.
+    // Started by msga's session: deleted (`claude rm`), its lingering worker
+    // ended too.
     backend.leaveConversation(ConversationId{child});
-    REQUIRE(QTest::qWaitFor([&] { return calls().contains("stop bbbb2222"); }, 5000));
+    REQUIRE(QTest::qWaitFor([&] { return calls().contains("rm bbbb2222"); }, 5000));
     CHECK(QTest::qWaitFor([&] { return !isProcessAlive(workers[1]); }, 16000));
     CHECK(isProcessAlive(workers[0]));
     CHECK(isProcessAlive(workers[2]));
-    CHECK(calls().filter("stop").size() == 1);
+    CHECK(calls().filter("stop").isEmpty());
+    CHECK(calls().filter(QRegularExpression("^rm ")).size() == 1);
     for (const qint64 pid : workers)
         signalProcess(pid, true);
 }
 
 TEST_CASE(
-    "removing a session msga started deletes its worktree with claude rm", "[claude][backend][bg]"
+    "removing a session msga started deletes every worktree it used", "[claude][backend][bg]"
 ) {
     FakeClaudeHome home;
     QTemporaryDir  work;
     QDir(home.dir.path()).mkpath("jobs");
-    // `rm` removes aaaa1111 (dropping its job, as Claude Code does) and keeps
-    // dddd4444's worktree; the worker it would end lingers, as with stop.
+    // A real repository, with the worktrees a session can leave behind.
+    const QString repo = QFileInfo(work.path()).canonicalFilePath() + "/repo";
+    QDir().mkpath(repo);
+    auto git = [&](const QStringList &args) {
+        QProcess p;
+        p.setWorkingDirectory(repo);
+        p.start(
+            "git",
+            QStringList{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"} +
+                args
+        );
+        REQUIRE(p.waitForFinished(20000));
+        REQUIRE(p.exitCode() == 0);
+        return QString::fromUtf8(p.readAllStandardOutput());
+    };
+    git({"init", "-q", "-b", "master"});
+    writeFile(repo + "/a.txt", "a\n");
+    git({"add", "a.txt"});
+    git({"commit", "-q", "-m", "a"});
+    const QString trees = repo + "/.claude/worktrees";
+    auto          add   = [&](const QString &name) {
+        git({"worktree", "add", "-q", "-b", "wt-" + name, trees + "/" + name});
+        return trees + "/" + name;
+    };
+    const QString inJob     = add("job");     // the job's own, dirty
+    const QString inRecords = add("records"); // only in the transcript, left, unpushed
+    const QString inSub     = add("sub");     // a subagent's
+    const QString inUse     = add("busy");    // entered, but a live session works in it
+    const QString foreign   = add("foreign"); // another session's, not msga's
+    writeFile(inJob + "/scratch.txt", "uncommitted\n");
+    writeFile(inRecords + "/b.txt", "b\n");
+    {
+        QProcess p;
+        p.setWorkingDirectory(inRecords);
+        p.start(
+            "git",
+            {"-c",
+             "user.name=t",
+             "-c",
+             "user.email=t@t",
+             "-c",
+             "commit.gpgsign=false",
+             "commit",
+             "-q",
+             "-am",
+             "x",
+             "--allow-empty"}
+        );
+        REQUIRE(p.waitForFinished(20000));
+    }
+    writeFile(inRecords + "/a.txt", "changed\n");
+
+    // Claude Code: `rm` keeps the dirty worktree (and the job), as it does.
     const QString cli = work.path() + "/claude";
     writeFile(cli, R"SH(#!/bin/sh
 if [ "$1" = auth ]; then echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
 printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
-printf '%s %s\n' "$2" "$(pwd -P)" >> "$CLAUDE_CONFIG_DIR/cwds.log"
-if [ "$1" = rm ] && [ "$2" = aaaa1111 ]; then
-  rm -rf "$CLAUDE_CONFIG_DIR/jobs/$2"
-  echo "removed $2"; echo "  worktree: gone"; exit 0
-fi
 if [ "$1" = rm ]; then
   echo "kept $2 — its worktree is still at somewhere"
   echo "  it has uncommitted changes"
-  echo "  claude rm $2 --discard-unpushed 1a2b@3c4d"
   exit 1
 fi
 )SH");
     QFile(cli).setPermissions(QFile(cli).permissions() | QFileDevice::ExeOwner);
-    const QString withTree = "aaaa1111-0000-4000-8000-000000000001"; // msga's, a worktree
-    const QString plain    = "bbbb2222-0000-4000-8000-000000000002"; // msga's, none
-    const QString foreign  = "cccc3333-0000-4000-8000-000000000003"; // elsewhere's, a worktree
-    const QString kept     = "dddd4444-0000-4000-8000-000000000004"; // msga's, exited, kept
-    const QString treeA    = work.path() + "/repo/.claude/worktrees/a";
-    QDir().mkpath(treeA);
+    const QString mine       = "aaaa1111-0000-4000-8000-000000000001";
+    const QString theirs     = "cccc3333-0000-4000-8000-000000000003";
+    const QString busy       = "eeee5555-0000-4000-8000-000000000005";
+    const QString transcript = home.dir.path() + "/projects/-src-app/" + mine + ".jsonl";
+    auto          record     = [](const QString &path, const QString &branch, const QString &from) {
+        return QJsonDocument(
+                   QJsonObject{
+                       {"type", "worktree-state"},
+                       {"worktreeSession",
+                        QJsonObject{
+                            {"worktreePath", path},
+                            {"worktreeBranch", branch},
+                            {"originalCwd", from}
+                        }}
+                   }
+               ).toJson(QJsonDocument::Compact) +
+               "\n";
+    };
+    // Entered, then left (ExitWorktree(keep) records a null session); entered
+    // one a live session works in; the main checkout named as if one.
+    writeFile(
+        transcript,
+        prompt("work in a worktree", "2026-09-25T10:00:00.000Z") +
+            record(inRecords, "wt-records", repo) +
+            "{\"type\":\"worktree-state\",\"worktreeSession\":null}\n" +
+            record(inUse, "wt-busy", repo) + record(repo, "master", repo)
+    );
+    writeFile(
+        home.dir.path() + "/projects/-src-app/" + mine + "/subagents/agent-a1.meta.json",
+        QJsonDocument(QJsonObject{{"worktreePath", inSub}, {"worktreeBranch", "wt-sub"}}).toJson()
+    );
     std::vector<qint64> workers;
     int                 n = 0;
-    for (const QString &sid : {withTree, plain, foreign, kept}) {
+    for (const QString &sid : {mine, theirs}) {
         const QString short8 = sid.left(8);
-        QDir(home.dir.path()).mkpath("jobs/" + short8);
-        QJsonObject job{
-            {"state", "done"},
-            {"sessionId", sid},
-            {"cwd", sid == withTree ? treeA : work.path()},
-            {"name", short8},
-            {"linkScanPath", home.dir.path() + "/projects/-src-app/" + sid + ".jsonl"},
-        };
-        if (sid != plain) {
-            job["worktreePath"]   = sid == withTree ? treeA : work.path() + "/wt-" + short8;
-            job["worktreeBranch"] = "worktree-" + short8;
-        }
-        writeFile(home.dir.path() + "/jobs/" + short8 + "/state.json", QJsonDocument(job).toJson());
-        if (sid == kept)
-            continue; // its worker has exited
+        writeFile(
+            home.dir.path() + "/jobs/" + short8 + "/state.json",
+            QJsonDocument(
+                QJsonObject{
+                    {"state", "done"},
+                    {"sessionId", sid},
+                    {"cwd", sid == mine ? inJob : foreign},
+                    {"name", short8},
+                    {"linkScanPath",
+                     sid == mine ? transcript
+                                 : home.dir.path() + "/projects/-src-app/" + sid + ".jsonl"},
+                    {"worktreePath", sid == mine ? inJob : foreign},
+                    {"worktreeBranch", sid == mine ? "wt-job" : "wt-foreign"},
+                    {"originCwd", repo},
+                }
+            )
+                .toJson()
+        );
         qint64 pid = 0;
         REQUIRE(QProcess::startDetached("sleep", {"60"}, {}, &pid));
         workers.push_back(pid);
@@ -1415,78 +1543,106 @@ fi
                     {"sessionId", sid},
                     {"jobId", short8},
                     {"kind", "bg"},
-                    {"status", "idle"}
+                    {"status", "idle"},
+                    {"cwd", sid == mine ? inJob : foreign}
                 }
-            )
-                .toJson()
+            ).toJson()
         );
     }
+    // A terminal's session working in `inUse`.
+    qint64 terminal = 0;
+    REQUIRE(QProcess::startDetached("sleep", {"60"}, {}, &terminal));
+    writeFile(
+        home.dir.path() + "/sessions/t.json",
+        QJsonDocument(
+            QJsonObject{
+                {"pid", terminal},
+                {"sessionId", busy},
+                {"cwd", inUse + "/src"},
+                {"kind", "interactive"},
+                {"entrypoint", "cli"},
+                {"status", "idle"}
+            }
+        )
+            .toJson()
+    );
     const QString known = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                           "/claude-code/known-sessions.json";
-    QDir().mkpath(QFileInfo(known).absolutePath());
     writeFile(
         known,
         QJsonDocument(
-            QJsonObject{{"sessions", QJsonArray{}}, {"started", QJsonArray{withTree, plain, kept}}}
+            QJsonObject{{"sessions", QJsonArray{}}, {"started", QJsonArray{mine}}}
         ).toJson()
     );
-    auto readLines = [&](const QString &name) {
-        QFile f(home.dir.path() + "/" + name);
+    auto calls = [&] {
+        QFile f(home.dir.path() + "/calls.log");
         return f.open(QIODevice::ReadOnly)
                    ? QString::fromUtf8(f.readAll()).split('\n', Qt::SkipEmptyParts)
                    : QStringList{};
     };
-    auto calls = [&] { return readLines("calls.log"); };
+    auto branches = [&] { return git({"branch", "--format=%(refname:short)"}).split('\n'); };
 
     claude_code::Backend backend(Credentials{cli});
     std::vector<Event>   events;
     rpl::lifetime        lt;
     backend.events() | rpl::on_next([&](Event e) { events.push_back(std::move(e)); }, lt);
     backend.connectRealtime();
-    REQUIRE(collect(backend.loadConversations())[0].size() == 4);
+    REQUIRE(collect(backend.loadConversations())[0].size() == 3);
 
-    // Started elsewhere: it only leaves the list, worktree and all.
-    backend.leaveConversation(ConversationId{foreign});
+    // Not msga's: it only leaves the list, worktree and all.
+    backend.leaveConversation(ConversationId{theirs});
     QTest::qWait(1500);
     CHECK(calls().filter("cccc3333").isEmpty());
-    CHECK(isProcessAlive(workers[2]));
+    CHECK(isProcessAlive(workers[1]));
+    CHECK(QFileInfo::exists(foreign));
 
-    // msga's, without a worktree: stopped as before.
-    backend.leaveConversation(ConversationId{plain});
-    REQUIRE(QTest::qWaitFor([&] { return calls().contains("stop bbbb2222"); }, 5000));
-    CHECK(QTest::qWaitFor([&] { return !isProcessAlive(workers[1]); }, 16000));
-
-    // msga's, in a worktree: deleted with `rm` (not stopped), run from outside
-    // the worktree, and its lingering worker ended all the same.
-    backend.leaveConversation(ConversationId{withTree});
+    // msga's: `claude rm` keeps the dirty worktree; msga deletes it once the
+    // worker is gone — and the ones only the records name, and the subagent's.
+    backend.leaveConversation(ConversationId{mine});
     REQUIRE(QTest::qWaitFor([&] { return calls().contains("rm aaaa1111"); }, 5000));
-    CHECK(QTest::qWaitFor([&] { return !isProcessAlive(workers[0]); }, 16000));
-    CHECK(calls().filter("aaaa1111").size() == 1);
     CHECK(
-        readLines("cwds.log").contains("aaaa1111 " + QFileInfo(treeA + "/..").canonicalFilePath())
+        QTest::qWaitFor(
+            [&] {
+                return !QFileInfo::exists(inJob) && !QFileInfo::exists(inRecords) &&
+                       !QFileInfo::exists(inSub);
+            },
+            30000
+        )
     );
-    CHECK_FALSE(QFileInfo::exists(home.dir.path() + "/jobs/aaaa1111"));
-
-    // msga's, exited, its worktree kept by Claude Code: `rm` all the same; the
-    // user is told why, and the session stays removed.
-    backend.leaveConversation(ConversationId{kept});
-    REQUIRE(QTest::qWaitFor([&] { return calls().contains("rm dddd4444"); }, 5000));
-    auto notice = [&] {
-        for (const auto &e : events)
-            if (const auto *ev = std::get_if<EvNotice>(&e))
-                return ev->text;
-        return QString();
-    };
-    REQUIRE(QTest::qWaitFor([&] { return !notice().isEmpty(); }, 5000));
-    CHECK(notice().contains("it has uncommitted changes"));
-    CHECK(calls().filter("dddd4444").size() == 1);
-    CHECK(calls().filter("stop").size() == 1); // bbbb2222's only
-    CHECK(isProcessAlive(workers[2]));
-    const auto after = collect(backend.loadConversations());
-    CHECK(after[0].empty());
+    CHECK(QTest::qWaitFor([&] { return !branches().contains("wt-sub"); }, 10000));
+    QTest::qWait(1000); // the last git, gone from the list, may not have exited yet
+    CHECK(!isProcessAlive(workers[0]));
+    const QStringList left = branches();
+    CHECK_FALSE(left.contains("wt-job"));
+    CHECK_FALSE(left.contains("wt-records"));
+    CHECK_FALSE(left.contains("wt-sub"));
+    // Kept: the one in use, the main checkout and its branch, the other session's.
+    CHECK(left.contains("wt-busy"));
+    CHECK(left.contains("master"));
+    CHECK(left.contains("wt-foreign"));
+    CHECK(QFileInfo::exists(inUse));
+    CHECK(QFileInfo::exists(repo + "/a.txt"));
+    CHECK(QFileInfo::exists(foreign));
+    const QString list = git({"worktree", "list", "--porcelain"});
+    CHECK_FALSE(list.contains(inJob));
+    CHECK_FALSE(list.contains(inRecords));
+    CHECK_FALSE(list.contains(inSub));
+    // The transcripts stay, the subagents' too.
+    CHECK(QFileInfo::exists(transcript));
+    CHECK(
+        QFileInfo::exists(
+            home.dir.path() + "/projects/-src-app/" + mine + "/subagents/agent-a1.meta.json"
+        )
+    );
+    // Nothing failed, so nothing to tell.
+    CHECK(std::none_of(events.begin(), events.end(), [](const Event &e) {
+        return std::holds_alternative<EvNotice>(e);
+    }));
+    CHECK(calls().filter("stop").isEmpty());
 
     for (const qint64 pid : workers)
         signalProcess(pid, true);
+    signalProcess(terminal, true);
 }
 #endif
 
@@ -2541,12 +2697,13 @@ if [ "$1" = attach ]; then # typing into a live worker: see the terminal UI test
   echo "no such session"; exit 1
 fi
 printf '%s\n' "$*" >> "$H/calls.log" # echo would expand \n
-if [ "$1" = stop ]; then
+if [ "$1" = stop ] || [ "$1" = rm ]; then
   # The worker writes its last records as it exits.
   T=$(sed -n 's/.*"linkScanPath":"\([^"]*\)".*/\1/p' "$H/jobs/$2/state.json")
   echo '{"type":"last-prompt","lastPrompt":"x"}' >> "$T"
   rm -f "$H/sessions/w$2.json"
   kill $(cat "$H/wpid-$2" 2>/dev/null) 2>/dev/null
+  if [ "$1" = rm ]; then rm -rf "$H/jobs/$2"; echo "removed $2"; exit 0; fi
   # No `sed -i`: BSD sed (macOS) reads its next argument as a backup suffix.
   sed 's/"state":"[a-z]*"/"state":"stopped"/' "$H/jobs/$2/state.json" > "$H/state.tmp" &&
     mv "$H/state.tmp" "$H/jobs/$2/state.json"
@@ -2713,15 +2870,16 @@ echo "backgrounded · $short"
     signalProcess(bystander, true);
 #endif
 
-    // "Remove from msga" stops a live worker too, and the session stays away
-    // though the worker still writes to its transcript as it goes.
+    // "Remove from msga" deletes it (`claude rm`), live worker and all, and the
+    // session stays away though the worker still writes to its transcript as
+    // it goes.
     send("fifth");
     REQUIRE(QTest::qWaitFor([&] { return calls().size() == 7; }, 8000));
     REQUIRE(QTest::qWaitFor([&] { return working(); }, 8000));
     QTest::qWait(300); // the launcher has reported back
     backend.leaveConversation(conv);
     REQUIRE(QTest::qWaitFor([&] { return calls().size() == 8; }, 8000));
-    CHECK(calls()[7] == "stop abcdef11");
+    CHECK(calls()[7] == "rm abcdef11");
     QTest::qWait(1500);
     const auto convs = collect(backend.loadConversations());
     CHECK(std::none_of(convs[0].begin(), convs[0].end(), [&](const Conversation &c) {
@@ -2729,12 +2887,12 @@ echo "backgrounded · $short"
     }));
     // Nothing resumes it. A removal that lands while the turn is still being
     // launched (a slow machine: the 300 ms above isn't a guarantee) stops the
-    // worker once more when the launch reports back — needed, the first stop may
-    // have beaten the new worker — so a second "stop" is fine, anything else not.
+    // worker once more when the launch reports back — needed, the first rm may
+    // have beaten the new worker — so a second "rm" is fine, anything else not.
     const QStringList after = calls();
     REQUIRE(after.size() >= 8);
     for (qsizetype i = 8; i < after.size(); ++i)
-        CHECK(after[i] == "stop abcdef11");
+        CHECK(after[i] == "rm abcdef11");
 }
 #endif
 

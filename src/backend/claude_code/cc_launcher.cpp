@@ -292,10 +292,12 @@ void Launcher::waitStopped(
     });
 }
 
-void Launcher::reapLeftovers(const QString &sessionId, std::function<void()> done) {
-    const QString shortId = sessionId.left(8);
+void Launcher::reapLeftovers(
+    const QString &sessionId, std::function<void()> done, const QString &jobId
+) {
+    const QString shortId = jobId.isEmpty() ? sessionId.left(8) : jobId;
     auto          pids    = leftoverProcesses(sessionId, shortId);
-    for (const qint64 pid : strandedWorker(_paths, sessionId))
+    for (const qint64 pid : strandedWorker(_paths, sessionId, shortId))
         pids.push_back(pid);
     if (pids.empty()) {
         if (done)
@@ -308,7 +310,7 @@ void Launcher::reapLeftovers(const QString &sessionId, std::function<void()> don
     QTimer::singleShot(2000, this, [paths = _paths, sessionId, shortId, done] {
         for (const qint64 pid : leftoverProcesses(sessionId, shortId))
             signalProcess(pid, true);
-        for (const qint64 pid : strandedWorker(paths, sessionId))
+        for (const qint64 pid : strandedWorker(paths, sessionId, shortId))
             signalProcess(pid, true);
         if (done)
             done();
@@ -327,18 +329,23 @@ void Launcher::stop(const QString &sessionId, const QString &cwd, std::function<
 }
 
 void Launcher::remove(
-    const QString &sessionId, const QString &cwd, std::function<void(QString)> done
+    const QString               &sessionId,
+    const QString               &jobId,
+    const QString               &cwd,
+    std::function<void(QString)> done
 ) {
-    const QString shortId = sessionId.left(8);
-    const auto    pids    = liveWorkerPids(_paths, sessionId);
-    run({QStringLiteral("rm"), shortId}, cwd, [this, sessionId, pids, done](int code, QString out) {
-        const QString refusal = parseRemoveRefusal(out, code);
-        // Like `stop`, it may return before the worker has exited (and
-        // one it couldn't end is ended here). Up to 10 s.
-        waitStopped(sessionId, pids, 40, [this, sessionId, done, refusal] {
-            reapLeftovers(sessionId, [done, refusal] { done(refusal); });
+    const QString shortId = jobId.isEmpty() ? sessionId.left(8) : jobId;
+    const auto    pids    = liveWorkerPids(_paths, sessionId, shortId);
+    run({QStringLiteral("rm"), shortId},
+        cwd,
+        [this, sessionId, shortId, pids, done](int code, QString out) {
+            const QString refusal = parseRemoveRefusal(out, code);
+            // Like `stop`, it may return before the worker has exited (and
+            // one it couldn't end is ended here). Up to 10 s.
+            waitStopped(sessionId, pids, 40, [this, sessionId, shortId, done, refusal] {
+                reapLeftovers(sessionId, [done, refusal] { done(refusal); }, shortId);
+            });
         });
-    });
 }
 
 void Launcher::runNewSession(const QStringList &args, const QString &cwd, Done done) {

@@ -137,12 +137,12 @@ std::optional<SessionInfo> parseBackgroundJob(const QByteArray &json) {
     return s;
 }
 
-std::optional<SessionInfo> readJob(const Paths &paths, const QString &sessionId) {
-    if (sessionId.isEmpty())
-        return std::nullopt;
-    return parseBackgroundJob(readSmallFile(
-        paths.jobsDir() + QLatin1Char('/') + sessionId.left(8) + QStringLiteral("/state.json")
-    ));
+QByteArray readJobState(const Paths &paths, const QString &jobId) {
+    if (jobId.isEmpty())
+        return {};
+    return readSmallFile(
+        paths.jobsDir() + QLatin1Char('/') + jobId + QStringLiteral("/state.json")
+    );
 }
 
 bool isProcessAlive(qint64 pid) {
@@ -161,9 +161,10 @@ bool isProcessAlive(qint64 pid) {
 #endif
 }
 
-std::vector<qint64> liveWorkerPids(const Paths &paths, const QString &sessionId) {
+std::vector<qint64>
+liveWorkerPids(const Paths &paths, const QString &sessionId, const QString &jobIdOrEmpty) {
     std::vector<qint64> out;
-    const QString       jobId = sessionId.left(8);
+    const QString       jobId = jobIdOrEmpty.isEmpty() ? sessionId.left(8) : jobIdOrEmpty;
     const QDir          sessions(paths.sessionsDir());
     for (const auto &f : sessions.entryList({QStringLiteral("*.json")}, QDir::Files)) {
         const auto s = parseInteractiveSession(readSmallFile(sessions.filePath(f)));
@@ -175,8 +176,8 @@ std::vector<qint64> liveWorkerPids(const Paths &paths, const QString &sessionId)
     return out;
 }
 
-bool hasLiveWorker(const Paths &paths, const QString &sessionId) {
-    return !liveWorkerPids(paths, sessionId).empty();
+bool hasLiveWorker(const Paths &paths, const QString &sessionId, const QString &jobId) {
+    return !liveWorkerPids(paths, sessionId, jobId).empty();
 }
 
 #if defined(Q_OS_LINUX)
@@ -246,10 +247,11 @@ std::vector<qint64> leftoverProcesses(const QString &sessionId, const QString &s
     return out;
 }
 
-std::vector<qint64> strandedWorker(const Paths &paths, const QString &sessionId) {
+std::vector<qint64>
+strandedWorker(const Paths &paths, const QString &sessionId, const QString &jobId) {
     std::vector<qint64> out;
 #if defined(Q_OS_LINUX)
-    for (const qint64 pid : liveWorkerPids(paths, sessionId)) {
+    for (const qint64 pid : liveWorkerPids(paths, sessionId, jobId)) {
         out.push_back(pid);
         const qint64 host = parentPid(pid);
         if (host > 1 && procStrings(host, "cmdline").contains("--bg-pty-host"))
@@ -258,6 +260,7 @@ std::vector<qint64> strandedWorker(const Paths &paths, const QString &sessionId)
 #else
     Q_UNUSED(paths);
     Q_UNUSED(sessionId);
+    Q_UNUSED(jobId);
 #endif
     return out;
 }
@@ -322,6 +325,7 @@ std::vector<SessionInfo> scanSessions(const Paths &paths) {
             applyWorker(*s, *w);
         else if (const auto w = workers.constFind(s->sessionId); w != workers.cend())
             applyWorker(*s, *w);
+        s->jobId = d; // the job itself, whatever session it now holds
         out.push_back(std::move(*s));
     }
     return out;

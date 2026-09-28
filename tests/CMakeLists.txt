@@ -79,6 +79,7 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/backend/claude_code/cc_pty.cpp
     ${CMAKE_SOURCE_DIR}/src/backend/claude_code/cc_vt.cpp
     ${CMAKE_SOURCE_DIR}/src/backend/claude_code/cc_launcher.cpp
+    ${CMAKE_SOURCE_DIR}/src/backend/claude_code/cc_worktrees.cpp
     ${CMAKE_SOURCE_DIR}/src/backend/claude_code/cc_roles.cpp
     ${CMAKE_SOURCE_DIR}/src/backend/claude_code/cc_roster.cpp
     ${CMAKE_SOURCE_DIR}/src/backend/claude_code/cc_transcript.cpp

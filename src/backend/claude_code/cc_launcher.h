@@ -126,11 +126,15 @@ public:
     // transcript stays. Claude Code keeps a worktree that holds uncommitted
     // changes or unpushed commits, or that another session uses: then the job
     // stays too, and `refusal` says why (the first line of its explanation);
-    // "" = removed. What the worker left running is ended as by stop(). Only
-    // for a job with a worktree: without one there is nothing for rm to do
-    // that stop() doesn't, but drop the job.
-    void
-    remove(const QString &sessionId, const QString &cwd, std::function<void(QString refusal)> done);
+    // "" = removed. What the worker left running is ended as by stop(). The
+    // job is `jobId` ("" = the one named after the session): a `/clear` gives
+    // the job's worker another session id.
+    void remove(
+        const QString                       &sessionId,
+        const QString                       &jobId,
+        const QString                       &cwd,
+        std::function<void(QString refusal)> done
+    );
 
     // `claude auth status`: a claude.ai login and an API key (from the
     // environment or settings) both count. Takes a fraction of a second.
@@ -167,7 +171,9 @@ private:
         int                   attemptsLeft,
         std::function<void()> then
     );
-    void reapLeftovers(const QString &sessionId, std::function<void()> done);
+    // `jobId` "" = the job named after the session.
+    void
+    reapLeftovers(const QString &sessionId, std::function<void()> done, const QString &jobId = {});
 
     QString _claudePath;
     Paths   _paths;

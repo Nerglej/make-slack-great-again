@@ -57,6 +57,7 @@ struct SessionInfo {
     // A background worker's job (sessions/<pid>.json "jobId"): it pairs the
     // worker with its job even once the worker's session id is another — a
     // `/clear` sent to the job starts a new session in the same worker.
+    // A background job entry has its own (its jobs/<id> folder).
     QString jobId;
     // Background: the worktree Claude Code made for the job (state.json
     // "worktreePath"), "" when it works in its folder as it is.
@@ -76,9 +77,8 @@ bool statusHasShell(const QString &status);
 
 std::optional<SessionInfo> parseInteractiveSession(const QByteArray &json);
 std::optional<SessionInfo> parseBackgroundJob(const QByteArray &json);
-// Background session `sessionId`'s job as its state.json reads now (no worker
-// folded in); nullopt when it has none.
-std::optional<SessionInfo> readJob(const Paths &paths, const QString &sessionId);
+// Job `jobId`'s state.json as it reads now, "" when there is none.
+QByteArray                 readJobState(const Paths &paths, const QString &jobId);
 
 // Fold a background session's live worker (its sessions/<pid>.json, kind "bg")
 // into the job's entry: running while the worker lives, busy per its status.
@@ -90,10 +90,12 @@ bool isProcessAlive(qint64 pid);
 // Whether a live background worker holds session `sessionId` (its
 // sessions/<pid>.json, kind "bg"; by its job too, see SessionInfo::jobId). After `claude stop` this
 // is what tells the worker has exited: an idle job's state.json keeps reading "done".
-bool                hasLiveWorker(const Paths &paths, const QString &sessionId);
+bool hasLiveWorker(const Paths &paths, const QString &sessionId, const QString &jobId = {});
 // …and their pids. The pid file can go before the process has exited, and a
 // resume in between only starts a copy: waiting for a stop watches both.
-std::vector<qint64> liveWorkerPids(const Paths &paths, const QString &sessionId);
+// `jobId` "" = the job named after the session (its first 8 characters).
+std::vector<qint64>
+liveWorkerPids(const Paths &paths, const QString &sessionId, const QString &jobId = {});
 
 // Processes background session `sessionId` (job `shortId`) started that
 // outlive its worker. `claude stop` ends the worker and with it the subagents
@@ -111,9 +113,10 @@ std::vector<qint64> leftoverProcesses(const QString &sessionId, const QString &s
 // --bg-pty-host). A worker the daemon lost track of — a daemon restarted
 // under it (seen 2026-09-28: a worker idling on for 3 days, its pty host
 // reparented to init) — takes no `stop`. Linux only (/proc); empty elsewhere.
-std::vector<qint64> strandedWorker(const Paths &paths, const QString &sessionId);
+std::vector<qint64>
+strandedWorker(const Paths &paths, const QString &sessionId, const QString &jobId = {});
 // SIGTERM, or SIGKILL when `force`. Not on Windows.
-void                signalProcess(qint64 pid, bool force);
+void signalProcess(qint64 pid, bool force);
 
 // Every session currently listed by the two directories. Interactive sessions
 // whose process is gone are left out (their pid file is stale).

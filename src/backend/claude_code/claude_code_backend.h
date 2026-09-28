@@ -188,11 +188,27 @@ private:
     QString  convIdFor(const QString &sessionId) const;
     void     tail(Tracked &t);
     void     diffAndAnnounce(Tracked &t);
-    void     hideSession(const QString &convId); // "Remove from msga", one session
+    // A removal's worktree clean-up (see removeOwned).
+    struct Cleanup;
+    // "Remove from msga", one session; `cleanup` collects the worktrees of the
+    // sessions removed together.
+    void hideSession(const QString &convId, const std::shared_ptr<Cleanup> &cleanup);
     // Stop a background session that was removed from msga, keeping it hidden.
-    // With its job's `worktree`, delete the session instead (Launcher::remove),
-    // which removes the worktree unless Claude Code keeps it (then says why).
-    void stopRemoved(const QString &sessionId, const QString &cwd, const QString &worktree = {});
+    void stopRemoved(const QString &sessionId, const QString &cwd);
+    // Remove session `sessionId`, which msga started: a background one is
+    // deleted as Claude Code's `claude rm` does (job `jobId`, "" = the one named
+    // after it), and every worktree it used — its job's, the ones its
+    // transcript entered, its subagents' — goes once it has stopped, as it is
+    // (uncommitted changes and all), with the others `cleanup` collects.
+    void removeOwned(
+        const QString                  &sessionId,
+        const QString                  &jobId,
+        const QString                  &cwd,
+        bool                            background,
+        const std::shared_ptr<Cleanup> &cleanup
+    );
+    // Lets go of one hold on `cleanup`; the last deletes its worktrees.
+    void release(const std::shared_ptr<Cleanup> &cleanup);
     // Whether msga started session `sessionId`, or a session msga started did
     // (see _launchedHere): only those are stopped when removed from msga.
     bool startedByMsga(const QString &sessionId) const;
@@ -314,6 +330,8 @@ private:
     // Claude Code records no such thing. Closing msga leaves their workers be;
     // "Remove from msga" stops them. Forgotten once Claude Code drops the job.
     QSet<QString>          _launchedHere;
+    // Worktrees being deleted right now (cleaned paths): never twice at once.
+    QSet<QString>          _reaping;
     QObject               *_ctx                = nullptr; // owns the Qt objects
     Launcher              *_launcher           = nullptr;
     QFileSystemWatcher    *_watcher            = nullptr;
