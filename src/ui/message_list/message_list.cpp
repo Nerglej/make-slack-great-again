@@ -3224,7 +3224,7 @@ bool MessageListWidget::tryHandleFileActionBarPress(const QPoint &pos) {
     if (btn == 0)
         downloadFileToUser(file);
     else if (btn == 1)
-        emit forwardMessageRequested(msg);
+        emit forwardFileRequested(msg, file);
     else if (btn == 2)
         showFileContextMenu(file, msg, gPos);
     return true;
@@ -3431,9 +3431,10 @@ void MessageListWidget::openPreviewViewer(const File &file, const Message &msg) 
             downloadFileToUser(f);
         });
         connect(
-            _imageViewer, &ImageViewerOverlay::forwardRequested, this, [this](const Message &m) {
-                emit forwardMessageRequested(m);
-            }
+            _imageViewer,
+            &ImageViewerOverlay::forwardRequested,
+            this,
+            [this](const File &f, const Message &m) { emit forwardFileRequested(m, f); }
         );
         connect(
             _imageViewer,

@@ -37,7 +37,7 @@ public:
 
 signals:
     void downloadRequested(File file);
-    void forwardRequested(Message msg);
+    void forwardRequested(File file, Message msg);
     void moreRequested(File file, Message msg, QPoint globalPos);
 
 protected:

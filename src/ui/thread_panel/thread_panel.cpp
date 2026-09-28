@@ -138,6 +138,12 @@ ThreadPanel::ThreadPanel(ImageCache *imgCache, QWidget *parent) : QWidget(parent
     connect(_msgList, &MessageListWidget::forwardMessageRequested, this, [this](const Message &m) {
         emit forwardMessageRequested(_conv, m);
     });
+    connect(
+        _msgList,
+        &MessageListWidget::forwardFileRequested,
+        this,
+        [this](const Message &m, const File &f) { emit forwardFileRequested(_conv, m, f); }
+    );
 
     _typingIndicator = new TypingIndicatorWidget(this);
     layout->addWidget(_typingIndicator);

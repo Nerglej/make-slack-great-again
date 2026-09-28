@@ -63,6 +63,7 @@
 #include "shortcuts.h"
 
 #include "ui/icon_utils.h"
+#include "util/background_tasks.h"
 #include "util/desktop_notifier.h"
 #include "util/recent_folders.h"
 #include "util/slack_links.h"
@@ -1237,7 +1238,26 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
         this,
         [this](const Message &msg) { forwardMessage(_currentConvId, msg); }
     );
-    connect(_threadPanel, &ThreadPanel::forwardMessageRequested, this, &MainWindow::forwardMessage);
+    connect(
+        _messageList,
+        &MessageListWidget::forwardFileRequested,
+        this,
+        [this](const Message &msg, const File &file) { forwardMessage(_currentConvId, msg, file); }
+    );
+    connect(
+        _threadPanel,
+        &ThreadPanel::forwardMessageRequested,
+        this,
+        [this](const ConversationId &conv, const Message &msg) { forwardMessage(conv, msg); }
+    );
+    connect(
+        _threadPanel,
+        &ThreadPanel::forwardFileRequested,
+        this,
+        [this](const ConversationId &conv, const Message &msg, const File &file) {
+            forwardMessage(conv, msg, file);
+        }
+    );
     // Channel mode only (the item is never offered inside a thread), so the
     // thread panel's list needs no wiring for this one.
     connect(
@@ -3727,7 +3747,9 @@ void MainWindow::handleNotifToken(const QString &token) {
         openNotifTarget(t->teamId, t->conv, t->threadRoot, t->msgTs);
 }
 
-void MainWindow::forwardMessage(const ConversationId &sourceConv, const Message &msg) {
+void MainWindow::forwardMessage(
+    const ConversationId &sourceConv, const Message &msg, std::optional<File> onlyFile
+) {
     if (!_session)
         return;
     // A backend that allows it (Claude Code) forwards into any live workspace,
@@ -3746,7 +3768,7 @@ void MainWindow::forwardMessage(const ConversationId &sourceConv, const Message 
             workspaces.push_back({it->second.session.get(), name});
         }
     }
-    auto *dlg = new ForwardDialog(msg, _session, std::move(workspaces), this);
+    auto *dlg = new ForwardDialog(msg, _session, std::move(workspaces), std::move(onlyFile), this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     _forwardDialog = dlg;
     connect(
@@ -3762,17 +3784,63 @@ void MainWindow::forwardMessage(const ConversationId &sourceConv, const Message 
             const Conversation *tc = ts->findConversation(target);
             const bool          isChannel =
                 tc && (tc->kind == ConvKind::PublicChannel || tc->kind == ConvKind::PrivateChannel);
-            if (isChannel && ts->teamId() == source && ts->channelsAreLabels()) {
+            // A file shared on its own isn't the message: it is re-posted, not labeled.
+            if (!dlg->fileOnly() && isChannel && ts->teamId() == source &&
+                ts->channelsAreLabels()) {
                 ts->labelMessage(sourceConv, msg.ts, target, [this](bool ok, QString) {
                     if (!ok)
                         showNetworkError(tr("Couldn't apply the label."));
                 });
                 return;
             }
-            const QString comment = dlg->comment();
-            const QString fwd     = msg.rawText.isEmpty() ? msg.text.text : msg.rawText;
-            const QString full    = comment.isEmpty() ? fwd : (comment + "\n" + fwd);
-            ts->sendMessage(target, full);
+            const QString     comment = dlg->comment();
+            const QString     fwd     = dlg->fileOnly()         ? QString()
+                                        : msg.rawText.isEmpty() ? msg.text.text
+                                                                : msg.rawText;
+            const QString     full    = comment.isEmpty() ? fwd
+                                        : fwd.isEmpty()   ? comment
+                                                          : (comment + "\n" + fwd);
+            std::vector<File> files   = dlg->files();
+            if (files.empty()) {
+                ts->sendMessage(target, full);
+                return;
+            }
+            // The files go along as uploads of their own bytes, fetched through
+            // the workspace they live in; one that can't take uploads gets links.
+            const auto srcIt = _sessions.find(source);
+            Session   *src   = srcIt != _sessions.end() ? srcIt->second.session.get() : nullptr;
+            if (!ts->capabilities().fileUpload)
+                src = nullptr;
+            const int task = BackgroundTasks::instance().begin(
+                files.size() == 1 ? tr("Forwarding %1").arg(files.front().name)
+                                  : tr("Forwarding %Ln files", nullptr, int(files.size()))
+            );
+            fetchForwardedFiles(
+                src,
+                files,
+                [this, task, target, full, targetKey = ts->teamId()](
+                    QStringList paths, QStringList links, QString err
+                ) {
+                    BackgroundTasks::instance().end(task);
+                    const auto it = _sessions.find(targetKey);
+                    Session   *ts = it != _sessions.end() ? it->second.session.get() : nullptr;
+                    if (!ts)
+                        return;
+                    if (!err.isEmpty()) {
+                        qWarning() << "forward: file download failed:" << err;
+                        showNetworkError(tr("Couldn't forward the file."));
+                        return;
+                    }
+                    QString text = full;
+                    if (!links.isEmpty())
+                        text += (text.isEmpty() ? QString() : QStringLiteral("\n")) +
+                                links.join(QLatin1Char('\n'));
+                    if (!paths.isEmpty())
+                        ts->uploadFiles(target, paths, text);
+                    else if (!text.isEmpty())
+                        ts->sendMessage(target, text);
+                }
+            );
         }
     );
     dlg->open();

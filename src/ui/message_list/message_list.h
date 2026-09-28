@@ -208,6 +208,9 @@ signals:
     void editMessageRequested(Ts ts, QString rawText, std::vector<File> files);
     // Emitted when "Forward message" is chosen.
     void forwardMessageRequested(Message msg);
+    // Emitted by a file's own Share (hover bar, image viewer): forward just
+    // `file`, without the text of `msg` it was posted with.
+    void forwardFileRequested(Message msg, File file);
     // Emitted when "Move to thread…" is chosen (channel mode only); the host
     // picks the target thread and drives Session::moveMessageToThread.
     void moveToThreadRequested(Message msg);

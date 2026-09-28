@@ -52,7 +52,7 @@ ImageViewerOverlay::ImageViewerOverlay(QWidget *windowParent) : QWidget(windowPa
     connect(_downloadBtn, &QToolButton::clicked, this, [this] { emit downloadRequested(_file); });
     connect(_forwardBtn, &QToolButton::clicked, this, [this] {
         hide(); // the forward dialog replaces the viewer
-        emit forwardRequested(_msg);
+        emit forwardRequested(_file, _msg);
     });
     connect(_browserBtn, &QToolButton::clicked, this, [this] {
         const QString url = _file.permalink.isEmpty() ? _file.urlPrivate : _file.permalink;

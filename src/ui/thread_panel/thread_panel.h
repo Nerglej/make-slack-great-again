@@ -76,6 +76,8 @@ signals:
     // conversation the reply lives in — the host can't assume it is the one on
     // screen, since a thread panel outlives a navigation away from its channel.
     void forwardMessageRequested(ConversationId conv, Message msg);
+    // Forwarded from the embedded list: a file's own Share (see MessageListWidget).
+    void forwardFileRequested(ConversationId conv, Message msg, File file);
 
 private:
     void applyTheme();

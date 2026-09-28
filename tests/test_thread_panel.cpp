@@ -825,6 +825,25 @@ TEST_CASE("Forward message on a thread reply reaches the host", "[thread][forwar
     // message from it, and the panel is not always on the conversation shown.
     CHECK(forwarded[0].first == kConv.id);
     CHECK(forwarded[0].second.ts == QStringLiteral("100.600"));
+
+    // A file's own Share forwards that file alone — its own signal, so the
+    // host knows to leave the message text behind.
+    std::vector<File> sharedFiles;
+    QObject::connect(
+        &panel,
+        &ThreadPanel::forwardFileRequested,
+        &panel,
+        [&](const ConversationId &c, const Message &, const File &file) {
+            CHECK(c == kConv.id);
+            sharedFiles.push_back(file);
+        }
+    );
+    File file;
+    file.id = QStringLiteral("F1");
+    emit listOf(panel)->forwardFileRequested(replyMsg("100.600", "older reply", "U1"), file);
+    REQUIRE(sharedFiles.size() == 1);
+    CHECK(sharedFiles[0].id == QStringLiteral("F1"));
+    CHECK(forwarded.size() == 1); // not a whole-message forward
 }
 
 TEST_CASE("the header bell mutes and unmutes the open thread", "[thread][mute]") {

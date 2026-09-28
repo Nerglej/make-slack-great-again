@@ -279,7 +279,13 @@ private:
     // "Forward message": ask for a target, then re-post (or, on a label-based
     // backend, label) the message. `sourceConv` is where the message lives —
     // the thread panel can be showing a different conversation than the chat.
-    void forwardMessage(const ConversationId &sourceConv, const Message &msg);
+    // The message's files go along, re-uploaded; with `onlyFile` (a file's own
+    // Share) that file goes alone, without the message text.
+    void forwardMessage(
+        const ConversationId &sourceConv,
+        const Message        &msg,
+        std::optional<File>   onlyFile = std::nullopt
+    );
     // "Move to thread…" on a top-level message of the open conversation: pick a
     // thread among the loaded roots, then let the Session re-post + delete.
     void moveMessageToThread(const Message &msg);

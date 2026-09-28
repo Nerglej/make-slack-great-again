@@ -12,23 +12,51 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPointer>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QTextBrowser>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QtMath>
 #include <algorithm>
+#include <memory>
+#include <utility>
+
+namespace {
+// What the preview shows when a single file is shared: the file alone, under
+// the original author and time.
+Message fileOnlyMessage(const Message &msg, const File &file) {
+    Message m;
+    m.ts     = msg.ts;
+    m.date   = msg.date;
+    m.author = msg.author;
+    m.files  = {file};
+    return m;
+}
+} // namespace
 
 ForwardDialog::ForwardDialog(
-    const Message &msg, Session *session, std::vector<Workspace> workspaces, QWidget *parent
+    const Message         &source,
+    Session               *session,
+    std::vector<Workspace> workspaces,
+    std::optional<File>    onlyFile,
+    QWidget               *parent
 )
-    : AppDialog(tr("Forward this message"), parent), _workspaces(std::move(workspaces)),
-      _target(session) {
-    auto       *cl = contentLayout();
-    const auto &sp = Th::c().spacing;
+    : AppDialog(onlyFile ? tr("Forward this file") : tr("Forward this message"), parent),
+      _workspaces(std::move(workspaces)), _fileOnly(onlyFile.has_value()), _target(session) {
+    const Message msg = onlyFile ? fileOnlyMessage(source, *onlyFile) : source;
+    _files            = msg.files;
+    auto       *cl    = contentLayout();
+    const auto &sp    = Th::c().spacing;
 
     // ── Target workspace (only when there is a choice) ────────────────
     if (_workspaces.size() > 1) {
@@ -220,7 +248,14 @@ ForwardDialog::ForwardDialog(
         });
 
     // The modeless dialog outlives the caller's message (often a signal argument).
-    connect(_copyLinkBtn, &QPushButton::clicked, this, [entities = msg.text.entities] {
+    connect(_copyLinkBtn, &QPushButton::clicked, this, [entities = msg.text.entities, onlyFile] {
+        if (onlyFile) {
+            const QString link =
+                onlyFile->permalink.isEmpty() ? onlyFile->urlPrivate : onlyFile->permalink;
+            if (!link.isEmpty())
+                QApplication::clipboard()->setText(link);
+            return;
+        }
         for (const auto &ent : entities) {
             if (ent.type == EntityType::Link && !ent.data.isEmpty()) {
                 QApplication::clipboard()->setText(ent.data);
@@ -278,4 +313,86 @@ ConversationId ForwardDialog::targetConv() const {
 
 QString ForwardDialog::comment() const {
     return _composer->currentText().trimmed();
+}
+
+void fetchForwardedFiles(
+    Session                                                                 *source,
+    const std::vector<File>                                                 &files,
+    std::function<void(QStringList paths, QStringList links, QString error)> done
+) {
+    struct Batch {
+        QStringList                                            paths; // by file index
+        QStringList                                            links;
+        int                                                    pending = 0;
+        bool                                                   failed  = false;
+        std::function<void(QStringList, QStringList, QString)> done;
+    };
+    auto batch  = std::make_shared<Batch>();
+    batch->done = std::move(done);
+    batch->paths.resize(qsizetype(files.size()));
+    auto finish = [batch] {
+        if (batch->failed || --batch->pending > 0)
+            return;
+        batch->paths.removeAll(QString());
+        batch->done(batch->paths, batch->links, {});
+    };
+    auto fail = [batch](const QString &err) {
+        if (std::exchange(batch->failed, true))
+            return;
+        batch->done({}, {}, err.isEmpty() ? QStringLiteral("download failed") : err);
+    };
+
+    // Held until every download has started, so one that answers synchronously
+    // (a local file) can't finish the batch early.
+    batch->pending = 1;
+    for (int i = 0; i < (int)files.size(); ++i) {
+        const File   &f    = files[i];
+        // The original upload: for audio, url_private is Slack's MP4 transcode.
+        const QString url  = f.urlPrivateDownload.isEmpty() ? f.urlPrivate : f.urlPrivateDownload;
+        const QString link = f.permalink.isEmpty() ? f.urlPrivate : f.permalink;
+        if (f.isCanvas() || url.isEmpty() || !source) {
+            if (!link.isEmpty())
+                batch->links << link;
+            continue;
+        }
+        // Already on disk (a Claude Code attachment, say): upload it as is.
+        if (const QUrl u(url); u.isLocalFile() && QFileInfo(u.toLocalFile()).isFile()) {
+            batch->paths[i] = u.toLocalFile();
+            continue;
+        }
+        QString name = QFileInfo(f.name).fileName();
+        name.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
+        if (name.isEmpty())
+            name = QStringLiteral("file");
+        // A folder per source URL keeps the file's own name, which is what the
+        // upload is called on the other side.
+        const QString hash = QString::fromLatin1(
+            QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex().left(12)
+        );
+        const QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                             QStringLiteral("/cache/forward/%1/%2").arg(hash, name);
+        if (QFileInfo fi(path); fi.isFile() && fi.size() > 0) {
+            batch->paths[i] = path;
+            continue;
+        }
+        ++batch->pending;
+        source->downloadFile(
+            url,
+            [batch, finish, fail, path, i](QByteArray data) {
+                if (batch->failed)
+                    return;
+                QDir().mkpath(QFileInfo(path).path());
+                QSaveFile out(path);
+                if (!out.open(QIODevice::WriteOnly) || out.write(data) != data.size() ||
+                    !out.commit()) {
+                    fail(out.errorString());
+                    return;
+                }
+                batch->paths[i] = path;
+                finish();
+            },
+            fail
+        );
+    }
+    finish();
 }
