@@ -15,7 +15,7 @@ class QSettings;
 // (bumped/rank) are what the tests pin; load/save/bump are the QSettings glue.
 namespace RecentFolders {
 
-inline constexpr int  kMax             = 15;
+inline constexpr int  kMax             = 10;
 inline constexpr char kClaudeCodeKey[] = "claudeCode/recentDirs";
 
 struct Entry {

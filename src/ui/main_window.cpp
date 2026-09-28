@@ -1047,7 +1047,10 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
     connect(_teammatePage, &TeammatePage::openSessionRequested, this, [this](ConversationId conv) {
         _convList->selectConversation(conv);
     });
-    connect(_teammatePage, &TeammatePage::folderChanged, this, [this] { applyTeammateComposer(); });
+    connect(_teammatePage, &TeammatePage::folderChanged, this, [this] {
+        applyTeammateComposer();
+        focusComposerIfActive(); // a folder picked: ready to write
+    });
     connect(_teammatePage, &TeammatePage::editRequested, this, [this](const QString &id) {
         editTeammate(id);
     });
@@ -4580,8 +4583,9 @@ void MainWindow::populateConversations(const std::vector<Conversation> &convs) {
 }
 
 void MainWindow::focusComposerIfActive() {
-    // Skip when the canvas page is up (composer hidden) or nothing is open.
-    if (isActiveWindow() && !_currentConvId.value.isEmpty() && _composer &&
+    // Skip when the canvas page is up (composer hidden) or nothing is open —
+    // a teammate's page counts as open: its composer starts a session.
+    if (isActiveWindow() && (!_currentConvId.value.isEmpty() || teammateViewOpen()) && _composer &&
         _composer->isVisible() && _composer->isEnabled()) {
         _composer->focusInput();
     }
