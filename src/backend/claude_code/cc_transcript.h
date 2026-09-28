@@ -105,7 +105,8 @@ public:
     const std::vector<qint64> &activity() const { return _activity; }
     // Epoch micros of the latest notification that a background task (a
     // subagent: its agentId) stopped; 0 = none yet. One arrives each time it
-    // stops — it may start again, on its own or for a relayed reply.
+    // stops — it may start again, on its own or for a relayed reply. A
+    // foreground subagent's stop is its Agent call's result.
     qint64 taskStoppedAt(const QString &taskId) const { return _taskStopped.value(taskId); }
 
     // As of the newest record that says: the Claude Code version that wrote

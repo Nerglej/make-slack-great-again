@@ -86,8 +86,15 @@ toolUse(const QString &id, const QString &name, const QJsonObject &input, const 
     });
 }
 
-QByteArray
-toolResult(const QString &id, const char *ts, bool error = false, const QString &agentId = {}) {
+// An Agent call's result names the subagent; `status` is "async_launched" for
+// a background one (just started), "completed" for a foreground one (done).
+QByteArray toolResult(
+    const QString &id,
+    const char    *ts,
+    bool           error   = false,
+    const QString &agentId = {},
+    const QString &status  = {}
+) {
     QJsonObject o{
         {"type", "user"},
         {"timestamp", ts},
@@ -99,8 +106,12 @@ toolResult(const QString &id, const char *ts, bool error = false, const QString 
               }}
          }},
     };
-    if (!agentId.isEmpty())
-        o["toolUseResult"] = QJsonObject{{"agentId", agentId}};
+    if (!agentId.isEmpty()) {
+        QJsonObject result{{"agentId", agentId}};
+        if (!status.isEmpty())
+            result["status"] = status;
+        o["toolUseResult"] = result;
+    }
     return line(o);
 }
 
@@ -446,6 +457,20 @@ TEST_CASE("a background task's stop notifications are noted", "[claude][transcri
     );
     CHECK(q.taskStoppedAt("agent42") == 0);
     CHECK(p.taskStoppedAt("nobody") == 0);
+}
+
+TEST_CASE("a foreground subagent's result is its stop", "[claude][transcript]") {
+    // Only a background subagent is notified when it stops; a foreground one
+    // just returns, its result "completed" (Claude Code 2.1.283's Agent tool).
+    TranscriptParser p;
+    p.feed(
+        toolUse("a1", "Agent", {{"description", "Fix it"}}, "2026-09-25T10:00:01.000Z") +
+        toolResult("a1", "2026-09-25T10:00:09.000Z", false, "fg1", "completed") +
+        toolUse("a2", "Agent", {{"description", "Look"}}, "2026-09-25T10:00:10.000Z") +
+        toolResult("a2", "2026-09-25T10:00:10.500Z", false, "bg1", "async_launched")
+    );
+    CHECK(p.taskStoppedAt("fg1") == 1790330409000000);
+    CHECK(p.taskStoppedAt("bg1") == 0); // started, not stopped
 }
 
 TEST_CASE("a reply relayed to a subagent reads back as the reply alone", "[claude][transcript]") {
@@ -3399,7 +3424,7 @@ TEST_CASE("a background subagent at work thinks in its thread", "[claude][backen
             {{"description", "Read the docs"}, {"subagent_type", "designer"}},
             "2026-09-25T10:00:01.000Z"
         ) +
-        toolResult("a1", "2026-09-25T10:00:01.500Z", false, "agent42") // launched
+        toolResult("a1", "2026-09-25T10:00:01.500Z", false, "agent42", "async_launched")
     );
     const QString sub = home.dir.path() + "/projects/-src-app/S1/subagents/agent-agent42.jsonl";
     QDir().mkpath(QFileInfo(sub).path());
@@ -3570,6 +3595,146 @@ TEST_CASE("a plain subagent isn't taken for its session's teammate", "[claude][b
     CHECK(byText.value("Started both.") == UserId{"claude:role:researcher"});
     CHECK(byText.value("Subagent: Fix it") == UserId{"claude:role:engineer"});
     CHECK(byText.value("Subagent: Look around") == UserId{"claude:agent"});
+}
+
+TEST_CASE(
+    "a teammate at work as a subagent in another's session shows as working",
+    "[claude][backend][thread][presence]"
+) {
+    // Seen live 2026-09-28: an Engineer a Researcher session started was
+    // "thinking (2m 47s)…" in its thread, its dot in the team list clear.
+    FakeClaudeHome home;
+    home.writeSession("idle"); // the Researcher itself waits
+    const QByteArray snapshot = line(
+        {{"type", "attachment"},
+         {"timestamp", "2026-09-25T10:00:00.500Z"},
+         {"attachment",
+          QJsonObject{
+              {"type", "prompt_snapshot"},
+              {"systemPrompt", QJsonArray{"# Your role: Researcher (msga: researcher)\nDig."}}
+          }}}
+    );
+    home.append(
+        prompt("ask an engineer", "2026-09-25T10:00:00.000Z") + snapshot +
+        toolUse(
+            "a1",
+            "Agent",
+            {{"description", "Fix it"}, {"subagent_type", "engineer"}, {"prompt", "Fix it."}},
+            "2026-09-25T10:00:01.000Z"
+        ) +
+        toolResult("a1", "2026-09-25T10:00:01.500Z", false, "eng1", "async_launched") +
+        toolUse(
+            "a2",
+            "Agent",
+            {{"description", "Look around"}, {"subagent_type", "Explore"}, {"prompt", "Look."}},
+            "2026-09-25T10:00:02.000Z"
+        ) +
+        toolResult("a2", "2026-09-25T10:00:02.500Z", false, "exp1", "async_launched") +
+        // A foreground Engineer, done long ago: its result was its stop.
+        toolUse(
+            "a3",
+            "Agent",
+            {{"description", "Check it"},
+             {"subagent_type", "engineer"},
+             {"prompt", "Check it."},
+             {"run_in_background", false}},
+            "2026-09-25T09:00:00.000Z"
+        ) +
+        toolResult("a3", "2026-09-25T09:05:00.000Z", false, "eng0", "completed") +
+        assistantText("Started them.", "2026-09-25T10:00:03.000Z") +
+        turnEnd("2026-09-25T10:00:04.000Z")
+    );
+    const QString subDir = home.dir.path() + "/projects/-src-app/S1/subagents/";
+    QDir().mkpath(subDir);
+    const auto subAppend = [&](const QString &agentId, const QByteArray &bytes) {
+        QFile f(subDir + "agent-" + agentId + ".jsonl");
+        REQUIRE(f.open(QIODevice::Append));
+        f.write(bytes);
+    };
+    subAppend("eng1", prompt("Fix it.", "2026-09-25T10:00:02.000Z", false));
+    subAppend("exp1", prompt("Look.", "2026-09-25T10:00:03.000Z", false));
+    subAppend(
+        "eng0",
+        prompt("Check it.", "2026-09-25T09:00:01.000Z", false) +
+            assistantText("Checked.", "2026-09-25T09:04:59.000Z")
+    );
+
+    claude_code::Backend backend(Credentials{});
+    std::vector<Event>   events;
+    rpl::lifetime        lt;
+    backend.events() | rpl::on_next([&](Event e) { events.push_back(std::move(e)); }, lt);
+    const UserId engineer{"claude:role:engineer"};
+    const UserId researcher{"claude:role:researcher"};
+    const UserId generalist{"claude:agent"};
+    const auto   present = [&](const UserId &id) {
+        const auto v = collect(backend.loadPresence(id));
+        return !v.empty() && v.front();
+    };
+    const auto announced = [&](const UserId &id) -> std::optional<bool> {
+        for (auto it = events.rbegin(); it != events.rend(); ++it)
+            if (const auto *p = std::get_if<EvPresenceChanged>(&*it); p && p->user == id)
+                return p->active;
+        return std::nullopt;
+    };
+    const auto card = [&](const UserId &id) {
+        const auto users = collect(backend.loadUsers());
+        for (const User &u : users.front())
+            if (u.id == id)
+                return u;
+        return User{};
+    };
+    backend.connectRealtime();
+
+    // Its subagent runs: the Engineer is green, dot and card alike — its own
+    // session idle, the Researcher's too. The Explore one lights no one.
+    CHECK(present(engineer));
+    CHECK(card(engineer).isActive);
+    CHECK_FALSE(card(engineer).unavailable);
+    CHECK_FALSE(present(researcher));
+    CHECK_FALSE(present(generalist));
+
+    // It stops: the dot clears, told to the list.
+    subAppend("eng1", assistantText("Fixed.", "2026-09-25T10:01:00.000Z"));
+    home.append(taskStopped("eng1", "2026-09-25T10:01:00.050Z"));
+    REQUIRE(QTest::qWaitFor([&] { return announced(engineer) == false; }, 5000));
+    CHECK_FALSE(present(engineer));
+    CHECK_FALSE(card(engineer).isActive);
+
+    // A reply relayed to it starts it again. Nothing watches a subagent's own
+    // file: the typing pump, ticking for the Explore one, notices.
+    events.clear();
+    subAppend(
+        "eng1",
+        line({
+            {"type", "user"},
+            {"isMeta", true},
+            {"timestamp", "2026-09-25T10:05:00.000Z"},
+            {"origin", QJsonObject{{"kind", "coordinator"}}},
+            {"message", QJsonObject{{"role", "user"}, {"content", "And the tests?"}}},
+        })
+    );
+    REQUIRE(QTest::qWaitFor([&] { return announced(engineer) == true; }, 5000));
+    CHECK(present(engineer));
+
+    // Both stop: the pump's last tick, the one that finds nothing at work,
+    // still clears the dot.
+    events.clear();
+    subAppend("eng1", assistantText("Tested.", "2026-09-25T10:06:00.000Z"));
+    subAppend("exp1", assistantText("Looked.", "2026-09-25T10:06:00.000Z"));
+    home.append(
+        taskStopped("eng1", "2026-09-25T10:06:00.050Z") +
+        taskStopped("exp1", "2026-09-25T10:06:00.050Z")
+    );
+    REQUIRE(QTest::qWaitFor([&] { return announced(engineer) == false; }, 5000));
+    CHECK_FALSE(present(engineer));
+    CHECK_FALSE(present(generalist));
+    // No subagent thinks any more — the finished foreground one neither.
+    events.clear();
+    QTest::qWait(3500);
+    CHECK_FALSE(std::any_of(events.begin(), events.end(), [](const Event &e) {
+        const auto *t = std::get_if<EvTyping>(&e);
+        return t && t->threadRoot;
+    }));
 }
 
 TEST_CASE(

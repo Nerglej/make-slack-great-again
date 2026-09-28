@@ -604,6 +604,26 @@ bool Backend::roleBusy(const QString &role) const {
     for (auto it = _sessions.cbegin(); it != _sessions.cend(); ++it)
         if (!asThread(*it.value()) && busy(*it.value()) && roleOf(*it.value()) == role)
             return true;
+    return roleSubagentRunning(role);
+}
+
+// A subagent started as the teammate running in a live session — the same one
+// pumpTyping has thinking in its thread. A plain one ("claude", "Explore")
+// speaks as the Generalist, yet isn't one: it lights no dot.
+bool Backend::roleSubagentRunning(const QString &role) const {
+    const UserId who = roleUser(role);
+    if (who == kAgentUser)
+        return false;
+    for (auto it = _sessions.cbegin(); it != _sessions.cend(); ++it) {
+        const Tracked &t = *it.value();
+        if (!t.info.running || t.stopping || asThread(t))
+            continue;
+        const UserId assistant = roleUser(roleOf(t));
+        for (const auto &item : t.parser.items())
+            if (item.kind == TranscriptItem::Kind::Subagent && !item.agentId.isEmpty() &&
+                subagentAuthor(item, assistant) == who && subagentRunSinceMs(t, item.agentId))
+                return true;
+    }
     return false;
 }
 
@@ -746,7 +766,8 @@ void Backend::tail(Tracked &t) {
         _events.fire(EvUserChanged{teammateUser(_team.resolve(t.parser.role()))});
 }
 
-const Backend::SubagentCount &Backend::subagentStats(const Tracked &t, const QString &agentId) {
+const Backend::SubagentCount &
+Backend::subagentStats(const Tracked &t, const QString &agentId) const {
     const QString path = Paths::subagentTranscript(t.transcriptPath, agentId);
     const qint64  size = QFileInfo(path).size();
     auto         &c    = _subagentCounts[path];
@@ -772,7 +793,7 @@ const Backend::SubagentCount &Backend::subagentStats(const Tracked &t, const QSt
     return c;
 }
 
-int Backend::subagentReplyCount(const Tracked &t, const QString &agentId, Ts *latest) {
+int Backend::subagentReplyCount(const Tracked &t, const QString &agentId, Ts *latest) const {
     const SubagentCount &c = subagentStats(t, agentId);
     *latest                = c.latest;
     return _zen ? c.zenCount : c.count;
@@ -782,7 +803,7 @@ int Backend::subagentReplyCount(const Tracked &t, const QString &agentId, Ts *la
 // session is notified each time it stops, a few ms after its last record, and
 // it may start again (a reply relayed to it, or on its own when work of its
 // own ends) — then its file grows past that notification.
-qint64 Backend::subagentRunSinceMs(const Tracked &t, const QString &agentId) {
+qint64 Backend::subagentRunSinceMs(const Tracked &t, const QString &agentId) const {
     const auto  &activity = subagentStats(t, agentId).activity;
     const qint64 stopped  = t.parser.taskStoppedAt(agentId);
     if (activity.empty() || activity.back() <= stopped)
@@ -1871,7 +1892,18 @@ void Backend::refresh() {
     for (const auto &id : parentsToDiff)
         if (Tracked *p = find(id))
             diffAndAnnounce(*p);
-    // A teammate shows as working while any of its sessions does.
+    announceRoles();
+    if (!_firstScanDone)
+        pruneOutputs(_sessions.keys()); // copies of sessions gone while msga wasn't looking
+    _firstScanDone = true;
+    watchLive();
+    scheduleSaveKnown();
+    pumpTyping();
+}
+
+// A teammate shows as working while any of its sessions does, or a subagent
+// started as it does — which no roster scan need notice: pumpTyping asks too.
+void Backend::announceRoles() {
     for (const QString &role : roleIds()) {
         const bool b = roleBusy(role);
         if (_firstScanDone && b != _roleBusy.value(role))
@@ -1882,12 +1914,6 @@ void Backend::refresh() {
             _events.fire(EvUserChanged{teammateUser(_team.resolve(role))});
         _roleUnavailable.insert(role, y);
     }
-    if (!_firstScanDone)
-        pruneOutputs(_sessions.keys()); // copies of sessions gone while msga wasn't looking
-    _firstScanDone = true;
-    watchLive();
-    scheduleSaveKnown();
-    pumpTyping();
 }
 
 // Claude working on a turn shows as the session "thinking (8m 58s)" — the
@@ -1947,6 +1973,9 @@ void Backend::pumpTyping() {
         _typingTimer->start();
     else if (!any)
         _typingTimer->stop();
+    // A subagent starting or stopping turns its teammate's dot — the stop too:
+    // this is the last tick when nothing else works.
+    announceRoles();
 }
 
 void Backend::watchLive() {

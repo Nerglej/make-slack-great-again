@@ -218,7 +218,10 @@ private:
     ) const;
     QStringList          roleIds() const; // every role a session may have
     void                 teamChanged(const QString &id);
+    // Green: one of its sessions works, or it works as a subagent in any live
+    // session (the thread's "… is thinking").
     bool                 roleBusy(const QString &role) const;
+    bool                 roleSubagentRunning(const QString &role) const;
     bool                 roleUnavailable(const QString &role) const; // …or yellow
     User                 teammateUser(const Role &r) const;
     // Branched sessions (/btw threads): see detectForks.
@@ -262,6 +265,9 @@ private:
     void                  adoptCopy(Tracked &t, const QString &copyId);
     void                  watchLive();
     void                  pumpTyping();
+    // Teammates' dots that changed since last announced (EvPresenceChanged,
+    // EvUserChanged for yellow); only recorded before the first scan is done.
+    void                  announceRoles();
     std::vector<Message>  visibleMessages(Tracked &t);
     // Puts the user's reactions (_reactions) on `conv`'s messages.
     void                  applyReactions(const QString &conv, std::vector<Message> &msgs) const;
@@ -279,9 +285,9 @@ private:
     bool                  needsUser(const Tracked &t) const;
     bool                  unavailable(const Tracked &t) const; // the yellow dot
     const TranscriptItem *deletableItem(Tracked &t, const Ts &ts);
-    int                   subagentReplyCount(const Tracked &t, const QString &agentId, Ts *latest);
+    int     subagentReplyCount(const Tracked &t, const QString &agentId, Ts *latest) const;
     // When the subagent's run under way began (epoch ms); 0 = it isn't running.
-    qint64                subagentRunSinceMs(const Tracked &t, const QString &agentId);
+    qint64  subagentRunSinceMs(const Tracked &t, const QString &agentId) const;
     QString subagentOf(const Tracked &t, const Ts &root) const; // "" = none/not started
 
     Credentials                              _creds;
@@ -337,8 +343,8 @@ private:
         Ts                  latest;
         std::vector<qint64> activity; // every record's epoch micros (TranscriptParser::activity)
     };
-    const SubagentCount          &subagentStats(const Tracked &t, const QString &agentId);
-    QHash<QString, SubagentCount> _subagentCounts; // by transcript path
+    const SubagentCount &subagentStats(const Tracked &t, const QString &agentId) const;
+    mutable QHash<QString, SubagentCount> _subagentCounts; // by transcript path
     struct CommandList {
         std::vector<SlashCommand> commands;
         qint64                    fetchedMs = 0;

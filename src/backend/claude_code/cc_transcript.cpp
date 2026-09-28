@@ -356,13 +356,11 @@ void TranscriptParser::handleLine(const QByteArray &line) {
                 const QJsonObject b  = v.toObject();
                 const QString     bt = b.value(QLatin1String("type")).toString();
                 if (bt == QLatin1String("tool_result")) {
-                    sawToolResult         = true;
-                    const QString id      = b.value(QLatin1String("tool_use_id")).toString();
-                    const bool    failed  = b.value(QLatin1String("is_error")).toBool();
-                    const QString agentId = o.value(QLatin1String("toolUseResult"))
-                                                .toObject()
-                                                .value(QLatin1String("agentId"))
-                                                .toString();
+                    sawToolResult             = true;
+                    const QString     id      = b.value(QLatin1String("tool_use_id")).toString();
+                    const bool        failed  = b.value(QLatin1String("is_error")).toBool();
+                    const QJsonObject result  = o.value(QLatin1String("toolUseResult")).toObject();
+                    const QString     agentId = result.value(QLatin1String("agentId")).toString();
                     // Newest first: the call is almost always in the latest item.
                     for (auto it = _items.rbegin(); it != _items.rend(); ++it) {
                         auto call = std::find_if(
@@ -373,8 +371,18 @@ void TranscriptParser::handleLine(const QByteArray &line) {
                         if (call == it->tools.end())
                             continue;
                         call->error = failed;
-                        if (it->kind == TranscriptItem::Kind::Subagent && !agentId.isEmpty())
+                        if (it->kind == TranscriptItem::Kind::Subagent && !agentId.isEmpty()) {
                             it->agentId = agentId;
+                            // A foreground subagent's result comes when it's
+                            // done ("completed"), and no notification follows:
+                            // the result is its stop. A background one's
+                            // ("async_launched") only says it started.
+                            if (result.value(QLatin1String("status")).toString() !=
+                                QLatin1String("async_launched")) {
+                                qint64 &at = _taskStopped[agentId];
+                                at         = std::max(at, micros);
+                            }
+                        }
                         break;
                     }
                 } else if (bt == QLatin1String("text")) {
