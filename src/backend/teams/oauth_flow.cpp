@@ -15,6 +15,8 @@
 #include <QNetworkRequest>
 #include <QUrlQuery>
 
+using namespace Qt::StringLiterals;
+
 // Same custom-scheme redirect the OS routes back to the app (registered verbatim
 // in the Entra app's "Mobile and desktop applications" platform).
 static constexpr const char *kOAuthRedirectUri = "msga://oauth/callback";
@@ -68,15 +70,15 @@ void OAuthFlow::start() {
 
     QUrl      url(authorityBase() + QStringLiteral("/oauth2/v2.0/authorize"));
     QUrlQuery q;
-    q.addQueryItem("client_id", _app.clientId);
-    q.addQueryItem("response_type", "code");
-    q.addQueryItem("redirect_uri", kOAuthRedirectUri);
-    q.addQueryItem("response_mode", "query");
-    q.addQueryItem("scope", scopes());
-    q.addQueryItem("state", _state);
-    q.addQueryItem("code_challenge", QString::fromLatin1(pkce.challenge));
-    q.addQueryItem("code_challenge_method", "S256");
-    q.addQueryItem("prompt", "select_account");
+    q.addQueryItem(u"client_id"_s, _app.clientId);
+    q.addQueryItem(u"response_type"_s, u"code"_s);
+    q.addQueryItem(u"redirect_uri"_s, kOAuthRedirectUri);
+    q.addQueryItem(u"response_mode"_s, u"query"_s);
+    q.addQueryItem(u"scope"_s, scopes());
+    q.addQueryItem(u"state"_s, _state);
+    q.addQueryItem(u"code_challenge"_s, QString::fromLatin1(pkce.challenge));
+    q.addQueryItem(u"code_challenge_method"_s, u"S256"_s);
+    q.addQueryItem(u"prompt"_s, u"select_account"_s);
     url.setQuery(q);
 
     QDesktopServices::openUrl(url);
@@ -84,7 +86,7 @@ void OAuthFlow::start() {
 
 void OAuthFlow::handleCallbackUri(const QUrl &uri) {
     // Expected: msga://oauth/callback?code=…&state=…
-    if (uri.scheme() != "msga" || uri.host() != "oauth" || uri.path() != "/callback")
+    if (uri.scheme() != u"msga"_s || uri.host() != u"oauth"_s || uri.path() != u"/callback"_s)
         return;
 
     const auto cb = net::oauth::parseCallback(QUrlQuery(uri.query()), _state);
@@ -99,28 +101,30 @@ void OAuthFlow::handleCallbackUri(const QUrl &uri) {
 
 void OAuthFlow::exchangeCode(const QString &code) {
     QUrlQuery params;
-    params.addQueryItem("client_id", _app.clientId);
-    params.addQueryItem("grant_type", "authorization_code");
-    params.addQueryItem("code", code);
-    params.addQueryItem("redirect_uri", kOAuthRedirectUri);
-    params.addQueryItem("code_verifier", _codeVerifier); // PKCE (no client_secret — public client)
-    params.addQueryItem("scope", scopes());
+    params.addQueryItem(u"client_id"_s, _app.clientId);
+    params.addQueryItem(u"grant_type"_s, u"authorization_code"_s);
+    params.addQueryItem(u"code"_s, code);
+    params.addQueryItem(u"redirect_uri"_s, kOAuthRedirectUri);
+    params.addQueryItem(
+        u"code_verifier"_s, _codeVerifier
+    ); // PKCE (no client_secret — public client)
+    params.addQueryItem(u"scope"_s, scopes());
 
     const QUrl tokenUrl(authorityBase() + QStringLiteral("/oauth2/v2.0/token"));
     net::oauth::postForm(this, tokenUrl, params, [this](QNetworkReply *reply) {
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
-        if (obj.contains("error")) {
-            const QString desc = obj.value("error_description").toString();
-            emit          failed(desc.isEmpty() ? obj.value("error").toString("unknown") : desc);
+        if (obj.contains(u"error"_s)) {
+            const QString desc = obj.value(u"error_description"_s).toString();
+            emit failed(desc.isEmpty() ? obj.value(u"error"_s).toString(u"unknown"_s) : desc);
             return;
         }
-        const qint64 expiresIn = obj.value("expires_in").toInteger(0);
+        const qint64 expiresIn = obj.value(u"expires_in"_s).toInteger(0);
         const qint64 expiresAt = expiresIn > 0 ? QDateTime::currentSecsSinceEpoch() + expiresIn : 0;
         finish(
-            obj.value("access_token").toString(),
-            obj.value("refresh_token").toString(),
+            obj.value(u"access_token"_s).toString(),
+            obj.value(u"refresh_token"_s).toString(),
             expiresAt,
-            obj.value("id_token").toString()
+            obj.value(u"id_token"_s).toString()
         );
     });
 }
@@ -145,11 +149,11 @@ void OAuthFlow::finish(
     const QString &idToken
 ) {
     const auto    claims   = jwtPayload(idToken);
-    const QString tenantId = claims.value("tid").toString();
-    const QString userId   = claims.value("oid").toString();
+    const QString tenantId = claims.value(u"tid"_s).toString();
+    const QString userId   = claims.value(u"oid"_s).toString();
     // Fallback workspace name from the UPN domain; replaced by the org's real
     // displayName once /organization returns.
-    const QString upn      = claims.value("preferred_username").toString();
+    const QString upn      = claims.value(u"preferred_username"_s).toString();
     const QString domain   = upn.contains('@') ? upn.section('@', 1) : upn;
 
     // Look up the organization's display name (and skip icon for now — the org
@@ -168,9 +172,9 @@ void OAuthFlow::finish(
             QString orgName = domain;
             if (reply->error() == QNetworkReply::NoError) {
                 const auto arr =
-                    QJsonDocument::fromJson(reply->readAll()).object().value("value").toArray();
+                    QJsonDocument::fromJson(reply->readAll()).object().value(u"value"_s).toArray();
                 if (!arr.isEmpty()) {
-                    const auto name = arr.first().toObject().value("displayName").toString();
+                    const auto name = arr.first().toObject().value(u"displayName"_s).toString();
                     if (!name.isEmpty())
                         orgName = name;
                 }

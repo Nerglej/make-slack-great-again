@@ -17,6 +17,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 MembersPopup::MembersPopup(ImageCache *imgCache, QWidget *parent)
     : QFrame(parent, Qt::Popup | Qt::FramelessWindowHint) {
     setObjectName("membersPopup");
@@ -68,24 +70,21 @@ MembersPopup::MembersPopup(ImageCache *imgCache, QWidget *parent)
 
 void MembersPopup::applyTheme() {
     const auto &th = Th::c();
-    setStyleSheet(QString(
-                      "QFrame#membersPopup {"
-                      "  background: %1;"
-                      "  border: 1px solid %2;"
-                      "  border-radius: 8px;"
-                      "}"
-    )
-                      .arg(Th::qss(th.surface.raised), Th::qss(th.divider.strong)));
+    setStyleSheet(
+        u"QFrame#membersPopup {"
+        "  background: %1;"
+        "  border: 1px solid %2;"
+        "  border-radius: 8px;"
+        "}"_s.arg(Th::qss(th.surface.raised), Th::qss(th.divider.strong))
+    );
     _title->setStyleSheet(
-        QString("QLabel { color: %1; font-size: %2px; font-weight: 600; background: transparent; }")
+        u"QLabel { color: %1; font-size: %2px; font-weight: 600; background: transparent; }"_s
             .arg(Th::qss(th.text.secondary))
             .arg(th.fonts.sm)
     );
-    _message->setStyleSheet(
-        QString("QLabel { color: %1; font-size: %2px; background: transparent; }")
-            .arg(Th::qss(th.text.secondary))
-            .arg(th.fonts.md)
-    );
+    _message->setStyleSheet(u"QLabel { color: %1; font-size: %2px; background: transparent; }"_s
+                                .arg(Th::qss(th.text.secondary))
+                                .arg(th.fonts.md));
 }
 
 void MembersPopup::open(const QRect &anchorGlobal, int expectedCount) {

@@ -10,6 +10,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 // Slack caps channel names at 80; a group DM alias needs no more.
 static constexpr int kMaxNameLen = 80;
 
@@ -64,9 +66,8 @@ QString RenameConversationDialog::name() const {
 void RenameConversationDialog::applyTheme() {
     AppDialog::applyTheme();
     if (_sectionLabel)
-        _sectionLabel->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+        _sectionLabel->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
     if (_hint)
-        _hint->setStyleSheet(QString("color: %1; font-size: %2px;")
-                                 .arg(Th::qss(Th::c().text.secondary))
+        _hint->setStyleSheet(u"color: %1; font-size: %2px;"_s.arg(Th::qss(Th::c().text.secondary))
                                  .arg(Th::c().fonts.sm));
 }

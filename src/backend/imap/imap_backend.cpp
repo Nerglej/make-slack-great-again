@@ -32,6 +32,8 @@
 #include <limits>
 #include <memory>
 
+using namespace Qt::StringLiterals;
+
 namespace imap {
 
 namespace {
@@ -208,13 +210,13 @@ Message buildMessage(const MsgRef &ref, const QByteArray &rawBody) {
             const QImage img = QImage::fromData(a.content);
             f.imageWidth     = img.width();
             f.imageHeight    = img.height();
-            f.urlPrivate     = QStringLiteral("data:") + a.mimeType + ";base64," +
+            f.urlPrivate     = QStringLiteral("data:") + a.mimeType + u";base64,"_s +
                                QString::fromLatin1(a.content.toBase64());
         } else {
             // Other attachments: a lazy ref the user can download/open on click;
             // downloadFile re-fetches the part (avoids holding bytes in memory).
-            f.urlPrivate = QStringLiteral("imapfile:") + ref.mailbox + "|" +
-                           QString::number(ref.uid) + "|" + f.name;
+            f.urlPrivate = QStringLiteral("imapfile:") + ref.mailbox + u"|"_s +
+                           QString::number(ref.uid) + u"|"_s + f.name;
         }
         msg.files.push_back(std::move(f));
     }
@@ -239,7 +241,7 @@ MessagePage buildPage(
         if (subj.isEmpty())
             return;
         const QString body   = msg.text.text;
-        const QString prefix = body.isEmpty() ? subj : (subj + "\n\n");
+        const QString prefix = body.isEmpty() ? subj : (subj + u"\n\n"_s);
         const int     shift  = body.isEmpty() ? 0 : int(prefix.size());
         msg.text.text        = body.isEmpty() ? subj : (prefix + body);
         for (auto &e : msg.text.entities)
@@ -532,7 +534,7 @@ void Backend::loadDomainIconCache() {
     _domainIconsLoaded = true;
     const QJsonObject root =
         QJsonDocument::fromJson(
-            QSettings("msga", "msga").value(QStringLiteral("imap/domainIcons")).toByteArray()
+            QSettings(u"msga"_s, u"msga"_s).value(QStringLiteral("imap/domainIcons")).toByteArray()
         )
             .object();
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -555,7 +557,7 @@ void Backend::saveDomainIconCache() const {
                 {QStringLiteral("ts"), double(it.value().ts)},
             }
         );
-    QSettings("msga", "msga")
+    QSettings(u"msga"_s, u"msga"_s)
         .setValue(
             QStringLiteral("imap/domainIcons"), QJsonDocument(root).toJson(QJsonDocument::Compact)
         );
@@ -1423,10 +1425,10 @@ void Backend::submitMail(
         cp.references        = references;
         cp.attachments       = attachments;
         const QString domain = me.section(QLatin1Char('@'), 1);
-        cp.messageId         = QUuid::createUuid().toString(QUuid::WithoutBraces) + "@" + domain;
+        cp.messageId         = QUuid::createUuid().toString(QUuid::WithoutBraces) + u"@"_s + domain;
         cp.dateRfc2822       = QDateTime::currentDateTime().toString(Qt::RFC2822Date);
         if (!attachments.isEmpty())
-            cp.boundary = "msga_" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+            cp.boundary = u"msga_"_s + QUuid::createUuid().toString(QUuid::WithoutBraces);
         const QByteArray raw = buildMimeMessage(cp);
 
         // Refresh the OAuth token (if any) so SMTP authenticates with a live
@@ -1788,7 +1790,7 @@ void Backend::downloadFile(
                             const ParsedMessage pm = Mime::parse(it.rawBody);
                             for (const MimeAttachment &a : pm.attachments)
                                 if (a.filename == name ||
-                                    (a.filename.isEmpty() && name == "attachment")) {
+                                    (a.filename.isEmpty() && name == u"attachment"_s)) {
                                     if (onData)
                                         onData(a.content);
                                     return;

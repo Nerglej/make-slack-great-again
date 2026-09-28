@@ -2,6 +2,8 @@
 // Copyright (C) 2026  Vladimir Osipov
 #include "fake_backend.h"
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 TextWithEntities plainText(const QString &text) {
@@ -21,72 +23,72 @@ Message makeMessage(const QString &ts, const QString &userId, const QString &tex
 
 FakeBackend::FakeBackend() : _authState(AuthState::LoggedIn) {
     _conversations = std::vector<Conversation>{
-        {.id       = ConversationId{"C001"},
+        {.id       = ConversationId{u"C001"_s},
          .kind     = ConvKind::PublicChannel,
-         .name     = "general",
+         .name     = u"general"_s,
          .isMember = true,
-         .lastRead = "0",
+         .lastRead = u"0"_s,
          .unread   = 0},
-        {.id       = ConversationId{"C002"},
+        {.id       = ConversationId{u"C002"_s},
          .kind     = ConvKind::PublicChannel,
-         .name     = "random",
+         .name     = u"random"_s,
          .isMember = true,
-         .lastRead = "0",
+         .lastRead = u"0"_s,
          .unread   = 2},
-        {.id       = ConversationId{"C003"},
+        {.id       = ConversationId{u"C003"_s},
          .kind     = ConvKind::PrivateChannel,
-         .name     = "secret",
+         .name     = u"secret"_s,
          .isMember = true,
-         .lastRead = "0",
+         .lastRead = u"0"_s,
          .unread   = 0},
-        {.id       = ConversationId{"D001"},
+        {.id       = ConversationId{u"D001"_s},
          .kind     = ConvKind::Im,
-         .name     = "alice-dm",
+         .name     = u"alice-dm"_s,
          .isMember = true,
-         .lastRead = "0",
+         .lastRead = u"0"_s,
          .unread   = 1,
-         .dmUser   = std::optional<UserId>(UserId{"U002"})},
-        {.id       = ConversationId{"G001"},
+         .dmUser   = std::optional<UserId>(UserId{u"U002"_s})},
+        {.id       = ConversationId{u"G001"_s},
          .kind     = ConvKind::Mpim,
-         .name     = "mpdm-alice--bob--charlie-1",
+         .name     = u"mpdm-alice--bob--charlie-1"_s,
          .isMember = true,
-         .lastRead = "0",
+         .lastRead = u"0"_s,
          .unread   = 0,
-         .members  = {UserId{"U002"}, UserId{"U001"}, UserId{"U004"}}},
+         .members  = {UserId{u"U002"_s}, UserId{u"U001"_s}, UserId{u"U004"_s}}},
     };
 
     _users = std::vector<User>{
-        {.id          = UserId{"U001"},
-         .name        = "bob",
-         .displayName = "Bob Builder",
+        {.id          = UserId{u"U001"_s},
+         .name        = u"bob"_s,
+         .displayName = u"Bob Builder"_s,
          .isBot       = false,
          .isActive    = true},
-        {.id          = UserId{"U002"},
-         .name        = "alice",
-         .displayName = "Alice Wonder",
+        {.id          = UserId{u"U002"_s},
+         .name        = u"alice"_s,
+         .displayName = u"Alice Wonder"_s,
          .isBot       = false,
          .isActive    = false},
-        {.id          = UserId{"U003"},
-         .name        = "bot",
-         .displayName = "HelperBot",
+        {.id          = UserId{u"U003"_s},
+         .name        = u"bot"_s,
+         .displayName = u"HelperBot"_s,
          .isBot       = true,
          .isActive    = false},
-        {.id          = UserId{"U004"},
-         .name        = "charlie",
-         .displayName = "Charlie Dev",
+        {.id          = UserId{u"U004"_s},
+         .name        = u"charlie"_s,
+         .displayName = u"Charlie Dev"_s,
          .isBot       = false,
          .isActive    = false},
     };
 
-    _history["C001"] = {
-        makeMessage("1000000000.000001", "U002", "Hey everyone, welcome!"),
-        makeMessage("1000000000.000002", "U001", "Thanks! Excited to be here."),
-        makeMessage("1000000000.000003", "U003", "I am a bot. Beep boop."),
+    _history[u"C001"_s] = {
+        makeMessage(u"1000000000.000001"_s, u"U002"_s, u"Hey everyone, welcome!"_s),
+        makeMessage(u"1000000000.000002"_s, u"U001"_s, u"Thanks! Excited to be here."_s),
+        makeMessage(u"1000000000.000003"_s, u"U003"_s, u"I am a bot. Beep boop."_s),
     };
 
-    _history["C002"] = {
-        makeMessage("1000000001.000001", "U001", "Anyone up for a coffee break?"),
-        makeMessage("1000000001.000002", "U002", "Always :coffee:"),
+    _history[u"C002"_s] = {
+        makeMessage(u"1000000001.000001"_s, u"U001"_s, u"Anyone up for a coffee break?"_s),
+        makeMessage(u"1000000001.000002"_s, u"U002"_s, u"Always :coffee:"_s),
     };
 }
 
@@ -102,7 +104,7 @@ void FakeBackend::connectRealtime() {}
 void FakeBackend::disconnectRealtime() {}
 
 rpl::producer<UserId> FakeBackend::loadMe() {
-    return rpl::variable<UserId>(UserId{"U001"}).value();
+    return rpl::variable<UserId>(UserId{u"U001"_s}).value();
 }
 
 rpl::producer<std::vector<Conversation>> FakeBackend::loadConversations() {
@@ -176,15 +178,15 @@ void FakeBackend::setConversationInfo(Conversation c) {
 
 rpl::producer<std::vector<SlashCommand>> FakeBackend::listCommands() {
     return rpl::variable<std::vector<SlashCommand>>(std::vector<SlashCommand>{
-                                                        {.name  = "remind",
-                                                         .desc  = "Set a reminder",
-                                                         .usage = "[@someone or #channel] [what] "
-                                                                  "[when]"},
-                                                        {.name    = "deploy",
-                                                         .desc    = "Deploy a service",
-                                                         .usage   = "[service]",
-                                                         .appId   = "A012FAKE",
-                                                         .appName = "Deploybot"},
+                                                        {.name  = u"remind"_s,
+                                                         .desc  = u"Set a reminder"_s,
+                                                         .usage = u"[@someone or #channel] [what] "
+                                                                  "[when]"_s},
+                                                        {.name    = u"deploy"_s,
+                                                         .desc    = u"Deploy a service"_s,
+                                                         .usage   = u"[service]"_s,
+                                                         .appId   = u"A012FAKE"_s,
+                                                         .appName = u"Deploybot"_s},
                                                     })
         .value();
 }

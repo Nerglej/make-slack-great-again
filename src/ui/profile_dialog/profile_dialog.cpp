@@ -25,6 +25,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 constexpr int kAvatarDiameter = 120;
 constexpr int kMaxNameLen     = 80;
@@ -311,7 +313,7 @@ void ProfileDialog::save() {
 void ProfileDialog::setStatusMessage(const QString &text, bool error) {
     _status->setText(text);
     _status->setVisible(!text.isEmpty());
-    _status->setStyleSheet(QString("color: %1; font-size: %2px;")
+    _status->setStyleSheet(u"color: %1; font-size: %2px;"_s
                                .arg(Th::qss(error ? Th::c().text.danger : Th::c().text.secondary))
                                .arg(Th::c().fonts.sm));
     updateCard();
@@ -320,7 +322,7 @@ void ProfileDialog::setStatusMessage(const QString &text, bool error) {
 void ProfileDialog::applyTheme() {
     AppDialog::applyTheme();
 
-    const QString labelStyle = QString("color: %1;").arg(Th::qss(Th::c().text.primary));
+    const QString labelStyle = u"color: %1;"_s.arg(Th::qss(Th::c().text.primary));
     for (QLabel *l : {_nameLabel, _emailLabel, _phoneLabel})
         if (l)
             l->setStyleSheet(labelStyle);

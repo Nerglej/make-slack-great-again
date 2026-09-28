@@ -15,7 +15,7 @@ inline QFont emojiFont(int pixelSize = 20) {
 #elif defined(Q_OS_MAC)
     f.setFamily("Apple Color Emoji");
 #else
-    f.setFamilies({"Noto Color Emoji", "Noto Emoji"});
+    f.setFamilies({QStringLiteral("Noto Color Emoji"), QStringLiteral("Noto Emoji")});
 #endif
     return f;
 }

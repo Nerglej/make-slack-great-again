@@ -26,6 +26,8 @@
 #include <QTimer>
 #include <QWindow>
 
+using namespace Qt::StringLiterals;
+
 static constexpr QSize kBtnIconSize{12, 12};
 
 TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
@@ -70,26 +72,26 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
         return btn;
     };
 
-    if (QGuiApplication::platformName() != "wayland") {
-        _pinBtn = makeBtn(":/ui/pin-off.svg", "titleBarPin");
+    if (QGuiApplication::platformName() != u"wayland"_s) {
+        _pinBtn = makeBtn(u":/ui/pin-off.svg"_s, "titleBarPin");
         _pinBtn->installEventFilter(this);
         connect(_pinBtn, &QPushButton::clicked, this, [this] { togglePin(); });
         layout->addWidget(_pinBtn);
     }
 
-    _minBtn = makeBtn(":/ui/wc-minimize.svg", "titleBarMin");
+    _minBtn = makeBtn(u":/ui/wc-minimize.svg"_s, "titleBarMin");
     _minBtn->installEventFilter(this);
     connect(_minBtn, &QPushButton::clicked, this, [this] { window()->showMinimized(); });
     layout->addWidget(_minBtn);
 
-    _maxBtn = makeBtn(":/ui/wc-maximize.svg", "titleBarMax");
+    _maxBtn = makeBtn(u":/ui/wc-maximize.svg"_s, "titleBarMax");
     _maxBtn->installEventFilter(this);
     connect(_maxBtn, &QPushButton::clicked, this, [this] {
         window()->isMaximized() ? window()->showNormal() : window()->showMaximized();
     });
     layout->addWidget(_maxBtn);
 
-    _closeBtn = makeBtn(":/ui/wc-close.svg", "titleBarClose");
+    _closeBtn = makeBtn(u":/ui/wc-close.svg"_s, "titleBarClose");
     _closeBtn->installEventFilter(this);
     connect(_closeBtn, &QPushButton::clicked, this, [this] { window()->close(); });
     layout->addWidget(_closeBtn);
@@ -134,34 +136,33 @@ void TitleBar::applyTheme() {
 #ifdef Q_OS_MACOS
     Th::setStyleSheetIfChanged(
         this,
-        QString("QWidget#titleBar { background: %1; border-bottom: 1px solid %2; }")
-            .arg(Th::qss(Th::c().surface.content), Th::qss(Th::c().divider.subtle))
+        u"QWidget#titleBar { background: %1; border-bottom: 1px solid %2; }"_s.arg(
+            Th::qss(Th::c().surface.content), Th::qss(Th::c().divider.subtle)
+        )
     );
     Th::setStyleSheetIfChanged(
         _titleLabel,
-        QString("color: %1; font-size: %2px; font-weight: 600;")
-            .arg(Th::qss(Th::c().text.primary))
+        u"color: %1; font-size: %2px; font-weight: 600;"_s.arg(Th::qss(Th::c().text.primary))
             .arg(Th::c().fonts.xl)
     );
     if (window()->windowHandle())
         configureMacTitleBar(window());
 #else
     Th::setStyleSheetIfChanged(
-        this, QString("QWidget#titleBar { background: %1; }").arg(Th::qss(Th::c().titleBar.bg))
+        this, u"QWidget#titleBar { background: %1; }"_s.arg(Th::qss(Th::c().titleBar.bg))
     );
     _minBtn->setIcon(
-        svgIcon(":/ui/wc-minimize.svg", kBtnIconSize, Th::c().titleBar.controlDefault)
+        svgIcon(u":/ui/wc-minimize.svg"_s, kBtnIconSize, Th::c().titleBar.controlDefault)
     );
     updateMaxButton();
     updatePinButton();
-    _closeBtn->setIcon(svgIcon(":/ui/wc-close.svg", kBtnIconSize, Th::c().titleBar.controlDefault));
+    _closeBtn->setIcon(
+        svgIcon(u":/ui/wc-close.svg"_s, kBtnIconSize, Th::c().titleBar.controlDefault)
+    );
     Th::setStyleSheetIfChanged(
         _closeBtn,
-        QString(
-            "QPushButton#titleBarClose:hover { background-color: %1; "
-            "border-top-right-radius: 8px; }"
-        )
-            .arg(Th::qss(Th::c().titleBar.controlClose))
+        u"QPushButton#titleBarClose:hover { background-color: %1; "
+        "border-top-right-radius: 8px; }"_s.arg(Th::qss(Th::c().titleBar.controlClose))
     );
 #endif
 }
@@ -169,7 +170,8 @@ void TitleBar::applyTheme() {
 void TitleBar::updateMaxButton() {
     if (!_maxBtn || !window())
         return;
-    const QString svg = window()->isMaximized() ? ":/ui/wc-restore.svg" : ":/ui/wc-maximize.svg";
+    const QString svg =
+        window()->isMaximized() ? u":/ui/wc-restore.svg"_s : u":/ui/wc-maximize.svg"_s;
     _maxBtn->setIcon(svgIcon(svg, kBtnIconSize, Th::c().titleBar.controlDefault));
 }
 
@@ -179,7 +181,7 @@ void TitleBar::mousePressEvent(QMouseEvent *e) {
         if (auto *h = window()->windowHandle())
             h->startSystemMove();
 #else
-        if (QGuiApplication::platformName() == "wayland") {
+        if (QGuiApplication::platformName() == u"wayland"_s) {
             if (auto *h = window()->windowHandle()) {
                 _systemMovePending = true;
                 h->startSystemMove();
@@ -230,7 +232,7 @@ void TitleBar::mouseReleaseEvent(QMouseEvent *e) {
 //
 // macOS / Windows: QCursor::setPos() works, same as X11.
 void TitleBar::refreshHoverState() {
-    if (QGuiApplication::platformName() == "wayland") {
+    if (QGuiApplication::platformName() == u"wayland"_s) {
         const QPoint gp = QCursor::pos();
         const QPoint lp = window()->mapFromGlobal(gp);
         QWidget     *w  = window()->childAt(lp);
@@ -289,17 +291,17 @@ bool TitleBar::eventFilter(QObject *watched, QEvent *e) {
     if (watched == _minBtn) {
         if (e->type() == QEvent::Enter)
             _minBtn->setIcon(
-                svgIcon(":/ui/wc-minimize.svg", kBtnIconSize, Th::c().titleBar.controlHover)
+                svgIcon(u":/ui/wc-minimize.svg"_s, kBtnIconSize, Th::c().titleBar.controlHover)
             );
         else if (e->type() == QEvent::Leave)
             _minBtn->setIcon(
-                svgIcon(":/ui/wc-minimize.svg", kBtnIconSize, Th::c().titleBar.controlDefault)
+                svgIcon(u":/ui/wc-minimize.svg"_s, kBtnIconSize, Th::c().titleBar.controlDefault)
             );
     }
     if (watched == _maxBtn) {
         if (e->type() == QEvent::Enter) {
             const QString svg =
-                window()->isMaximized() ? ":/ui/wc-restore.svg" : ":/ui/wc-maximize.svg";
+                window()->isMaximized() ? u":/ui/wc-restore.svg"_s : u":/ui/wc-maximize.svg"_s;
             _maxBtn->setIcon(svgIcon(svg, kBtnIconSize, Th::c().titleBar.controlHover));
         } else if (e->type() == QEvent::Leave)
             updateMaxButton();
@@ -308,7 +310,7 @@ bool TitleBar::eventFilter(QObject *watched, QEvent *e) {
         if (e->type() == QEvent::Enter) {
             const QString text = _pinned ? tr("Unpin window") : tr("Pin window on top");
             _tooltip->showAbove(text, QRect(_pinBtn->mapToGlobal(QPoint(0, 0)), _pinBtn->size()));
-            const QString svg = _pinned ? ":/ui/pin.svg" : ":/ui/pin-off.svg";
+            const QString svg = _pinned ? u":/ui/pin.svg"_s : u":/ui/pin-off.svg"_s;
             _pinBtn->setIcon(svgIcon(svg, kBtnIconSize, Th::c().titleBar.controlHover));
         } else if (e->type() == QEvent::Leave) {
             _tooltip->hide();
@@ -318,11 +320,11 @@ bool TitleBar::eventFilter(QObject *watched, QEvent *e) {
     if (watched == _closeBtn) {
         if (e->type() == QEvent::Enter)
             _closeBtn->setIcon(
-                svgIcon(":/ui/wc-close.svg", kBtnIconSize, Th::c().titleBar.controlHover)
+                svgIcon(u":/ui/wc-close.svg"_s, kBtnIconSize, Th::c().titleBar.controlHover)
             );
         else if (e->type() == QEvent::Leave)
             _closeBtn->setIcon(
-                svgIcon(":/ui/wc-close.svg", kBtnIconSize, Th::c().titleBar.controlDefault)
+                svgIcon(u":/ui/wc-close.svg"_s, kBtnIconSize, Th::c().titleBar.controlDefault)
             );
     }
     return QWidget::eventFilter(watched, e);
@@ -350,11 +352,11 @@ void TitleBar::updatePinButton() {
     if (!_pinBtn)
         return;
     if (_pinned) {
-        _pinBtn->setIcon(svgIcon(":/ui/pin.svg", kBtnIconSize, Th::c().titleBar.controlClose));
+        _pinBtn->setIcon(svgIcon(u":/ui/pin.svg"_s, kBtnIconSize, Th::c().titleBar.controlClose));
         _pinBtn->setObjectName("titleBarPinActive");
     } else {
         _pinBtn->setIcon(
-            svgIcon(":/ui/pin-off.svg", kBtnIconSize, Th::c().titleBar.controlDefault)
+            svgIcon(u":/ui/pin-off.svg"_s, kBtnIconSize, Th::c().titleBar.controlDefault)
         );
         _pinBtn->setObjectName("titleBarPin");
     }

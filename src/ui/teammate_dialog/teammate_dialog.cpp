@@ -17,6 +17,8 @@
 #include <QSvgRenderer>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 constexpr int kPreviewSize = 64;
@@ -246,19 +248,16 @@ void TeammateDialog::applyTheme() {
     AppDialog::applyTheme();
     const auto &th = Th::c();
     for (auto *l : _labels)
-        l->setStyleSheet(QString("color: %1;").arg(Th::qss(th.text.primary)));
+        l->setStyleSheet(u"color: %1;"_s.arg(Th::qss(th.text.primary)));
     for (auto *l : _hints)
         l->setStyleSheet(
-            QString("color: %1; font-size: %2px;").arg(Th::qss(th.text.secondary)).arg(th.fonts.sm)
+            u"color: %1; font-size: %2px;"_s.arg(Th::qss(th.text.secondary)).arg(th.fonts.sm)
         );
     if (_prompt)
         _prompt->setStyleSheet(
-            QString(
-                "QPlainTextEdit { border: 1px solid %1; border-radius: %2px; "
-                "background: %3; color: %4; font-size: %5px; padding: 4px; }"
-                "QPlainTextEdit:focus { border: 2px solid %6; }"
-            )
-                .arg(Th::qss(th.composer.border))
+            u"QPlainTextEdit { border: 1px solid %1; border-radius: %2px; "
+            "background: %3; color: %4; font-size: %5px; padding: 4px; }"
+            "QPlainTextEdit:focus { border: 2px solid %6; }"_s.arg(Th::qss(th.composer.border))
                 .arg(Ui::kControlRadius)
                 .arg(Th::qss(th.surface.raised))
                 .arg(Th::qss(th.text.primary))
@@ -290,5 +289,5 @@ RemoveTeammateDialog::RemoveTeammateDialog(const QString &name, QWidget *parent)
 void RemoveTeammateDialog::applyTheme() {
     AppDialog::applyTheme();
     if (_text)
-        _text->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+        _text->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
 }

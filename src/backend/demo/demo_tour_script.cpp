@@ -7,6 +7,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+using namespace Qt::StringLiterals;
+
 namespace demo {
 
 QString tourPathFromArgs(int argc, char **argv) {
@@ -79,9 +81,9 @@ constexpr Verb kVerbs[] = {
 };
 
 const QStringList kSettingsPages = {
-    "appearance", "notifications", "ai", "storage", "system", "about"
+    u"appearance"_s, u"notifications"_s, u"ai"_s, u"storage"_s, u"system"_s, u"about"_s
 };
-const QStringList kKeys = {"Return", "Tab", "Escape", "Down", "Up", "Backspace"};
+const QStringList kKeys = {u"Return"_s, u"Tab"_s, u"Escape"_s, u"Down"_s, u"Up"_s, u"Backspace"_s};
 
 } // namespace
 
@@ -98,14 +100,14 @@ std::optional<TourScript> parseTour(const QByteArray &json, QString *error) {
     const auto root = doc.object();
 
     TourScript script;
-    if (const auto win = root.value("window").toArray(); win.size() == 2)
+    if (const auto win = root.value(u"window"_s).toArray(); win.size() == 2)
         script.window = QSize(win[0].toInt(), win[1].toInt());
     if (script.window.width() < 800 || script.window.height() < 600)
         return fail(QStringLiteral("tour: window must be at least 800x600"));
-    script.pauseMs = root.value("pause").toInt(script.pauseMs);
+    script.pauseMs = root.value(u"pause"_s).toInt(script.pauseMs);
 
     int n = 0;
-    for (const auto &sv : root.value("steps").toArray()) {
+    for (const auto &sv : root.value(u"steps"_s).toArray()) {
         ++n;
         const auto  o    = sv.toObject();
         const Verb *verb = nullptr;
@@ -147,14 +149,14 @@ std::optional<TourScript> parseTour(const QByteArray &json, QString *error) {
         }
         case Verb::Special: // settings: N (hold on Appearance) | {"pages": [...], "each": ms}
             if (val.isObject()) {
-                for (const auto &p : val.toObject().value("pages").toArray())
+                for (const auto &p : val.toObject().value(u"pages"_s).toArray())
                     st.list << p.toString();
-                st.ms = val.toObject().value("each").toInt(1600);
+                st.ms = val.toObject().value(u"each"_s).toInt(1600);
             } else {
                 st.ms = val.toInt(2500);
             }
             if (st.list.isEmpty())
-                st.list << "appearance";
+                st.list << u"appearance"_s;
             for (const auto &p : st.list)
                 if (!kSettingsPages.contains(p))
                     return fail(
@@ -163,22 +165,22 @@ std::optional<TourScript> parseTour(const QByteArray &json, QString *error) {
             break;
         case Verb::Post: { // post: {"conv": id, "user": id, "text": mrkdwn, "thread": fragment}
             const auto o2 = val.toObject();
-            st.conv       = o2.value("conv").toString();
-            st.user       = o2.value("user").toString();
-            st.arg        = o2.value("text").toString();
-            st.arg2       = o2.value("thread").toString();
+            st.conv       = o2.value(u"conv"_s).toString();
+            st.user       = o2.value(u"user"_s).toString();
+            st.arg        = o2.value(u"text"_s).toString();
+            st.arg2       = o2.value(u"thread"_s).toString();
             if (st.conv.isEmpty() || st.user.isEmpty() || st.arg.isEmpty())
                 return fail(QStringLiteral("tour: step %1: post needs conv, user and text").arg(n));
             break;
         }
         }
         if (st.kind == K::Type)
-            st.num = o.value("cps").toDouble(16);
-        if (st.kind == K::Theme && st.arg != "light" && st.arg != "dark")
+            st.num = o.value(u"cps"_s).toDouble(16);
+        if (st.kind == K::Theme && st.arg != u"light"_s && st.arg != u"dark"_s)
             return fail(QStringLiteral("tour: step %1: theme is light|dark").arg(n));
         if (st.kind == K::Key && !kKeys.contains(st.arg))
             return fail(
-                QStringLiteral("tour: step %1: key is one of %2").arg(n).arg(kKeys.join(", "))
+                QStringLiteral("tour: step %1: key is one of %2").arg(n).arg(kKeys.join(u", "_s))
             );
         script.steps.push_back(std::move(st));
     }

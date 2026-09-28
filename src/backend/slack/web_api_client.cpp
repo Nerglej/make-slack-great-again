@@ -9,9 +9,11 @@
 #include <QNetworkRequest>
 #include <QDebug>
 
+using namespace Qt::StringLiterals;
+
 namespace slack {
 
-const QString  WebApiClient::kBaseUrl        = "https://slack.com/api/";
+const QString  WebApiClient::kBaseUrl        = u"https://slack.com/api/"_s;
 const QString &WebApiClient::kConnectionLost = net::HttpQueue::kConnectionLost;
 
 namespace {
@@ -20,7 +22,7 @@ namespace {
 // hiccups rather than a problem with the request itself. Slack documents these
 // as "likely a transient issue on our end" — safe to retry an idempotent call.
 bool isTransientSlackError(const QString &err) {
-    return err == "internal_error" || err == "service_unavailable" || err == "fatal_error";
+    return err == u"internal_error"_s || err == u"service_unavailable"_s || err == u"fatal_error"_s;
 }
 
 // Unlike a transport failure (genuinely offline → unlimited queueing is correct),
@@ -37,7 +39,7 @@ constexpr int kMaxTransientSlackRetries = 6;
 // superseded by a refresh that happened on another device, which also burns our
 // stored refresh token. Both mean "refresh, or make the user sign in again".
 bool isAuthRejection(const QString &err) {
-    return err == "token_expired" || err == "invalid_auth";
+    return err == u"token_expired"_s || err == u"invalid_auth"_s;
 }
 
 // A refresh retries the failing call transparently on success. token_expired
@@ -104,9 +106,9 @@ void WebApiClient::postMultipart(
             return;
         }
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
-        if (!obj.value("ok").toBool()) {
+        if (!obj.value(u"ok"_s).toBool()) {
             if (onError)
-                onError(obj.value("error").toString("unknown"));
+                onError(obj.value(u"error"_s).toString(u"unknown"_s));
             return;
         }
         if (onSuccess)
@@ -122,8 +124,8 @@ void WebApiClient::paginate(
     std::function<void()>           onDone,
     OnError                         onError
 ) {
-    if (!params.hasQueryItem("limit"))
-        params.addQueryItem("limit", "200");
+    if (!params.hasQueryItem(u"limit"_s))
+        params.addQueryItem(u"limit"_s, u"200"_s);
 
     struct Ctx {
         WebApiClient                   *self;
@@ -163,12 +165,14 @@ void WebApiClient::paginate(
                 if (!arr.isEmpty())
                     ctx->onPage(arr);
 
-                auto cursor =
-                    resp.value("response_metadata").toObject().value("next_cursor").toString();
+                auto cursor = resp.value(u"response_metadata"_s)
+                                  .toObject()
+                                  .value(u"next_cursor"_s)
+                                  .toString();
                 if (!cursor.isEmpty()) {
                     auto next = ctx->params;
-                    next.removeQueryItem("cursor");
-                    next.addQueryItem("cursor", cursor);
+                    next.removeQueryItem(u"cursor"_s);
+                    next.addQueryItem(u"cursor"_s, cursor);
                     ctx->loadPage(next);
                 } else {
                     ctx->onDone();
@@ -184,8 +188,8 @@ void WebApiClient::paginate(
 }
 
 void WebApiClient::handleResponse(const QJsonObject &obj, PendingCall c) {
-    if (!obj.value("ok").toBool()) {
-        const auto err = obj.value("error").toString("unknown");
+    if (!obj.value(u"ok"_s).toBool()) {
+        const auto err = obj.value(u"error"_s).toString(u"unknown"_s);
 
         // A transient Slack-side error on an idempotent call: ride out a brief
         // blip with backoff instead of leaking a dropped call to the caller.
@@ -202,8 +206,8 @@ void WebApiClient::handleResponse(const QJsonObject &obj, PendingCall c) {
 
         if (!c.quietErrors)
             qWarning() << "WebApiClient Slack error:" << err << "on" << c.method
-                       << "| needed:" << obj.value("needed").toString()
-                       << "| provided:" << obj.value("provided").toString();
+                       << "| needed:" << obj.value(u"needed"_s).toString()
+                       << "| provided:" << obj.value(u"provided"_s).toString();
 
         if (isAuthRejection(err) && hasTokenExpiredHandler() &&
             c.authRefreshRetries < kMaxAuthRefreshRetries) {

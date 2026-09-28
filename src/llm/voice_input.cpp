@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <cstdlib>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 constexpr const char *kGlossaryKey = "voice/glossary";
@@ -290,7 +292,7 @@ void VoiceInput::resetToIdle() {
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 QStringList VoiceInput::glossary() {
-    return QSettings("msga", "msga").value(kGlossaryKey).toStringList();
+    return QSettings(u"msga"_s, u"msga"_s).value(kGlossaryKey).toStringList();
 }
 
 void VoiceInput::setGlossary(const QStringList &terms) {
@@ -298,7 +300,7 @@ void VoiceInput::setGlossary(const QStringList &terms) {
     for (const QString &t : terms)
         if (const QString s = t.simplified(); !s.isEmpty() && !clean.contains(s))
             clean << s;
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     if (clean.isEmpty())
         s.remove(kGlossaryKey);
     else
@@ -306,9 +308,9 @@ void VoiceInput::setGlossary(const QStringList &terms) {
 }
 
 bool VoiceInput::cleanupEnabled() {
-    return QSettings("msga", "msga").value(kCleanupKey, true).toBool();
+    return QSettings(u"msga"_s, u"msga"_s).value(kCleanupKey, true).toBool();
 }
 
 void VoiceInput::setCleanupEnabled(bool on) {
-    QSettings("msga", "msga").setValue(kCleanupKey, on);
+    QSettings(u"msga"_s, u"msga"_s).setValue(kCleanupKey, on);
 }

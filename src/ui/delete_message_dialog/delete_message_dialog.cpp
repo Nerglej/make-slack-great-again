@@ -13,6 +13,8 @@
 #include <QTextBrowser>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 DeleteMessageDialog::DeleteMessageDialog(const Message &msg, Session *session, QWidget *parent)
     : AppDialog(tr("Delete message"), parent) {
     auto       *cl = contentLayout();
@@ -84,19 +86,16 @@ DeleteMessageDialog::DeleteMessageDialog(const Message &msg, Session *session, Q
 
 void DeleteMessageDialog::applyTheme() {
     AppDialog::applyTheme();
-    _warnLabel->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.secondary)));
+    _warnLabel->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.secondary)));
     _msgCard->setStyleSheet(
-        QString(
-            "QFrame#msgCard {"
-            "  border: 1px solid %1;"
-            "  border-radius: 6px;"
-            "  background: %2;"
-            "}"
-        )
-            .arg(Th::qss(Th::c().surface.highlightStrong), Th::qss(Th::c().message.fileChipBg))
+        u"QFrame#msgCard {"
+        "  border: 1px solid %1;"
+        "  border-radius: 6px;"
+        "  background: %2;"
+        "}"_s.arg(Th::qss(Th::c().surface.highlightStrong), Th::qss(Th::c().message.fileChipBg))
     );
     if (_tsLabel)
-        _tsLabel->setStyleSheet(QString("color: %1; font-size: %2px;")
+        _tsLabel->setStyleSheet(u"color: %1; font-size: %2px;"_s
                                     .arg(Th::qss(Th::c().text.secondary))
                                     .arg(Th::c().fonts.sm));
     // Cancel/Delete buttons self-theme (StyledButton).

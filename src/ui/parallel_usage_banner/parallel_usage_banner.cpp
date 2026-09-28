@@ -11,6 +11,8 @@
 #include <QPushButton>
 #include <QStyleOption>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 // Setup docs explaining that every device needs its own Slack app keys.
 constexpr auto kSetupDocsUrl =
@@ -74,18 +76,16 @@ void ParallelUsageBanner::applyTheme() {
     _label->setPalette(pal);
 
     // Re-tint the close glyph on every theme change (see .rules).
-    _closeBtn->setIcon(svgIcon(":/ui/x.svg", QSize(14, 14), th.text.onDark));
+    _closeBtn->setIcon(svgIcon(u":/ui/x.svg"_s, QSize(14, 14), th.text.onDark));
 
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "QWidget#parallelUsageBanner { background: %1; }"
-            "QLabel { background: transparent; color: %2; font-size: %3px; }"
-            "QPushButton#parallelUsageClose {"
-            "  background: transparent; border: none; border-radius: 3px;"
-            "}"
-            "QPushButton#parallelUsageClose:hover { background: %4; }"
-        )
+        u"QWidget#parallelUsageBanner { background: %1; }"
+        "QLabel { background: transparent; color: %2; font-size: %3px; }"
+        "QPushButton#parallelUsageClose {"
+        "  background: transparent; border: none; border-radius: 3px;"
+        "}"
+        "QPushButton#parallelUsageClose:hover { background: %4; }"_s
             .arg(Th::qss(th.danger.icon), Th::qss(th.text.onDark))
             .arg(th.fonts.md)
             .arg(Th::qss(th.danger.hover))

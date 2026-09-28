@@ -7,9 +7,11 @@
 #include <QSet>
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 QStringList parseMpdmUsernames(const QString &mpdmName) {
     QString s = mpdmName;
-    if (s.startsWith("mpdm-"))
+    if (s.startsWith(u"mpdm-"_s))
         s = s.mid(5);
     // Strip trailing numeric suffix like "-1" or "-3"
     const int lastDash = s.lastIndexOf('-');
@@ -19,7 +21,7 @@ QStringList parseMpdmUsernames(const QString &mpdmName) {
         if (ok)
             s = s.left(lastDash);
     }
-    return s.split("--", Qt::SkipEmptyParts);
+    return s.split(u"--"_s, Qt::SkipEmptyParts);
 }
 
 namespace {
@@ -96,7 +98,7 @@ namedConversationsFor(Session *session, const QHash<QString, qint64> &visitedAt)
             // peer is gone is not something to jump to.
             const auto it = peers.constFind(c.dmUser->value);
             if (it != peers.constEnd()) {
-                if (it->isDeactivated || it->displayName == "deactivateduser" ||
+                if (it->isDeactivated || it->displayName == u"deactivateduser"_s ||
                     session->isUnresolvedUserId(it->displayName))
                     continue;
             }
@@ -131,7 +133,7 @@ namedConversationsFor(Session *session, const QHash<QString, qint64> &visitedAt)
                     names.append(n.isEmpty() ? uname : n);
                 }
             }
-            nc.name = names.isEmpty() ? Emoji::expandCodes(c.name) : names.join(", ");
+            nc.name = names.isEmpty() ? Emoji::expandCodes(c.name) : names.join(u", "_s);
         } else {
             nc.name = Emoji::expandCodes(c.name);
         }

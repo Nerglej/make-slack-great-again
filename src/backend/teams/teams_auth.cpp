@@ -8,6 +8,8 @@
 #include <QJsonObject>
 #include <QSettings>
 
+using namespace Qt::StringLiterals;
+
 namespace teams {
 
 namespace {
@@ -16,12 +18,12 @@ constexpr auto kClientIdKey = "credentials/teamsClientId";
 
 QString personalClientId() {
     // A public identifier (no secret in the PKCE flow) — plain settings.
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     return s.value(QString::fromLatin1(kClientIdKey)).toString();
 }
 
 void setPersonalClientId(const QString &clientId) {
-    QSettings     s("msga", "msga");
+    QSettings     s(u"msga"_s, u"msga"_s);
     // Store trimmed; blank falls back to the compiled-in build credential and is
     // removed rather than stored empty.
     const QString v = clientId.trimmed();

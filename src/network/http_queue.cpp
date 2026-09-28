@@ -13,9 +13,11 @@
 
 #include <limits>
 
+using namespace Qt::StringLiterals;
+
 namespace net {
 
-const QString HttpQueue::kConnectionLost = "connection_lost";
+const QString HttpQueue::kConnectionLost = u"connection_lost"_s;
 
 namespace {
 
@@ -61,11 +63,11 @@ FailureClass classifyTransportError(QNetworkReply::NetworkError e) {
 HttpQueue::HttpQueue(QObject *parent) : QObject(parent), _nam(new QNetworkAccessManager(this)) {}
 
 void HttpQueue::applyAuth(QNetworkRequest &req) const {
-    req.setRawHeader("Authorization", ("Bearer " + _token).toUtf8());
+    req.setRawHeader("Authorization", (u"Bearer "_s + _token).toUtf8());
     // Session auth requires the `d` cookie on every call; the token alone is
     // rejected. Sent verbatim (the stored value already carries its `xoxd-` prefix).
     if (!_cookie.isEmpty()) {
-        req.setRawHeader("Cookie", ("d=" + _cookie).toUtf8());
+        req.setRawHeader("Cookie", (u"d="_s + _cookie).toUtf8());
         // QNAM's default cookie handling (CookieLoadControlAttribute == Automatic)
         // rebuilds the Cookie header from its own (empty) jar and clobbers the one
         // set above — so without this the cookie never goes out and Slack answers
@@ -94,7 +96,7 @@ void HttpQueue::rawPost(
     const QUrl &url, const QByteArray &data, std::function<void()> onDone, OnError onError
 ) {
     QNetworkRequest req(url);
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
+    req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/octet-stream"_s);
     req.setAttribute(
         QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy
     );
@@ -256,7 +258,7 @@ void HttpQueue::execute(const PendingCall &c) {
         // POST with JSON body
         url.setQuery(QUrlQuery{});
         req.setUrl(url);
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
         reply = _nam->post(req, QJsonDocument(c.jsonBody).toJson(QJsonDocument::Compact));
     } else if (!c.idempotent) {
         // POST with form body. Qt's HTTP stack transparently retransmits GET
@@ -267,7 +269,7 @@ void HttpQueue::execute(const PendingCall &c) {
         // the classification in handleReply instead of inside Qt.
         url.setQuery(QUrlQuery{});
         req.setUrl(url);
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+        req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/x-www-form-urlencoded"_s);
         reply = _nam->post(req, net::formUrlEncode(c.params));
     } else {
         // GET with query params. Slack parses query strings with form rules

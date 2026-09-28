@@ -28,6 +28,8 @@
 
 #include <memory>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 constexpr int kMaxStatusLen = 100; // Slack caps status_text at 100 chars
 constexpr int kEmojiBtn     = 30;  // emoji prefix button side
@@ -67,21 +69,19 @@ public:
     }
 
     void applyTheme() {
-        _label->setText(QString(
-                            "<span style=\"color:%1;font-weight:bold;\">%2</span>"
-                            "<span style=\"color:%3;\">&nbsp;&nbsp;—&nbsp;&nbsp;%4</span>"
-        )
-                            .arg(
-                                Th::qss(Th::c().text.primary),
-                                _name.toHtmlEscaped(),
-                                Th::qss(Th::c().text.secondary),
-                                _duration.toHtmlEscaped()
-                            ));
-        setStyleSheet(QString(
-                          "PresetRow { border-radius: 6px; background: transparent; }"
-                          "PresetRow:hover { background: %1; }"
-        )
-                          .arg(Th::qss(Th::c().surface.sunken)));
+        _label->setText(
+            u"<span style=\"color:%1;font-weight:bold;\">%2</span>"
+            "<span style=\"color:%3;\">&nbsp;&nbsp;—&nbsp;&nbsp;%4</span>"_s.arg(
+                Th::qss(Th::c().text.primary),
+                _name.toHtmlEscaped(),
+                Th::qss(Th::c().text.secondary),
+                _duration.toHtmlEscaped()
+            )
+        );
+        setStyleSheet(
+            u"PresetRow { border-radius: 6px; background: transparent; }"
+            "PresetRow:hover { background: %1; }"_s.arg(Th::qss(Th::c().surface.sunken))
+        );
     }
 
     std::function<void()> onClick;
@@ -373,36 +373,32 @@ void StatusDialog::applyTheme() {
 
     if (_textEdit)
         _textEdit->setStyleSheet(
-            QString(
-                "QLineEdit { background: transparent; border: none; color: %1; font-size: %2px; }"
-            )
+            u"QLineEdit { background: transparent; border: none; color: %1; font-size: %2px; }"_s
                 .arg(Th::qss(Th::c().text.primary))
                 .arg(Th::c().fonts.base)
         );
 
     if (_emojiBtn)
-        _emojiBtn->setStyleSheet(QString(
-                                     "QToolButton { border: none; background: transparent; "
-                                     "border-radius: 6px; }"
-                                     "QToolButton:hover { background: %1; }"
-        )
-                                     .arg(Th::qss(Th::c().surface.sunken)));
+        _emojiBtn->setStyleSheet(
+            u"QToolButton { border: none; background: transparent; "
+            "border-radius: 6px; }"
+            "QToolButton:hover { background: %1; }"_s.arg(Th::qss(Th::c().surface.sunken))
+        );
 
     if (auto *h = findChild<QLabel *>(QStringLiteral("statusSectionHeader")))
-        h->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.secondary)));
+        h->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.secondary)));
     if (auto *l = findChild<QLabel *>(QStringLiteral("statusClearAfterLabel")))
-        l->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+        l->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
 
     if (_clearBtn)
         _clearBtn->setStyleSheet(
-            QString(
-                "QPushButton {"
-                "  border: none; border-radius: 6px;"
-                "  padding: 8px 12px; background: transparent; color: %1;"
-                "}"
-                "QPushButton:hover { background: %2; }"
+            u"QPushButton {"
+            "  border: none; border-radius: 6px;"
+            "  padding: 8px 12px; background: transparent; color: %1;"
+            "}"
+            "QPushButton:hover { background: %2; }"_s.arg(
+                Th::qss(Th::c().text.danger), Th::qss(Th::c().surface.sunken)
             )
-                .arg(Th::qss(Th::c().text.danger), Th::qss(Th::c().surface.sunken))
         );
 
     // Cancel/Save buttons self-theme (StyledButton).
@@ -412,13 +408,12 @@ void StatusDialog::styleInputBox(bool focused) {
     if (!_inputBox)
         return;
     const QColor border = focused ? Th::c().composer.borderFocus : Th::c().composer.border;
-    _inputBox->setStyleSheet(QString(
-                                 "QFrame#statusInputBox {"
-                                 "  border: %1px solid %2; border-radius: 6px; background: %3;"
-                                 "}"
-    )
-                                 .arg(focused ? 2 : 1)
-                                 .arg(Th::qss(border), Th::qss(Th::c().surface.raised)));
+    _inputBox->setStyleSheet(
+        u"QFrame#statusInputBox {"
+        "  border: %1px solid %2; border-radius: 6px; background: %3;"
+        "}"_s.arg(focused ? 2 : 1)
+            .arg(Th::qss(border), Th::qss(Th::c().surface.raised))
+    );
 }
 
 bool StatusDialog::eventFilter(QObject *obj, QEvent *event) {

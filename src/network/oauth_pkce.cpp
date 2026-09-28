@@ -12,6 +12,8 @@
 #include <QUrl>
 #include <QUrlQuery>
 
+using namespace Qt::StringLiterals;
+
 namespace net::oauth {
 
 Pkce makePkce() {
@@ -30,16 +32,16 @@ Pkce makePkce() {
 
 Callback parseCallback(const QUrlQuery &q, const QString &expectedState) {
     Callback cb;
-    if (q.hasQueryItem("error")) {
-        cb.error            = q.queryItemValue("error");
-        cb.errorDescription = q.queryItemValue("error_description");
+    if (q.hasQueryItem(u"error"_s)) {
+        cb.error            = q.queryItemValue(u"error"_s);
+        cb.errorDescription = q.queryItemValue(u"error_description"_s);
         return cb;
     }
-    if (q.queryItemValue("state") != expectedState) {
+    if (q.queryItemValue(u"state"_s) != expectedState) {
         cb.error = QStringLiteral("state_mismatch");
         return cb;
     }
-    cb.code = q.queryItemValue("code");
+    cb.code = q.queryItemValue(u"code"_s);
     return cb;
 }
 
@@ -65,7 +67,7 @@ void postForm(
     std::function<void(QNetworkReply *)> done
 ) {
     QNetworkRequest req(url);
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/x-www-form-urlencoded"_s);
     post(ctx, req, net::formUrlEncode(params), std::move(done));
 }
 

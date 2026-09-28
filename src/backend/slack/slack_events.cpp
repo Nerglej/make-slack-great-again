@@ -4,96 +4,101 @@
 
 #include "backend/slack/json_mappers.h"
 
+using namespace Qt::StringLiterals;
+
 namespace slack {
 
 std::optional<Event> normalizeSlackEvent(const QJsonObject &ev) {
-    const auto type    = ev.value("type").toString();
-    const auto subtype = ev.value("subtype").toString();
+    const auto type    = ev.value(u"type"_s).toString();
+    const auto subtype = ev.value(u"subtype"_s).toString();
 
-    if (type == "message") {
-        if (subtype == "message_deleted") {
+    if (type == u"message"_s) {
+        if (subtype == u"message_deleted"_s) {
             // previous_message carries the deleted message; toMessage derives
             // threadRoot (set only when it was a reply) so the channel list can
             // drop the root's reply count.
-            const auto prev = JsonMappers::toMessage(ev.value("previous_message").toObject());
+            const auto prev = JsonMappers::toMessage(ev.value(u"previous_message"_s).toObject());
             return EvMessageDeleted{
-                ConversationId{ev.value("channel").toString()},
-                ev.value("deleted_ts").toString(),
+                ConversationId{ev.value(u"channel"_s).toString()},
+                ev.value(u"deleted_ts"_s).toString(),
                 prev.threadRoot
             };
         }
-        if (subtype == "message_changed" || subtype == "message_replied") {
+        if (subtype == u"message_changed"_s || subtype == u"message_replied"_s) {
             return EvMessageChanged{
-                ConversationId{ev.value("channel").toString()},
-                JsonMappers::toMessage(ev.value("message").toObject())
+                ConversationId{ev.value(u"channel"_s).toString()},
+                JsonMappers::toMessage(ev.value(u"message"_s).toObject())
             };
         }
         // Plain message or bot_message
         return EvMessageNew{
-            ConversationId{ev.value("channel").toString()}, JsonMappers::toMessage(ev)
+            ConversationId{ev.value(u"channel"_s).toString()}, JsonMappers::toMessage(ev)
         };
     }
 
-    if (type == "reaction_added") {
-        const auto item = ev.value("item").toObject();
+    if (type == u"reaction_added"_s) {
+        const auto item = ev.value(u"item"_s).toObject();
         return EvReactionAdded{
-            ConversationId{item.value("channel").toString()},
-            item.value("ts").toString(),
-            ev.value("reaction").toString(),
-            UserId{ev.value("user").toString()}
+            ConversationId{item.value(u"channel"_s).toString()},
+            item.value(u"ts"_s).toString(),
+            ev.value(u"reaction"_s).toString(),
+            UserId{ev.value(u"user"_s).toString()}
         };
     }
 
-    if (type == "reaction_removed") {
-        const auto item = ev.value("item").toObject();
+    if (type == u"reaction_removed"_s) {
+        const auto item = ev.value(u"item"_s).toObject();
         return EvReactionRemoved{
-            ConversationId{item.value("channel").toString()},
-            item.value("ts").toString(),
-            ev.value("reaction").toString(),
-            UserId{ev.value("user").toString()}
+            ConversationId{item.value(u"channel"_s).toString()},
+            item.value(u"ts"_s).toString(),
+            ev.value(u"reaction"_s).toString(),
+            UserId{ev.value(u"user"_s).toString()}
         };
     }
 
     // channel_marked, group_marked, im_marked, mpim_marked all have the same shape
-    if (type == "channel_marked" || type == "group_marked" || type == "im_marked" ||
-        type == "mpim_marked") {
+    if (type == u"channel_marked"_s || type == u"group_marked"_s || type == u"im_marked"_s ||
+        type == u"mpim_marked"_s) {
         return EvConvMarked{
-            ConversationId{ev.value("channel").toString()},
-            ev.value("ts").toString(),
-            ev.value("unread_count_display").toInt(),
-            ev.value("mention_count_display").toInt()
+            ConversationId{ev.value(u"channel"_s).toString()},
+            ev.value(u"ts"_s).toString(),
+            ev.value(u"unread_count_display"_s).toInt(),
+            ev.value(u"mention_count_display"_s).toInt()
         };
     }
 
     // user_typing is an RTM-only event (no Events API equivalent), so over Socket
     // Mode this branch is dead — but SessionRealtime rides RTM, where Slack DOES
     // send user_typing, so here it lights up the typing UI for real.
-    if (type == "user_typing") {
+    if (type == u"user_typing"_s) {
         return EvTyping{
-            ConversationId{ev.value("channel").toString()}, UserId{ev.value("user").toString()}
+            ConversationId{ev.value(u"channel"_s).toString()},
+            UserId{ev.value(u"user"_s).toString()}
         };
     }
 
-    if (type == "presence_change") {
+    if (type == u"presence_change"_s) {
         return EvPresenceChanged{
-            UserId{ev.value("user").toString()}, ev.value("presence").toString() == "active"
+            UserId{ev.value(u"user"_s).toString()},
+            ev.value(u"presence"_s).toString() == u"active"_s
         };
     }
 
-    if (type == "dnd_updated_user") {
+    if (type == u"dnd_updated_user"_s) {
         return EvDndChanged{
-            UserId{ev.value("user").toString()},
-            ev.value("dnd_status").toObject().value("dnd_enabled").toBool()
+            UserId{ev.value(u"user"_s).toString()},
+            ev.value(u"dnd_status"_s).toObject().value(u"dnd_enabled"_s).toBool()
         };
     }
 
-    if (type == "channel_created") {
-        return EvChannelCreated{JsonMappers::toConversation(ev.value("channel").toObject())};
+    if (type == u"channel_created"_s) {
+        return EvChannelCreated{JsonMappers::toConversation(ev.value(u"channel"_s).toObject())};
     }
 
-    if (type == "member_joined_channel") {
+    if (type == u"member_joined_channel"_s) {
         return EvMemberJoined{
-            ConversationId{ev.value("channel").toString()}, UserId{ev.value("user").toString()}
+            ConversationId{ev.value(u"channel"_s).toString()},
+            UserId{ev.value(u"user"_s).toString()}
         };
     }
 
@@ -101,16 +106,16 @@ std::optional<Event> normalizeSlackEvent(const QJsonObject &ev) {
     // full user object — same shape as users.list — so toUser parses it
     // directly. (user_profile_changed carries only id+profile and would zero
     // out is_admin/is_bot/etc., so we don't map it.)
-    if (type == "user_change") {
-        return EvUserChanged{JsonMappers::toUser(ev.value("user").toObject())};
+    if (type == u"user_change"_s) {
+        return EvUserChanged{JsonMappers::toUser(ev.value(u"user"_s).toObject())};
     }
 
     // User groups: any change re-fetches the (small) list rather than patching
     // from the payload — subteam_members_changed carries only deltas, and the
     // self_* pair carries just an id.
-    if (type == "subteam_created" || type == "subteam_updated" ||
-        type == "subteam_members_changed" || type == "subteam_self_added" ||
-        type == "subteam_self_removed") {
+    if (type == u"subteam_created"_s || type == u"subteam_updated"_s ||
+        type == u"subteam_members_changed"_s || type == u"subteam_self_added"_s ||
+        type == u"subteam_self_removed"_s) {
         return EvUsergroupsChanged{};
     }
 
@@ -118,27 +123,27 @@ std::optional<Event> normalizeSlackEvent(const QJsonObject &ev) {
 }
 
 std::optional<Event> huddleEventFor(const QJsonObject &ev) {
-    if (ev.value("type").toString() != "message")
+    if (ev.value(u"type"_s).toString() != u"message"_s)
         return std::nullopt;
 
-    const auto subtype = ev.value("subtype").toString();
+    const auto subtype = ev.value(u"subtype"_s).toString();
 
     // A huddle starting: USLACKBOT posts a "huddle_thread" message carrying the
     // live `room`. The subtype itself proves it's a huddle, so "ongoing" is just
     // "no end timestamp" (participants may not be populated at the announce
     // moment); a roomless announce still counts as a start.
     QJsonObject room;
-    QString     channel  = ev.value("channel").toString();
+    QString     channel  = ev.value(u"channel"_s).toString();
     bool        isHuddle = false;
-    if (subtype == "huddle_thread") {
-        room     = ev.value("room").toObject();
+    if (subtype == u"huddle_thread"_s) {
+        room     = ev.value(u"room"_s).toObject();
         isHuddle = true;
-    } else if (subtype == "message_changed") {
+    } else if (subtype == u"message_changed"_s) {
         // A huddle ending/changing arrives as an edit of the huddle_thread
         // message (its room gains a date_end).
-        const auto inner = ev.value("message").toObject();
-        if (inner.value("subtype").toString() == "huddle_thread") {
-            room     = inner.value("room").toObject();
+        const auto inner = ev.value(u"message"_s).toObject();
+        if (inner.value(u"subtype"_s).toString() == u"huddle_thread"_s) {
+            room     = inner.value(u"room"_s).toObject();
             isHuddle = true;
         }
     }

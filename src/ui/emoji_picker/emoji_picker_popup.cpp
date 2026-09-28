@@ -32,6 +32,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 // Popup chrome size — a fixed Slack-like panel; the grid scrolls inside it.
@@ -409,7 +411,7 @@ EmojiPickerPopup::EmojiPickerPopup(QWidget *parent)
     setFixedWidth(kFullWidth);
     setFixedHeight(kFullHeight);
 
-    _skinTone = QSettings("msga", "msga").value(QStringLiteral("emoji/skinTone"), 0).toInt();
+    _skinTone = QSettings(u"msga"_s, u"msga"_s).value(QStringLiteral("emoji/skinTone"), 0).toInt();
     if (_skinTone != 0 && (_skinTone < 2 || _skinTone > 6))
         _skinTone = 0;
 
@@ -484,24 +486,22 @@ void EmojiPickerPopup::applyTheme() {
     // category QToolButtons and the skin-tone QPushButton are styled here.
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "QFrame#emojiPicker {"
-            "  background: %1;"
-            "  border: 1px solid %2;"
-            "  border-radius: 8px;"
-            "}"
-            "QToolButton {"
-            "  border: none; background: transparent; padding: 5px;"
-            "  border-bottom: 2px solid transparent;"
-            "}"
-            "QToolButton:hover { background: %4; border-radius: 4px; }"
-            "QToolButton:checked { border-bottom: 2px solid %3; }"
-            "QPushButton {"
-            "  border: none; background: transparent; color: %5;"
-            "  padding: 3px 6px; font-size: %7px;"
-            "}"
-            "QPushButton:hover { color: %6; }"
-        )
+        u"QFrame#emojiPicker {"
+        "  background: %1;"
+        "  border: 1px solid %2;"
+        "  border-radius: 8px;"
+        "}"
+        "QToolButton {"
+        "  border: none; background: transparent; padding: 5px;"
+        "  border-bottom: 2px solid transparent;"
+        "}"
+        "QToolButton:hover { background: %4; border-radius: 4px; }"
+        "QToolButton:checked { border-bottom: 2px solid %3; }"
+        "QPushButton {"
+        "  border: none; background: transparent; color: %5;"
+        "  padding: 3px 6px; font-size: %7px;"
+        "}"
+        "QPushButton:hover { color: %6; }"_s
             .arg(
                 Th::qss(Th::c().surface.raised),
                 Th::qss(Th::c().divider.strong),
@@ -604,7 +604,7 @@ void EmojiPickerPopup::rebuild(const QString &filter) {
     // Frequently Used (persisted MRU of base names).
     {
         const QStringList recents =
-            QSettings("msga", "msga").value(QStringLiteral("emoji/recent")).toStringList();
+            QSettings(u"msga"_s, u"msga"_s).value(QStringLiteral("emoji/recent")).toStringList();
         QVector<EmojiGrid::Cell> freq;
         for (const QString &name : recents) {
             const QString g = Emoji::fromName(name);
@@ -711,7 +711,7 @@ void EmojiPickerPopup::setActiveTab(int sectionIdx) {
 }
 
 void EmojiPickerPopup::recordUse(const QString &baseName) {
-    QSettings   s("msga", "msga");
+    QSettings   s(u"msga"_s, u"msga"_s);
     QStringList recents = s.value(QStringLiteral("emoji/recent")).toStringList();
     recents.removeAll(baseName);
     recents.prepend(baseName);
@@ -722,7 +722,7 @@ void EmojiPickerPopup::recordUse(const QString &baseName) {
 
 void EmojiPickerPopup::applySkinTone(int tone) {
     _skinTone = tone;
-    QSettings("msga", "msga").setValue(QStringLiteral("emoji/skinTone"), tone);
+    QSettings(u"msga"_s, u"msga"_s).setValue(QStringLiteral("emoji/skinTone"), tone);
     _grid->setSkinTone(tone);
     updateSkinToneButton();
 }

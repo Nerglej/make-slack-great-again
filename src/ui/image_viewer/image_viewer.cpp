@@ -15,6 +15,8 @@
 #include <QHideEvent>
 #include <QUrl>
 
+using namespace Qt::StringLiterals;
+
 static constexpr QSize kBtnIconSz{20, 20};
 static constexpr int   kBtnSz = 36;
 
@@ -75,24 +77,21 @@ ImageViewerOverlay::ImageViewerOverlay(QWidget *windowParent) : QWidget(windowPa
 }
 
 void ImageViewerOverlay::applyTheme() {
-    _nameLabel->setStyleSheet("color:" + Th::qss(Th::c().text.onDark) + ";");
-    const QString btnQss = QString(
-                               "QToolButton { border: none; border-radius: %1px;"
-                               "  background: transparent; }"
-                               "QToolButton:hover { background: %2; }"
-    )
-                               .arg(kBtnSz / 2)
+    _nameLabel->setStyleSheet(u"color:"_s + Th::qss(Th::c().text.onDark) + u";"_s);
+    const QString btnQss = u"QToolButton { border: none; border-radius: %1px;"
+                           "  background: transparent; }"
+                           "QToolButton:hover { background: %2; }"_s.arg(kBtnSz / 2)
                                .arg(Th::qss(Th::c().surface.viewerBtnHover));
     const QColor  ic     = Th::c().icon.onDark;
     const auto    style  = [&](QToolButton *b, const QString &icon) {
         b->setStyleSheet(btnQss);
         b->setIcon(svgIcon(icon, kBtnIconSz, ic));
     };
-    style(_downloadBtn, ":/ui/download.svg");
-    style(_forwardBtn, ":/ui/share-2.svg");
-    style(_browserBtn, ":/ui/external-link.svg");
-    style(_moreBtn, ":/ui/more-horizontal.svg");
-    style(_closeBtn, ":/ui/x.svg");
+    style(_downloadBtn, u":/ui/download.svg"_s);
+    style(_forwardBtn, u":/ui/share-2.svg"_s);
+    style(_browserBtn, u":/ui/external-link.svg"_s);
+    style(_moreBtn, u":/ui/more-horizontal.svg"_s);
+    style(_closeBtn, u":/ui/x.svg"_s);
 }
 
 void ImageViewerOverlay::open(const File &file, const Message &msg, const QPixmap &pixmap) {

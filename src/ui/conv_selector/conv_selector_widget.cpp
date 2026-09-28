@@ -21,6 +21,8 @@
 #include <QStringList>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kDropMaxH = 200;
 
 ConvSelectorWidget::ConvSelectorWidget(Session *session, QWidget *parent)
@@ -43,7 +45,7 @@ ConvSelectorWidget::ConvSelectorWidget(Session *session, QWidget *parent)
     _searchEdit = new QLineEdit(_inputFrame);
     _searchEdit->setPlaceholderText(tr("Search channels and people…"));
     _searchEdit->setFrame(false);
-    _searchEdit->setStyleSheet("QLineEdit { background: transparent; border: none; }");
+    _searchEdit->setStyleSheet(u"QLineEdit { background: transparent; border: none; }"_s);
     inputLay->addWidget(_searchEdit);
 
     // Chip row (shown when item selected)
@@ -54,7 +56,7 @@ ConvSelectorWidget::ConvSelectorWidget(Session *session, QWidget *parent)
 
     _chipLabel = new QLabel(_chip);
 
-    _chipClear = new QPushButton("×", _chip);
+    _chipClear = new QPushButton(u"×"_s, _chip);
     _chipClear->setFixedSize(18, 18);
     _chipClear->setFlat(true);
     _chipClear->setCursor(Qt::PointingHandCursor);
@@ -104,32 +106,25 @@ ConvSelectorWidget::~ConvSelectorWidget() {
 
 void ConvSelectorWidget::applyTheme() {
     _inputFrame->setStyleSheet(
-        QString(
-            "QFrame#convInput {"
-            "  border: 1px solid %1;"
-            "  border-radius: 4px;"
-            "  background: white;"
-            "}"
-            "QFrame#convInput:focus-within {"
-            "  border-color: %2;"
-            "}"
-        )
-            .arg(Th::qss(Th::c().divider.strong), Th::qss(Th::c().accent.def))
+        u"QFrame#convInput {"
+        "  border: 1px solid %1;"
+        "  border-radius: 4px;"
+        "  background: white;"
+        "}"
+        "QFrame#convInput:focus-within {"
+        "  border-color: %2;"
+        "}"_s.arg(Th::qss(Th::c().divider.strong), Th::qss(Th::c().accent.def))
     );
     _chipLabel->setStyleSheet(
-        QString(
-            "QLabel { background: %1; color: %2;"
-            " border-radius: 12px; padding: 2px 8px;"
-            " font-weight: bold; }"
+        u"QLabel { background: %1; color: %2;"
+        " border-radius: 12px; padding: 2px 8px;"
+        " font-weight: bold; }"_s.arg(
+            Th::qss(Th::c().accent.subtleBg), Th::qss(Th::c().message.replyLink)
         )
-            .arg(Th::qss(Th::c().accent.subtleBg), Th::qss(Th::c().message.replyLink))
     );
     _chipClear->setStyleSheet(
-        QString(
-            "QPushButton { border: none; color: #666; font-size: %1px; padding: 0; }"
-            "QPushButton:hover { color: #333; }"
-        )
-            .arg(Th::c().fonts.base)
+        u"QPushButton { border: none; color: #666; font-size: %1px; padding: 0; }"
+        "QPushButton:hover { color: #333; }"_s.arg(Th::c().fonts.base)
     );
 }
 
@@ -144,14 +139,13 @@ void ConvSelectorWidget::openDropdown() {
         _dropdown = new QFrame(window());
         _dropdown->setAttribute(Qt::WA_StyledBackground, true);
         _dropdown->setObjectName("convDropdown");
-        _dropdown->setStyleSheet(QString(
-                                     "QFrame#convDropdown {"
-                                     "  background: white;"
-                                     "  border: 1px solid %1;"
-                                     "  border-radius: 4px;"
-                                     "}"
-        )
-                                     .arg(Th::qss(Th::c().divider.strong)));
+        _dropdown->setStyleSheet(
+            u"QFrame#convDropdown {"
+            "  background: white;"
+            "  border: 1px solid %1;"
+            "  border-radius: 4px;"
+            "}"_s.arg(Th::qss(Th::c().divider.strong))
+        );
 
         auto *lay = new QVBoxLayout(_dropdown);
         lay->setContentsMargins(0, Th::c().spacing.xs, 0, Th::c().spacing.xs);
@@ -160,17 +154,14 @@ void ConvSelectorWidget::openDropdown() {
         _dropList = new QListWidget(_dropdown);
         _dropList->setFrameShape(QFrame::NoFrame);
         _dropList->setStyleSheet(
-            QString(
-                "QListWidget { border: none; background: transparent; }"
-                "QListWidget::item { padding: 6px 12px; }"
-                "QListWidget::item:hover { background: %1; }"
-                "QListWidget::item:selected { background: %2; color: %3; }"
-            )
-                .arg(
-                    Th::qss(Th::c().surface.highlight),
-                    Th::qss(Th::c().accent.subtleBg),
-                    Th::qss(Th::c().message.replyLink)
-                ) +
+            u"QListWidget { border: none; background: transparent; }"
+            "QListWidget::item { padding: 6px 12px; }"
+            "QListWidget::item:hover { background: %1; }"
+            "QListWidget::item:selected { background: %2; color: %3; }"_s.arg(
+                Th::qss(Th::c().surface.highlight),
+                Th::qss(Th::c().accent.subtleBg),
+                Th::qss(Th::c().message.replyLink)
+            ) +
             Th::popupScrollBarQss()
         );
         _dropList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -289,9 +280,9 @@ void ConvSelectorWidget::rebuildList(const QString &filter) {
                     names.append(u && !u->displayName.isEmpty() ? u->displayName : uname);
                 }
             }
-            label = names.isEmpty() ? "#" + conv.name : names.join(QStringLiteral(", "));
+            label = names.isEmpty() ? u"#"_s + conv.name : names.join(QStringLiteral(", "));
         } else {
-            label = "#" + conv.name;
+            label = u"#"_s + conv.name;
         }
         // Match the bare name (without the leading '#') so "#gen" finds "#general".
         const QString hay = label.startsWith('#') ? label.mid(1) : label;

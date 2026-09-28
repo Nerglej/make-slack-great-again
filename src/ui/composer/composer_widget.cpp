@@ -64,6 +64,8 @@
 #include <QTextBlock>
 #include <QTimer>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kMinEditHeight = 40;
 
 static constexpr QSize kToolIconSize{18, 18};
@@ -105,7 +107,7 @@ static QString gifLinkToken(const QString &url, const QString &title) {
     // badge already says so, and "GIF · Happy Dancing GIF" reads twice.
     if (label.endsWith(QLatin1String(" GIF"), Qt::CaseInsensitive))
         label.chop(4);
-    return label.isEmpty() ? "<" + url + ">" : "<" + url + "|" + label + ">";
+    return label.isEmpty() ? u"<"_s + url + u">"_s : u"<"_s + url + u"|"_s + label + u">"_s;
 }
 
 // What the editor shows for a GIF token — a pill, like a mention, so the
@@ -185,21 +187,20 @@ protected:
 // so the hint tracks the binding; the QString overload is for the hints that
 // aren't a key sequence at all (typing "@").
 static QString tip(const QString &label, Ui::Shortcut id) {
-    return label + " (" + Ui::Shortcuts::nativeKeys(id) + ")";
+    return label + u" ("_s + Ui::Shortcuts::nativeKeys(id) + u")"_s;
 }
 
 static QString tip(const QString &label, const QString &hint) {
-    return label + " (" + hint + ")";
+    return label + u" ("_s + hint + u")"_s;
 }
 
 // Bottom-bar icon buttons at rest (the mic button while recording has its own).
 static QString bottomBarToolBtnQss() {
-    return QString(
-               "QToolButton { border: none; border-radius: 3px; background: transparent; }"
-               "QToolButton:hover   { background: %1; }"
-               "QToolButton:pressed { background: %2; }"
-    )
-        .arg(Th::qss(Th::c().divider.def), Th::qss(Th::c().surface.highlightStrong));
+    return u"QToolButton { border: none; border-radius: 3px; background: transparent; }"
+           "QToolButton:hover   { background: %1; }"
+           "QToolButton:pressed { background: %2; }"_s.arg(
+               Th::qss(Th::c().divider.def), Th::qss(Th::c().surface.highlightStrong)
+           );
 }
 
 static QFrame *makeVSep(QWidget *parent) {
@@ -207,7 +208,7 @@ static QFrame *makeVSep(QWidget *parent) {
     sep->setObjectName("composerVSep"); // restyled on theme switch (applyTheme)
     sep->setFrameShape(QFrame::VLine);
     sep->setFixedSize(1, 16);
-    sep->setStyleSheet("QFrame { color: " + Th::qss(Th::c().composer.toolbarBorder) + "; }");
+    sep->setStyleSheet(u"QFrame { color: "_s + Th::qss(Th::c().composer.toolbarBorder) + u"; }"_s);
     return sep;
 }
 
@@ -239,7 +240,7 @@ public:
         lay->setSpacing(sp.md);
 
         _urlEdit = new StyledLineEdit(this);
-        _urlEdit->setPlaceholderText("https://");
+        _urlEdit->setPlaceholderText(u"https://"_s);
         _urlEdit->setMinimumWidth(280);
         _textEdit = new StyledLineEdit(this);
 
@@ -284,13 +285,13 @@ private:
     void applyQss() {
         setStyleSheet(
             QString(
-                "QWidget#linkPopup {"
+                u"QWidget#linkPopup {"
                 "  background: %1;"
                 "  border: 1px solid %2;"
                 "  border-radius: 8px;"
                 "}"
                 // The two inputs are StyledLineEdit (self-themed).
-                "QLabel { border: none; font-size: %4px; color: %3; background: transparent; }"
+                "QLabel { border: none; font-size: %4px; color: %3; background: transparent; }"_s
             )
                 .arg(Th::qss(Th::c().surface.raised))
                 .arg(Th::qss(Th::c().divider.strong))
@@ -388,21 +389,18 @@ public:
 private:
     void applyQss() {
         setStyleSheet(
-            QString(
-                "QWidget#schedulePopup {"
-                "  background:%1; border:1px solid %2; border-radius:8px;"
-                "}"
-                "QLabel  { font-size:%6px; color:%3; border:none; background:transparent; }"
-                "QDateTimeEdit {"
-                "  border:1px solid %2; border-radius:4px;"
-                "  padding:4px 8px; font-size:%7px; color:%4; background:%1;"
-                "}"
-                "QDateTimeEdit:focus { border-color:%5; }"
-                "QDateTimeEdit::up-button, QDateTimeEdit::down-button {"
-                "  width:14px;"
-                "}"
-            )
-                .arg(Th::qss(Th::c().surface.raised))
+            u"QWidget#schedulePopup {"
+            "  background:%1; border:1px solid %2; border-radius:8px;"
+            "}"
+            "QLabel  { font-size:%6px; color:%3; border:none; background:transparent; }"
+            "QDateTimeEdit {"
+            "  border:1px solid %2; border-radius:4px;"
+            "  padding:4px 8px; font-size:%7px; color:%4; background:%1;"
+            "}"
+            "QDateTimeEdit:focus { border-color:%5; }"
+            "QDateTimeEdit::up-button, QDateTimeEdit::down-button {"
+            "  width:14px;"
+            "}"_s.arg(Th::qss(Th::c().surface.raised))
                 .arg(Th::qss(Th::c().divider.strong))
                 .arg(Th::qss(Th::c().text.secondary))
                 .arg(Th::qss(Th::c().text.primary))
@@ -468,31 +466,31 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
     boxLayout->addWidget(_formattingTb);
 
     connect(_formattingTb, &FormattingToolbar::boldClicked, this, [this] {
-        applyInlineFormat("*");
+        applyInlineFormat(u"*"_s);
     });
     connect(_formattingTb, &FormattingToolbar::italicClicked, this, [this] {
-        applyInlineFormat("_");
+        applyInlineFormat(u"_"_s);
     });
     connect(_formattingTb, &FormattingToolbar::underlineClicked, this, [this] {
-        applyInlineFormat("__");
+        applyInlineFormat(u"__"_s);
     });
     connect(_formattingTb, &FormattingToolbar::strikeClicked, this, [this] {
-        applyInlineFormat("~");
+        applyInlineFormat(u"~"_s);
     });
     connect(_formattingTb, &FormattingToolbar::inlineCodeClicked, this, [this] {
-        applyInlineFormat("`");
+        applyInlineFormat(u"`"_s);
     });
     connect(_formattingTb, &FormattingToolbar::codeBlockClicked, this, [this] {
-        applyBlockFormat("```");
+        applyBlockFormat(u"```"_s);
     });
     connect(_formattingTb, &FormattingToolbar::orderedListClicked, this, [this] {
-        prefixSelectedLines("", true);
+        prefixSelectedLines(u""_s, true);
     });
     connect(_formattingTb, &FormattingToolbar::bulletListClicked, this, [this] {
-        prefixSelectedLines("- ");
+        prefixSelectedLines(u"- "_s);
     });
     connect(_formattingTb, &FormattingToolbar::blockquoteClicked, this, [this] {
-        prefixSelectedLines("> ");
+        prefixSelectedLines(u"> "_s);
     });
     connect(_formattingTb, &FormattingToolbar::linkClicked, this, &ComposerWidget::openLinkDialog);
 
@@ -548,7 +546,7 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
     // ── Bottom action bar ─────────────────────────────────────────────────────
     _bottomBar = new QWidget(_box);
     _bottomBar->setFixedHeight(36);
-    _bottomBar->setStyleSheet("QWidget { background: transparent; }");
+    _bottomBar->setStyleSheet(u"QWidget { background: transparent; }"_s);
     auto *bbLayout = new QHBoxLayout(_bottomBar);
     bbLayout->setContentsMargins(sp.md, sp.xs, sp.sm, sp.xs);
     bbLayout->setSpacing(sp.sm);
@@ -564,11 +562,11 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
     attachBtn->setFixedSize(26, 26);
     attachBtn->setIconSize(kAttachIconSize);
     attachBtn->setIcon(
-        svgIcon(":/ui/paperclip.svg", kAttachIconSize, Th::c().composer.toolbarIcon)
+        svgIcon(u":/ui/paperclip.svg"_s, kAttachIconSize, Th::c().composer.toolbarIcon)
     );
     attachBtn->setCursor(Qt::PointingHandCursor);
     attachBtn->setFocusPolicy(Qt::NoFocus);
-    _iconBtns.append({attachBtn, ":/ui/paperclip.svg"});
+    _iconBtns.append({attachBtn, u":/ui/paperclip.svg"_s});
     registerTip(attachBtn, tip(tr("Attach file"), Ui::Shortcut::AttachFile));
     connect(attachBtn, &QToolButton::clicked, this, &ComposerWidget::openAttachDialog);
 
@@ -584,10 +582,10 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
         return btn;
     };
 
-    auto *emojiBtn   = makeBbBtn(":/ui/smile.svg", tip(tr("Emoji"), Ui::Shortcut::EmojiPicker));
-    auto *gifBtn     = makeBbBtn(":/ui/gif.svg", tr("Search GIFs"));
+    auto *emojiBtn   = makeBbBtn(u":/ui/smile.svg"_s, tip(tr("Emoji"), Ui::Shortcut::EmojiPicker));
+    auto *gifBtn     = makeBbBtn(u":/ui/gif.svg"_s, tr("Search GIFs"));
     _gifBtn          = gifBtn;
-    auto *mentionBtn = makeBbBtn(":/ui/at-sign.svg", tip(tr("Mention"), QStringLiteral("@")));
+    auto *mentionBtn = makeBbBtn(u":/ui/at-sign.svg"_s, tip(tr("Mention"), QStringLiteral("@")));
 
     bbLayout->addWidget(attachBtn);
     bbLayout->addWidget(emojiBtn);
@@ -598,7 +596,7 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
     // Voice input, beside the send group. Shown by updateMicVisibility() once a
     // host supplies a context source and a speech-to-text provider exists; its
     // tooltip and look follow the recording state (updateVoiceUi).
-    _micBtn = makeBbBtn(":/ui/mic.svg", tip(tr("Voice input"), Ui::Shortcut::VoiceInput));
+    _micBtn = makeBbBtn(u":/ui/mic.svg"_s, tip(tr("Voice input"), Ui::Shortcut::VoiceInput));
     _micBtn->setObjectName("composerMicBtn");
     _micBtn->hide();
     connect(_micBtn, &QToolButton::clicked, this, &ComposerWidget::toggleVoiceInput);
@@ -616,7 +614,9 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
     _dropBtn->setObjectName("composerScheduleBtn");
     _dropBtn->setFixedSize(18, 28);
     _dropBtn->setIconSize(QSize(12, 12));
-    _dropBtn->setIcon(svgIcon(":/ui/chevron-down.svg", QSize(12, 12), Th::c().composer.dropArrow));
+    _dropBtn->setIcon(
+        svgIcon(u":/ui/chevron-down.svg"_s, QSize(12, 12), Th::c().composer.dropArrow)
+    );
     _dropBtn->setCursor(Qt::PointingHandCursor);
     _dropBtn->setFocusPolicy(Qt::NoFocus);
     registerTip(_dropBtn, tr("Schedule send"));
@@ -644,7 +644,7 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
             connect(
                 _emojiPicker, &EmojiPickerPopup::emojiSelected, this, [this](const QString &name) {
                     auto cursor = _edit->textCursor();
-                    cursor.insertText(":" + name + ":");
+                    cursor.insertText(u":"_s + name + u":"_s);
                     _edit->setFocus();
                 }
             );
@@ -696,7 +696,7 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
 
     connect(mentionBtn, &QToolButton::clicked, this, [this] {
         auto cursor = _edit->textCursor();
-        cursor.insertText("@");
+        cursor.insertText(u"@"_s);
         _edit->setTextCursor(cursor);
         _edit->setFocus();
         QTimer::singleShot(0, this, &ComposerWidget::checkMentionPopup);
@@ -715,15 +715,12 @@ void ComposerWidget::applyTheme() {
     _edit->setFont(QApplication::font());
     Th::setStyleSheetIfChanged(
         _edit,
-        QString(
-            "QTextEdit {"
-            "  border: none;"
-            "  padding: 6px 10px;"
-            "  color: %1;"
-            "  background: transparent;"
-            "}"
-        )
-            .arg(Th::qss(Th::c().text.primary))
+        u"QTextEdit {"
+        "  border: none;"
+        "  padding: 6px 10px;"
+        "  color: %1;"
+        "  background: transparent;"
+        "}"_s.arg(Th::qss(Th::c().text.primary))
     );
 
     recolorMentionPills();
@@ -732,14 +729,12 @@ void ComposerWidget::applyTheme() {
     // `focused` property that picks the accent border.
     Th::setStyleSheetIfChanged(
         _box,
-        QString(
-            "QFrame#composerBox {"
-            "  border: 1px solid %1;"
-            "  border-radius: 8px;"
-            "  background: %2;"
-            "}"
-            "QFrame#composerBox[%3=\"true\"] { border: 1px solid %4; }"
-        )
+        u"QFrame#composerBox {"
+        "  border: 1px solid %1;"
+        "  border-radius: 8px;"
+        "  background: %2;"
+        "}"
+        "QFrame#composerBox[%3=\"true\"] { border: 1px solid %4; }"_s
             .arg(Th::qss(Th::c().composer.border), Th::qss(Th::c().surface.raised))
             .arg(QLatin1String(kFocusedProp), Th::qss(Th::c().composer.borderFocus))
     );
@@ -757,7 +752,7 @@ void ComposerWidget::applyTheme() {
     const auto vseps = findChildren<QFrame *>(QStringLiteral("composerVSep"));
     for (auto *sep : vseps)
         Th::setStyleSheetIfChanged(
-            sep, QString("QFrame { color: %1; }").arg(Th::qss(Th::c().composer.toolbarBorder))
+            sep, u"QFrame { color: %1; }"_s.arg(Th::qss(Th::c().composer.toolbarBorder))
         );
 
     // Re-apply bottom-bar tool button styles (the mic button's own below).
@@ -940,11 +935,11 @@ void ComposerWidget::checkMentionPopup() {
                 auto      tc   = _edit->textCursor();
                 tc.setPosition(_atTriggerStart);
                 tc.setPosition(cur2, QTextCursor::KeepAnchor);
-                if (insert.startsWith("<")) // mentions: show the name, send the raw token
+                if (insert.startsWith(u"<"_s)) // mentions: show the name, send the raw token
                     tc.insertText(display, mentionCharFormat(display, insert));
                 else // broadcasts in threads stay literal
                     tc.insertText(insert, QTextCharFormat());
-                tc.insertText(" ", QTextCharFormat());
+                tc.insertText(u" "_s, QTextCharFormat());
                 _edit->setFocus();
             }
         );
@@ -978,7 +973,7 @@ void ComposerWidget::setEditorMrkdwn(const QString &text) {
         tc.insertText(text.mid(pos, m.capturedStart() - pos), QTextCharFormat());
         pos = m.capturedEnd();
         if (!m.captured(6).isEmpty()) {
-            const QString display = "@" + m.captured(6);
+            const QString display = u"@"_s + m.captured(6);
             tc.insertText(display, mentionCharFormat(display, m.captured(0)));
             continue;
         }
@@ -991,7 +986,7 @@ void ComposerWidget::setEditorMrkdwn(const QString &text) {
             }
             continue;
         }
-        const bool isChannel = (m.captured(1) == "#");
+        const bool isChannel = (m.captured(1) == u"#"_s);
         QString    display   = m.captured(3); // "|name" label carried in the token
         if (display.isEmpty()) {
             if (isChannel) {
@@ -1039,8 +1034,8 @@ bool ComposerWidget::attachFromMimeData(const QMimeData *source) {
             return false;
         QDir          dir(QStandardPaths::writableLocation(QStandardPaths::TempLocation));
         static int    seq  = 0; // distinct names for pastes within the same second
-        const QString name = QString("Pasted image %1-%2.png")
-                                 .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HHmmss"))
+        const QString name = u"Pasted image %1-%2.png"_s
+                                 .arg(QDateTime::currentDateTime().toString(u"yyyy-MM-dd HHmmss"_s))
                                  .arg(++seq);
         const QString path = dir.filePath(name);
         if (!img.save(path, "PNG"))
@@ -1088,7 +1083,7 @@ void ComposerWidget::setFocused(bool focused) {
     // Update schedule-send dropdown icon color
     const QColor dropColor =
         _edit->toPlainText().trimmed().isEmpty() ? Th::c().composer.dropArrow : Qt::white;
-    _dropBtn->setIcon(svgIcon(":/ui/chevron-down.svg", QSize(12, 12), dropColor));
+    _dropBtn->setIcon(svgIcon(u":/ui/chevron-down.svg"_s, QSize(12, 12), dropColor));
 }
 
 void ComposerWidget::focusInput() {
@@ -1143,50 +1138,43 @@ void ComposerWidget::updateSendState() {
     _sendActiveState = static_cast<int>(active);
 
     _sendBtn->setIcon(
-        svgIcon(":/ui/send.svg", QSize(18, 18), active ? Qt::white : Th::c().composer.dropArrow)
+        svgIcon(u":/ui/send.svg"_s, QSize(18, 18), active ? Qt::white : Th::c().composer.dropArrow)
     );
 
     const QColor dropColor = active ? Qt::white : Th::c().composer.dropArrow;
-    _dropBtn->setIcon(svgIcon(":/ui/chevron-down.svg", QSize(12, 12), dropColor));
+    _dropBtn->setIcon(svgIcon(u":/ui/chevron-down.svg"_s, QSize(12, 12), dropColor));
 
     if (active) {
         // Group paints the unified green pill; buttons are transparent windows into it.
         Th::setStyleSheetIfChanged(
-            _sendGroup,
-            QString("background:%1; border-radius:4px;").arg(Th::qss(Th::c().accent.def))
+            _sendGroup, u"background:%1; border-radius:4px;"_s.arg(Th::qss(Th::c().accent.def))
         );
         Th::setStyleSheetIfChanged(
             _sendBtn,
-            "QPushButton { background:transparent; border:none; margin:0; padding:0; }"
+            u"QPushButton { background:transparent; border:none; margin:0; padding:0; }"
             "QPushButton:hover   { background:rgba(255,255,255,40); }"
-            "QPushButton:pressed { background:rgba(0,0,0,40); }"
+            "QPushButton:pressed { background:rgba(0,0,0,40); }"_s
         );
         Th::setStyleSheetIfChanged(
             _dropBtn,
-            "QPushButton { background:transparent; border:none; margin:0; padding:0;"
+            u"QPushButton { background:transparent; border:none; margin:0; padding:0;"
             "  border-left:1px solid rgba(0,0,0,60); }"
             "QPushButton:hover   { background:rgba(255,255,255,40); }"
-            "QPushButton:pressed { background:rgba(0,0,0,40); }"
+            "QPushButton:pressed { background:rgba(0,0,0,40); }"_s
         );
     } else {
-        Th::setStyleSheetIfChanged(_sendGroup, "background:transparent;");
+        Th::setStyleSheetIfChanged(_sendGroup, u"background:transparent;"_s);
         Th::setStyleSheetIfChanged(
             _sendBtn,
-            QString(
-                "QPushButton { background:transparent; border:none; margin:0; padding:0;"
-                "  border-top-left-radius:4px; border-bottom-left-radius:4px; }"
-                "QPushButton:hover { background:%1; }"
-            )
-                .arg(Th::qss(Th::c().surface.highlight))
+            u"QPushButton { background:transparent; border:none; margin:0; padding:0;"
+            "  border-top-left-radius:4px; border-bottom-left-radius:4px; }"
+            "QPushButton:hover { background:%1; }"_s.arg(Th::qss(Th::c().surface.highlight))
         );
         Th::setStyleSheetIfChanged(
             _dropBtn,
-            QString(
-                "QPushButton { background:transparent; border:none; margin:0; padding:0;"
-                "  border-top-right-radius:4px; border-bottom-right-radius:4px; }"
-                "QPushButton:hover { background:%1; }"
-            )
-                .arg(Th::qss(Th::c().surface.highlight))
+            u"QPushButton { background:transparent; border:none; margin:0; padding:0;"
+            "  border-top-right-radius:4px; border-bottom-right-radius:4px; }"
+            "QPushButton:hover { background:%1; }"_s.arg(Th::qss(Th::c().surface.highlight))
         );
     }
 }
@@ -1404,7 +1392,7 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                         this,
                         [this](const QString &name) {
                             auto cursor = _edit->textCursor();
-                            cursor.insertText(":" + name + ":");
+                            cursor.insertText(u":"_s + name + u":"_s);
                             _edit->setFocus();
                         }
                     );
@@ -1425,15 +1413,15 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
             };
 
             const std::pair<Shortcut, std::function<void()>> kBindings[] = {
-                {Shortcut::Bold, [this] { applyInlineFormat("*"); }},
-                {Shortcut::Italic, [this] { applyInlineFormat("_"); }},
-                {Shortcut::Underline, [this] { applyInlineFormat("__"); }},
-                {Shortcut::Strikethrough, [this] { applyInlineFormat("~"); }},
-                {Shortcut::InlineCode, [this] { applyInlineFormat("`"); }},
-                {Shortcut::CodeBlock, [this] { applyBlockFormat("```"); }},
-                {Shortcut::OrderedList, [this] { prefixSelectedLines("", true); }},
-                {Shortcut::BulletList, [this] { prefixSelectedLines("- "); }},
-                {Shortcut::Quote, [this] { prefixSelectedLines("> "); }},
+                {Shortcut::Bold, [this] { applyInlineFormat(u"*"_s); }},
+                {Shortcut::Italic, [this] { applyInlineFormat(u"_"_s); }},
+                {Shortcut::Underline, [this] { applyInlineFormat(u"__"_s); }},
+                {Shortcut::Strikethrough, [this] { applyInlineFormat(u"~"_s); }},
+                {Shortcut::InlineCode, [this] { applyInlineFormat(u"`"_s); }},
+                {Shortcut::CodeBlock, [this] { applyBlockFormat(u"```"_s); }},
+                {Shortcut::OrderedList, [this] { prefixSelectedLines(u""_s, true); }},
+                {Shortcut::BulletList, [this] { prefixSelectedLines(u"- "_s); }},
+                {Shortcut::Quote, [this] { prefixSelectedLines(u"> "_s); }},
                 {Shortcut::AttachFile, [this] { openAttachDialog(); }},
                 {Shortcut::Link, openLinkFromToolbar},
                 {Shortcut::EmojiPicker, openEmojiPicker},
@@ -1525,8 +1513,8 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                         for (const auto *c : matches) {
                             MentionCompleter::Item it;
                             it.command = true;
-                            it.insert  = "/" + c->name;
-                            it.title   = "/" + c->name;
+                            it.insert  = u"/"_s + c->name;
+                            it.title   = u"/"_s + c->name;
                             it.usage   = c->usage;
                             it.desc    = c->desc;
                             it.isApp   = !c->appId.isEmpty();
@@ -1555,8 +1543,8 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                                 it.channel        = true;
                                 it.channelPrivate = (c.kind == ConvKind::PrivateChannel);
                                 it.title          = c.name;
-                                it.display        = "#" + c.name;
-                                it.insert         = "<#" + c.id.value + "|" + c.name + ">";
+                                it.display        = u"#"_s + c.name;
+                                it.insert         = u"<#"_s + c.id.value + u"|"_s + c.name + u">"_s;
                                 items.append(it);
                                 // Cap generously so the list scrolls (the popup
                                 // shows a window of rows, the rest scroll).
@@ -1581,10 +1569,11 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                         // Frequently used emoji surface ahead of the
                         // alphabetical matches from the full table.
                         static const QStringList kCommonEmoji{
-                            "thumbsup", "thumbsdown", "clap",        "heart",    "fire",
-                            "rocket",   "eyes",       "smile",       "laughing", "wink",
-                            "grin",     "joy",        "sweat_smile", "sob",      "thinking_face",
-                            "wave",     "ok_hand",    "point_right", "muscle",   "100"
+                            u"thumbsup"_s,    u"thumbsdown"_s, u"clap"_s,          u"heart"_s,
+                            u"fire"_s,        u"rocket"_s,     u"eyes"_s,          u"smile"_s,
+                            u"laughing"_s,    u"wink"_s,       u"grin"_s,          u"joy"_s,
+                            u"sweat_smile"_s, u"sob"_s,        u"thinking_face"_s, "wave",
+                            "ok_hand",        "point_right",   "muscle",           "100"
                         };
                         // Flexible matching: an exact prefix ranks first, then a
                         // match at a token boundary (codes split on _ - +), then
@@ -1593,8 +1582,8 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                         const auto rankOf = [&query](const QString &name) -> int {
                             if (name.startsWith(query))
                                 return 0;
-                            if (name.contains("_" + query) || name.contains("-" + query) ||
-                                name.contains("+" + query))
+                            if (name.contains(u"_"_s + query) || name.contains(u"-"_s + query) ||
+                                name.contains(u"+"_s + query))
                                 return 1;
                             return name.contains(query) ? 2 : -1;
                         };
@@ -1638,10 +1627,10 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                             if (items.size() >= 8)
                                 break;
                             if (c.custom) {
-                                items.append({":" + c.name + ":", ":" + c.name + ":"});
+                                items.append({u":"_s + c.name + u":"_s, u":"_s + c.name + u":"_s});
                             } else {
                                 const QString glyph = Emoji::fromName(c.name);
-                                items.append({glyph + "  :" + c.name + ":", glyph});
+                                items.append({glyph + u"  :"_s + c.name + u":"_s, glyph});
                             }
                         }
                     }
@@ -1681,11 +1670,11 @@ bool ComposerWidget::eventFilter(QObject *obj, QEvent *event) {
                                 const QString name    = (pipe >= 0 && end > pipe)
                                                             ? insert.mid(pipe + 1, end - pipe - 1)
                                                             : QString();
-                                const QString display = "#" + name;
+                                const QString display = u"#"_s + name;
                                 tc.insertText(display, mentionCharFormat(display, insert));
-                                tc.insertText(" ", QTextCharFormat());
+                                tc.insertText(u" "_s, QTextCharFormat());
                             } else {
-                                tc.insertText(insert + " ");
+                                tc.insertText(insert + u" "_s);
                             }
                             _edit->setFocus();
                         }
@@ -1833,20 +1822,17 @@ void ComposerWidget::updateVoiceUi() {
     if (_voiceStrip->mode() == Mode::Recording) {
         Th::setStyleSheetIfChanged(
             _micBtn,
-            QString(
-                "QToolButton { border: none; border-radius: %1px; background: %2; }"
-                "QToolButton:hover   { background: %3; }"
-                "QToolButton:pressed { background: %3; }"
-            )
-                .arg(_micBtn->width() / 2)
+            u"QToolButton { border: none; border-radius: %1px; background: %2; }"
+            "QToolButton:hover   { background: %3; }"
+            "QToolButton:pressed { background: %3; }"_s.arg(_micBtn->width() / 2)
                 .arg(Th::qss(Th::c().danger.def), Th::qss(Th::c().danger.hover))
         );
-        _micBtn->setIcon(svgIcon(":/ui/mic-stop.svg", kMicIcon, Qt::white));
+        _micBtn->setIcon(svgIcon(u":/ui/mic-stop.svg"_s, kMicIcon, Qt::white));
     } else {
         Th::setStyleSheetIfChanged(_micBtn, bottomBarToolBtnQss());
         const QColor tint =
             _edit->hasFocus() ? Th::c().composer.toolbarIconActive : Th::c().composer.toolbarIcon;
-        _micBtn->setIcon(svgIcon(":/ui/mic.svg", kMicIcon, tint));
+        _micBtn->setIcon(svgIcon(u":/ui/mic.svg"_s, kMicIcon, tint));
     }
 }
 
@@ -2064,7 +2050,7 @@ void ComposerWidget::prefixSelectedLines(const QString &prefix, bool ordered) {
     cursor.beginEditBlock();
     int lineIdx = 0;
     while (true) {
-        const QString pfx = ordered ? (QString::number(lineIdx + 1) + ". ") : prefix;
+        const QString pfx = ordered ? (QString::number(lineIdx + 1) + u". "_s) : prefix;
         cursor.insertText(pfx);
         end += pfx.size();
         ++lineIdx;
@@ -2083,10 +2069,10 @@ void ComposerWidget::applyBlockFormat(const QString &fence) {
     auto cursor = _edit->textCursor();
     if (cursor.hasSelection()) {
         const QString sel = cursor.selectedText().replace(QChar(0x2029), '\n').trimmed();
-        cursor.insertText(fence + "\n" + sel + "\n" + fence);
+        cursor.insertText(fence + u"\n"_s + sel + u"\n"_s + fence);
     } else {
         const int pos = cursor.position();
-        cursor.insertText(fence + "\n\n" + fence);
+        cursor.insertText(fence + u"\n\n"_s + fence);
         cursor.setPosition(pos + fence.length() + 1);
         _edit->setTextCursor(cursor);
     }
@@ -2309,9 +2295,10 @@ void ComposerWidget::openLinkDialog(const QPoint &pos) {
 
     static_cast<LinkPopup *>(_linkPopup)
         ->open(pos, sel, [this, savedCursor](const QString &url, const QString &label) {
-            const QString mrkdwn =
-                (label.isEmpty() || label == url) ? "<" + url + ">" : "<" + url + "|" + label + ">";
-            auto cursor = savedCursor;
+            const QString mrkdwn = (label.isEmpty() || label == url)
+                                       ? u"<"_s + url + u">"_s
+                                       : u"<"_s + url + u"|"_s + label + u">"_s;
+            auto          cursor = savedCursor;
             cursor.insertText(mrkdwn);
             _edit->setFocus();
         });

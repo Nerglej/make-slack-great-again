@@ -31,6 +31,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 // Popup chrome — same footprint as the emoji picker so the two feel related.
@@ -561,29 +563,24 @@ void GifPickerPopup::saveKeyFromSetup() {
 }
 
 void GifPickerPopup::applyTheme() {
-    setStyleSheet(QString(
-                      "QFrame#gifPicker {"
-                      "  background: %1;"
-                      "  border: 1px solid %2;"
-                      "  border-radius: 8px;"
-                      "}"
-    )
-                      .arg(Th::qss(Th::c().surface.raised), Th::qss(Th::c().divider.strong)));
-    const QString bodyText =
-        QString("QLabel { color: %1; font-size: %2px; background: transparent; }")
-            .arg(Th::qss(Th::c().text.secondary))
-            .arg(Th::c().fonts.md);
+    setStyleSheet(
+        u"QFrame#gifPicker {"
+        "  background: %1;"
+        "  border: 1px solid %2;"
+        "  border-radius: 8px;"
+        "}"_s.arg(Th::qss(Th::c().surface.raised), Th::qss(Th::c().divider.strong))
+    );
+    const QString bodyText = u"QLabel { color: %1; font-size: %2px; background: transparent; }"_s
+                                 .arg(Th::qss(Th::c().text.secondary))
+                                 .arg(Th::c().fonts.md);
     _message->setStyleSheet(bodyText);
     _setupText->setStyleSheet(bodyText);
-    _setupError->setStyleSheet(
-        QString("QLabel { color: %1; font-size: %2px; background: transparent; }")
-            .arg(Th::qss(Th::c().text.danger))
-            .arg(Th::c().fonts.sm)
-    );
-    const QString attribution =
-        QString("QLabel { color: %1; font-size: %2px; background: transparent; }")
-            .arg(Th::qss(Th::c().text.tertiary))
-            .arg(Th::c().fonts.xs);
+    _setupError->setStyleSheet(u"QLabel { color: %1; font-size: %2px; background: transparent; }"_s
+                                   .arg(Th::qss(Th::c().text.danger))
+                                   .arg(Th::c().fonts.sm));
+    const QString attribution = u"QLabel { color: %1; font-size: %2px; background: transparent; }"_s
+                                    .arg(Th::qss(Th::c().text.tertiary))
+                                    .arg(Th::c().fonts.xs);
     _attribution->setStyleSheet(attribution);
     _setupAttribution->setStyleSheet(attribution);
 }

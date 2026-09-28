@@ -11,6 +11,8 @@
 #include <QTextList>
 #include <QTextTable>
 
+using namespace Qt::StringLiterals;
+
 namespace CanvasDiff {
 
 QString normalizeMd(QString md) {
@@ -46,8 +48,8 @@ QString normalizeMd(QString md) {
             l.chop(1);
     }
     md = lines.join('\n');
-    static const QRegularExpression kBlankRuns("\n{3,}");
-    md.replace(kBlankRuns, "\n\n");
+    static const QRegularExpression kBlankRuns(u"\n{3,}"_s);
+    md.replace(kBlankRuns, u"\n\n"_s);
     return md.trimmed();
 }
 
@@ -84,7 +86,7 @@ std::pair<QString, QString> splitTitleH1(const QString &html, const QStringList 
 namespace {
 
 QString attrId(const QString &openingTag) {
-    static const QRegularExpression re("\\bid=['\"]([^'\"]+)['\"]");
+    static const QRegularExpression re(u"\\bid=['\"]([^'\"]+)['\"]"_s);
     const auto                      m = re.match(openingTag);
     return m.hasMatch() ? m.captured(1) : QString();
 }
@@ -159,7 +161,7 @@ std::optional<std::vector<Chunk>> parseBaseChunks(const QString &bodyHtml) {
         // i.e. the image is treated as invisible context. Handling it here (vs.
         // bailing to a whole-document replace) keeps a picture-bearing canvas on
         // the surgical section-diff path, so the image section is never rewritten.
-        if (tag == "img") {
+        if (tag == u"img"_s) {
             Chunk imgChunk{Chunk::Kind::Para, attrId(opening), false, htmlToMd(opening)};
             if (!imgChunk.md.isEmpty())
                 chunks.push_back(std::move(imgChunk));
@@ -175,9 +177,9 @@ std::optional<std::vector<Chunk>> parseBaseChunks(const QString &bodyHtml) {
         Chunk chunk;
         if (tag.size() == 2 && tag[0] == 'h' && tag[1].isDigit()) {
             chunk = {Chunk::Kind::Heading, attrId(opening), false, htmlToMd(element)};
-        } else if (tag == "p") {
+        } else if (tag == u"p"_s) {
             chunk = {Chunk::Kind::Para, attrId(opening), false, htmlToMd(element)};
-        } else if (tag == "div" || tag == "ul" || tag == "ol") {
+        } else if (tag == u"div"_s || tag == u"ul"_s || tag == u"ol"_s) {
             // List wrapper: the <ul> carries the section id.
             static const QRegularExpression ulRe(
                 QStringLiteral("<[uo]l\\b[^>]*>"), QRegularExpression::CaseInsensitiveOption
@@ -186,9 +188,9 @@ std::optional<std::vector<Chunk>> parseBaseChunks(const QString &bodyHtml) {
             if (!ulM.hasMatch())
                 return std::nullopt;
             chunk = {Chunk::Kind::List, attrId(ulM.captured(0)), false, htmlToMd(element)};
-        } else if (tag == "blockquote") {
+        } else if (tag == u"blockquote"_s) {
             chunk = {Chunk::Kind::Quote, {}, true, htmlToMd(element)};
-        } else if (tag == "table") {
+        } else if (tag == u"table"_s) {
             chunk = {Chunk::Kind::Table, {}, true, htmlToMd(element)};
         } else {
             return std::nullopt; // <hr>, embeds, … — fall back to whole-doc save

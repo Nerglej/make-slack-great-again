@@ -10,8 +10,10 @@
 #include <QSettings>
 #include <QUrl>
 
+using namespace Qt::StringLiterals;
+
 static QSettings settings() {
-    return QSettings("msga", "msga");
+    return QSettings(u"msga"_s, u"msga"_s);
 }
 
 namespace {
@@ -75,16 +77,16 @@ void migrateV1toV2(QSettings &s) {
         }
         const QString oldBase = QStringLiteral("workspace/") + id;
         QJsonObject   blob;
-        blob[QStringLiteral("xoxp")]         = s.value(oldBase + "/xoxp").toString();
-        blob[QStringLiteral("refreshToken")] = s.value(oldBase + "/refreshToken").toString();
+        blob[QStringLiteral("xoxp")]         = s.value(oldBase + u"/xoxp"_s).toString();
+        blob[QStringLiteral("refreshToken")] = s.value(oldBase + u"/refreshToken"_s).toString();
         blob[QStringLiteral("expiresAt")] =
-            QString::number(s.value(oldBase + "/expiresAt").toLongLong());
+            QString::number(s.value(oldBase + u"/expiresAt"_s).toLongLong());
 
         const WorkspaceKey key{legacySlackService(), id};
         const QString      base = recordBase(key);
-        s.setValue(base + "/displayName", s.value(oldBase + "/name").toString());
-        s.setValue(base + "/iconUrl", s.value(oldBase + "/iconUrl").toString());
-        s.setValue(base + "/auth", QJsonDocument(blob).toJson(QJsonDocument::Compact));
+        s.setValue(base + u"/displayName"_s, s.value(oldBase + u"/name"_s).toString());
+        s.setValue(base + u"/iconUrl"_s, s.value(oldBase + u"/iconUrl"_s).toString());
+        s.setValue(base + u"/auth"_s, QJsonDocument(blob).toJson(QJsonDocument::Compact));
         s.remove(oldBase);
         handles << key.toString();
     }
@@ -115,25 +117,25 @@ void TokenStore::saveWorkspace(const WorkspaceRecord &c) {
         ids.append(handle);
     s.setValue(QStringLiteral("workspaces"), ids);
     const auto base = recordBase(c.key);
-    s.setValue(base + "/displayName", c.displayName);
-    s.setValue(base + "/iconUrl", c.iconUrl);
+    s.setValue(base + u"/displayName"_s, c.displayName);
+    s.setValue(base + u"/iconUrl"_s, c.iconUrl);
     // The auth blob carries the tokens/refresh tokens/passwords — hold it in the
     // OS keychain, out of the plaintext settings file. The blob is always
     // compact JSON (see the slack::/imap::/teams:: auth units), so the UTF-8
     // round-trip through QString is lossless.
-    SecretStore::writeScrubbingLegacy(base + "/auth", QString::fromUtf8(c.auth));
+    SecretStore::writeScrubbingLegacy(base + u"/auth"_s, QString::fromUtf8(c.auth));
 }
 
 std::optional<TokenStore::WorkspaceRecord> TokenStore::loadWorkspace(const WorkspaceKey &key) {
     auto          s    = settings();
     const auto    base = recordBase(key);
-    const QString auth = SecretStore::readMigrating(base + "/auth");
-    if (!s.contains(base + "/displayName") && auth.isEmpty())
+    const QString auth = SecretStore::readMigrating(base + u"/auth"_s);
+    if (!s.contains(base + u"/displayName"_s) && auth.isEmpty())
         return std::nullopt;
     WorkspaceRecord r;
     r.key         = key;
-    r.displayName = s.value(base + "/displayName").toString();
-    r.iconUrl     = s.value(base + "/iconUrl").toString();
+    r.displayName = s.value(base + u"/displayName"_s).toString();
+    r.iconUrl     = s.value(base + u"/iconUrl"_s).toString();
     r.auth        = auth.toUtf8();
     return r;
 }
@@ -145,8 +147,8 @@ void TokenStore::removeWorkspace(const WorkspaceKey &key) {
     auto       ids    = s.value(QStringLiteral("workspaces")).toStringList();
     ids.removeAll(handle);
     s.setValue(QStringLiteral("workspaces"), ids);
-    SecretStore::remove(recordBase(key) + "/auth"); // drop the keychain secret
-    s.remove(recordBase(key));                      // drop metadata (+ any legacy auth)
+    SecretStore::remove(recordBase(key) + u"/auth"_s); // drop the keychain secret
+    s.remove(recordBase(key));                         // drop metadata (+ any legacy auth)
     if (s.value(QStringLiteral("active")).toString() == handle)
         s.setValue(QStringLiteral("active"), ids.isEmpty() ? QString() : ids.first());
 }
@@ -186,15 +188,15 @@ bool TokenStore::hasAnyWorkspace() {
 }
 
 bool TokenStore::isWorkspaceMuted(const WorkspaceKey &key) {
-    return settings().value(recordBase(key) + "/muted", false).toBool();
+    return settings().value(recordBase(key) + u"/muted"_s, false).toBool();
 }
 
 void TokenStore::setWorkspaceMuted(const WorkspaceKey &key, bool muted) {
     auto s = settings();
     if (muted)
-        s.setValue(recordBase(key) + "/muted", true);
+        s.setValue(recordBase(key) + u"/muted"_s, true);
     else
-        s.remove(recordBase(key) + "/muted");
+        s.remove(recordBase(key) + u"/muted"_s);
 }
 
 std::optional<WorkspaceKey> TokenStore::activeWorkspace() {
@@ -211,15 +213,15 @@ void TokenStore::setActiveWorkspace(const WorkspaceKey &key) {
 }
 
 QString TokenStore::customWorkspaceIconPath(const WorkspaceKey &key) {
-    return settings().value(recordBase(key) + "/customIcon").toString();
+    return settings().value(recordBase(key) + u"/customIcon"_s).toString();
 }
 
 void TokenStore::setCustomWorkspaceIconPath(const WorkspaceKey &key, const QString &path) {
     auto s = settings();
     if (path.isEmpty())
-        s.remove(recordBase(key) + "/customIcon");
+        s.remove(recordBase(key) + u"/customIcon"_s);
     else
-        s.setValue(recordBase(key) + "/customIcon", path);
+        s.setValue(recordBase(key) + u"/customIcon"_s, path);
 }
 
 QString TokenStore::displayIconUrl(const WorkspaceRecord &rec) {

@@ -22,6 +22,8 @@
 #include <cstring>
 #endif
 
+using namespace Qt::StringLiterals;
+
 static constexpr char kBase[] = "https://msga.app/download/";
 
 #if defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_64)
@@ -59,16 +61,16 @@ static QString downloadTempPath() {
 #else
     // Linux and Windows: same directory as the running binary so rename(2)/MoveFileEx
     // stays on the same filesystem and is atomic.
-    return QCoreApplication::applicationFilePath() + ".download";
+    return QCoreApplication::applicationFilePath() + u".download"_s;
 #endif
 }
 
 bool UpdateChecker::autoCheckEnabled() {
-    return QSettings("msga", "msga").value("updates/autoCheck", true).toBool();
+    return QSettings(u"msga"_s, u"msga"_s).value("updates/autoCheck", true).toBool();
 }
 
 void UpdateChecker::setAutoCheckEnabled(bool enabled) {
-    QSettings("msga", "msga").setValue("updates/autoCheck", enabled);
+    QSettings(u"msga"_s, u"msga"_s).setValue("updates/autoCheck", enabled);
 }
 
 void UpdateChecker::checkInBackground() {
@@ -109,14 +111,15 @@ void UpdateChecker::onManifestDone(QNetworkReply *reply, bool silent) {
         return;
     }
     const QJsonObject obj    = QJsonDocument::fromJson(reply->readAll()).object();
-    const int         remote = obj["version"].toInt();
+    const int         remote = obj[u"version"_s].toInt();
     if (remote <= 0) {
         if (!silent)
             emit checkFailed(tr("Could not parse version manifest."));
         return;
     }
 
-    QSettings("msga", "msga").setValue("updates/lastChecked", QDateTime::currentSecsSinceEpoch());
+    QSettings(u"msga"_s, u"msga"_s)
+        .setValue("updates/lastChecked", QDateTime::currentSecsSinceEpoch());
 
     if (remote <= AppCredentials::version) {
         emit upToDate();

@@ -7,6 +7,8 @@
 
 #include <vector>
 
+using namespace Qt::StringLiterals;
+
 namespace imap {
 
 namespace {
@@ -354,7 +356,7 @@ TextWithEntities htmlToEntities(const QString &html) {
     for (int i = 0; i < n;) {
         if (html[i] == '<') {
             if (html.mid(i, 4) == QLatin1String("<!--")) {
-                const int e = html.indexOf("-->", i + 4);
+                const int e = html.indexOf(u"-->"_s, i + 4);
                 i           = e < 0 ? n : e + 3;
                 continue;
             }

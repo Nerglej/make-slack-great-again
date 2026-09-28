@@ -44,6 +44,8 @@ Message fileOnlyMessage(const Message &msg, const File &file) {
 }
 } // namespace
 
+using namespace Qt::StringLiterals;
+
 ForwardDialog::ForwardDialog(
     const Message         &source,
     Session               *session,
@@ -112,9 +114,10 @@ ForwardDialog::ForwardDialog(
         const auto   *user      = session->findUser(msg.author);
         const QString name      = user ? user->displayName : session->userDisplayName(msg.author);
         auto         *nameLabel = new QLabel(
-            "<b>" + name.toHtmlEscaped() + "</b>" + "  <span style='color:" +
-                Th::qss(Th::c().text.tertiary) + ";font-size:" + QString::number(Th::c().fonts.sm) +
-                "px'>" + MsgRender::formatTs(msg.date) + "</span>",
+            u"<b>"_s + name.toHtmlEscaped() + u"</b>"_s + u"  <span style='color:"_s +
+                Th::qss(Th::c().text.tertiary) + u";font-size:"_s +
+                QString::number(Th::c().fonts.sm) + u"px'>"_s + MsgRender::formatTs(msg.date) +
+                u"</span>"_s,
             _previewCard
         );
         nameLabel->setTextFormat(Qt::RichText);
@@ -155,7 +158,7 @@ ForwardDialog::ForwardDialog(
             nf.setPointSizeF(nf.pointSizeF() * 0.82);
             nameLabel->setFont(nf);
         }
-        nameLabel->setStyleSheet("color:" + Th::qss(Th::c().message.fileNameDim) + ";");
+        nameLabel->setStyleSheet(u"color:"_s + Th::qss(Th::c().message.fileNameDim) + u";"_s);
         addPadded(nameLabel);
 
         // Compute placeholder size from metadata (avoids layout jump when image loads)
@@ -172,8 +175,8 @@ ForwardDialog::ForwardDialog(
         imgLabel->setFixedSize(phW, phH);
         imgLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         imgLabel->setStyleSheet(
-            "QLabel { background:" + Th::qss(Th::c().message.imagePlaceholderBg) +
-            "; border: 1px solid " + Th::qss(Th::c().message.imagePlaceholderBorder) + "; }"
+            u"QLabel { background:"_s + Th::qss(Th::c().message.imagePlaceholderBg) +
+            u"; border: 1px solid "_s + Th::qss(Th::c().message.imagePlaceholderBorder) + u"; }"_s
         );
         addPadded(imgLabel);
 
@@ -279,14 +282,11 @@ ForwardDialog::ForwardDialog(
 void ForwardDialog::applyTheme() {
     AppDialog::applyTheme();
     _previewCard->setStyleSheet(
-        QString(
-            "QFrame#fwdCard {"
-            "  border: 1px solid %1;"
-            "  border-radius: 6px;"
-            "  background: %2;"
-            "}"
-        )
-            .arg(Th::qss(Th::c().surface.highlightStrong), Th::qss(Th::c().message.fileChipBg))
+        u"QFrame#fwdCard {"
+        "  border: 1px solid %1;"
+        "  border-radius: 6px;"
+        "  background: %2;"
+        "}"_s.arg(Th::qss(Th::c().surface.highlightStrong), Th::qss(Th::c().message.fileChipBg))
     );
     // Copy Link / Cancel / Forward buttons self-theme (StyledButton).
 }

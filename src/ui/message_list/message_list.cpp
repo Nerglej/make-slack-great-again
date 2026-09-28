@@ -70,6 +70,8 @@
 #include <cmath>
 #include <limits>
 
+using namespace Qt::StringLiterals;
+
 // ── MessageListWidget ─────────────────────────────────────────────────────────
 
 MessageListWidget::MessageListWidget(Session *session, ImageCache *imgCache, QWidget *parent)
@@ -1205,7 +1207,7 @@ void MessageListWidget::ensureDocLayout(const MessageItem &item, int forWidth) c
     // when the message actually carries an image block.
     auto hasImageBlock = [](const std::vector<Block> &blocks) {
         return std::any_of(blocks.begin(), blocks.end(), [](const Block &b) {
-            return b.typeStr == "image" && !b.imageUrl.isEmpty();
+            return b.typeStr == u"image"_s && !b.imageUrl.isEmpty();
         });
     };
     bool anyImageBlock = hasImageBlock(item.msg.blocks);
@@ -1227,12 +1229,16 @@ void MessageListWidget::ensureDocLayout(const MessageItem &item, int forWidth) c
             doc->addResource(
                 QTextDocument::ImageResource,
                 QUrl(MsgRender::kGifChevronExpandedRes),
-                svgPixmapPhys(":/ui/chevron-down.svg", QSize(10, 10), Th::c().text.secondary, dpr)
+                svgPixmapPhys(
+                    u":/ui/chevron-down.svg"_s, QSize(10, 10), Th::c().text.secondary, dpr
+                )
             );
             doc->addResource(
                 QTextDocument::ImageResource,
                 QUrl(MsgRender::kGifChevronCollapsedRes),
-                svgPixmapPhys(":/ui/chevron-right.svg", QSize(10, 10), Th::c().text.secondary, dpr)
+                svgPixmapPhys(
+                    u":/ui/chevron-right.svg"_s, QSize(10, 10), Th::c().text.secondary, dpr
+                )
             );
         }
         if (!_imgCache)
@@ -1295,7 +1301,7 @@ void MessageListWidget::ensureDocLayout(const MessageItem &item, int forWidth) c
             ad.textDoc->setDefaultStyleSheet(MsgRender::docStyleSheet());
             addImageResources(ad.textDoc.get());
             const MsgRender::GifRenderContext gifCtx{
-                item.msg.ts + "/a" + QString::number(ai), &_collapsedGifs, &_expandedUnfurls
+                item.msg.ts + u"/a"_s + QString::number(ai), &_collapsedGifs, &_expandedUnfurls
             };
             const auto html = MsgRender::buildAttachHtml(att, _session, &gifCtx);
             if (!html.isEmpty())
@@ -2480,13 +2486,13 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
             _session->backend()->threadAcceptsReplies(_currentConv, *existingThread);
         menu->addItem(
             replies ? tr("Reply in thread") : tr("Open thread"),
-            "T",
+            u"T"_s,
             [this, conv = _currentConv, rootTs = msg.threadRoot.value_or(msg.ts)] {
                 emit threadClicked(conv, rootTs);
             },
             false,
             false,
-            ":/ui/message-square-reply.svg"
+            u":/ui/message-square-reply.svg"_s
         );
         addedThreadSection = true;
     }
@@ -2506,7 +2512,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
                 },
                 false,
                 false,
-                muted ? ":/ui/bell.svg" : ":/ui/bell-off.svg"
+                muted ? u":/ui/bell.svg"_s : u":/ui/bell-off.svg"_s
             );
             addedThreadSection = true;
         }
@@ -2517,13 +2523,13 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
     if (canEdit) {
         menu->addItem(
             tr("Edit message"),
-            "E",
+            u"E"_s,
             [this, ts = msg.ts, raw = msg.rawText, files = msg.files] {
                 emit editMessageRequested(ts, raw, files);
             },
             false,
             false,
-            ":/ui/edit-3.svg"
+            u":/ui/edit-3.svg"_s
         );
         menu->addSeparator();
     }
@@ -2538,11 +2544,11 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
         if (!permalink.isEmpty()) {
             menu->addItem(
                 tr("Copy link"),
-                "L",
+                u"L"_s,
                 [permalink] { Clipboard::setText(permalink); },
                 false,
                 false,
-                ":/ui/link.svg"
+                u":/ui/link.svg"_s
             );
         }
     }
@@ -2555,19 +2561,19 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
             [linkUrl] { Clipboard::setText(linkUrl); },
             false,
             false,
-            ":/ui/link.svg"
+            u":/ui/link.svg"_s
         );
     }
 
     menu->addItem(
         tr("Copy message"),
-        "Ctrl+C",
+        u"Ctrl+C"_s,
         // Shortened link labels ("host/…/…") copy as the full URL — the visible
         // text is useless off-screen.
         [text = LinkLabels::plainTextWithFullUrls(msg.text)] { Clipboard::setText(text); },
         false,
         false,
-        ":/ui/copy.svg"
+        u":/ui/copy.svg"_s
     );
 
     menu->addSeparator();
@@ -2577,7 +2583,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
     } else if (msg.pinned) {
         menu->addItem(
             tr("Unpin from channel"),
-            "P",
+            u"P"_s,
             [this, ts = msg.ts, conv = _currentConv] {
                 if (_session)
                     _session->backend()->unpinMessage(conv, ts);
@@ -2589,12 +2595,12 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
             },
             false,
             false,
-            ":/ui/pin-off.svg"
+            u":/ui/pin-off.svg"_s
         );
     } else {
         menu->addItem(
             tr("Pin to channel"),
-            "P",
+            u"P"_s,
             [this, ts = msg.ts, conv = _currentConv] {
                 if (_session)
                     _session->backend()->pinMessage(conv, ts);
@@ -2607,7 +2613,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
             },
             false,
             false,
-            ":/ui/pin.svg"
+            u":/ui/pin.svg"_s
         );
     }
 
@@ -2629,7 +2635,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
                 },
                 false,
                 false,
-                ":/ui/bookmark-minus.svg"
+                u":/ui/bookmark-minus.svg"_s
             );
         } else if (!saved) {
             menu->addItem(
@@ -2641,7 +2647,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
                 },
                 false,
                 false,
-                ":/ui/bookmark.svg"
+                u":/ui/bookmark.svg"_s
             );
         }
         if (reminded) {
@@ -2654,7 +2660,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
                 },
                 false,
                 false,
-                ":/ui/alarm-clock.svg"
+                u":/ui/alarm-clock.svg"_s
             );
         } else {
             menu->addItem(
@@ -2663,7 +2669,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
                 [this, msg, globalPos] { showRemindMenu(msg, globalPos); },
                 /*destructive=*/false,
                 /*submenu=*/true,
-                ":/ui/alarm-clock.svg"
+                u":/ui/alarm-clock.svg"_s
             );
         }
     }
@@ -2676,7 +2682,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
         [this, msg] { emit forwardMessageRequested(msg); },
         false,
         false,
-        ":/ui/share-2.svg"
+        u":/ui/share-2.svg"_s
     );
 
     // "Move to thread…": a top-level message without replies of its own (moving
@@ -2690,7 +2696,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
             [this, msg] { emit moveToThreadRequested(msg); },
             false,
             false,
-            ":/ui/corner-down-right.svg"
+            u":/ui/corner-down-right.svg"_s
         );
     }
 
@@ -2700,14 +2706,14 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
         [this, ts = msg.ts] { startSummarizeDown(ts); },
         false,
         false,
-        ":/ui/sparkles.svg"
+        u":/ui/sparkles.svg"_s
     );
 
     if (canDelete) {
         menu->addSeparator();
         menu->addItem(
             tr("Delete message…"),
-            "Del",
+            u"Del"_s,
             [this, msg] {
                 auto *dlg = new DeleteMessageDialog(msg, _session, window());
                 dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -2719,7 +2725,7 @@ void MessageListWidget::showMessageContextMenu(const Message &msg, const QPoint 
             },
             /*destructive=*/true,
             false,
-            ":/ui/trash-2.svg"
+            u":/ui/trash-2.svg"_s
         );
     }
 
@@ -2904,7 +2910,7 @@ bool MessageListWidget::tryHandleDismissPress(const QPoint &pos) {
     // the attachment for good and forgets this index-keyed hide (the remaining
     // cards shift); if the call fails, the banner says so and the card stays
     // hidden here, exactly like a local dismissal.
-    _dismissedAttachments.insert(msg.ts + "/" + QString::number(dAi));
+    _dismissedAttachments.insert(msg.ts + u"/"_s + QString::number(dAi));
     if (removesPreviewServerSide(msg)) {
         Attachment att = msg.attachments[dAi];
         if (att.id <= 0)
@@ -2924,7 +2930,7 @@ bool MessageListWidget::removesPreviewServerSide(const Message &msg) const {
 void MessageListWidget::clearDismissedAttachments(const Ts &ts) {
     if (_dismissedAttachments.isEmpty())
         return;
-    const QString prefix = ts + "/";
+    const QString prefix = ts + u"/"_s;
     for (auto it = _dismissedAttachments.begin(); it != _dismissedAttachments.end();) {
         if (it->startsWith(prefix))
             it = _dismissedAttachments.erase(it);
@@ -3064,9 +3070,9 @@ bool MessageListWidget::tryShowLinkContextMenu(const QPoint &pos) {
         tr("Open link"),
         [this, anchor, pos] { openAnchorTarget(anchor, pos); },
         false,
-        ":/ui/external-link.svg"
+        u":/ui/external-link.svg"_s
     );
-    menu->addItem(tr("Copy link"), [url] { Clipboard::setText(url); }, false, ":/ui/link.svg");
+    menu->addItem(tr("Copy link"), [url] { Clipboard::setText(url); }, false, u":/ui/link.svg"_s);
     menu->popup(viewport()->mapToGlobal(pos));
     return true;
 }
@@ -3235,7 +3241,7 @@ void MessageListWidget::downloadFileToUser(const File &file) {
         return;
     const QString defaultName = file.name.isEmpty() ? tr("file") : file.name;
     const QString savePath =
-        Ui::getSaveFileName(this, tr("Save file"), QDir::homePath() + "/" + defaultName);
+        Ui::getSaveFileName(this, tr("Save file"), QDir::homePath() + u"/"_s + defaultName);
     if (savePath.isEmpty())
         return;
     // The original upload: for audio, url_private is Slack's MP4 transcode, and
@@ -3290,7 +3296,7 @@ void MessageListWidget::copyFullImageToClipboard(const File &file) {
     const int     task     = BackgroundTasks::instance().begin(tr("Copying %1").arg(copyName));
 
     // Pending upload — the original bytes live on disk.
-    if (file.urlPrivate.startsWith("file://")) {
+    if (file.urlPrivate.startsWith(u"file://"_s)) {
         QFile      f(QUrl(file.urlPrivate).toLocalFile());
         QByteArray data;
         if (f.open(QIODevice::ReadOnly))
@@ -3337,7 +3343,12 @@ void MessageListWidget::showFileContextMenu(
 
     if (file.isCsv() && !file.urlPrivate.isEmpty()) {
         menu->addItem(
-            tr("Preview"), {}, [this, file] { openCsvPreview(file); }, false, false, ":/ui/eye.svg"
+            tr("Preview"),
+            {},
+            [this, file] { openCsvPreview(file); },
+            false,
+            false,
+            u":/ui/eye.svg"_s
         );
     }
 
@@ -3348,7 +3359,7 @@ void MessageListWidget::showFileContextMenu(
         [linkUrl] { Clipboard::setText(linkUrl); },
         false,
         false,
-        ":/ui/link.svg"
+        u":/ui/link.svg"_s
     );
 
     if (isImage && !file.urlPrivate.isEmpty()) {
@@ -3358,7 +3369,7 @@ void MessageListWidget::showFileContextMenu(
             [this, file] { copyFullImageToClipboard(file); },
             false,
             false,
-            ":/ui/copy.svg"
+            u":/ui/copy.svg"_s
         );
     }
 
@@ -3375,7 +3386,7 @@ void MessageListWidget::showFileContextMenu(
             },
             /*destructive=*/true,
             false,
-            ":/ui/trash-2.svg"
+            u":/ui/trash-2.svg"_s
         );
     }
 
@@ -3453,7 +3464,7 @@ void MessageListWidget::openPreviewViewer(const File &file, const Message &msg) 
     // the document itself, and its thumb already IS the prerendered page.
     if (!file.isImage() || file.urlPrivate.isEmpty())
         return;
-    if (file.urlPrivate.startsWith("file://")) { // pending upload — read from disk
+    if (file.urlPrivate.startsWith(u"file://"_s)) { // pending upload — read from disk
         const QPixmap px(QUrl(file.urlPrivate).toLocalFile());
         _imageViewer->updatePixmap(file.id, px);
         return;
@@ -3520,7 +3531,7 @@ void MessageListWidget::openHtmlFile(const File &file) {
     // only offers a download. url_private needs auth, so fetch it and hand the
     // browser a local copy (a data: URL is refused as a top-level navigation by
     // Chromium, and xdg-open has no handler for the scheme anyway).
-    if (file.urlPrivate.startsWith("file://")) { // pending upload — bytes are on disk
+    if (file.urlPrivate.startsWith(u"file://"_s)) { // pending upload — bytes are on disk
         QDesktopServices::openUrl(QUrl(file.urlPrivate));
         return;
     }
@@ -3528,7 +3539,8 @@ void MessageListWidget::openHtmlFile(const File &file) {
         return;
     QString name = QFileInfo(file.name).fileName();
     name.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
-    if (!name.endsWith(".html", Qt::CaseInsensitive) && !name.endsWith(".htm", Qt::CaseInsensitive))
+    if (!name.endsWith(u".html"_s, Qt::CaseInsensitive) &&
+        !name.endsWith(u".htm"_s, Qt::CaseInsensitive))
         name += QStringLiteral(".html");
     const QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                          QStringLiteral("/cache/files/%1-%2").arg(file.id, name);
@@ -3646,7 +3658,7 @@ void MessageListWidget::toggleAudio(const File &file) {
             break; // Error: fall through and try again
         }
     }
-    if (file.urlPrivate.startsWith("file://")) { // pending upload — bytes are on disk
+    if (file.urlPrivate.startsWith(u"file://"_s)) { // pending upload — bytes are on disk
         player.play(file.id, QUrl(file.urlPrivate).toLocalFile(), file.durationMs);
         return;
     }
@@ -3807,7 +3819,7 @@ void MessageListWidget::startTranscription(const File &file, const Message &msg)
         return;
     }
 
-    if (file.urlPrivate.startsWith("file://")) { // pending upload — bytes are on disk
+    if (file.urlPrivate.startsWith(u"file://"_s)) { // pending upload — bytes are on disk
         QFile f(QUrl(file.urlPrivate).toLocalFile());
         if (!f.open(QIODevice::ReadOnly)) {
             dlg->setFailed(tr("Could not read the file"));

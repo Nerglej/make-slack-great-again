@@ -39,6 +39,8 @@
 #include <algorithm>
 #include <cmath>
 
+using namespace Qt::StringLiterals;
+
 // ── PaintContext ──────────────────────────────────────────────────────────────
 
 PaintContext MessageListWidget::makePaintContext() const {
@@ -182,7 +184,7 @@ void MessageListWidget::paintTablePill(QPainter &p) const {
     const int     iconSide = 14;
     const int     padL     = 10;
     const QPixmap icon     = svgPixmapPhys(
-        ":/ui/maximize-2.svg",
+        u":/ui/maximize-2.svg"_s,
         QSize(iconSide, iconSide),
         Th::c().text.onDark,
         p.device()->devicePixelRatioF()
@@ -267,7 +269,7 @@ void MessageListWidget::paintRow(
             !qFuzzyCompare(d, kPinDpr) || pinColor != kPinColor) {
             kPinDpr   = d;
             kPinColor = pinColor;
-            kPinPx    = svgPixmapPhys(":/ui/pin.svg", QSize(12, 12), pinColor, d);
+            kPinPx    = svgPixmapPhys(u":/ui/pin.svg"_s, QSize(12, 12), pinColor, d);
         }
         if (!kPinPx.isNull())
             p.drawPixmap(kPadH, bannerTop + (kBannerH - 12) / 2, kPinPx);
@@ -303,8 +305,8 @@ void MessageListWidget::paintRow(
             !qFuzzyCompare(d, kStripDpr) || stripColor != kStripColor) {
             kStripDpr   = d;
             kStripColor = stripColor;
-            kAlarmPx    = svgPixmapPhys(":/ui/alarm-clock.svg", QSize(12, 12), stripColor, d);
-            kBookmarkPx = svgPixmapPhys(":/ui/bookmark.svg", QSize(12, 12), stripColor, d);
+            kAlarmPx    = svgPixmapPhys(u":/ui/alarm-clock.svg"_s, QSize(12, 12), stripColor, d);
+            kBookmarkPx = svgPixmapPhys(u":/ui/bookmark.svg"_s, QSize(12, 12), stripColor, d);
         }
         const QPixmap &stripPx = reminded ? kAlarmPx : kBookmarkPx;
         if (!stripPx.isNull())
@@ -605,7 +607,7 @@ static void paintHuddleTile(QPainter &p, const QRect &rect) {
         !qFuzzyCompare(d, kDpr) || color != kColor || kPx.width() != qRound(side * d)) {
         kDpr   = d;
         kColor = color;
-        kPx    = svgPixmapPhys(":/ui/headphones.svg", QSize(side, side), color, d);
+        kPx    = svgPixmapPhys(u":/ui/headphones.svg"_s, QSize(side, side), color, d);
     }
     if (!kPx.isNull())
         p.drawPixmap(
@@ -869,7 +871,7 @@ void MessageListWidget::paintAttachments(
             xFont.setPointSizeF(xFont.pointSizeF() * 1.15);
             p.setFont(xFont);
             p.setPen(Th::c().message.attachmentDismiss);
-            p.drawText(btnRect, Qt::AlignCenter, "\xC3\x97"); // UTF-8 × (U+00D7)
+            p.drawText(btnRect, Qt::AlignCenter, u"\u00D7"_s); // × (U+00D7)
             p.restore();
         }
 
@@ -1105,7 +1107,7 @@ QPixmap MessageListWidget::coverPreview(
     // Distinct cache key from scaledPreview's (url-only), and per tile size so a
     // gallery and a relayout at a different width don't collide.
     const QString cacheKey =
-        key + "@cover@" + QString::number(phys.width()) + 'x' + QString::number(phys.height());
+        key + u"@cover@"_s + QString::number(phys.width()) + 'x' + QString::number(phys.height());
     QPixmap out = _scaledPreviews.value(cacheKey);
     if (out.size() != phys) {
         // Scale to cover, then centre-crop the overflow to exactly `phys`.
@@ -1417,7 +1419,7 @@ void MessageListWidget::requestItemImages(MessageItem &item) {
 
                     // Pending uploads point at the local file — read it from
                     // disk for an instant preview, no network involved.
-                    if (url.startsWith("file://")) {
+                    if (url.startsWith(u"file://"_s)) {
                         QPixmap   px(QUrl(url).toLocalFile());
                         const int maxSrcW = qCeil(kImgMaxW * devicePixelRatioF());
                         if (!px.isNull() && px.width() > maxSrcW)
@@ -1509,7 +1511,7 @@ void MessageListWidget::paintReactions(
     for (int j = 0; j < (int)item.msg.reactions.size(); ++j) {
         const auto   &r        = item.msg.reactions[j];
         const auto    emoji    = MsgRender::resolveEmojiRich(r.name, _session);
-        const QString countStr = " " + QString::number(r.count);
+        const QString countStr = u" "_s + QString::number(r.count);
         const int     chipW    = reactChipW(countStr);
         if (x + chipW > left + width)
             break;
@@ -1689,7 +1691,7 @@ void MessageListWidget::paintCanvasCard(QPainter &p, const File &f, const QRect 
             !qFuzzyCompare(d, kDpr) || glyph != kColor) {
             kDpr   = d;
             kColor = glyph;
-            kPx    = svgPixmapPhys(":/ui/canvas.svg", QSize(20, 20), glyph, d);
+            kPx    = svgPixmapPhys(u":/ui/canvas.svg"_s, QSize(20, 20), glyph, d);
         }
         if (!kPx.isNull())
             p.drawPixmap(tile.x() + (kTile - 20) / 2, tile.y() + (kTile - 20) / 2, kPx);
@@ -2046,7 +2048,7 @@ void MessageListWidget::paintReplyBar(
             14,
             kReplyBarH,
             Qt::AlignVCenter | Qt::AlignRight,
-            "\xC3\x97" // × (U+00D7)
+            u"\u00D7"_s // × (U+00D7)
         );
     } else if (hovered) {
         p.drawText(
@@ -2063,7 +2065,7 @@ void MessageListWidget::paintReplyBar(
             14,
             kReplyBarH,
             Qt::AlignVCenter | Qt::AlignRight,
-            "\xE2\x80\xBA" // › (U+203A)
+            u"\u203A"_s // › (U+203A)
         );
     } else {
         QString sub;
@@ -2390,7 +2392,7 @@ MessageListWidget::reactionAt(const QPoint &viewportPos, QRect *outChipRect) con
         // Check which chip — sizes must match paintReactions exactly
         int x = textLeft;
         for (int j = 0; j < (int)item.msg.reactions.size(); ++j) {
-            const QString countStr = " " + QString::number(item.msg.reactions[j].count);
+            const QString countStr = u" "_s + QString::number(item.msg.reactions[j].count);
             const int     chipW    = reactChipW(countStr);
             if (x + chipW > textLeft + textWidth)
                 break;
@@ -2513,11 +2515,11 @@ void MessageListWidget::paintHoverToolbar(QPainter &p, int index, int rowTop, in
         !qFuzzyCompare(d, kIconDpr) || iconColor != kIconColor) {
         kIconDpr   = d;
         kIconColor = iconColor;
-        kPxSmile   = svgPixmapPhys(":/ui/smile.svg", kIconSz, iconColor, d);
-        kPxForward = svgPixmapPhys(":/ui/forward.svg", kIconSz, iconColor, d);
-        kPxSave    = svgPixmapPhys(":/ui/bookmark.svg", kIconSz, iconColor, d);
-        kPxSaved   = svgPixmapPhys(":/ui/bookmark-filled.svg", kIconSz, iconColor, d);
-        kPxMore    = svgPixmapPhys(":/ui/more-horizontal.svg", kIconSz, iconColor, d);
+        kPxSmile   = svgPixmapPhys(u":/ui/smile.svg"_s, kIconSz, iconColor, d);
+        kPxForward = svgPixmapPhys(u":/ui/forward.svg"_s, kIconSz, iconColor, d);
+        kPxSave    = svgPixmapPhys(u":/ui/bookmark.svg"_s, kIconSz, iconColor, d);
+        kPxSaved   = svgPixmapPhys(u":/ui/bookmark-filled.svg"_s, kIconSz, iconColor, d);
+        kPxMore    = svgPixmapPhys(u":/ui/more-horizontal.svg"_s, kIconSz, iconColor, d);
     }
     const bool saved = index >= 0 && index < (int)_items.size() && isSaved(_items[index]);
 
@@ -2656,9 +2658,9 @@ void MessageListWidget::paintFileActionBar(QPainter &p, const QRect &fileRect) c
         !qFuzzyCompare(d, kIconDpr) || iconColor != kIconColor) {
         kIconDpr    = d;
         kIconColor  = iconColor;
-        kPxDownload = svgPixmapPhys(":/ui/download.svg", kIconSz, iconColor, d);
-        kPxShare    = svgPixmapPhys(":/ui/share-2.svg", kIconSz, iconColor, d);
-        kPxMore     = svgPixmapPhys(":/ui/more-horizontal.svg", kIconSz, iconColor, d);
+        kPxDownload = svgPixmapPhys(u":/ui/download.svg"_s, kIconSz, iconColor, d);
+        kPxShare    = svgPixmapPhys(u":/ui/share-2.svg"_s, kIconSz, iconColor, d);
+        kPxMore     = svgPixmapPhys(u":/ui/more-horizontal.svg"_s, kIconSz, iconColor, d);
     }
     const QPixmap *kIcons[] = {&kPxDownload, &kPxShare, &kPxMore};
 

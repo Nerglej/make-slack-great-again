@@ -23,6 +23,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 using OverviewCard::kAvatarSize;
 using OverviewCard::kTextLeft;
 
@@ -371,14 +373,12 @@ public:
             isPrivateChannel() ? QStringLiteral(":/ui/lock.svg") : QStringLiteral(":/ui/hash.svg"),
             _chanBtn
         );
-        _participants->setStyleSheet(QString("background: transparent; color: %1; font-size: %2px;")
+        _participants->setStyleSheet(u"background: transparent; color: %1; font-size: %2px;"_s
                                          .arg(Th::qss(th.text.secondary))
                                          .arg(th.fonts.caption));
         _newPill->setStyleSheet(
-            QString(
-                "background: %1; color: %2; border-radius: 8px; padding: 1px 8px; "
-                "font-size: %3px; font-weight: 600;"
-            )
+            u"background: %1; color: %2; border-radius: 8px; padding: 1px 8px; "
+            "font-size: %3px; font-weight: 600;"_s
                 .arg(Th::qss(th.badge.mention), Th::qss(th.accent.text))
                 .arg(th.fonts.sm)
         );

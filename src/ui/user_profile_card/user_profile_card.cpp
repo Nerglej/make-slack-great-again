@@ -22,6 +22,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 // Fonts used by both relayout() (metrics) and paintEvent() (drawing).
 static QFont nameFont() {
     QFont f = QApplication::font();
@@ -147,7 +149,7 @@ void UserProfileCard::showFor(
         // Unresolved by the host: built-in names only. fromName() answers the
         // ":name:" placeholder for anything else — never draw that as text.
         const QString glyph = Emoji::fromName(user.statusEmoji);
-        if (glyph != ":" + user.statusEmoji + ":")
+        if (glyph != u":"_s + user.statusEmoji + u":"_s)
             _statusEmoji.glyph = glyph;
     }
     _showPresence = showPresence;
@@ -418,7 +420,7 @@ void UserProfileCard::paintEvent(QPaintEvent *) {
                                    : _emailHovered ? Th::c().accent.def
                                                    : Th::c().text.primary;
             const QPixmap icon   = svgPixmapPhys(
-                copied ? ":/ui/check.svg" : ":/ui/mail.svg",
+                copied ? u":/ui/check.svg"_s : u":/ui/mail.svg"_s,
                 QSize(16, 16),
                 copied ? Th::c().accent.def : Th::c().icon.def,
                 dpr
@@ -440,7 +442,7 @@ void UserProfileCard::paintEvent(QPaintEvent *) {
         if (_clockH > 0) {
             const int     sy = card.top() + clockTop();
             const QPixmap clock =
-                svgPixmapPhys(":/ui/clock.svg", QSize(16, 16), Th::c().icon.def, dpr);
+                svgPixmapPhys(u":/ui/clock.svg"_s, QSize(16, 16), Th::c().icon.def, dpr);
             p.drawPixmap(card.left() + kPad, sy + (_clockH - 16) / 2, clock);
             p.setFont(dFont);
             p.setPen(Th::c().text.primary);
@@ -457,8 +459,9 @@ void UserProfileCard::paintEvent(QPaintEvent *) {
             p.setBrush(_btnHovered ? QBrush(Th::c().surface.highlight) : QBrush(Qt::NoBrush));
             p.drawRoundedRect(QRectF(btn), 8, 8);
 
-            const QPixmap msgIcon =
-                svgPixmapPhys(":/ui/message-square.svg", QSize(16, 16), Th::c().text.primary, dpr);
+            const QPixmap msgIcon = svgPixmapPhys(
+                u":/ui/message-square.svg"_s, QSize(16, 16), Th::c().text.primary, dpr
+            );
             p.drawPixmap(btn.left() + 12, btn.top() + (kBtnH - 16) / 2, msgIcon);
 
             QFont btnFont = QApplication::font();

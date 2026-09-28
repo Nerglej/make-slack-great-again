@@ -42,6 +42,8 @@
 #include <QWidget>
 #include <cstdio>
 
+using namespace Qt::StringLiterals;
+
 namespace demo {
 
 // ── lifecycle ─────────────────────────────────────────────────────────────────
@@ -247,12 +249,12 @@ void Tour::run(const TourStep &step, Done done) {
 
     case K::Key: {
         static const QHash<QString, int> keys = {
-            {"Return", Qt::Key_Return},
-            {"Tab", Qt::Key_Tab},
-            {"Escape", Qt::Key_Escape},
-            {"Down", Qt::Key_Down},
-            {"Up", Qt::Key_Up},
-            {"Backspace", Qt::Key_Backspace},
+            {u"Return"_s, Qt::Key_Return},
+            {u"Tab"_s, Qt::Key_Tab},
+            {u"Escape"_s, Qt::Key_Escape},
+            {u"Down"_s, Qt::Key_Down},
+            {u"Up"_s, Qt::Key_Up},
+            {u"Backspace"_s, Qt::Key_Backspace},
         };
         const int key = keys.value(step.arg, Qt::Key_unknown);
         pressKey(key, key == Qt::Key_Return ? QStringLiteral("\r") : QString(), done);
@@ -306,7 +308,7 @@ void Tour::run(const TourStep &step, Done done) {
         return;
 
     case K::Theme:
-        parkCursor([this, dark = step.arg == "dark", done] {
+        parkCursor([this, dark = step.arg == u"dark"_s, done] {
             ThemeManager::instance().setMode(
                 dark ? ThemeManager::ColorMode::Dark : ThemeManager::ColorMode::Light
             );
@@ -316,7 +318,7 @@ void Tour::run(const TourStep &step, Done done) {
 
     case K::Settings: {
         static const QStringList pages = {
-            "appearance", "notifications", "ai", "storage", "system", "about"
+            u"appearance"_s, u"notifications"_s, u"ai"_s, u"storage"_s, u"system"_s, u"about"_s
         };
         parkCursor([this, list = step.list, each = step.ms, done] {
             _win->_settingsDialog->openAt(SettingsDialog::Page::Appearance);

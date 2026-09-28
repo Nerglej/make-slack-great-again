@@ -15,6 +15,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kCardPadH = 24;
 static constexpr int kCardPadT = 20;
 static constexpr int kCardPadB = 16;
@@ -78,7 +80,7 @@ QuickSwitcherDialog::QuickSwitcherDialog(
 
     _searchEdit = new StyledLineEdit(card());
     _searchEdit->setPlaceholderText(tr("Jump to a conversation…"));
-    _searchEdit->setLeadingIcon(":/ui/search.svg");
+    _searchEdit->setLeadingIcon(u":/ui/search.svg"_s);
     _searchEdit->lineEdit()->installEventFilter(this);
 
     auto *fieldRow = new QVBoxLayout;
@@ -334,11 +336,11 @@ void QuickSwitcherDialog::applyTheme() {
     // StyledLineEdit themes itself; the two labels don't.
     const auto &th = Th::c();
     if (_hint)
-        _hint->setStyleSheet(QString("font-size: %1px; color: %2;")
-                                 .arg(th.fonts.caption)
-                                 .arg(Th::qss(th.text.tertiary)));
+        _hint->setStyleSheet(
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.tertiary))
+        );
     if (_empty)
         _empty->setStyleSheet(
-            QString("font-size: %1px; color: %2;").arg(th.fonts.base).arg(Th::qss(th.text.tertiary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.base).arg(Th::qss(th.text.tertiary))
         );
 }

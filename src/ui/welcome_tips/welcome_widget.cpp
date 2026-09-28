@@ -11,6 +11,8 @@
 #include <QResizeEvent>
 #include <QShowEvent>
 
+using namespace Qt::StringLiterals;
+
 // ── WelcomeWidget ─────────────────────────────────────────────────────────────
 
 WelcomeWidget::WelcomeWidget(QWidget *parent) : QWidget(parent) {
@@ -72,7 +74,7 @@ void WelcomeWidget::buildRows() {
     };
 
     auto makePlus = [this](QWidget *parent) -> QLabel * {
-        auto *lbl = new QLabel("+", parent);
+        auto *lbl = new QLabel(u"+"_s, parent);
         lbl->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         _plusLabels.append(lbl);
         return lbl;
@@ -115,41 +117,36 @@ void WelcomeWidget::applyTheme() {
 
     Th::setStyleSheetIfChanged(
         _title,
-        QString("font-size: %1px; color: %2; font-weight: 500;")
-            .arg(th.fonts.lg)
+        u"font-size: %1px; color: %2; font-weight: 500;"_s.arg(th.fonts.lg)
             .arg(Th::qss(th.text.secondary))
     );
 
-    Th::setStyleSheetIfChanged(_rule, QString("color: %1;").arg(Th::qss(th.surface.highlight)));
+    Th::setStyleSheetIfChanged(_rule, u"color: %1;"_s.arg(Th::qss(th.surface.highlight)));
 
-    const QString chipSS = QString(
-                               "QLabel {"
-                               "  background-color: %1;"
-                               "  border: 1px solid %2;"
-                               "  border-bottom: 2px solid %2;"
-                               "  border-radius: 5px;"
-                               "  padding: 3px 9px;"
-                               "  font-size: %3px;"
-                               "  color: %4;"
-                               "}"
-    )
-                               .arg(
-                                   Th::qss(th.surface.highlight),
-                                   Th::qss(th.divider.def),
-                                   QString::number(th.fonts.caption),
-                                   Th::qss(th.text.primary)
-                               );
+    const QString chipSS = u"QLabel {"
+                           "  background-color: %1;"
+                           "  border: 1px solid %2;"
+                           "  border-bottom: 2px solid %2;"
+                           "  border-radius: 5px;"
+                           "  padding: 3px 9px;"
+                           "  font-size: %3px;"
+                           "  color: %4;"
+                           "}"_s.arg(
+                               Th::qss(th.surface.highlight),
+                               Th::qss(th.divider.def),
+                               QString::number(th.fonts.caption),
+                               Th::qss(th.text.primary)
+                           );
     for (QLabel *lbl : std::as_const(_chipLabels))
         Th::setStyleSheetIfChanged(lbl, chipSS);
 
-    const QString plusSS = QString("font-size: %1px; color: %2; padding: 0 1px;")
-                               .arg(th.fonts.sm)
+    const QString plusSS = u"font-size: %1px; color: %2; padding: 0 1px;"_s.arg(th.fonts.sm)
                                .arg(Th::qss(th.divider.def));
     for (QLabel *lbl : std::as_const(_plusLabels))
         Th::setStyleSheetIfChanged(lbl, plusSS);
 
     const QString actionSS =
-        QString("font-size: %1px; color: %2;").arg(th.fonts.base).arg(Th::qss(th.text.primary));
+        u"font-size: %1px; color: %2;"_s.arg(th.fonts.base).arg(Th::qss(th.text.primary));
     for (QLabel *lbl : std::as_const(_actionLabels))
         Th::setStyleSheetIfChanged(lbl, actionSS);
 }

@@ -285,7 +285,9 @@ struct Usergroup {
     bool                operator==(const Usergroup &) const = default;
 
     // What to show for a mention: "@handle", or the name when there is no handle.
-    QString mentionLabel() const { return "@" + (handle.isEmpty() ? name : handle); }
+    QString mentionLabel() const {
+        return QStringLiteral("@") + (handle.isEmpty() ? name : handle);
+    }
 };
 
 // Rich presence for the authed user only. users.getPresence returns these
@@ -823,21 +825,23 @@ struct File {
         return thumbUrl.isEmpty() ? urlPrivate : thumbUrl;
     }
 
-    bool isImage() const { return mimeType.startsWith("image/") && imageWidth > 0; }
-    bool isPdf() const { return mimeType == "application/pdf"; }
+    bool isImage() const { return mimeType.startsWith(QStringLiteral("image/")) && imageWidth > 0; }
+    bool isPdf() const { return mimeType == QStringLiteral("application/pdf"); }
     // Slack canvases (filetype "quip"): drawn as a preview card in the message
     // list, opened in the in-app canvas viewer.
     bool isCanvas() const { return mimeType == QLatin1String("application/vnd.slack-docs"); }
     // Audio uploads and Slack voice clips get the inline player chip.
     bool isAudio() const {
-        return mimeType.startsWith("audio/") || subtype == QLatin1String("slack_audio");
+        return mimeType.startsWith(QStringLiteral("audio/")) ||
+               subtype == QLatin1String("slack_audio");
     }
     bool hasTranscript() const {
         return transcriptStatus == QLatin1String("complete") && !transcriptPreview.isEmpty();
     }
     // CSV uploads get a "Preview" action that opens them in the table viewer.
     bool isCsv() const {
-        return mimeType == "text/csv" || name.endsWith(QLatin1String(".csv"), Qt::CaseInsensitive);
+        return mimeType == QStringLiteral("text/csv") ||
+               name.endsWith(QLatin1String(".csv"), Qt::CaseInsensitive);
     }
     // True when Slack provides a prerendered preview image: the image itself, or the
     // server-rendered first page of a PDF (thumb_pdf) — no client-side rendering needed.

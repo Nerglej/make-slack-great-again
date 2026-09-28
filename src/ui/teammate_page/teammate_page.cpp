@@ -25,6 +25,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 constexpr int kAvatarSize   = 56;
@@ -157,7 +159,7 @@ void TeammatePage::open(const AgentRole &mate) {
     _description->setText(mate.description);
     _description->setVisible(!mate.description.isEmpty());
     updateAvatar();
-    QSettings     s("msga", "msga");
+    QSettings     s(u"msga"_s, u"msga"_s);
     const QString any = s.value("claudeCode/lastDir", QDir::homePath()).toString();
     setFolder(s.value(folderKey(mate.id), any).toString());
     rebuild();
@@ -240,7 +242,7 @@ void TeammatePage::setFolder(const QString &dir) {
     _folder  = dir;
     _blocker = _session ? _session->backend()->agentSessionBlocker(dir) : QString();
     _folderLabel->setText(
-        tr("Start new session in %1").arg("<b>" + homeRelative(dir).toHtmlEscaped() + "</b>")
+        tr("Start new session in %1").arg(u"<b>"_s + homeRelative(dir).toHtmlEscaped() + u"</b>"_s)
     );
     emit folderChanged();
 }
@@ -262,7 +264,7 @@ void TeammatePage::showFolderMenu() {
             );
             sessions.push_back({dir, micros / 1000000});
         }
-    QSettings  s("msga", "msga");
+    QSettings  s(u"msga"_s, u"msga"_s);
     const auto isDir = [](const QString &p) { return QFileInfo(p).isDir(); };
     auto       choices =
         RecentFolders::rank(RecentFolders::load(s, RecentFolders::kClaudeCodeKey), sessions, isDir);
@@ -309,7 +311,7 @@ void TeammatePage::chooseFolder() {
 void TeammatePage::pickFolder(const QString &dir) {
     if (_mate.id.isEmpty())
         return;
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     s.setValue(folderKey(_mate.id), dir);
     RecentFolders::bump(s, RecentFolders::kClaudeCodeKey, dir);
     setFolder(dir);
@@ -344,47 +346,39 @@ void TeammatePage::updateAvatar() {
 void TeammatePage::applyTheme() {
     const auto &th = Th::c();
     Th::setStyleSheetIfChanged(
-        this, QString("QWidget#teammatePage { background: %1; }").arg(Th::qss(th.surface.content))
+        this, u"QWidget#teammatePage { background: %1; }"_s.arg(Th::qss(th.surface.content))
     );
-    Th::setStyleSheetIfChanged(
-        _header, QString("QWidget#teammateHeader { background: transparent; }")
-    );
+    Th::setStyleSheetIfChanged(_header, u"QWidget#teammateHeader { background: transparent; }"_s);
     Th::setStyleSheetIfChanged(
         _footer,
-        QString(
-            "QWidget#teammateFooter { background: transparent; "
-            "border-top: 1px solid %1; }"
-        )
-            .arg(Th::qss(th.divider.subtle))
+        u"QWidget#teammateFooter { background: transparent; "
+        "border-top: 1px solid %1; }"_s.arg(Th::qss(th.divider.subtle))
     );
     Th::setStyleSheetIfChanged(
         _name,
-        QString("background: transparent; font-weight: bold; font-size: %1px; color: %2;")
+        u"background: transparent; font-weight: bold; font-size: %1px; color: %2;"_s
             .arg(th.fonts.xxxl)
             .arg(Th::qss(th.text.primary))
     );
     Th::setStyleSheetIfChanged(
         _description,
-        QString("background: transparent; font-size: %1px; color: %2;")
-            .arg(th.fonts.lg)
+        u"background: transparent; font-size: %1px; color: %2;"_s.arg(th.fonts.lg)
             .arg(Th::qss(th.text.secondary))
     );
     Th::setStyleSheetIfChanged(
         _listTitle,
-        QString("background: transparent; font-weight: bold; font-size: %1px; color: %2;")
+        u"background: transparent; font-weight: bold; font-size: %1px; color: %2;"_s
             .arg(th.fonts.xl)
             .arg(Th::qss(th.text.primary))
     );
     Th::setStyleSheetIfChanged(
         _empty,
-        QString("background: transparent; color: %1; padding: %2px;")
-            .arg(Th::qss(th.text.secondary))
+        u"background: transparent; color: %1; padding: %2px;"_s.arg(Th::qss(th.text.secondary))
             .arg(th.spacing.xxl)
     );
     Th::setStyleSheetIfChanged(
         _folderLabel,
-        QString("background: transparent; color: %1; font-size: %2px;")
-            .arg(Th::qss(th.text.secondary))
+        u"background: transparent; color: %1; font-size: %2px;"_s.arg(Th::qss(th.text.secondary))
             .arg(th.fonts.md)
     );
     updateAvatar();

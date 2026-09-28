@@ -181,7 +181,7 @@ private:
     int                                     _staleMs             = 50000;
     bool                                    _reachabilityWatched = false;
     // apps.connections.open endpoint; overridable for tests.
-    QUrl                                    _openUrl{"https://slack.com/api/apps.connections.open"};
+    QUrl _openUrl{QStringLiteral("https://slack.com/api/apps.connections.open")};
     // users to track, per sink; the union is re-sent on every connect
     QHash<rpl::event_stream<Event> *, QStringList> _presenceIds;
 

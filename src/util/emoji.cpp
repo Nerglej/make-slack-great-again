@@ -9,6 +9,8 @@
 
 #include <QHash>
 
+using namespace Qt::StringLiterals;
+
 namespace Emoji {
 
 namespace {
@@ -31,7 +33,7 @@ const QHash<QString, int> &indexByName() {
 QString fromName(const QString &name) {
     const auto &idx = indexByName();
     const auto  it  = idx.constFind(name);
-    return it != idx.constEnd() ? Data::entryValue(Data::kEntries[*it]) : (":" + name + ":");
+    return it != idx.constEnd() ? Data::entryValue(Data::kEntries[*it]) : (u":"_s + name + u":"_s);
 }
 
 QString expandCodes(const QString &text) {

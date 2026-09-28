@@ -12,6 +12,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace Th {
 
 const Theme &current() {
@@ -21,7 +23,7 @@ const Theme &current() {
 QString qss(const QColor &c) {
     if (c.alpha() == 255)
         return c.name(); // "#RRGGBB"
-    return QString("rgba(%1,%2,%3,%4)").arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.alpha());
+    return u"rgba(%1,%2,%3,%4)"_s.arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.alpha());
 }
 
 namespace {
@@ -801,24 +803,22 @@ bool setStyleSheetIfChanged(QWidget *w, const QString &qss) {
 }
 
 QString globalQss() {
-    return QString(
-               "QToolTip {"
-               "  border: none;"
-               "  border-radius: 6px;"
-               "  padding: 5px 10px;"
-               "  font-weight: bold;"
-               "  font-size: %1px;"
-               "}"
-    )
-        .arg(c().fonts.caption);
+    return u"QToolTip {"
+           "  border: none;"
+           "  border-radius: 6px;"
+           "  padding: 5px 10px;"
+           "  font-weight: bold;"
+           "  font-size: %1px;"
+           "}"_s.arg(c().fonts.caption);
 }
 
 namespace {
 
 QString toolTipColorQss() {
     const auto &th = c();
-    return QString("QToolTip { background-color: %1; color: %2; }")
-        .arg(qss(th.tooltip.bg), qss(th.text.onDark));
+    return u"QToolTip { background-color: %1; color: %2; }"_s.arg(
+        qss(th.tooltip.bg), qss(th.text.onDark)
+    );
 }
 
 // Qt's tooltip is a private QTipLabel (a QLabel), created per tip and reused
@@ -875,36 +875,34 @@ QString scrollBarQss(int width, int radius) {
 
 QString scrollBarQss(const ScrollBarStyle &s) {
     const auto   &th     = c();
-    const QString margin = s.margin ? QString("%1px").arg(s.margin) : QStringLiteral("0");
+    const QString margin = s.margin ? u"%1px"_s.arg(s.margin) : QStringLiteral("0");
     const QString scope  = s.scope.isEmpty() ? QString() : s.scope + QLatin1Char(' ');
     const auto    hover  = [&](const char *dir) {
-        return s.hoverTint ? scope + QString("QScrollBar::handle:%1:hover { background: %2; }")
-                                         .arg(QLatin1String(dir), qss(th.text.secondary))
+        return s.hoverTint ? scope + u"QScrollBar::handle:%1:hover { background: %2; }"_s.arg(
+                                         QLatin1String(dir), qss(th.text.secondary)
+                                     )
                            : QString();
     };
     // %8 (the scope) is substituted last, after the hover rules went into %6/%7.
-    return QString(
-               "%8QScrollBar:vertical { background: transparent; width: %1px; margin: %4; }"
-               "%8QScrollBar::handle:vertical { background: %3; border-radius: %2px;"
-               " min-height: %5px; }"
-               "%6"
-               "%8QScrollBar::add-line:vertical, %8QScrollBar::sub-line:vertical { height: 0; }"
-               "%8QScrollBar::add-page:vertical, %8QScrollBar::sub-page:vertical {"
-               " background: transparent; }"
-               "%8QScrollBar:horizontal { background: transparent; height: %1px; margin: %4; }"
-               "%8QScrollBar::handle:horizontal { background: %3; border-radius: %2px;"
-               " min-width: %5px; }"
-               "%7"
-               "%8QScrollBar::add-line:horizontal, %8QScrollBar::sub-line:horizontal { width: 0; }"
-               "%8QScrollBar::add-page:horizontal, %8QScrollBar::sub-page:horizontal {"
-               " background: transparent; }"
-    )
-        .arg(s.width)
-        .arg(s.radius)
-        .arg(qss(th.divider.strong), margin)
-        .arg(s.minHandle)
-        .arg(hover("vertical"), hover("horizontal"))
-        .arg(scope);
+    return u"%8QScrollBar:vertical { background: transparent; width: %1px; margin: %4; }"
+           "%8QScrollBar::handle:vertical { background: %3; border-radius: %2px;"
+           " min-height: %5px; }"
+           "%6"
+           "%8QScrollBar::add-line:vertical, %8QScrollBar::sub-line:vertical { height: 0; }"
+           "%8QScrollBar::add-page:vertical, %8QScrollBar::sub-page:vertical {"
+           " background: transparent; }"
+           "%8QScrollBar:horizontal { background: transparent; height: %1px; margin: %4; }"
+           "%8QScrollBar::handle:horizontal { background: %3; border-radius: %2px;"
+           " min-width: %5px; }"
+           "%7"
+           "%8QScrollBar::add-line:horizontal, %8QScrollBar::sub-line:horizontal { width: 0; }"
+           "%8QScrollBar::add-page:horizontal, %8QScrollBar::sub-page:horizontal {"
+           " background: transparent; }"_s.arg(s.width)
+               .arg(s.radius)
+               .arg(qss(th.divider.strong), margin)
+               .arg(s.minHandle)
+               .arg(hover("vertical"), hover("horizontal"))
+               .arg(scope);
 }
 
 QString popupScrollBarQss() {
@@ -914,48 +912,44 @@ QString popupScrollBarQss() {
 }
 
 static QString fontRule(int fontPx) {
-    return fontPx > 0 ? QString("font-size: %1px;").arg(fontPx) : QString();
+    return fontPx > 0 ? u"font-size: %1px;"_s.arg(fontPx) : QString();
 }
 
 QString radioQss(int fontPx) {
     const auto &th = c();
     // 16px well + 1px border; checked = accent ring + accent dot with a
     // well-colored gap (radial gradient keeps the indicator size constant).
-    return QString(
-               "QRadioButton { color: %1; %2 background: transparent; }"
-               "QRadioButton::indicator { width: 16px; height: 16px; border-radius: 9px;"
-               "  border: 1px solid %3; background: %4; }"
-               "QRadioButton::indicator:hover { border-color: %5; }"
-               "QRadioButton::indicator:checked { border-color: %6;"
-               "  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,"
-               "  stop:0 %6, stop:0.45 %6, stop:0.55 %4, stop:1 %4); }"
-    )
-        .arg(qss(th.text.primary), fontRule(fontPx), qss(th.divider.strong))
-        .arg(qss(th.surface.content), qss(th.text.tertiary), qss(th.accent.def));
+    return u"QRadioButton { color: %1; %2 background: transparent; }"
+           "QRadioButton::indicator { width: 16px; height: 16px; border-radius: 9px;"
+           "  border: 1px solid %3; background: %4; }"
+           "QRadioButton::indicator:hover { border-color: %5; }"
+           "QRadioButton::indicator:checked { border-color: %6;"
+           "  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,"
+           "  stop:0 %6, stop:0.45 %6, stop:0.55 %4, stop:1 %4); }"_s
+               .arg(qss(th.text.primary), fontRule(fontPx), qss(th.divider.strong))
+               .arg(qss(th.surface.content), qss(th.text.tertiary), qss(th.accent.def));
 }
 
 QString checkBoxQss(int fontPx, const QColor &textColor) {
     const auto &th = c();
-    return QString(
-               "QCheckBox { color: %1; %2 background: transparent; }"
-               "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;"
-               "  border: 1px solid %3; background: %4; }"
-               "QCheckBox::indicator:hover { border-color: %5; }"
-               "QCheckBox::indicator:checked { border-color: %6; background: %6;"
-               "  image: url(:/ui/check-on-accent.svg); }"
-    )
-        .arg(
-            qss(textColor.isValid() ? textColor : th.text.primary),
-            fontRule(fontPx),
-            qss(th.divider.strong)
-        )
-        .arg(qss(th.surface.content), qss(th.text.tertiary), qss(th.accent.def));
+    return u"QCheckBox { color: %1; %2 background: transparent; }"
+           "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;"
+           "  border: 1px solid %3; background: %4; }"
+           "QCheckBox::indicator:hover { border-color: %5; }"
+           "QCheckBox::indicator:checked { border-color: %6; background: %6;"
+           "  image: url(:/ui/check-on-accent.svg); }"_s
+               .arg(
+                   qss(textColor.isValid() ? textColor : th.text.primary),
+                   fontRule(fontPx),
+                   qss(th.divider.strong)
+               )
+               .arg(qss(th.surface.content), qss(th.text.tertiary), qss(th.accent.def));
 }
 
 QString spinBoxQss(int fontPx) {
     const auto &th = c();
     return QString(
-               "QSpinBox { %1 color: %2; background: %3;"
+               u"QSpinBox { %1 color: %2; background: %3;"
                "  border: 1px solid %4; border-radius: 4px; padding: 3px 6px;"
                "  selection-background-color: %5; selection-color: %6; }"
                "QSpinBox:focus { border-color: %7; }"
@@ -967,7 +961,7 @@ QString spinBoxQss(int fontPx) {
                "QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: %8; }"
                "QSpinBox::up-arrow { image: url(:/ui/spin-up.svg); width: 10px; height: 10px; }"
                "QSpinBox::down-arrow { image: url(:/ui/spin-down.svg); width: 10px;"
-               "  height: 10px; }"
+               "  height: 10px; }"_s
     )
         .arg(fontRule(fontPx), qss(th.text.primary), qss(th.surface.content))
         .arg(qss(th.divider.strong), qss(th.accent.def), qss(th.accent.text))
@@ -980,11 +974,9 @@ QString stockDialogQss() {
     // style renders the dialog flat anyway, so pinning color/selection to the
     // same theme tokens guarantees contrast on every app-theme × OS-theme
     // combination. Scrollbars get our usual look instead of the stock boxes.
-    return QString(
-               "QWidget { color: %1; background: %2;"
-               "  selection-background-color: %3; selection-color: %4; }"
-               "QWidget:disabled { color: %5; }"
-           )
+    return u"QWidget { color: %1; background: %2;"
+           "  selection-background-color: %3; selection-color: %4; }"
+           "QWidget:disabled { color: %5; }"_s
                .arg(qss(th.text.primary), qss(th.surface.content), qss(th.accent.def))
                .arg(qss(th.accent.text), qss(th.text.tertiary)) +
            scrollBarQss();

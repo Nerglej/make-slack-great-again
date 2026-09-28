@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <vector>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kCardMinW = 480;
 static constexpr int kCardMaxW = 560;
 static constexpr int kCardPadH = 28; // left / right padding inside card
@@ -248,13 +250,12 @@ void AppDialog::done(int result) {
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
 void AppDialog::applyTheme() {
-    _card->setStyleSheet(QString(
-                             "QFrame#appDialogCard { background: %1; border-radius: 12px;"
-                             " border: none; }"
-    )
-                             .arg(Th::qss(Th::c().surface.raised)));
+    _card->setStyleSheet(
+        u"QFrame#appDialogCard { background: %1; border-radius: 12px;"
+        " border: none; }"_s.arg(Th::qss(Th::c().surface.raised))
+    );
     if (_titleLabel)
-        _titleLabel->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+        _titleLabel->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
     if (_scroll) {
         // Transparent all the way down so the card's rounded fill shows through
         // (the viewport is its own widget, hence the descendant selector).

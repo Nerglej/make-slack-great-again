@@ -15,136 +15,140 @@
 #include <QUrl>
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 // ── JSON serialization helpers ────────────────────────────────────────────────
 
 static QJsonObject toJson(const TextEntity &e) {
     QJsonObject o;
-    o["t"] = static_cast<int>(e.type);
-    o["o"] = e.offset;
-    o["l"] = e.length;
+    o[u"t"_s] = static_cast<int>(e.type);
+    o[u"o"_s] = e.offset;
+    o[u"l"_s] = e.length;
     if (!e.data.isEmpty())
-        o["d"] = e.data;
+        o[u"d"_s] = e.data;
     return o;
 }
 static TextEntity entityFromJson(const QJsonObject &o) {
     TextEntity e;
-    e.type   = static_cast<EntityType>(o["t"].toInt());
-    e.offset = o["o"].toInt();
-    e.length = o["l"].toInt();
-    e.data   = o["d"].toString();
+    e.type   = static_cast<EntityType>(o[u"t"_s].toInt());
+    e.offset = o[u"o"_s].toInt();
+    e.length = o[u"l"_s].toInt();
+    e.data   = o[u"d"_s].toString();
     return e;
 }
 
 static QJsonObject toJson(const TextWithEntities &t) {
     QJsonObject o;
-    o["x"] = t.text;
+    o[u"x"_s] = t.text;
     if (!t.entities.empty()) {
         QJsonArray arr;
         for (const auto &e : t.entities)
             arr.append(toJson(e));
-        o["e"] = arr;
+        o[u"e"_s] = arr;
     }
     return o;
 }
 static TextWithEntities tweFromJson(const QJsonObject &o) {
     TextWithEntities t;
-    t.text = o["x"].toString();
-    for (const auto &v : o["e"].toArray())
+    t.text = o[u"x"_s].toString();
+    for (const auto &v : o[u"e"_s].toArray())
         t.entities.push_back(entityFromJson(v.toObject()));
     return t;
 }
 
 static QJsonObject toJson(const Reaction &r) {
     QJsonObject o;
-    o["n"] = r.name;
-    o["c"] = r.count;
+    o[u"n"_s] = r.name;
+    o[u"c"_s] = r.count;
     QJsonArray users;
     for (const auto &u : r.users)
         users.append(u.value);
-    o["u"] = users;
+    o[u"u"_s] = users;
     return o;
 }
 static Reaction reactionFromJson(const QJsonObject &o) {
     Reaction r;
-    r.name  = o["n"].toString();
-    r.count = o["c"].toInt();
-    for (const auto &v : o["u"].toArray())
+    r.name  = o[u"n"_s].toString();
+    r.count = o[u"c"_s].toInt();
+    for (const auto &v : o[u"u"_s].toArray())
         r.users.push_back(UserId{v.toString()});
     return r;
 }
 
 static QJsonObject toJson(const File &f) {
     QJsonObject o;
-    o["id"] = f.id;
-    o["na"] = f.name;
-    o["mi"] = f.mimeType;
-    o["pt"] = f.prettyType;
-    o["up"] = f.urlPrivate;
-    o["pl"] = f.permalink;
-    o["th"] = f.thumbUrl;
-    o["iw"] = f.imageWidth;
-    o["ih"] = f.imageHeight;
-    o["sz"] = static_cast<double>(f.size);
+    o[u"id"_s] = f.id;
+    o[u"na"_s] = f.name;
+    o[u"mi"_s] = f.mimeType;
+    o[u"pt"_s] = f.prettyType;
+    o[u"up"_s] = f.urlPrivate;
+    o[u"pl"_s] = f.permalink;
+    o[u"th"_s] = f.thumbUrl;
+    o[u"iw"_s] = f.imageWidth;
+    o[u"ih"_s] = f.imageHeight;
+    o[u"sz"_s] = static_cast<double>(f.size);
     if (!f.urlPrivateDownload.isEmpty())
-        o["ud"] = f.urlPrivateDownload;
+        o[u"ud"_s] = f.urlPrivateDownload;
     if (f.durationMs > 0)
-        o["dm"] = static_cast<double>(f.durationMs);
+        o[u"dm"_s] = static_cast<double>(f.durationMs);
     if (!f.aacUrl.isEmpty())
-        o["aac"] = f.aacUrl;
+        o[u"aac"_s] = f.aacUrl;
     if (!f.subtype.isEmpty())
-        o["st"] = f.subtype;
+        o[u"st"_s] = f.subtype;
     if (!f.fileType.isEmpty())
-        o["ft"] = f.fileType;
+        o[u"ft"_s] = f.fileType;
     if (!f.transcriptStatus.isEmpty())
-        o["tst"] = f.transcriptStatus;
+        o[u"tst"_s] = f.transcriptStatus;
     if (!f.transcriptPreview.isEmpty())
-        o["tpv"] = f.transcriptPreview;
+        o[u"tpv"_s] = f.transcriptPreview;
     if (!f.transcriptVttUrl.isEmpty())
-        o["tvt"] = f.transcriptVttUrl;
+        o[u"tvt"_s] = f.transcriptVttUrl;
     if (!f.title.isEmpty())
-        o["ti"] = f.title;
+        o[u"ti"_s] = f.title;
     if (!f.thumbs.empty()) {
         QJsonArray arr;
         for (const auto &t : f.thumbs)
-            arr.append(QJsonObject{{"w", t.width}, {"h", t.height}, {"u", t.url}});
-        o["tb"] = arr;
+            arr.append(QJsonObject{{u"w"_s, t.width}, {u"h"_s, t.height}, {u"u"_s, t.url}});
+        o[u"tb"_s] = arr;
     }
     if (!f.animThumbs.empty()) {
         QJsonArray arr;
         for (const auto &t : f.animThumbs)
-            arr.append(QJsonObject{{"w", t.width}, {"h", t.height}, {"u", t.url}});
-        o["ta"] = arr;
+            arr.append(QJsonObject{{u"w"_s, t.width}, {u"h"_s, t.height}, {u"u"_s, t.url}});
+        o[u"ta"_s] = arr;
     }
     return o;
 }
 static File fileFromJson(const QJsonObject &o) {
     File f;
-    f.id                 = o["id"].toString();
-    f.name               = o["na"].toString();
-    f.mimeType           = o["mi"].toString();
-    f.prettyType         = o["pt"].toString();
-    f.urlPrivate         = o["up"].toString();
-    f.permalink          = o["pl"].toString();
-    f.thumbUrl           = o["th"].toString();
-    f.imageWidth         = o["iw"].toInt();
-    f.imageHeight        = o["ih"].toInt();
-    f.size               = static_cast<qint64>(o["sz"].toDouble());
-    f.urlPrivateDownload = o["ud"].toString();
-    f.durationMs         = static_cast<qint64>(o["dm"].toDouble());
-    f.aacUrl             = o["aac"].toString();
-    f.subtype            = o["st"].toString();
-    f.fileType           = o["ft"].toString();
-    f.transcriptStatus   = o["tst"].toString();
-    f.transcriptPreview  = o["tpv"].toString();
-    f.transcriptVttUrl   = o["tvt"].toString();
-    f.title              = o["ti"].toString();
-    for (const auto &v : o["tb"].toArray()) {
+    f.id                 = o[u"id"_s].toString();
+    f.name               = o[u"na"_s].toString();
+    f.mimeType           = o[u"mi"_s].toString();
+    f.prettyType         = o[u"pt"_s].toString();
+    f.urlPrivate         = o[u"up"_s].toString();
+    f.permalink          = o[u"pl"_s].toString();
+    f.thumbUrl           = o[u"th"_s].toString();
+    f.imageWidth         = o[u"iw"_s].toInt();
+    f.imageHeight        = o[u"ih"_s].toInt();
+    f.size               = static_cast<qint64>(o[u"sz"_s].toDouble());
+    f.urlPrivateDownload = o[u"ud"_s].toString();
+    f.durationMs         = static_cast<qint64>(o[u"dm"_s].toDouble());
+    f.aacUrl             = o[u"aac"_s].toString();
+    f.subtype            = o[u"st"_s].toString();
+    f.fileType           = o[u"ft"_s].toString();
+    f.transcriptStatus   = o[u"tst"_s].toString();
+    f.transcriptPreview  = o[u"tpv"_s].toString();
+    f.transcriptVttUrl   = o[u"tvt"_s].toString();
+    f.title              = o[u"ti"_s].toString();
+    for (const auto &v : o[u"tb"_s].toArray()) {
         const auto t = v.toObject();
-        f.thumbs.push_back(FileThumb{t["w"].toInt(), t["h"].toInt(), t["u"].toString()});
+        f.thumbs.push_back(FileThumb{t[u"w"_s].toInt(), t[u"h"_s].toInt(), t[u"u"_s].toString()});
     }
-    for (const auto &v : o["ta"].toArray()) {
+    for (const auto &v : o[u"ta"_s].toArray()) {
         const auto t = v.toObject();
-        f.animThumbs.push_back(FileThumb{t["w"].toInt(), t["h"].toInt(), t["u"].toString()});
+        f.animThumbs.push_back(
+            FileThumb{t[u"w"_s].toInt(), t[u"h"_s].toInt(), t[u"u"_s].toString()}
+        );
     }
     return f;
 }
@@ -152,11 +156,11 @@ static File fileFromJson(const QJsonObject &o) {
 static QJsonArray buttonsToJson(const std::vector<BotButton> &buttons) {
     QJsonArray arr;
     for (const auto &btn : buttons) {
-        QJsonObject o{{"t", btn.text}, {"u", btn.url}, {"s", btn.style}};
+        QJsonObject o{{u"t"_s, btn.text}, {u"u"_s, btn.url}, {u"s"_s, btn.style}};
         if (!btn.actionId.isEmpty()) {
-            o["a"] = btn.actionId;
-            o["b"] = btn.blockId;
-            o["v"] = btn.value;
+            o[u"a"_s] = btn.actionId;
+            o[u"b"_s] = btn.blockId;
+            o[u"v"_s] = btn.value;
         }
         arr.append(o);
     }
@@ -168,12 +172,12 @@ static std::vector<BotButton> buttonsFromJson(const QJsonArray &arr) {
         const auto o = v.toObject();
         buttons.push_back(
             BotButton{
-                .text     = o["t"].toString(),
-                .url      = o["u"].toString(),
-                .style    = o["s"].toString(),
-                .actionId = o["a"].toString(),
-                .blockId  = o["b"].toString(),
-                .value    = o["v"].toString(),
+                .text     = o[u"t"_s].toString(),
+                .url      = o[u"u"_s].toString(),
+                .style    = o[u"s"_s].toString(),
+                .actionId = o[u"a"_s].toString(),
+                .blockId  = o[u"b"_s].toString(),
+                .value    = o[u"v"_s].toString(),
             }
         );
     }
@@ -182,14 +186,14 @@ static std::vector<BotButton> buttonsFromJson(const QJsonArray &arr) {
 
 static QJsonObject toJson(const Block &b) {
     QJsonObject o;
-    o["ty"] = b.typeStr;
-    o["tx"] = toJson(b.text);
+    o[u"ty"_s] = b.typeStr;
+    o[u"tx"_s] = toJson(b.text);
     if (!b.imageUrl.isEmpty())
-        o["iu"] = b.imageUrl;
+        o[u"iu"_s] = b.imageUrl;
     if (!b.altText.isEmpty())
-        o["at"] = b.altText;
+        o[u"at"_s] = b.altText;
     if (!b.buttons.empty())
-        o["bt"] = buttonsToJson(b.buttons);
+        o[u"bt"_s] = buttonsToJson(b.buttons);
     if (!b.tableRows.empty()) {
         QJsonArray rows;
         for (const auto &row : b.tableRows) {
@@ -198,18 +202,18 @@ static QJsonObject toJson(const Block &b) {
                 cells.append(toJson(cell));
             rows.append(cells);
         }
-        o["tr"] = rows;
+        o[u"tr"_s] = rows;
     }
     return o;
 }
 static Block blockFromJson(const QJsonObject &o) {
     Block b;
-    b.typeStr  = o["ty"].toString();
-    b.text     = tweFromJson(o["tx"].toObject());
-    b.imageUrl = o["iu"].toString();
-    b.altText  = o["at"].toString();
-    b.buttons  = buttonsFromJson(o["bt"].toArray());
-    for (const auto &rv : o["tr"].toArray()) {
+    b.typeStr  = o[u"ty"_s].toString();
+    b.text     = tweFromJson(o[u"tx"_s].toObject());
+    b.imageUrl = o[u"iu"_s].toString();
+    b.altText  = o[u"at"_s].toString();
+    b.buttons  = buttonsFromJson(o[u"bt"_s].toArray());
+    for (const auto &rv : o[u"tr"_s].toArray()) {
         std::vector<TextWithEntities> row;
         for (const auto &cv : rv.toArray())
             row.push_back(tweFromJson(cv.toObject()));
@@ -221,39 +225,39 @@ static Block blockFromJson(const QJsonObject &o) {
 static QJsonObject toJson(const Attachment &a) {
     QJsonObject o;
     if (a.id > 0)
-        o["id"] = a.id; // positional id, what chat.deleteAttachment addresses
-    o["fb"] = a.fallback;
-    o["co"] = a.color;
-    o["pt"] = a.pretext;
-    o["an"] = a.authorName;
-    o["ti"] = a.title;
-    o["tl"] = a.titleLink;
-    o["tx"] = toJson(a.text);
-    o["iu"] = a.imageUrl;
-    o["tu"] = a.thumbUrl;
-    o["fo"] = a.footer;
+        o[u"id"_s] = a.id; // positional id, what chat.deleteAttachment addresses
+    o[u"fb"_s] = a.fallback;
+    o[u"co"_s] = a.color;
+    o[u"pt"_s] = a.pretext;
+    o[u"an"_s] = a.authorName;
+    o[u"ti"_s] = a.title;
+    o[u"tl"_s] = a.titleLink;
+    o[u"tx"_s] = toJson(a.text);
+    o[u"iu"_s] = a.imageUrl;
+    o[u"tu"_s] = a.thumbUrl;
+    o[u"fo"_s] = a.footer;
     if (!a.footerIcon.isEmpty())
-        o["fc"] = a.footerIcon;
+        o[u"fc"_s] = a.footerIcon;
     if (a.msgDate > 0)
-        o["md"] = QString::number(a.msgDate); // epoch micros; string-encoded like Message::date
-    o["lp"]  = a.isLinkPreview;
-    o["lpv"] = 2; // app unfurls now count as previews too
+        o[u"md"_s] = QString::number(a.msgDate); // epoch micros; string-encoded like Message::date
+    o[u"lp"_s]  = a.isLinkPreview;
+    o[u"lpv"_s] = 2; // app unfurls now count as previews too
     if (a.imageWidth > 0)
-        o["iw"] = a.imageWidth;
+        o[u"iw"_s] = a.imageWidth;
     if (a.imageHeight > 0)
-        o["ih"] = a.imageHeight;
+        o[u"ih"_s] = a.imageHeight;
     if (a.thumbWidth > 0)
-        o["tw"] = a.thumbWidth;
+        o[u"tw"_s] = a.thumbWidth;
     if (a.thumbHeight > 0)
-        o["tg"] = a.thumbHeight;
+        o[u"tg"_s] = a.thumbHeight;
     if (!a.blocks.empty()) {
         QJsonArray arr;
         for (const auto &b : a.blocks)
             arr.append(toJson(b));
-        o["bl"] = arr;
+        o[u"bl"_s] = arr;
     }
     if (!a.buttons.empty())
-        o["bt"] = buttonsToJson(a.buttons);
+        o[u"bt"_s] = buttonsToJson(a.buttons);
     // Classic bot "fields" rows. Jenkins-style bots put their whole body here
     // (text empty, fallback = the same string): dropping them demoted every
     // cached copy to the fallback rendering.
@@ -261,64 +265,64 @@ static QJsonObject toJson(const Attachment &a) {
         QJsonArray arr;
         for (const auto &f : a.fields) {
             QJsonObject fo;
-            fo["t"] = f.title;
-            fo["v"] = toJson(f.value);
+            fo[u"t"_s] = f.title;
+            fo[u"v"_s] = toJson(f.value);
             arr.append(fo);
         }
-        o["fd"] = arr;
+        o[u"fd"_s] = arr;
     }
     if (a.isMsgUnfurl) {
-        o["mu"] = true;
-        o["ai"] = a.authorIcon;
-        o["as"] = a.authorSubname;
-        o["ci"] = a.channelId;
+        o[u"mu"_s] = true;
+        o[u"ai"_s] = a.authorIcon;
+        o[u"as"_s] = a.authorSubname;
+        o[u"ci"_s] = a.channelId;
         if (!a.files.empty()) {
             QJsonArray arr;
             for (const auto &f : a.files)
                 arr.append(toJson(f));
-            o["fi"] = arr;
+            o[u"fi"_s] = arr;
         }
     }
     return o;
 }
 static Attachment attachmentFromJson(const QJsonObject &o) {
     Attachment a;
-    a.id            = o["id"].toInt();
-    a.fallback      = o["fb"].toString();
-    a.color         = o["co"].toString();
-    a.pretext       = o["pt"].toString();
-    a.authorName    = o["an"].toString();
-    a.title         = o["ti"].toString();
-    a.titleLink     = o["tl"].toString();
-    a.text          = tweFromJson(o["tx"].toObject());
-    a.imageUrl      = o["iu"].toString();
-    a.thumbUrl      = o["tu"].toString();
-    a.footer        = o["fo"].toString();
-    a.footerIcon    = o["fc"].toString();
-    a.msgDate       = o["md"].toString().toLongLong();
-    a.imageWidth    = o["iw"].toInt();
-    a.imageHeight   = o["ih"].toInt();
-    a.thumbWidth    = o["tw"].toInt();
-    a.thumbHeight   = o["tg"].toInt();
-    a.isLinkPreview = o["lp"].toBool();
-    for (const auto &v : o["bl"].toArray())
+    a.id            = o[u"id"_s].toInt();
+    a.fallback      = o[u"fb"_s].toString();
+    a.color         = o[u"co"_s].toString();
+    a.pretext       = o[u"pt"_s].toString();
+    a.authorName    = o[u"an"_s].toString();
+    a.title         = o[u"ti"_s].toString();
+    a.titleLink     = o[u"tl"_s].toString();
+    a.text          = tweFromJson(o[u"tx"_s].toObject());
+    a.imageUrl      = o[u"iu"_s].toString();
+    a.thumbUrl      = o[u"tu"_s].toString();
+    a.footer        = o[u"fo"_s].toString();
+    a.footerIcon    = o[u"fc"_s].toString();
+    a.msgDate       = o[u"md"_s].toString().toLongLong();
+    a.imageWidth    = o[u"iw"_s].toInt();
+    a.imageHeight   = o[u"ih"_s].toInt();
+    a.thumbWidth    = o[u"tw"_s].toInt();
+    a.thumbHeight   = o[u"tg"_s].toInt();
+    a.isLinkPreview = o[u"lp"_s].toBool();
+    for (const auto &v : o[u"bl"_s].toArray())
         a.blocks.push_back(blockFromJson(v.toObject()));
-    a.buttons = buttonsFromJson(o["bt"].toArray());
-    for (const auto &v : o["fd"].toArray()) {
+    a.buttons = buttonsFromJson(o[u"bt"_s].toArray());
+    for (const auto &v : o[u"fd"_s].toArray()) {
         const auto fo = v.toObject();
         a.fields.push_back(
             AttachmentField{
-                .title = fo["t"].toString(),
-                .value = tweFromJson(fo["v"].toObject()),
+                .title = fo[u"t"_s].toString(),
+                .value = tweFromJson(fo[u"v"_s].toObject()),
             }
         );
     }
-    a.isMsgUnfurl = o["mu"].toBool();
+    a.isMsgUnfurl = o[u"mu"_s].toBool();
     if (a.isMsgUnfurl) {
-        a.authorIcon    = o["ai"].toString();
-        a.authorSubname = o["as"].toString();
-        a.channelId     = o["ci"].toString();
-        for (const auto &v : o["fi"].toArray())
+        a.authorIcon    = o[u"ai"_s].toString();
+        a.authorSubname = o[u"as"_s].toString();
+        a.channelId     = o[u"ci"_s].toString();
+        for (const auto &v : o[u"fi"_s].toArray())
             a.files.push_back(fileFromJson(v.toObject()));
     }
     return a;
@@ -326,54 +330,54 @@ static Attachment attachmentFromJson(const QJsonObject &o) {
 
 static QJsonObject toJson(const Message &m) {
     QJsonObject o;
-    o["ts"] = m.ts;
-    o["da"] = QString::number(m.date); // epoch micros; string-encoded to avoid JSON double loss
+    o[u"ts"_s] = m.ts;
+    o[u"da"_s] = QString::number(m.date); // epoch micros; string-encoded to avoid JSON double loss
     if (m.threadRoot)
-        o["tr"] = *m.threadRoot;
-    o["au"] = m.author.value;
+        o[u"tr"_s] = *m.threadRoot;
+    o[u"au"_s] = m.author.value;
     if (!m.botName.isEmpty())
-        o["bn"] = m.botName;
+        o[u"bn"_s] = m.botName;
     if (!m.botAvatarUrl.isEmpty())
-        o["ba"] = m.botAvatarUrl;
+        o[u"ba"_s] = m.botAvatarUrl;
     if (!m.botId.isEmpty())
-        o["bd"] = m.botId;
-    o["tx"] = toJson(m.text);
-    o["ed"] = m.edited;
+        o[u"bd"_s] = m.botId;
+    o[u"tx"_s] = toJson(m.text);
+    o[u"ed"_s] = m.edited;
     if (m.subtype)
-        o["st"] = *m.subtype;
+        o[u"st"_s] = *m.subtype;
     if (!m.reactions.empty()) {
         QJsonArray arr;
         for (const auto &r : m.reactions)
             arr.append(toJson(r));
-        o["re"] = arr;
+        o[u"re"_s] = arr;
     }
     if (!m.files.empty()) {
         QJsonArray arr;
         for (const auto &f : m.files)
             arr.append(toJson(f));
-        o["fi"] = arr;
+        o[u"fi"_s] = arr;
     }
     if (!m.blocks.empty()) {
         QJsonArray arr;
         for (const auto &b : m.blocks)
             arr.append(toJson(b));
-        o["bl"] = arr;
+        o[u"bl"_s] = arr;
     }
     if (!m.attachments.empty()) {
         QJsonArray arr;
         for (const auto &a : m.attachments)
             arr.append(toJson(a));
-        o["at"] = arr;
+        o[u"at"_s] = arr;
     }
     if (m.huddle) {
         QJsonArray who;
         for (const auto &u : m.huddle->attendees)
             who.append(u.value);
-        o["hu"] = QJsonObject{
-            {"a", who},
-            {"s", QString::number(m.huddle->startSec)},
-            {"e", QString::number(m.huddle->endSec)},
-            {"x", m.huddle->ended},
+        o[u"hu"_s] = QJsonObject{
+            {u"a"_s, who},
+            {u"s"_s, QString::number(m.huddle->startSec)},
+            {u"e"_s, QString::number(m.huddle->endSec)},
+            {u"x"_s, m.huddle->ended},
         };
     }
     return o;
@@ -394,33 +398,33 @@ static QString urlResourceKey(const QString &url) {
 }
 static Message messageFromJson(const QJsonObject &o) {
     Message m;
-    m.ts   = o["ts"].toString();
+    m.ts   = o[u"ts"_s].toString();
     // Legacy caches predate the field — backfill from the stored ts so old and
     // new entries agree to the microsecond (no cache-version bump needed).
-    m.date = o.contains("da") ? o["da"].toString().toLongLong() : decimalTsToMicros(m.ts);
-    if (o.contains("tr"))
-        m.threadRoot = o["tr"].toString();
-    m.author       = UserId{o["au"].toString()};
-    m.botName      = o["bn"].toString();
-    m.botAvatarUrl = o["ba"].toString();
-    m.botId        = o["bd"].toString();
-    m.text         = tweFromJson(o["tx"].toObject());
-    m.edited       = o["ed"].toBool();
-    if (o.contains("st"))
-        m.subtype = o["st"].toString();
-    for (const auto &v : o["re"].toArray())
+    m.date = o.contains(u"da"_s) ? o[u"da"_s].toString().toLongLong() : decimalTsToMicros(m.ts);
+    if (o.contains(u"tr"_s))
+        m.threadRoot = o[u"tr"_s].toString();
+    m.author       = UserId{o[u"au"_s].toString()};
+    m.botName      = o[u"bn"_s].toString();
+    m.botAvatarUrl = o[u"ba"_s].toString();
+    m.botId        = o[u"bd"_s].toString();
+    m.text         = tweFromJson(o[u"tx"_s].toObject());
+    m.edited       = o[u"ed"_s].toBool();
+    if (o.contains(u"st"_s))
+        m.subtype = o[u"st"_s].toString();
+    for (const auto &v : o[u"re"_s].toArray())
         m.reactions.push_back(reactionFromJson(v.toObject()));
-    for (const auto &v : o["fi"].toArray())
+    for (const auto &v : o[u"fi"_s].toArray())
         m.files.push_back(fileFromJson(v.toObject()));
-    for (const auto &v : o["bl"].toArray())
+    for (const auto &v : o[u"bl"_s].toArray())
         m.blocks.push_back(blockFromJson(v.toObject()));
-    for (const auto &v : o["at"].toArray()) {
+    for (const auto &v : o[u"at"_s].toArray()) {
         const auto obj = v.toObject();
         auto       att = attachmentFromJson(obj);
         // Older caches discarded Slack's unfurl metadata. Only infer a preview
         // when its target is also a link in the message body; a bot attachment
         // with a linked title alone is not enough.
-        if (obj.value("lpv").toInt() < 2 && !att.isLinkPreview && !att.isMsgUnfurl &&
+        if (obj.value(u"lpv"_s).toInt() < 2 && !att.isLinkPreview && !att.isMsgUnfurl &&
             m.botName.isEmpty() && (!m.subtype || *m.subtype != QLatin1String("bot_message"))) {
             // Slack reports the unfurl's canonical URL (redirects resolved,
             // tracking params dropped), so compare host+path, not the string.
@@ -438,13 +442,13 @@ static Message messageFromJson(const QJsonObject &o) {
         }
         m.attachments.push_back(std::move(att));
     }
-    if (const auto h = o["hu"].toObject(); !h.isEmpty()) {
+    if (const auto h = o[u"hu"_s].toObject(); !h.isEmpty()) {
         HuddleInfo info;
-        for (const auto &v : h["a"].toArray())
+        for (const auto &v : h[u"a"_s].toArray())
             info.attendees.push_back(UserId{v.toString()});
-        info.startSec = h["s"].toString().toLongLong();
-        info.endSec   = h["e"].toString().toLongLong();
-        info.ended    = h["x"].toBool();
+        info.startSec = h[u"s"_s].toString().toLongLong();
+        info.endSec   = h[u"e"_s].toString().toLongLong();
+        info.ended    = h[u"x"_s].toBool();
         m.huddle      = std::move(info);
     }
     // Re-derive the synthesized huddle label on every load — it must follow
@@ -456,96 +460,96 @@ static Message messageFromJson(const QJsonObject &o) {
 
 static QJsonObject toJson(const User &u) {
     QJsonObject o;
-    o["id"] = u.id.value;
-    o["na"] = u.name;
-    o["dn"] = u.displayName;
-    o["av"] = u.avatarUrl;
-    o["bo"] = u.isBot;
-    o["ex"] = u.isExternal;
-    o["ac"] = u.isActive;
-    o["de"] = u.isDeactivated;
-    o["ad"] = u.isAdmin;
-    o["ow"] = u.isOwner;
-    o["se"] = u.statusEmoji;
-    o["st"] = u.statusText;
-    o["ti"] = u.title;
+    o[u"id"_s] = u.id.value;
+    o[u"na"_s] = u.name;
+    o[u"dn"_s] = u.displayName;
+    o[u"av"_s] = u.avatarUrl;
+    o[u"bo"_s] = u.isBot;
+    o[u"ex"_s] = u.isExternal;
+    o[u"ac"_s] = u.isActive;
+    o[u"de"_s] = u.isDeactivated;
+    o[u"ad"_s] = u.isAdmin;
+    o[u"ow"_s] = u.isOwner;
+    o[u"se"_s] = u.statusEmoji;
+    o[u"st"_s] = u.statusText;
+    o[u"ti"_s] = u.title;
     if (!u.email.isEmpty())
-        o["em"] = u.email;
+        o[u"em"_s] = u.email;
     if (u.hasTz)
-        o["tz"] = u.tzOffset;
+        o[u"tz"_s] = u.tzOffset;
     return o;
 }
 static User userFromJson(const QJsonObject &o) {
     User u;
-    u.id            = UserId{o["id"].toString()};
-    u.name          = o["na"].toString();
-    u.displayName   = o["dn"].toString();
-    u.avatarUrl     = o["av"].toString();
-    u.isBot         = o["bo"].toBool();
-    u.isExternal    = o["ex"].toBool();
-    u.isActive      = o["ac"].toBool();
-    u.isDeactivated = o["de"].toBool();
-    u.isAdmin       = o["ad"].toBool();
-    u.isOwner       = o["ow"].toBool();
-    u.statusEmoji   = o["se"].toString();
-    u.statusText    = o["st"].toString();
-    u.title         = o["ti"].toString();
-    u.email         = o["em"].toString();
-    u.hasTz         = o.contains("tz");
-    u.tzOffset      = o["tz"].toInt();
+    u.id            = UserId{o[u"id"_s].toString()};
+    u.name          = o[u"na"_s].toString();
+    u.displayName   = o[u"dn"_s].toString();
+    u.avatarUrl     = o[u"av"_s].toString();
+    u.isBot         = o[u"bo"_s].toBool();
+    u.isExternal    = o[u"ex"_s].toBool();
+    u.isActive      = o[u"ac"_s].toBool();
+    u.isDeactivated = o[u"de"_s].toBool();
+    u.isAdmin       = o[u"ad"_s].toBool();
+    u.isOwner       = o[u"ow"_s].toBool();
+    u.statusEmoji   = o[u"se"_s].toString();
+    u.statusText    = o[u"st"_s].toString();
+    u.title         = o[u"ti"_s].toString();
+    u.email         = o[u"em"_s].toString();
+    u.hasTz         = o.contains(u"tz"_s);
+    u.tzOffset      = o[u"tz"_s].toInt();
     return u;
 }
 
 static QJsonObject toJson(const Conversation &c) {
     QJsonObject o;
-    o["id"] = c.id.value;
-    o["ki"] = static_cast<int>(c.kind);
-    o["na"] = c.name;
-    o["mb"] = c.isMember;
-    o["lr"] = c.lastRead;
+    o[u"id"_s] = c.id.value;
+    o[u"ki"_s] = static_cast<int>(c.kind);
+    o[u"na"_s] = c.name;
+    o[u"mb"_s] = c.isMember;
+    o[u"lr"_s] = c.lastRead;
     if (!c.latestTs.isEmpty())
-        o["lt"] = c.latestTs;
-    o["un"] = c.unread;
+        o[u"lt"_s] = c.latestTs;
+    o[u"un"_s] = c.unread;
     if (c.mentionCount > 0)
-        o["mc"] = c.mentionCount;
+        o[u"mc"_s] = c.mentionCount;
     if (c.dmUser)
-        o["dm"] = c.dmUser->value;
+        o[u"dm"_s] = c.dmUser->value;
     if (c.isMuted)
-        o["mu"] = true;
+        o[u"mu"_s] = true;
     if (c.isStarred)
-        o["st"] = true;
+        o[u"st"_s] = true;
     if (c.locallyMuted)
-        o["lm"] = true;
+        o[u"lm"_s] = true;
     if (!c.localName.isEmpty())
-        o["ln"] = c.localName;
+        o[u"ln"_s] = c.localName;
     if (c.notifLevel != NotificationLevel::Default)
-        o["nl"] = static_cast<int>(c.notifLevel);
+        o[u"nl"_s] = static_cast<int>(c.notifLevel);
     if (!c.agentRole.isEmpty())
-        o["ar"] = c.agentRole;
+        o[u"ar"_s] = c.agentRole;
     return o;
 }
 static Conversation convFromJson(const QJsonObject &o) {
     Conversation c;
-    c.id           = ConversationId{o["id"].toString()};
-    c.kind         = static_cast<ConvKind>(o["ki"].toInt());
-    c.name         = o["na"].toString();
-    c.isMember     = o["mb"].toBool();
-    c.lastRead     = o["lr"].toString();
-    c.latestTs     = o["lt"].toString();
-    c.unread       = o["un"].toInt();
-    c.mentionCount = o["mc"].toInt();
-    if (o.contains("dm"))
-        c.dmUser = UserId{o["dm"].toString()};
-    if (o.contains("mu"))
-        c.isMuted = o["mu"].toBool();
-    if (o.contains("st"))
-        c.isStarred = o["st"].toBool();
-    if (o.contains("lm"))
-        c.locallyMuted = o["lm"].toBool();
-    c.localName = o["ln"].toString();
-    if (o.contains("nl"))
-        c.notifLevel = static_cast<NotificationLevel>(o["nl"].toInt());
-    c.agentRole = o["ar"].toString();
+    c.id           = ConversationId{o[u"id"_s].toString()};
+    c.kind         = static_cast<ConvKind>(o[u"ki"_s].toInt());
+    c.name         = o[u"na"_s].toString();
+    c.isMember     = o[u"mb"_s].toBool();
+    c.lastRead     = o[u"lr"_s].toString();
+    c.latestTs     = o[u"lt"_s].toString();
+    c.unread       = o[u"un"_s].toInt();
+    c.mentionCount = o[u"mc"_s].toInt();
+    if (o.contains(u"dm"_s))
+        c.dmUser = UserId{o[u"dm"_s].toString()};
+    if (o.contains(u"mu"_s))
+        c.isMuted = o[u"mu"_s].toBool();
+    if (o.contains(u"st"_s))
+        c.isStarred = o[u"st"_s].toBool();
+    if (o.contains(u"lm"_s))
+        c.locallyMuted = o[u"lm"_s].toBool();
+    c.localName = o[u"ln"_s].toString();
+    if (o.contains(u"nl"_s))
+        c.notifLevel = static_cast<NotificationLevel>(o[u"nl"_s].toInt());
+    c.agentRole = o[u"ar"_s].toString();
     return c;
 }
 
@@ -557,44 +561,44 @@ WorkspaceCache::WorkspaceCache(const QString &handle) {
     // path component on Windows, so sanitize it into a safe directory name.
     QString       safe = handle;
     safe.replace(QLatin1Char(':'), QLatin1Char('_'));
-    _dir            = base + "/cache/" + safe;
+    _dir            = base + u"/cache/"_s + safe;
     // One-time migration: pre-multi-service caches were keyed by the bare id
     // (the part after the service prefix). Rename it forward so an existing
     // offline cache survives the upgrade instead of being silently rebuilt.
     const int colon = handle.indexOf(QLatin1Char(':'));
     if (colon > 0 && !QDir(_dir).exists()) {
-        const QString legacy = base + "/cache/" + handle.mid(colon + 1);
+        const QString legacy = base + u"/cache/"_s + handle.mid(colon + 1);
         if (QDir(legacy).exists())
             QDir().rename(legacy, _dir);
     }
-    QDir().mkpath(_dir + "/messages");
-    QDir().mkpath(_dir + "/images");
+    QDir().mkpath(_dir + u"/messages"_s);
+    QDir().mkpath(_dir + u"/images"_s);
 }
 
 QString WorkspaceCache::convPath() const {
-    return _dir + "/conversations.json";
+    return _dir + u"/conversations.json"_s;
 }
 QString WorkspaceCache::usersPath() const {
-    return _dir + "/users.json";
+    return _dir + u"/users.json"_s;
 }
 QString WorkspaceCache::botsPath() const {
-    return _dir + "/bots.json";
+    return _dir + u"/bots.json"_s;
 }
 QString WorkspaceCache::usergroupsPath() const {
-    return _dir + "/usergroups.json";
+    return _dir + u"/usergroups.json"_s;
 }
 QString WorkspaceCache::emojiPath() const {
-    return _dir + "/emoji.json";
+    return _dir + u"/emoji.json"_s;
 }
 QString WorkspaceCache::msgsPath(const ConversationId &conv) const {
-    return _dir + "/messages/" + conv.value + ".json";
+    return _dir + u"/messages/"_s + conv.value + u".json"_s;
 }
 QString WorkspaceCache::metaPath() const {
-    return _dir + "/meta.json";
+    return _dir + u"/meta.json"_s;
 }
 QString WorkspaceCache::imgPath(const QString &url) const {
     const auto hash = QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Md5).toHex();
-    return _dir + "/images/" + hash;
+    return _dir + u"/images/"_s + hash;
 }
 
 QByteArray WorkspaceCache::readFile(const QString &path) {
@@ -669,7 +673,9 @@ void WorkspaceCache::saveUsergroups(const std::vector<Usergroup> &groups) {
         QJsonArray users;
         for (const auto &u : g.users)
             users.append(u.value);
-        arr.append(QJsonObject{{"id", g.id}, {"ha", g.handle}, {"na", g.name}, {"us", users}});
+        arr.append(
+            QJsonObject{{u"id"_s, g.id}, {u"ha"_s, g.handle}, {u"na"_s, g.name}, {u"us"_s, users}}
+        );
     }
     writeJson(usergroupsPath(), QJsonDocument(arr));
 }
@@ -685,10 +691,10 @@ std::vector<Usergroup> WorkspaceCache::loadUsergroups() const {
     for (const auto &v : doc.array()) {
         const auto o = v.toObject();
         Usergroup  g;
-        g.id     = o["id"].toString();
-        g.handle = o["ha"].toString();
-        g.name   = o["na"].toString();
-        for (const auto &u : o["us"].toArray())
+        g.id     = o[u"id"_s].toString();
+        g.handle = o[u"ha"_s].toString();
+        g.name   = o[u"na"_s].toString();
+        for (const auto &u : o[u"us"_s].toArray())
             g.users.push_back(UserId{u.toString()});
         if (!g.id.isEmpty())
             result.push_back(std::move(g));
@@ -747,9 +753,9 @@ void WorkspaceCache::writeMeta() {
 void WorkspaceCache::saveLastConv(const ConversationId &conv, const QString &displayName) {
     // meta.json also carries other keys (activity sweep stamp etc.) — they
     // survive because the cached object is mutated in place, no re-read needed.
-    auto &o   = metaObject();
-    o["conv"] = conv.value;
-    o["name"] = displayName;
+    auto &o      = metaObject();
+    o[u"conv"_s] = conv.value;
+    o[u"name"_s] = displayName;
     writeMeta();
 }
 
@@ -757,47 +763,47 @@ std::pair<ConversationId, QString> WorkspaceCache::loadLastConv() const {
     const auto &o = metaObject();
     if (o.isEmpty())
         return {};
-    return {ConversationId{o.value("conv").toString()}, o.value("name").toString()};
+    return {ConversationId{o.value(u"conv"_s).toString()}, o.value(u"name"_s).toString()};
 }
 
 void WorkspaceCache::saveMeUserId(const UserId &id) {
-    metaObject()["meId"] = id.value;
+    metaObject()[u"meId"_s] = id.value;
     writeMeta();
 }
 
 UserId WorkspaceCache::loadMeUserId() const {
-    return UserId{metaObject().value("meId").toString()};
+    return UserId{metaObject().value(u"meId"_s).toString()};
 }
 
 void WorkspaceCache::saveActivitySweepAt(qint64 unixSecs) {
-    metaObject()["sweepAt"] = unixSecs;
+    metaObject()[u"sweepAt"_s] = unixSecs;
     writeMeta();
 }
 
 qint64 WorkspaceCache::loadActivitySweepAt() const {
-    return metaObject().value("sweepAt").toVariant().toLongLong();
+    return metaObject().value(u"sweepAt"_s).toVariant().toLongLong();
 }
 
 void WorkspaceCache::saveMutedThreads(const QStringList &keys) {
-    metaObject()["mutedThreads"] = QJsonArray::fromStringList(keys);
+    metaObject()[u"mutedThreads"_s] = QJsonArray::fromStringList(keys);
     writeMeta();
 }
 
 QStringList WorkspaceCache::loadMutedThreads() const {
     QStringList out;
-    for (const auto &v : metaObject().value("mutedThreads").toArray())
+    for (const auto &v : metaObject().value(u"mutedThreads"_s).toArray())
         out.append(v.toString());
     return out;
 }
 
 void WorkspaceCache::saveFollowedThreads(const QStringList &keys) {
-    metaObject()["followedThreads"] = QJsonArray::fromStringList(keys);
+    metaObject()[u"followedThreads"_s] = QJsonArray::fromStringList(keys);
     writeMeta();
 }
 
 QStringList WorkspaceCache::loadFollowedThreads() const {
     QStringList out;
-    for (const auto &v : metaObject().value("followedThreads").toArray())
+    for (const auto &v : metaObject().value(u"followedThreads"_s).toArray())
         out.append(v.toString());
     return out;
 }
@@ -805,17 +811,17 @@ QStringList WorkspaceCache::loadFollowedThreads() const {
 void WorkspaceCache::saveAiTranscripts(const QHash<QString, AiTranscript> &byFileId) {
     QJsonObject o;
     for (auto it = byFileId.constBegin(); it != byFileId.constEnd(); ++it)
-        o[it.key()] = QJsonObject{{"text", it.value().text}, {"by", it.value().provider}};
-    metaObject()["aiTranscripts"] = o;
+        o[it.key()] = QJsonObject{{u"text"_s, it.value().text}, {u"by"_s, it.value().provider}};
+    metaObject()[u"aiTranscripts"_s] = o;
     writeMeta();
 }
 
 QHash<QString, AiTranscript> WorkspaceCache::loadAiTranscripts() const {
     QHash<QString, AiTranscript> out;
-    const QJsonObject            o = metaObject().value("aiTranscripts").toObject();
+    const QJsonObject            o = metaObject().value(u"aiTranscripts"_s).toObject();
     for (auto it = o.constBegin(); it != o.constEnd(); ++it) {
         const QJsonObject e = it.value().toObject();
-        AiTranscript      t{e.value("text").toString(), e.value("by").toString()};
+        AiTranscript      t{e.value(u"text"_s).toString(), e.value(u"by"_s).toString()};
         if (!t.text.isEmpty())
             out.insert(it.key(), t);
     }
@@ -826,46 +832,46 @@ void WorkspaceCache::saveReminders(const std::vector<MessageReminder> &reminders
     QJsonArray arr;
     for (const auto &r : reminders) {
         QJsonObject o;
-        o["conv"] = r.conv.value;
-        o["ts"]   = r.ts;
-        o["due"]  = r.dueAt;
+        o[u"conv"_s] = r.conv.value;
+        o[u"ts"_s]   = r.ts;
+        o[u"due"_s]  = r.dueAt;
         if (r.savedAt > 0)
-            o["saved"] = r.savedAt;
+            o[u"saved"_s] = r.savedAt;
         if (!r.threadRoot.isEmpty())
-            o["root"] = r.threadRoot;
+            o[u"root"_s] = r.threadRoot;
         if (!r.snippet.isEmpty())
-            o["snippet"] = r.snippet;
+            o[u"snippet"_s] = r.snippet;
         if (!r.author.value.isEmpty())
-            o["author"] = r.author.value;
+            o[u"author"_s] = r.author.value;
         if (!r.botName.isEmpty())
-            o["botName"] = r.botName;
+            o[u"botName"_s] = r.botName;
         if (!r.botAvatarUrl.isEmpty())
-            o["botAvatar"] = r.botAvatarUrl;
+            o[u"botAvatar"_s] = r.botAvatarUrl;
         if (r.fired)
-            o["fired"] = true;
+            o[u"fired"_s] = true;
         arr.append(o);
     }
-    metaObject()["reminders"] = arr;
+    metaObject()[u"reminders"_s] = arr;
     writeMeta();
 }
 
 std::vector<MessageReminder> WorkspaceCache::loadReminders() const {
     std::vector<MessageReminder> out;
-    const auto                   arr = metaObject().value("reminders").toArray();
+    const auto                   arr = metaObject().value(u"reminders"_s).toArray();
     out.reserve(arr.size());
     for (const auto &v : arr) {
         const auto      o = v.toObject();
         MessageReminder r;
-        r.conv         = ConversationId{o.value("conv").toString()};
-        r.ts           = o.value("ts").toString();
-        r.dueAt        = o.value("due").toVariant().toLongLong();
-        r.savedAt      = o.value("saved").toVariant().toLongLong();
-        r.threadRoot   = o.value("root").toString();
-        r.snippet      = o.value("snippet").toString();
-        r.author       = UserId{o.value("author").toString()};
-        r.botName      = o.value("botName").toString();
-        r.botAvatarUrl = o.value("botAvatar").toString();
-        r.fired        = o.value("fired").toBool();
+        r.conv         = ConversationId{o.value(u"conv"_s).toString()};
+        r.ts           = o.value(u"ts"_s).toString();
+        r.dueAt        = o.value(u"due"_s).toVariant().toLongLong();
+        r.savedAt      = o.value(u"saved"_s).toVariant().toLongLong();
+        r.threadRoot   = o.value(u"root"_s).toString();
+        r.snippet      = o.value(u"snippet"_s).toString();
+        r.author       = UserId{o.value(u"author"_s).toString()};
+        r.botName      = o.value(u"botName"_s).toString();
+        r.botAvatarUrl = o.value(u"botAvatar"_s).toString();
+        r.fired        = o.value(u"fired"_s).toBool();
         if (!r.conv.value.isEmpty() && !r.ts.isEmpty())
             out.push_back(std::move(r));
     }
@@ -879,36 +885,36 @@ void WorkspaceCache::saveReminderPreviews(const QHash<QString, ReminderPreview> 
         if (p.isEmpty())
             continue;
         QJsonObject o;
-        o["key"] = it.key();
+        o[u"key"_s] = it.key();
         if (!p.threadRoot.isEmpty())
-            o["root"] = p.threadRoot;
+            o[u"root"_s] = p.threadRoot;
         if (!p.snippet.isEmpty())
-            o["snippet"] = p.snippet;
+            o[u"snippet"_s] = p.snippet;
         if (!p.author.value.isEmpty())
-            o["author"] = p.author.value;
+            o[u"author"_s] = p.author.value;
         if (!p.botName.isEmpty())
-            o["botName"] = p.botName;
+            o[u"botName"_s] = p.botName;
         if (!p.botAvatarUrl.isEmpty())
-            o["botAvatar"] = p.botAvatarUrl;
+            o[u"botAvatar"_s] = p.botAvatarUrl;
         arr.append(o);
     }
-    metaObject()["reminderPreviews"] = arr;
+    metaObject()[u"reminderPreviews"_s] = arr;
     writeMeta();
 }
 
 QHash<QString, ReminderPreview> WorkspaceCache::loadReminderPreviews() const {
     QHash<QString, ReminderPreview> out;
-    for (const auto &v : metaObject().value("reminderPreviews").toArray()) {
+    for (const auto &v : metaObject().value(u"reminderPreviews"_s).toArray()) {
         const auto    o   = v.toObject();
-        const QString key = o.value("key").toString();
+        const QString key = o.value(u"key"_s).toString();
         if (key.isEmpty())
             continue;
         ReminderPreview p;
-        p.threadRoot   = o.value("root").toString();
-        p.snippet      = o.value("snippet").toString();
-        p.author       = UserId{o.value("author").toString()};
-        p.botName      = o.value("botName").toString();
-        p.botAvatarUrl = o.value("botAvatar").toString();
+        p.threadRoot   = o.value(u"root"_s).toString();
+        p.snippet      = o.value(u"snippet"_s).toString();
+        p.author       = UserId{o.value(u"author"_s).toString()};
+        p.botName      = o.value(u"botName"_s).toString();
+        p.botAvatarUrl = o.value(u"botAvatar"_s).toString();
         if (!p.isEmpty())
             out.insert(key, std::move(p));
     }
@@ -916,13 +922,13 @@ QHash<QString, ReminderPreview> WorkspaceCache::loadReminderPreviews() const {
 }
 
 void WorkspaceCache::saveDeadConvIds(const QStringList &ids) {
-    metaObject()["deadConvIds"] = QJsonArray::fromStringList(ids);
+    metaObject()[u"deadConvIds"_s] = QJsonArray::fromStringList(ids);
     writeMeta();
 }
 
 QStringList WorkspaceCache::loadDeadConvIds() const {
     QStringList out;
-    for (const auto &v : metaObject().value("deadConvIds").toArray())
+    for (const auto &v : metaObject().value(u"deadConvIds"_s).toArray())
         out.append(v.toString());
     return out;
 }
@@ -931,13 +937,13 @@ void WorkspaceCache::saveUserProbeTimes(const QHash<QString, qint64> &byUserId) 
     QJsonObject o;
     for (auto it = byUserId.constBegin(); it != byUserId.constEnd(); ++it)
         o[it.key()] = QJsonValue(qint64(it.value()));
-    metaObject()["userProbeTimes"] = o;
+    metaObject()[u"userProbeTimes"_s] = o;
     writeMeta();
 }
 
 QHash<QString, qint64> WorkspaceCache::loadUserProbeTimes() const {
     QHash<QString, qint64> out;
-    const QJsonObject      o = metaObject().value("userProbeTimes").toObject();
+    const QJsonObject      o = metaObject().value(u"userProbeTimes"_s).toObject();
     for (auto it = o.constBegin(); it != o.constEnd(); ++it)
         out.insert(it.key(), it.value().toVariant().toLongLong());
     return out;

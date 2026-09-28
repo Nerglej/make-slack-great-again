@@ -12,6 +12,8 @@
 #include <QToolButton>
 #include <QtMath>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 constexpr int   kDot       = 8;  // recording dot diameter
@@ -58,13 +60,10 @@ VoiceRecordingStrip::VoiceRecordingStrip(QWidget *parent) : QWidget(parent) {
 void VoiceRecordingStrip::applyTheme() {
     Th::setStyleSheetIfChanged(
         _cancelBtn,
-        QString(
-            "QToolButton { border: none; border-radius: 3px; background: transparent; }"
-            "QToolButton:hover { background: %1; }"
-        )
-            .arg(Th::qss(Th::c().divider.def))
+        u"QToolButton { border: none; border-radius: 3px; background: transparent; }"
+        "QToolButton:hover { background: %1; }"_s.arg(Th::qss(Th::c().divider.def))
     );
-    _cancelBtn->setIcon(svgIcon(":/ui/x.svg", kCancelIcon, Th::c().text.secondary));
+    _cancelBtn->setIcon(svgIcon(u":/ui/x.svg"_s, kCancelIcon, Th::c().text.secondary));
     update();
 }
 

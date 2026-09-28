@@ -7,6 +7,8 @@
 
 #include <QSettings>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 constexpr const char *kDefaultKey   = "llm/defaultProvider";
@@ -24,7 +26,7 @@ LlmService &LlmService::instance() {
 }
 
 LlmService::LlmService() {
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
 
     for (auto preset : {LlmProviderConfig::anthropicPreset(), LlmProviderConfig::openAiPreset()}) {
         LlmTokenStore::scrubLegacyOAuth(preset.id);
@@ -54,7 +56,7 @@ LlmProvider *LlmService::registerProvider(const LlmProviderConfig &cfg) {
 }
 
 void LlmService::persistConfig(const LlmProvider *p) const {
-    QSettings   s("msga", "msga");
+    QSettings   s(u"msga"_s, u"msga"_s);
     const auto &c = p->config();
     if (c.sttModel.isEmpty())
         s.remove(cfgKey(c.id, "sttModel"));
@@ -105,7 +107,7 @@ void LlmService::removeCustom(const QString &id) {
     if (!p || p->isPreset())
         return;
     _providers.removeOne(p);
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     s.remove(QStringLiteral("llm/providers/%1").arg(id));
     QStringList ids = s.value(kCustomIdsKey).toStringList();
     ids.removeAll(id);
@@ -145,18 +147,18 @@ void LlmService::disconnectProvider(const QString &id) {
 }
 
 QString LlmService::defaultProviderId() const {
-    return QSettings("msga", "msga").value(kDefaultKey).toString();
+    return QSettings(u"msga"_s, u"msga"_s).value(kDefaultKey).toString();
 }
 
 void LlmService::setDefaultProviderId(const QString &id) {
     if (defaultProviderId() == id)
         return;
-    QSettings("msga", "msga").setValue(kDefaultKey, id);
+    QSettings(u"msga"_s, u"msga"_s).setValue(kDefaultKey, id);
     emit availabilityChanged();
 }
 
 QString LlmService::nativeLanguage() const {
-    const QString stored = QSettings("msga", "msga").value("llm/nativeLanguage").toString();
+    const QString stored = QSettings(u"msga"_s, u"msga"_s).value("llm/nativeLanguage").toString();
     if (!stored.isEmpty())
         return stored;
     // Never set → follow the UI language ("system" resolves to the OS locale).
@@ -164,7 +166,7 @@ QString LlmService::nativeLanguage() const {
 }
 
 void LlmService::setNativeLanguage(const QString &code) {
-    QSettings("msga", "msga").setValue("llm/nativeLanguage", code);
+    QSettings(u"msga"_s, u"msga"_s).setValue("llm/nativeLanguage", code);
 }
 
 LlmProvider *LlmService::activeProvider() const {

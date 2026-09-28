@@ -14,6 +14,8 @@
 #include <QStyle>
 #include <QStyleOption>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 constexpr int kPadH    = 12; // left/right text padding
 constexpr int kPadV    = 8;  // top/bottom padding
@@ -44,12 +46,9 @@ void Dropdown::applyStyle() {
     const QColor bg     = isEnabled() ? Th::c().surface.raised : Th::c().surface.sunken;
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "Dropdown {"
-            "  border: %1px solid %2; border-radius: 6px; background: %3;"
-            "}"
-        )
-            .arg(active ? 2 : 1)
+        u"Dropdown {"
+        "  border: %1px solid %2; border-radius: 6px; background: %3;"
+        "}"_s.arg(active ? 2 : 1)
             .arg(Th::qss(border), Th::qss(bg))
     );
     update();

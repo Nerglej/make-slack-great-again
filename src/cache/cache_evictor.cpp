@@ -13,6 +13,8 @@
 #include <thread>
 #include <vector>
 
+using namespace Qt::StringLiterals;
+
 CacheEvictor *CacheEvictor::instance() {
     // Intentionally leaked: a worker thread may still be queuing the finished()
     // event during static destruction, so the object must outlive main().
@@ -21,12 +23,12 @@ CacheEvictor *CacheEvictor::instance() {
 }
 
 int CacheEvictor::capMb() {
-    const int mb = QSettings("msga", "msga").value("storage/cacheCapMb").toInt();
+    const int mb = QSettings(u"msga"_s, u"msga"_s).value("storage/cacheCapMb").toInt();
     return mb > 0 ? mb : kDefaultCapMb;
 }
 
 void CacheEvictor::setCapMb(int mb) {
-    QSettings("msga", "msga").setValue("storage/cacheCapMb", mb);
+    QSettings(u"msga"_s, u"msga"_s).setValue("storage/cacheCapMb", mb);
 }
 
 qint64 CacheEvictor::sweep(const QString &cacheRoot, qint64 capBytes) {
@@ -83,7 +85,7 @@ void CacheEvictor::schedule() {
         return;
     }
     const QString root =
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cache";
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + u"/cache"_s;
     std::thread([this, root] {
         do {
             _again = false;

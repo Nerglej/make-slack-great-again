@@ -22,20 +22,26 @@ inline std::vector<SlashCommand> all() {
     return {
         // App-level (backend-agnostic): handled by Session without touching the
         // messaging API.
-        {"shrug",
+        {QStringLiteral("shrug"),
          t("Appends \xC2\xAF\\_(\xE3\x83\x84)_/\xC2\xAF to your message"),
          t("[message]"),
          {}},
-        {"mute", t("Mute or unmute a channel"), {}, {}},
+        {QStringLiteral("mute"), t("Mute or unmute a channel"), {}, {}},
         // Self presence / status — map to setPresence/setStatus/setDndSnooze.
-        {"active", t("Set yourself to active"), {}, {}},
-        {"away", t("Toggle your away status"), {}, {}},
-        {"dnd", t("Pause or resume notifications"), t("[duration, e.g. 30m or 2h] or off"), {}},
-        {"status", t("Set or clear your status"), t("[:emoji:] [text] or clear"), {}},
+        {QStringLiteral("active"), t("Set yourself to active"), {}, {}},
+        {QStringLiteral("away"), t("Toggle your away status"), {}, {}},
+        {QStringLiteral("dnd"),
+         t("Pause or resume notifications"),
+         t("[duration, e.g. 30m or 2h] or off"),
+         {}},
+        {QStringLiteral("status"),
+         t("Set or clear your status"),
+         t("[:emoji:] [text] or clear"),
+         {}},
         // Conversation actions — map to openDm / leaveConversation.
-        {"msg", t("Send a direct message"), t("@user [message]"), {}},
-        {"dm", t("Send a direct message"), t("@user [message]"), {}},
-        {"leave", t("Leave a channel or conversation"), {}, {}},
+        {QStringLiteral("msg"), t("Send a direct message"), t("@user [message]"), {}},
+        {QStringLiteral("dm"), t("Send a direct message"), t("@user [message]"), {}},
+        {QStringLiteral("leave"), t("Leave a channel or conversation"), {}, {}},
     };
 }
 

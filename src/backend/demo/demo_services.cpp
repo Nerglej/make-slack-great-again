@@ -12,6 +12,8 @@
 #include <QUrl>
 #include <QUrlQuery>
 
+using namespace Qt::StringLiterals;
+
 namespace demo {
 
 namespace {
@@ -86,37 +88,39 @@ QByteArray FakeServices::giphyJson(const QString &baseUrl, const std::vector<Gif
     for (const auto &g : gifs) {
         const QString url = baseUrl + QStringLiteral("/gif/") + g.file;
         QJsonObject   rendition{
-            {"url", url},
-            {"width", QString::number(g.width)},
-            {"height", QString::number(g.height)},
+            {u"url"_s, url},
+            {u"width"_s, QString::number(g.width)},
+            {u"height"_s, QString::number(g.height)},
         };
         data.append(
             QJsonObject{
-                {"id", QStringLiteral("demo%1").arg(++n)},
-                {"title", g.title},
-                {"alt_text", g.title},
-                {"images", QJsonObject{{"fixed_width", rendition}, {"downsized", rendition}}},
+                {u"id"_s, QStringLiteral("demo%1").arg(++n)},
+                {u"title"_s, g.title},
+                {u"alt_text"_s, g.title},
+                {u"images"_s,
+                 QJsonObject{{u"fixed_width"_s, rendition}, {u"downsized"_s, rendition}}},
             }
         );
     }
     return QJsonDocument(
-               QJsonObject{{"data", data}, {"meta", QJsonObject{{"status", 200}}}}
+               QJsonObject{{u"data"_s, data}, {u"meta"_s, QJsonObject{{u"status"_s, 200}}}}
     ).toJson(QJsonDocument::Compact);
 }
 
 QByteArray FakeServices::chatCompletionJson(const QString &text) {
     return QJsonDocument(
                QJsonObject{
-                   {"id", "chatcmpl-demo"},
-                   {"object", "chat.completion"},
-                   {"model", "lumen-1"},
-                   {"choices",
+                   {u"id"_s, u"chatcmpl-demo"_s},
+                   {u"object"_s, u"chat.completion"_s},
+                   {u"model"_s, u"lumen-1"_s},
+                   {u"choices"_s,
                     QJsonArray{QJsonObject{
-                        {"index", 0},
-                        {"finish_reason", "stop"},
-                        {"message", QJsonObject{{"role", "assistant"}, {"content", text}}},
+                        {u"index"_s, 0},
+                        {u"finish_reason"_s, u"stop"_s},
+                        {u"message"_s,
+                         QJsonObject{{u"role"_s, u"assistant"_s}, {u"content"_s, text}}},
                     }}},
-                   {"usage", QJsonObject{{"prompt_tokens", 0}, {"completion_tokens", 0}}},
+                   {u"usage"_s, QJsonObject{{u"prompt_tokens"_s, 0}, {u"completion_tokens"_s, 0}}},
                }
     )
         .toJson(QJsonDocument::Compact);

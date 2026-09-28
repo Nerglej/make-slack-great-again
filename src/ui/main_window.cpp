@@ -115,6 +115,8 @@
 #include <algorithm>
 #include <memory>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kResizeBorder = 6;
 
 // What the window asks for before the display gets a say. fitToScreen() only
@@ -157,7 +159,7 @@ static QString iconUrlForHandle(const QString &handle) {
 // conversations whose own level is NotificationLevel::Default. Defaults to "All
 // new posts" (0); 1 = "Just mentions".
 static NotificationLevel globalDefaultNotifLevel() {
-    return QSettings("msga", "msga").value("notifications/level", 0).toInt() == 1
+    return QSettings(u"msga"_s, u"msga"_s).value("notifications/level", 0).toInt() == 1
                ? NotificationLevel::Mentions
                : NotificationLevel::All;
 }
@@ -167,7 +169,7 @@ static NotificationLevel globalDefaultNotifLevel() {
 // chat list for unreads that don't @mention me (see
 // ConvListWidget::setHighlightMentionsOnlyUnreads).
 static bool highlightMentionsOnlyUnreads() {
-    return QSettings("msga", "msga").value("notifications/boldMentionsOnly", true).toBool();
+    return QSettings(u"msga"_s, u"msga"_s).value("notifications/boldMentionsOnly", true).toBool();
 }
 
 // Thin drag handle between the conv panel and the message area.
@@ -301,7 +303,7 @@ static QString zenModeKey(const QString &teamId) {
 }
 
 MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
-    setWindowTitle("");
+    setWindowTitle(u""_s);
 #ifdef Q_OS_MACOS
     // Keep AppKit's traffic lights, shadow, rounded corners, and resize handling.
 #if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
@@ -386,7 +388,7 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
         showLoggedOut();
     }
 
-    const QByteArray geo = QSettings("msga", "msga").value("window/geometry").toByteArray();
+    const QByteArray geo = QSettings(u"msga"_s, u"msga"_s).value("window/geometry").toByteArray();
     if (!geo.isEmpty())
         restoreGeometry(geo);
 
@@ -497,31 +499,30 @@ QWidget *MainWindow::buildLoggedOutPage() {
     auto *icon = new QLabel(inner);
     icon->setAlignment(Qt::AlignCenter);
     icon->setFixedSize(72, 72);
-    icon->setPixmap(QIcon(":/icon.svg").pixmap(QSize(72, 72), qApp->devicePixelRatio()));
+    icon->setPixmap(QIcon(u":/icon.svg"_s).pixmap(QSize(72, 72), qApp->devicePixelRatio()));
 
     auto *titleBlock  = new QWidget(inner);
     auto *titleLayout = new QVBoxLayout(titleBlock);
     titleLayout->setContentsMargins(0, 0, 0, 0);
     titleLayout->setSpacing(sp.md);
 
-    auto *title = new QLabel("MSGA", titleBlock);
+    auto *title = new QLabel(u"MSGA"_s, titleBlock);
     title->setAlignment(Qt::AlignCenter);
-    title->setStyleSheet(QString("font-size: %1px; font-weight: 600; color: %2; margin-top: 4px;")
+    title->setStyleSheet(u"font-size: %1px; font-weight: 600; color: %2; margin-top: 4px;"_s
                              .arg(Th::c().fonts.xxxl)
                              .arg(Th::qss(Th::c().text.primary)));
 
     auto *tagline = new QLabel(titleBlock);
     tagline->setAlignment(Qt::AlignCenter);
-    tagline->setText(QString(
-                         "<span style='font-size:%3px; color:%1; letter-spacing:0.06em;'>"
-                         "[<span style='color:%2;'>m</span>ake "
-                         "<span style='color:%2;'>s</span>lack "
-                         "<span style='color:%2;'>g</span>reat "
-                         "<span style='color:%2;'>a</span>gain]"
-                         "</span>"
-    )
-                         .arg(Th::qss(Th::c().text.tertiary), Th::qss(Th::c().text.primary))
-                         .arg(Th::c().fonts.sm));
+    tagline->setText(
+        u"<span style='font-size:%3px; color:%1; letter-spacing:0.06em;'>"
+        "[<span style='color:%2;'>m</span>ake "
+        "<span style='color:%2;'>s</span>lack "
+        "<span style='color:%2;'>g</span>reat "
+        "<span style='color:%2;'>a</span>gain]"
+        "</span>"_s.arg(Th::qss(Th::c().text.tertiary), Th::qss(Th::c().text.primary))
+            .arg(Th::c().fonts.sm)
+    );
 
     titleLayout->addWidget(title);
     titleLayout->addWidget(tagline);
@@ -591,7 +592,7 @@ QWidget *MainWindow::buildMainPage() {
 
     // Apply stored appearance setting and keep conv list in sync when settings are saved.
     _convList->setRelevantDays(
-        QSettings("msga", "msga").value("appearance/relevantDays", 14).toInt()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/relevantDays", 14).toInt()
     );
     connect(
         _settingsDialog,
@@ -600,7 +601,7 @@ QWidget *MainWindow::buildMainPage() {
         &ConvListWidget::setRelevantDays
     );
     _convList->setShowAgentsApps(
-        QSettings("msga", "msga").value("appearance/showAgentsApps", true).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/showAgentsApps", true).toBool()
     );
     connect(
         _settingsDialog,
@@ -609,7 +610,7 @@ QWidget *MainWindow::buildMainPage() {
         &ConvListWidget::setShowAgentsApps
     );
     _convList->setUnreadsOnly(
-        QSettings("msga", "msga").value("appearance/unreadsOnly", false).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/unreadsOnly", false).toBool()
     );
     connect(
         _settingsDialog,
@@ -628,7 +629,7 @@ QWidget *MainWindow::buildMainPage() {
     });
     // Threads display mode (standalone panel vs. inline expansion).
     _messageList->setThreadsInline(
-        QSettings("msga", "msga").value("appearance/threadsInline", false).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/threadsInline", false).toBool()
     );
     connect(
         _settingsDialog,
@@ -637,7 +638,7 @@ QWidget *MainWindow::buildMainPage() {
         &MessageListWidget::setThreadsInline
     );
     const bool showLinkPreviews =
-        QSettings("msga", "msga").value("appearance/showLinkPreviews", true).toBool();
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/showLinkPreviews", true).toBool();
     _messageList->setLinkPreviewsEnabled(showLinkPreviews);
     _threadPanel->setLinkPreviewsEnabled(showLinkPreviews);
     connect(
@@ -655,7 +656,7 @@ QWidget *MainWindow::buildMainPage() {
     // Visual effects. The cache's retention switch is the OR of the kinds: it
     // can't tell an emoji from a GIF, the per-kind discards happen in the views.
     const auto applyAnimationSettings = [this] {
-        QSettings  st("msga", "msga");
+        QSettings  st(u"msga"_s, u"msga"_s);
         const bool emoji = st.value("appearance/animateEmoji", true).toBool();
         const bool media = st.value("appearance/animateMedia", true).toBool();
         _imgCache->setAnimationsRetained(emoji || media);
@@ -799,7 +800,7 @@ QWidget *MainWindow::buildConvPanel(QWidget *parent) {
     connect(_convFooter, &ConvFooterWidget::zenModeToggled, this, [this](bool on) {
         if (!_session)
             return;
-        QSettings("msga", "msga").setValue(zenModeKey(_activeTeamId), on);
+        QSettings(u"msga"_s, u"msga"_s).setValue(zenModeKey(_activeTeamId), on);
         _session->setZenMode(on);
         if (_contentView == ContentView::Conversation && !_currentConvId.value.isEmpty())
             if (const int row = _convList->rowForId(_currentConvId); row >= 0)
@@ -860,7 +861,7 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
     _headerAvatar->setVisible(false);
     msgHeaderLayout->addWidget(_headerAvatar);
 
-    _convNameLabel = new QLabel("", msgHeader);
+    _convNameLabel = new QLabel(u""_s, msgHeader);
     _convNameLabel->setObjectName("convNameLabel");
 #ifdef Q_OS_MACOS
     _convNameLabel->setAlignment(Qt::AlignCenter);
@@ -895,7 +896,7 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
     _membersBtn->setFlat(true);
     _membersBtn->setCursor(Qt::PointingHandCursor);
     _membersBtn->setIconSize(QSize(16, 16));
-    _membersBtn->setIcon(svgIcon(":/ui/users.svg", QSize(16, 16), Th::c().icon.def));
+    _membersBtn->setIcon(svgIcon(u":/ui/users.svg"_s, QSize(16, 16), Th::c().icon.def));
     _membersBtn->setVisible(false);
     _membersBtnTooltip = new PopupTooltip(_membersBtn);
     _membersBtn->installEventFilter(this);
@@ -913,7 +914,7 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
     _huddleBtn->setFlat(true);
     _huddleBtn->setCursor(Qt::PointingHandCursor);
     _huddleBtn->setIconSize(QSize(16, 16));
-    _huddleBtn->setIcon(svgIcon(":/ui/headphones.svg", QSize(16, 16), Th::c().icon.def));
+    _huddleBtn->setIcon(svgIcon(u":/ui/headphones.svg"_s, QSize(16, 16), Th::c().icon.def));
     _huddleBtnTooltip = new PopupTooltip(_huddleBtn);
     _huddleBtn->installEventFilter(this);
     actionsLayout->addWidget(_huddleBtn);
@@ -936,7 +937,7 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
     _searchBtn->setFlat(true);
     _searchBtn->setCursor(Qt::PointingHandCursor);
     _searchBtn->setIconSize(QSize(16, 16));
-    _searchBtn->setIcon(svgIcon(":/ui/search.svg", QSize(16, 16), Th::c().icon.def));
+    _searchBtn->setIcon(svgIcon(u":/ui/search.svg"_s, QSize(16, 16), Th::c().icon.def));
     _searchBtnTooltip = new PopupTooltip(_searchBtn);
     _searchBtn->installEventFilter(this);
     actionsLayout->addWidget(_searchBtn);
@@ -1084,7 +1085,7 @@ QWidget *MainWindow::buildRightPanel(QWidget *parent) {
     saveThreadWidth->setInterval(300);
     connect(saveThreadWidth, &QTimer::timeout, this, [this] {
         if (_threadPanel->isVisible() && _threadPanel->width() >= 100)
-            QSettings("msga", "msga").setValue("window/threadWidth", _threadPanel->width());
+            QSettings(u"msga"_s, u"msga"_s).setValue("window/threadWidth", _threadPanel->width());
     });
     connect(_msgSplitter, &QSplitter::splitterMoved, saveThreadWidth, qOverload<>(&QTimer::start));
 
@@ -1428,8 +1429,9 @@ void MainWindow::applyTheme() {
     if (_msgHeader)
         Th::setStyleSheetIfChanged(
             _msgHeader,
-            QString("QWidget#msgHeader { background: %1; border-bottom: 1px solid %2; }")
-                .arg(Th::qss(th.surface.content), Th::qss(th.divider.subtle))
+            u"QWidget#msgHeader { background: %1; border-bottom: 1px solid %2; }"_s.arg(
+                Th::qss(th.surface.content), Th::qss(th.divider.subtle)
+            )
         );
 #endif
 
@@ -1449,7 +1451,7 @@ void MainWindow::applyTheme() {
     // switch.
     if (_rightPanel) {
         Th::setStyleSheetIfChanged(
-            _rightPanel, QString("QWidget { background: %1; }").arg(Th::qss(th.surface.content))
+            _rightPanel, u"QWidget { background: %1; }"_s.arg(Th::qss(th.surface.content))
         );
     }
 
@@ -1457,11 +1459,11 @@ void MainWindow::applyTheme() {
     if (_loggedOutPage) {
         Th::setStyleSheetIfChanged(
             _loggedOutPage,
-            QString("QWidget#loggedOutWrapper { background: %1; }").arg(Th::qss(th.nav.bg))
+            u"QWidget#loggedOutWrapper { background: %1; }"_s.arg(Th::qss(th.nav.bg))
         );
         if (auto *page = _loggedOutPage->findChild<QWidget *>("loggedOutPage")) {
             Th::setStyleSheetIfChanged(
-                page, QString("QWidget { background: %1; }").arg(Th::qss(th.surface.content))
+                page, u"QWidget { background: %1; }"_s.arg(Th::qss(th.surface.content))
             );
         }
     }
@@ -1476,53 +1478,46 @@ void MainWindow::applyTheme() {
 #endif
         Th::setStyleSheetIfChanged(
             _convNameLabel,
-            QString("font-weight: 600; font-size: %1px; color: %2;")
-                .arg(titleFontSize)
+            u"font-weight: 600; font-size: %1px; color: %2;"_s.arg(titleFontSize)
                 .arg(Th::qss(th.text.primary))
         );
     }
     if (_membersBtn) {
         Th::setStyleSheetIfChanged(
             _membersBtn,
-            QString(
-                "QPushButton { border: none; background: transparent;"
-                "  padding: 0 %1px; color: %2; font-size: %3px; }"
-            )
-                .arg(th.spacing.sm)
+            u"QPushButton { border: none; background: transparent;"
+            "  padding: 0 %1px; color: %2; font-size: %3px; }"_s.arg(th.spacing.sm)
                 .arg(Th::qss(th.text.secondary))
                 .arg(th.fonts.sm)
         );
-        _membersBtn->setIcon(svgIcon(":/ui/users.svg", QSize(16, 16), th.icon.def));
+        _membersBtn->setIcon(svgIcon(u":/ui/users.svg"_s, QSize(16, 16), th.icon.def));
     }
     if (_huddleBtn) {
         Th::setStyleSheetIfChanged(
-            _huddleBtn, "QPushButton { border: none; background: transparent; }"
+            _huddleBtn, u"QPushButton { border: none; background: transparent; }"_s
         );
-        _huddleBtn->setIcon(svgIcon(":/ui/headphones.svg", QSize(16, 16), th.icon.def));
+        _huddleBtn->setIcon(svgIcon(u":/ui/headphones.svg"_s, QSize(16, 16), th.icon.def));
     }
     if (_starBtn) {
         Th::setStyleSheetIfChanged(
-            _starBtn, "QPushButton { border: none; background: transparent; }"
+            _starBtn, u"QPushButton { border: none; background: transparent; }"_s
         );
     }
     if (_searchBtn) {
         Th::setStyleSheetIfChanged(
-            _searchBtn, "QPushButton { border: none; background: transparent; }"
+            _searchBtn, u"QPushButton { border: none; background: transparent; }"_s
         );
-        _searchBtn->setIcon(svgIcon(":/ui/search.svg", QSize(16, 16), th.icon.def));
+        _searchBtn->setIcon(svgIcon(u":/ui/search.svg"_s, QSize(16, 16), th.icon.def));
     }
     if (_errorBanner) {
         Th::setStyleSheetIfChanged(
             _errorBanner,
-            QString(
-                "QLabel#errorBanner {"
-                "  background: %1;"
-                "  color: %2;"
-                "  padding: 6px 12px;"
-                "  font-size: %3px;"
-                "}"
-            )
-                .arg(Th::qss(th.danger.icon), Th::qss(th.surface.raised))
+            u"QLabel#errorBanner {"
+            "  background: %1;"
+            "  color: %2;"
+            "  padding: 6px 12px;"
+            "  font-size: %3px;"
+            "}"_s.arg(Th::qss(th.danger.icon), Th::qss(th.surface.raised))
                 .arg(th.fonts.md)
         );
     }
@@ -1552,7 +1547,9 @@ Session *MainWindow::ensureSession(const QString &teamId) {
     entry.session    = std::make_unique<Session>(std::move(backend), teamId);
     Session *session = entry.session.get();
     if (session->capabilities().zenMode)
-        session->setZenMode(QSettings("msga", "msga").value(zenModeKey(teamId), false).toBool());
+        session->setZenMode(
+            QSettings(u"msga"_s, u"msga"_s).value(zenModeKey(teamId), false).toBool()
+        );
 
     // Background subscriptions — alive for the whole session, active
     // workspace or not, so badges and notifications never depend on what's
@@ -2239,7 +2236,7 @@ void MainWindow::renameConversation(ConversationId id) {
 // A session actually started in `dir`: first among the teammate page's recent
 // folders (RecentFolders).
 static void bumpRecentAgentFolder(const QString &dir) {
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     RecentFolders::bump(s, RecentFolders::kClaudeCodeKey, dir);
 }
 
@@ -2249,7 +2246,7 @@ static void bumpRecentAgentFolder(const QString &dir) {
 void MainWindow::startAgentSession(bool skipPermissionChecks) {
     if (!_session)
         return;
-    QSettings     s("msga", "msga");
+    QSettings     s(u"msga"_s, u"msga"_s);
     const QString last  = s.value("claudeCode/lastDir", QDir::homePath()).toString();
     const QString title = skipPermissionChecks
                               ? tr("Start session in a directory without permission checks…")
@@ -2437,7 +2434,7 @@ void MainWindow::connectToSession() {
         _convFooter->setStatusSupported(_session->capabilities().selfStatus);
         _convFooter->setZenMode(
             _session->capabilities().zenMode,
-            QSettings("msga", "msga").value(zenModeKey(_activeTeamId), false).toBool()
+            QSettings(u"msga"_s, u"msga"_s).value(zenModeKey(_activeTeamId), false).toBool()
         );
     }
 
@@ -2805,7 +2802,7 @@ void MainWindow::maybeNotify(const QString &teamId, const EvMessageNew &ev, bool
     if (tooOldToNotify(ev.msg.date))
         return;
 
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     if (!s.value("notifications/enabled", true).toBool())
         return;
 
@@ -2923,17 +2920,17 @@ void MainWindow::maybeNotify(const QString &teamId, const EvMessageNew &ev, bool
         if (session->capabilities().agentSessions && conv->dmUser)
             title = session->userDisplayName(*conv->dmUser);
     } else {
-        title = "#" + conv->name;
-        body  = senderName + ": " + preview;
+        title = u"#"_s + conv->name;
+        body  = senderName + u": "_s + preview;
     }
     // Say which workspace it came from when it isn't the one on screen.
     if (teamId != _activeTeamId) {
         const QString teamName = recordForHandle(teamId).displayName;
         if (!teamName.isEmpty())
-            title = teamName + " · " + title;
+            title = teamName + u" · "_s + title;
     }
     if (body.length() > 100)
-        body = body.left(97) + "…";
+        body = body.left(97) + u"…"_s;
 
     // Notification image: the message sender's avatar for DMs, the workspace
     // icon for channels (and anything else). We only use an already-cached
@@ -3031,7 +3028,7 @@ void MainWindow::maybeNotifyHuddle(const QString &teamId, const EvHuddleChanged 
     if (_notifiedHuddles.contains(key))
         return;
 
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     if (!s.value("notifications/enabled", true).toBool() ||
         !s.value("notifications/huddles", true).toBool())
         return;
@@ -3081,13 +3078,13 @@ void MainWindow::maybeNotifyHuddle(const QString &teamId, const EvHuddleChanged 
         title = starterName;
         body  = tr("Started a huddle");
     } else {
-        title = "#" + conv->name;
+        title = u"#"_s + conv->name;
         body  = tr("%1 started a huddle").arg(starterName);
     }
     if (teamId != _activeTeamId) {
         const QString teamName = recordForHandle(teamId).displayName;
         if (!teamName.isEmpty())
-            title = teamName + " · " + title;
+            title = teamName + u" · "_s + title;
     }
 
     // Notification image: starter avatar for a DM, workspace icon otherwise
@@ -3131,7 +3128,7 @@ void MainWindow::notifyReminderDue(const QString &teamId, const EvReminderDue &e
     // Only the global switch gates a reminder: the user explicitly asked for
     // this one, so per-conversation levels, thread mutes and even the workspace
     // mute don't apply (matching the official client, which alarms regardless).
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     if (!s.value("notifications/enabled", true).toBool())
         return;
 
@@ -3177,7 +3174,7 @@ void MainWindow::notifyReminderDue(const QString &teamId, const EvReminderDue &e
     if (teamId != _activeTeamId) {
         const QString teamName = recordForHandle(teamId).displayName;
         if (!teamName.isEmpty())
-            title = teamName + " · " + title;
+            title = teamName + u" · "_s + title;
     }
 
     // Say who wrote the reminded message. The author's name resolves live from
@@ -3194,9 +3191,9 @@ void MainWindow::notifyReminderDue(const QString &teamId, const EvReminderDue &e
     QString body =
         ev.snippet.isEmpty() ? tr("You asked to be reminded about a message.") : ev.snippet;
     if (!authorName.isEmpty() && !ev.snippet.isEmpty())
-        body = authorName + ": " + body;
+        body = authorName + u": "_s + body;
     if (body.length() > 100)
-        body = body.left(97) + "…";
+        body = body.left(97) + u"…"_s;
 
     // Picture: the reminded message's author (user avatar, else bot avatar),
     // falling back to the DM peer and finally the workspace icon. Cache-only,
@@ -3432,7 +3429,7 @@ void MainWindow::updateTrayIcon() {
         p.drawImage(QRectF(0, 0, sz, sz), custom);
     } else {
         // Always render via QSvgRenderer so the alpha channel is preserved in static builds.
-        QSvgRenderer renderer(QString(":/icon_tray.svg"));
+        QSvgRenderer renderer(u":/icon_tray.svg"_s);
         if (renderer.isValid())
             renderer.render(&p, QRectF(0, 0, sz, sz));
     }
@@ -3631,7 +3628,7 @@ void MainWindow::restoreFromTray() {
 
 void MainWindow::setupTray() {
     _trayIcon = new QSystemTrayIcon(this);
-    _trayIcon->setToolTip("MSGA");
+    _trayIcon->setToolTip(u"MSGA"_s);
     updateTrayIcon();
 
     auto *menu = new QMenu(this);
@@ -3799,7 +3796,7 @@ void MainWindow::forwardMessage(
                                                                 : msg.rawText;
             const QString     full    = comment.isEmpty() ? fwd
                                         : fwd.isEmpty()   ? comment
-                                                          : (comment + "\n" + fwd);
+                                                          : (comment + u"\n"_s + fwd);
             std::vector<File> files   = dlg->files();
             if (files.empty()) {
                 ts->sendMessage(target, full);
@@ -3896,9 +3893,10 @@ void MainWindow::openThreadPanel(const ConversationId &conv, const Ts &rootTs) {
     _threadPanel->openThread(conv, rootTs);
     _messageList->setOpenThreadRoot(rootTs);
     if (!wasOpen) {
-        const int total   = _msgSplitter->width();
-        const int desired = QSettings("msga", "msga").value("window/threadWidth", 360).toInt();
-        const int width   = std::clamp(desired, 100, std::max(100, total - 200));
+        const int total = _msgSplitter->width();
+        const int desired =
+            QSettings(u"msga"_s, u"msga"_s).value("window/threadWidth", 360).toInt();
+        const int width = std::clamp(desired, 100, std::max(100, total - 200));
         _msgSplitter->setSizes({total - width, width});
     }
 }
@@ -4085,7 +4083,7 @@ void MainWindow::startSessionWithTeammate(const QString &text, const QStringList
         return;
     const QString role = _teammatePage->teammate().id;
     const QString dir  = _teammatePage->folder();
-    QSettings("msga", "msga").setValue("claudeCode/lastDir", dir);
+    QSettings(u"msga"_s, u"msga"_s).setValue("claudeCode/lastDir", dir);
     _session->startAgentSession(
         dir,
         false,
@@ -4313,7 +4311,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *e) {
                             QGuiApplication::restoreOverrideCursor();
                             _resizeHoverCursor = false;
                         }
-                        if (QGuiApplication::platformName() == "wayland") {
+                        if (QGuiApplication::platformName() == u"wayland"_s) {
                             if (auto *h = windowHandle())
                                 h->startSystemResize(edges);
                         } else {
@@ -4611,7 +4609,7 @@ void MainWindow::changeEvent(QEvent *e) {
             // Wayland never reports the minimized state to Qt, so this cannot
             // fire there — the toggle is documented as inert on Wayland.
             if (_trayIcon &&
-                QSettings("msga", "msga").value("window/minimizeToTray", false).toBool())
+                QSettings(u"msga"_s, u"msga"_s).value("window/minimizeToTray", false).toBool())
                 QTimer::singleShot(0, this, [this] {
                     if (isMinimized())
                         hide();
@@ -4641,7 +4639,7 @@ void MainWindow::changeEvent(QEvent *e) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *e) {
-    QSettings("msga", "msga").setValue("window/geometry", saveGeometry());
+    QSettings(u"msga"_s, u"msga"_s).setValue("window/geometry", saveGeometry());
     hide();
     e->ignore();
 }
@@ -4713,7 +4711,7 @@ void MainWindow::openConversation(int row) {
     const QString name = _convList->resolvedName(row);
     const auto   *conv = _session->findConversation(_currentConvId);
     const bool    isDm = conv && (conv->kind == ConvKind::Im || conv->kind == ConvKind::Mpim);
-    const QString displayName = isDm ? name : name.isEmpty() ? "" : "#" + name;
+    const QString displayName = isDm ? name : name.isEmpty() ? u""_s : u"#"_s + name;
 
     // Keep the conversation header title in lock-step with the message list no
     // matter how this open was triggered. Programmatic opens (notification

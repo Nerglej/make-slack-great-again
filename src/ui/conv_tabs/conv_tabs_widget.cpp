@@ -9,6 +9,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 
+using namespace Qt::StringLiterals;
+
 ConvTabsWidget::ConvTabsWidget(QWidget *parent) : QWidget(parent) {
     setFixedHeight(kStripH);
     setMouseTracking(true);
@@ -60,8 +62,8 @@ void ConvTabsWidget::rebuildIcons() {
     const qreal dpr = _iconDpr > 0 ? _iconDpr : (qGuiApp ? qGuiApp->devicePixelRatio() : 1.0);
 
     _tabs[0].text    = tr("Messages");
-    _tabs[0].icon    = svgPixmapPhys(":/ui/message-circle.svg", sz, th.text.secondary, dpr);
-    _tabs[0].iconHot = svgPixmapPhys(":/ui/message-circle.svg", sz, th.text.primary, dpr);
+    _tabs[0].icon    = svgPixmapPhys(u":/ui/message-circle.svg"_s, sz, th.text.secondary, dpr);
+    _tabs[0].iconHot = svgPixmapPhys(u":/ui/message-circle.svg"_s, sz, th.text.primary, dpr);
 
     _tabs[1].text =
         _hasCanvas ? (_canvasTitle.isEmpty() ? tr("Untitled") : _canvasTitle) : tr("Add canvas");

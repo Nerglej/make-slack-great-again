@@ -15,6 +15,8 @@
 #include <QTimer>
 #include <QWebSocket>
 
+using namespace Qt::StringLiterals;
+
 namespace slack {
 
 namespace {
@@ -119,7 +121,7 @@ void SessionRealtime::openAndConnect() {
         const QString url = obj.value(QStringLiteral("url")).toString();
         if (!obj.value(QStringLiteral("ok")).toBool() || url.isEmpty()) {
             qWarning().noquote() << "SessionRealtime: rtm.connect failed —"
-                                 << obj.value(QStringLiteral("error")).toString("no_url");
+                                 << obj.value(QStringLiteral("error")).toString(u"no_url"_s);
             _connecting = false;
             scheduleReconnect();
             return;
@@ -209,9 +211,9 @@ void SessionRealtime::sendPing() {
 
 void SessionRealtime::onTextMessage(const QString &text) {
     const auto frame = QJsonDocument::fromJson(text.toUtf8()).object();
-    const auto type  = frame.value("type").toString();
+    const auto type  = frame.value(u"type"_s).toString();
 
-    if (type == "hello") {
+    if (type == u"hello"_s) {
         if (_hadHello) {
             // Session re-established after a gap — Slack doesn't replay missed
             // events, so have the backend/UI backfill history + badges.
@@ -222,7 +224,7 @@ void SessionRealtime::onTextMessage(const QString &text) {
     }
     // pong (reply to our ping) and reply_to (ack of a message WE sent over RTM,
     // which we don't do) carry no event to surface.
-    if (type == "pong" || frame.contains("reply_to"))
+    if (type == u"pong"_s || frame.contains(u"reply_to"_s))
         return;
 
     if (auto ev = normalizeSlackEvent(frame))

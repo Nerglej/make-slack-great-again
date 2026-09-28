@@ -5,6 +5,8 @@
 #include <QCryptographicHash>
 #include <QSet>
 
+using namespace Qt::StringLiterals;
+
 namespace imap {
 
 ProviderInfo providerForMxHost(const QString &mxHost) {
@@ -22,38 +24,38 @@ ProviderInfo providerForMxHost(const QString &mxHost) {
         p.appPasswordHelpUrl = help;
         p.known              = true;
     };
-    if (h.contains("google") || h.contains("googlemail"))
-        set("Gmail",
-            "imap.gmail.com",
-            "smtp.gmail.com",
+    if (h.contains(u"google"_s) || h.contains(u"googlemail"_s))
+        set(u"Gmail"_s,
+            u"imap.gmail.com"_s,
+            u"smtp.gmail.com"_s,
             AuthMethod::OAuthGoogle,
-            "https://myaccount.google.com/apppasswords");
-    else if (h.contains("outlook") || h.contains("office365") || h.contains("microsoft"))
-        set("Outlook",
-            "outlook.office365.com",
-            "smtp.office365.com",
+            u"https://myaccount.google.com/apppasswords"_s);
+    else if (h.contains(u"outlook"_s) || h.contains(u"office365"_s) || h.contains(u"microsoft"_s))
+        set(u"Outlook"_s,
+            u"outlook.office365.com"_s,
+            u"smtp.office365.com"_s,
             AuthMethod::OAuthMicrosoft,
-            "https://account.live.com/proofs/AppPassword");
-    else if (h.contains("messagingengine") || h.contains("fastmail"))
-        set("Fastmail",
-            "imap.fastmail.com",
-            "smtp.fastmail.com",
+            u"https://account.live.com/proofs/AppPassword"_s);
+    else if (h.contains(u"messagingengine"_s) || h.contains(u"fastmail"_s))
+        set(u"Fastmail"_s,
+            u"imap.fastmail.com"_s,
+            u"smtp.fastmail.com"_s,
             AuthMethod::Password,
-            "https://www.fastmail.help/hc/en-us/articles/360058752854");
-    else if (h.contains("yahoodns") || h.contains("yahoo"))
-        set("Yahoo",
-            "imap.mail.yahoo.com",
-            "smtp.mail.yahoo.com",
+            u"https://www.fastmail.help/hc/en-us/articles/360058752854"_s);
+    else if (h.contains(u"yahoodns"_s) || h.contains(u"yahoo"_s))
+        set(u"Yahoo"_s,
+            u"imap.mail.yahoo.com"_s,
+            u"smtp.mail.yahoo.com"_s,
             AuthMethod::Password,
-            "https://help.yahoo.com/kb/SLN15241.html");
-    else if (h.contains("zoho"))
-        set("Zoho", "imap.zoho.com", "smtp.zoho.com", AuthMethod::Password, {});
-    else if (h.contains("icloud") || h.contains("me.com") || h.contains("apple"))
-        set("iCloud",
-            "imap.mail.me.com",
-            "smtp.mail.me.com",
+            u"https://help.yahoo.com/kb/SLN15241.html"_s);
+    else if (h.contains(u"zoho"_s))
+        set(u"Zoho"_s, u"imap.zoho.com"_s, u"smtp.zoho.com"_s, AuthMethod::Password, {});
+    else if (h.contains(u"icloud"_s) || h.contains(u"me.com"_s) || h.contains(u"apple"_s))
+        set(u"iCloud"_s,
+            u"imap.mail.me.com"_s,
+            u"smtp.mail.me.com"_s,
             AuthMethod::Password,
-            "https://support.apple.com/en-us/102654");
+            u"https://support.apple.com/en-us/102654"_s);
     return p; // known=false if no branch matched
 }
 
@@ -143,41 +145,41 @@ ProviderInfo detectProvider(const QString &email) {
         p.known              = true;
     };
 
-    if (domain == "gmail.com" || domain == "googlemail.com") {
-        set("Gmail",
-            "imap.gmail.com",
-            "smtp.gmail.com",
+    if (domain == u"gmail.com"_s || domain == u"googlemail.com"_s) {
+        set(u"Gmail"_s,
+            u"imap.gmail.com"_s,
+            u"smtp.gmail.com"_s,
             AuthMethod::OAuthGoogle,
-            "https://myaccount.google.com/apppasswords");
+            u"https://myaccount.google.com/apppasswords"_s);
     } else if (
-        domain == "outlook.com" || domain == "hotmail.com" || domain == "live.com" ||
-        domain == "msn.com"
+        domain == u"outlook.com"_s || domain == u"hotmail.com"_s || domain == u"live.com"_s ||
+        domain == u"msn.com"_s
     ) {
-        set("Outlook",
-            "outlook.office365.com",
-            "smtp.office365.com",
+        set(u"Outlook"_s,
+            u"outlook.office365.com"_s,
+            u"smtp.office365.com"_s,
             AuthMethod::OAuthMicrosoft,
-            "https://account.live.com/proofs/AppPassword");
-    } else if (domain == "icloud.com" || domain == "me.com" || domain == "mac.com") {
-        set("iCloud",
-            "imap.mail.me.com",
-            "smtp.mail.me.com",
+            u"https://account.live.com/proofs/AppPassword"_s);
+    } else if (domain == u"icloud.com"_s || domain == u"me.com"_s || domain == u"mac.com"_s) {
+        set(u"iCloud"_s,
+            u"imap.mail.me.com"_s,
+            u"smtp.mail.me.com"_s,
             AuthMethod::Password,
-            "https://support.apple.com/en-us/102654");
-    } else if (domain == "fastmail.com" || domain == "fastmail.fm") {
-        set("Fastmail",
-            "imap.fastmail.com",
-            "smtp.fastmail.com",
+            u"https://support.apple.com/en-us/102654"_s);
+    } else if (domain == u"fastmail.com"_s || domain == u"fastmail.fm"_s) {
+        set(u"Fastmail"_s,
+            u"imap.fastmail.com"_s,
+            u"smtp.fastmail.com"_s,
             AuthMethod::Password,
-            "https://www.fastmail.help/hc/en-us/articles/360058752854");
-    } else if (domain == "yahoo.com" || domain == "ymail.com") {
-        set("Yahoo",
-            "imap.mail.yahoo.com",
-            "smtp.mail.yahoo.com",
+            u"https://www.fastmail.help/hc/en-us/articles/360058752854"_s);
+    } else if (domain == u"yahoo.com"_s || domain == u"ymail.com"_s) {
+        set(u"Yahoo"_s,
+            u"imap.mail.yahoo.com"_s,
+            u"smtp.mail.yahoo.com"_s,
             AuthMethod::Password,
-            "https://help.yahoo.com/kb/SLN15241.html");
-    } else if (domain == "gmx.com" || domain == "gmx.net") {
-        set("GMX", "imap.gmx.com", "mail.gmx.com", AuthMethod::Password, {});
+            u"https://help.yahoo.com/kb/SLN15241.html"_s);
+    } else if (domain == u"gmx.com"_s || domain == u"gmx.net"_s) {
+        set(u"GMX"_s, u"imap.gmx.com"_s, u"mail.gmx.com"_s, AuthMethod::Password, {});
     } else {
         // Unknown domain — guess the conventional hosts; the user can edit them.
         p.name     = domain.isEmpty() ? QStringLiteral("Email") : domain;

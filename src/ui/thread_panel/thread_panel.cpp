@@ -30,6 +30,8 @@
 #include <QCheckBox>
 #include <QSignalBlocker>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 constexpr int kShadowW = 6; // width of the left-edge shadow gradient, in px
@@ -424,16 +426,16 @@ void ThreadPanel::applyTheme() {
     // background: the panel reads as one continuous surface with the chat. The
     // only horizontal line above the header is the one the tab strip paints.
     Th::setStyleSheetIfChanged(
-        this,
-        QString("QWidget#threadPanel { background: %1; }").arg(Th::qss(Th::c().surface.content))
+        this, u"QWidget#threadPanel { background: %1; }"_s.arg(Th::qss(Th::c().surface.content))
     );
-    Th::setStyleSheetIfChanged(_headerWidget, "QWidget#threadHeader { background: transparent; }");
+    Th::setStyleSheetIfChanged(
+        _headerWidget, u"QWidget#threadHeader { background: transparent; }"_s
+    );
     if (_broadcastBox)
         applyBroadcastBoxTheme();
     Th::setStyleSheetIfChanged(
         _header,
-        QString("font-weight: bold; font-size: %1px; color: %2;")
-            .arg(Th::c().fonts.lg)
+        u"font-weight: bold; font-size: %1px; color: %2;"_s.arg(Th::c().fonts.lg)
             .arg(Th::qss(Th::c().text.primary))
     );
     // _closeBtn (IconButton) self-themes.
@@ -458,7 +460,7 @@ void ThreadPanel::downloadThread() {
         QStringLiteral("thread-%1.txt")
             .arg(QDateTime::fromSecsSinceEpoch(rootSecs).toString(QStringLiteral("yyyy-MM-dd")));
     const QString savePath =
-        Ui::getSaveFileName(this, tr("Save thread"), QDir::homePath() + "/" + defaultName);
+        Ui::getSaveFileName(this, tr("Save thread"), QDir::homePath() + u"/"_s + defaultName);
     if (savePath.isEmpty())
         return;
     ThreadExportJob::start(_session, _conv, _rootTs, title, savePath, window());

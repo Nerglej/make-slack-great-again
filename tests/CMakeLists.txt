@@ -241,6 +241,10 @@ set(MSGA_TEST_SUPPORT_SRCS
 add_library(msga_test_support STATIC ${MSGA_TEST_SUPPORT_SRCS})
 target_include_directories(msga_test_support PRIVATE ${TEST_INCLUDES})
 target_include_directories(msga_test_support SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDES})
+# Same -fno-exceptions as the app, so the tests exercise the code as shipped.
+# Not on msga_tests: Catch2 aborts a failed REQUIRE by throwing, and the
+# CHECK_NOTHROW/REQUIRE machinery needs exceptions in the test TUs themselves.
+target_compile_options(msga_test_support PRIVATE ${MSGA_NO_EXCEPTIONS})
 # PRIVATE on a static library = link-only for the tests: they get these on their
 # link line but keep their own compile flags (QT_*_LIB defines, include dirs).
 target_link_libraries(msga_test_support PRIVATE

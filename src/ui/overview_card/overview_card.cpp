@@ -16,6 +16,8 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 namespace OverviewCard {
 
 const QFont &nameFont() {
@@ -110,13 +112,12 @@ void styleChannelHeader(QLabel *icon, const QString &iconPath, QPushButton *butt
     const auto &th = Th::c();
     icon->setPixmap(svgPixmap(iconPath, QSize(15, 15), th.text.primary));
     icon->setStyleSheet(QStringLiteral("background: transparent;"));
-    button->setStyleSheet(QString(
-                              "QPushButton { border: none; background: transparent; padding: 0; "
-                              "color: %1; font-size: %2px; font-weight: 700; text-align: left; }"
-                              "QPushButton:hover { text-decoration: underline; }"
-    )
-                              .arg(Th::qss(th.text.primary))
-                              .arg(th.fonts.lg));
+    button->setStyleSheet(
+        u"QPushButton { border: none; background: transparent; padding: 0; "
+        "color: %1; font-size: %2px; font-weight: 700; text-align: left; }"
+        "QPushButton:hover { text-decoration: underline; }"_s.arg(Th::qss(th.text.primary))
+            .arg(th.fonts.lg)
+    );
 }
 
 QString conversationLabel(Session *session, const ConversationId &conv) {
@@ -130,15 +131,12 @@ QString conversationLabel(Session *session, const ConversationId &conv) {
 
 void styleCardBody(QWidget *body) {
     const auto &th = Th::c();
-    body->setStyleSheet(QString(
-                            "QWidget#%1 { background: %2; border: 1px solid %3; "
-                            "border-radius: 8px; }"
-    )
-                            .arg(
-                                body->objectName(),
-                                Th::qss(th.surface.content),
-                                Th::qss(th.message.attachmentBorder)
-                            ));
+    body->setStyleSheet(
+        u"QWidget#%1 { background: %2; border: 1px solid %3; "
+        "border-radius: 8px; }"_s.arg(
+            body->objectName(), Th::qss(th.surface.content), Th::qss(th.message.attachmentBorder)
+        )
+    );
 }
 
 Page buildPage(QWidget *page, const QString &prefix, const QString &title) {
@@ -197,27 +195,24 @@ void stylePage(QWidget *page, const Page &parts) {
     const auto &th = Th::c();
     // The whole page is one grey surface (official-client look): the title sits
     // on the same grey as the card list, separated only by a subtle hairline.
-    page->setStyleSheet(QString("QWidget#%1 { background: %2; }")
-                            .arg(page->objectName(), Th::qss(th.surface.sunken)));
-    parts.headerRow->setStyleSheet(QString(
-                                       "QWidget#%1 { background: %2; "
-                                       "border-bottom: 1px solid %3; }"
-    )
-                                       .arg(
-                                           parts.headerRow->objectName(),
-                                           Th::qss(th.surface.sunken),
-                                           Th::qss(th.divider.subtle)
-                                       ));
-    parts.listHost->setStyleSheet(
-        QString("QWidget#%1 { background: %2; }")
-            .arg(parts.listHost->objectName(), Th::qss(th.surface.sunken))
+    page->setStyleSheet(
+        u"QWidget#%1 { background: %2; }"_s.arg(page->objectName(), Th::qss(th.surface.sunken))
     );
+    parts.headerRow->setStyleSheet(
+        u"QWidget#%1 { background: %2; "
+        "border-bottom: 1px solid %3; }"_s.arg(
+            parts.headerRow->objectName(), Th::qss(th.surface.sunken), Th::qss(th.divider.subtle)
+        )
+    );
+    parts.listHost->setStyleSheet(u"QWidget#%1 { background: %2; }"_s.arg(
+        parts.listHost->objectName(), Th::qss(th.surface.sunken)
+    ));
     parts.titleLabel->setStyleSheet(
-        QString("background: transparent; font-weight: bold; font-size: %1px; color: %2;")
+        u"background: transparent; font-weight: bold; font-size: %1px; color: %2;"_s
             .arg(th.fonts.xxl)
             .arg(Th::qss(th.text.primary))
     );
-    parts.statusLabel->setStyleSheet(QString("background: transparent; color: %1; padding: %2px;")
+    parts.statusLabel->setStyleSheet(u"background: transparent; color: %1; padding: %2px;"_s
                                          .arg(Th::qss(th.text.secondary))
                                          .arg(th.spacing.xxl));
     parts.scroll->setStyleSheet(

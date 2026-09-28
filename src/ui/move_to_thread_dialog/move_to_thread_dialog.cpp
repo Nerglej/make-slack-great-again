@@ -16,6 +16,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 MoveToThreadDialog::MoveToThreadDialog(
     std::vector<ThreadChoice> threads, ImageCache *imgCache, QWidget *parent
 )
@@ -38,7 +40,7 @@ MoveToThreadDialog::MoveToThreadDialog(
 
     _searchEdit = new StyledLineEdit(card());
     _searchEdit->setPlaceholderText(tr("Filter threads…"));
-    _searchEdit->setLeadingIcon(":/ui/search.svg");
+    _searchEdit->setLeadingIcon(u":/ui/search.svg"_s);
     _searchEdit->lineEdit()->installEventFilter(this);
     lay->addWidget(_searchEdit);
 
@@ -169,13 +171,13 @@ void MoveToThreadDialog::applyTheme() {
     AppDialog::applyTheme();
     const auto &th = Th::c();
     if (_note)
-        _note->setStyleSheet(QString("font-size: %1px; color: %2;")
-                                 .arg(th.fonts.caption)
-                                 .arg(Th::qss(th.text.secondary)));
+        _note->setStyleSheet(
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
+        );
     if (_noteBox)
         _noteBox->setStyleSheet(Th::checkBoxQss(th.fonts.md));
     if (_empty)
         _empty->setStyleSheet(
-            QString("font-size: %1px; color: %2;").arg(th.fonts.base).arg(Th::qss(th.text.tertiary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.base).arg(Th::qss(th.text.tertiary))
         );
 }

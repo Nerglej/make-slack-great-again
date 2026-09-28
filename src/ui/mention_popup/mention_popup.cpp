@@ -18,6 +18,8 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 constexpr int kRowH        = 38;
 constexpr int kMaxVisible  = 8;
@@ -278,7 +280,7 @@ MentionPopup::MentionPopup(QWidget *parent) : QFrame(parent) {
     _scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
     _content = new QWidget(_scroll);
-    _content->setStyleSheet("background:transparent;");
+    _content->setStyleSheet(u"background:transparent;"_s);
 
     _vbox = new QVBoxLayout(_content);
     _vbox->setContentsMargins(0, 0, 0, 0);
@@ -298,15 +300,14 @@ MentionPopup::MentionPopup(QWidget *parent) : QFrame(parent) {
 
 void MentionPopup::applyTheme() {
     setStyleSheet(
-        QString(
-            "QFrame#mentionPopup {"
-            "  background:%1;"
-            "  border:1px solid %2;"
-            "  border-radius:6px;"
-            "}"
-            "QScrollArea { background: transparent; border: none; }"
-        )
-            .arg(Th::qss(Th::c().surface.raised), Th::qss(Th::c().divider.strong)) +
+        u"QFrame#mentionPopup {"
+        "  background:%1;"
+        "  border:1px solid %2;"
+        "  border-radius:6px;"
+        "}"
+        "QScrollArea { background: transparent; border: none; }"_s.arg(
+            Th::qss(Th::c().surface.raised), Th::qss(Th::c().divider.strong)
+        ) +
         Th::popupScrollBarQss()
     );
 }
@@ -438,10 +439,10 @@ void MentionPopup::rebuild(const QString &query, bool isDm, bool isThread) {
                 continue;
 
             RowData       d;
-            const QString display = "@" + disp;
+            const QString display = u"@"_s + disp;
             d.name                = display;
             if (!me.isEmpty() && u.id.value == me)
-                d.name += " " + tr("(you)");
+                d.name += u" "_s + tr("(you)");
             // Subtitle: the account/username when it differs from the shown label.
             if (!u.name.isEmpty() && !u.name.contains(disp, Qt::CaseInsensitive) &&
                 u.name.compare(disp, Qt::CaseInsensitive) != 0)
@@ -455,7 +456,7 @@ void MentionPopup::rebuild(const QString &query, bool isDm, bool isThread) {
             if (u.isBot && !u.isActive && !u.dndEnabled)
                 d.presence = Presence::Online;
 
-            addRow(d, display, "<@" + u.id.value + ">");
+            addRow(d, display, u"<@"_s + u.id.value + u">"_s);
             if (++added >= 50)
                 break;
         }

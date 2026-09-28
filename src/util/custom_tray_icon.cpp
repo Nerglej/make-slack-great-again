@@ -12,6 +12,8 @@
 #include <QStandardPaths>
 #include <QSvgRenderer>
 
+using namespace Qt::StringLiterals;
+
 namespace CustomTrayIcon {
 
 namespace {
@@ -177,7 +179,7 @@ bool install(const QImage &src) {
 
 void remove() {
     QFile::remove(path());
-    QSettings("msga", "msga").setValue(QLatin1String(kEnabledKey), false);
+    QSettings(u"msga"_s, u"msga"_s).setValue(QLatin1String(kEnabledKey), false);
     invalidate();
 }
 
@@ -186,21 +188,21 @@ bool hasImage() {
 }
 
 bool enabled() {
-    return QSettings("msga", "msga").value(QLatin1String(kEnabledKey), false).toBool();
+    return QSettings(u"msga"_s, u"msga"_s).value(QLatin1String(kEnabledKey), false).toBool();
 }
 
 void setEnabled(bool on) {
-    QSettings("msga", "msga").setValue(QLatin1String(kEnabledKey), on);
+    QSettings(u"msga"_s, u"msga"_s).setValue(QLatin1String(kEnabledKey), on);
     invalidate();
 }
 
 bool monochrome() {
     // On by default: trays are monochrome, like the built-in icon.
-    return QSettings("msga", "msga").value(QLatin1String(kMonochromeKey), true).toBool();
+    return QSettings(u"msga"_s, u"msga"_s).value(QLatin1String(kMonochromeKey), true).toBool();
 }
 
 void setMonochrome(bool on) {
-    QSettings("msga", "msga").setValue(QLatin1String(kMonochromeKey), on);
+    QSettings(u"msga"_s, u"msga"_s).setValue(QLatin1String(kMonochromeKey), on);
     invalidate();
 }
 

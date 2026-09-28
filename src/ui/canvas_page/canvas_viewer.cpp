@@ -17,6 +17,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 constexpr int kPanelRadius = 8;
 } // namespace
@@ -39,10 +41,10 @@ CanvasViewerOverlay::CanvasViewerOverlay(QWidget *windowParent) : QWidget(window
     bar->setSpacing(sp.xs);
     _heading = new QLabel(tr("Canvas"), _panel);
     bar->addWidget(_heading, 1);
-    _openBtn = new IconButton(":/ui/external-link.svg", 32, 16, _panel);
+    _openBtn = new IconButton(u":/ui/external-link.svg"_s, 32, 16, _panel);
     _openBtn->setCursor(Qt::PointingHandCursor);
     bar->addWidget(_openBtn);
-    _closeBtn = new IconButton(":/ui/x.svg", 32, 16, _panel);
+    _closeBtn = new IconButton(u":/ui/x.svg"_s, 32, 16, _panel);
     _closeBtn->setCursor(Qt::PointingHandCursor);
     bar->addWidget(_closeBtn);
     col->addLayout(bar);
@@ -92,12 +94,10 @@ void CanvasViewerOverlay::dismiss() {
 
 void CanvasViewerOverlay::applyTheme() {
     const auto &th = Th::c();
-    _panel->setStyleSheet(
-        QString("QWidget#canvasViewerPanel { background: %1; border-radius: %2px; }")
-            .arg(Th::qss(th.surface.content))
-            .arg(kPanelRadius)
-    );
-    _heading->setStyleSheet(QString("color: %1; font-size: %2px; font-weight: bold;")
+    _panel->setStyleSheet(u"QWidget#canvasViewerPanel { background: %1; border-radius: %2px; }"_s
+                              .arg(Th::qss(th.surface.content))
+                              .arg(kPanelRadius));
+    _heading->setStyleSheet(u"color: %1; font-size: %2px; font-weight: bold;"_s
                                 .arg(Th::qss(th.text.secondary))
                                 .arg(th.fonts.caption));
 }

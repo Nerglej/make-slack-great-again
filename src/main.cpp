@@ -43,11 +43,13 @@
 #include <QProcess>
 #endif
 
+using namespace Qt::StringLiterals;
+
 #if defined(Q_OS_LINUX)
 static QFont detectSystemFont() {
     // KDE: ~/.config/kdeglobals [Fonts] General=Family,size,...
     {
-        QSettings kde(QDir::homePath() + "/.config/kdeglobals", QSettings::IniFormat);
+        QSettings kde(QDir::homePath() + u"/.config/kdeglobals"_s, QSettings::IniFormat);
         kde.beginGroup("Fonts");
         const QString val = kde.value("General").toString();
         if (!val.isEmpty()) {
@@ -64,12 +66,12 @@ static QFont detectSystemFont() {
     }
     // GNOME/GTK: ~/.config/gtk-{4,3}.0/settings.ini  gtk-font-name=Family Size
     for (const char *dir : {"gtk-4.0", "gtk-3.0"}) {
-        QFile f(QDir::homePath() + "/.config/" + dir + "/settings.ini");
+        QFile f(QDir::homePath() + u"/.config/"_s + dir + "/settings.ini");
         if (!f.open(QIODevice::ReadOnly))
             continue;
         while (!f.atEnd()) {
             const QString line = QString::fromUtf8(f.readLine()).trimmed();
-            if (line.startsWith("gtk-font-name")) {
+            if (line.startsWith(u"gtk-font-name"_s)) {
                 const QString val = line.section('=', 1).trimmed();
                 const int     sp  = val.lastIndexOf(' ');
                 if (sp > 0) {
@@ -86,7 +88,7 @@ static QFont detectSystemFont() {
     // GNOME (dconf): gsettings get org.gnome.desktop.interface font-name → 'Family Size'
     {
         QProcess gs;
-        gs.start("gsettings", {"get", "org.gnome.desktop.interface", "font-name"});
+        gs.start(u"gsettings"_s, {u"get"_s, u"org.gnome.desktop.interface"_s, u"font-name"_s});
         if (gs.waitForFinished(500)) {
             QString val = QString::fromUtf8(gs.readAllStandardOutput()).trimmed();
             val.remove('\'').remove('"');
@@ -193,8 +195,8 @@ int main(int argc, char *argv[]) {
 #endif
 #endif
     QApplication app(argc, argv);
-    app.setApplicationName("MSGA");
-    app.setOrganizationName("msga");
+    app.setApplicationName(u"MSGA"_s);
+    app.setOrganizationName(u"msga"_s);
     // Window icon for every top-level window (taskbar / alt-tab / X11 _NET_WM_ICON).
     // Without this Qt never sends one, so the Windows taskbar showed the stock
     // blank-window icon even though the .exe itself carries our logo (GitHub
@@ -221,7 +223,7 @@ int main(int argc, char *argv[]) {
     // because the migration flag stops us from touching it again.
     // Safe to remove from July 2026 onward (by then ~all installs have migrated).
     {
-        QSettings s("msga", "msga");
+        QSettings s(u"msga"_s, u"msga"_s);
         if (!s.value("notifications/defaultMigrated", false).toBool()) {
             if (s.value("notifications/level", 0).toInt() == 1)
                 s.setValue("notifications/level", 0);
@@ -252,7 +254,7 @@ int main(int argc, char *argv[]) {
     QString urlArg;
     for (int i = 1; i < argc; ++i) {
         const QString arg = QString::fromLocal8Bit(argv[i]);
-        if (arg.startsWith("msga://"))
+        if (arg.startsWith(u"msga://"_s))
             urlArg = arg;
     }
 
@@ -286,7 +288,7 @@ int main(int argc, char *argv[]) {
 
     QTranslator   translator;
     const QString locale = uiLocale.name(); // e.g. "ja_JP"
-    const bool    loaded = translator.load(":/translations/msga_" + locale) ||
+    const bool    loaded = translator.load(u":/translations/msga_"_s + locale) ||
                            translator.load(":/translations/msga_" + locale.section('_', 0, 0));
     if (loaded)
         app.installTranslator(&translator);
@@ -339,8 +341,8 @@ int main(int argc, char *argv[]) {
     // toasts use launch="msga://notif?token=…") opens the conversation; anything
     // else is an OAuth redirect.
     auto       routeUri = [&window](const QUrl &uri) {
-        if (uri.host() == "notif") {
-            const QString token = QUrlQuery(uri).queryItemValue("token", QUrl::FullyDecoded);
+        if (uri.host() == u"notif"_s) {
+            const QString token = QUrlQuery(uri).queryItemValue(u"token"_s, QUrl::FullyDecoded);
             window.handleNotifToken(token);
         } else {
             window.handleOAuthUri(uri);
@@ -364,14 +366,15 @@ int main(int argc, char *argv[]) {
         bool eventFilter(QObject *, QEvent *ev) override {
             if (ev->type() == QEvent::FileOpen) {
                 const QUrl url = static_cast<QFileOpenEvent *>(ev)->url();
-                if (url.scheme() == "msga") {
-                    if (url.host() == "notif")
+                if (url.scheme() == u"msga"_s) {
+                    if (url.host() == u"notif"_s)
                         QMetaObject::invokeMethod(
                             _window,
                             "handleNotifToken",
                             Qt::QueuedConnection,
                             Q_ARG(
-                                QString, QUrlQuery(url).queryItemValue("token", QUrl::FullyDecoded)
+                                QString,
+                                QUrlQuery(url).queryItemValue(u"token"_s, QUrl::FullyDecoded)
                             )
                         );
                     else

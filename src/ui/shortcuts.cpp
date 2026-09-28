@@ -9,6 +9,8 @@
 #include <QWidget>
 #include <QtGlobal>
 
+using namespace Qt::StringLiterals;
+
 namespace Ui {
 namespace {
 
@@ -360,7 +362,9 @@ bool Shortcuts::matches(Shortcut id, const QKeyEvent *e) {
 bool Shortcuts::ctrlEnterSends() {
     if (g_ctrlEnterSends < 0)
         g_ctrlEnterSends =
-            QSettings("msga", "msga").value(Shortcuts::kCtrlEnterSendsKey, false).toBool() ? 1 : 0;
+            QSettings(u"msga"_s, u"msga"_s).value(Shortcuts::kCtrlEnterSendsKey, false).toBool()
+                ? 1
+                : 0;
     return g_ctrlEnterSends == 1;
 }
 

@@ -307,6 +307,19 @@ add_executable(msga MACOSX_BUNDLE WIN32
 
 target_precompile_headers(msga PRIVATE src/pch.h)
 
+# No C++ exceptions in our own code. Nothing in src/ catches one, so any throw
+# (std::bad_alloc, a libstdc++ __throw_* from .value()/.at()) already ends in
+# std::terminate; dropping the unwind landing pads and EH tables leaves that
+# unchanged and saves ~1.2 MB of the static binary (docs/DEPENDENCY_BUILD_AUDIT.md).
+# CXX only: the .mm files compile as OBJCXX and keep the default, so the @try in
+# desktop_notifier_mac.mm stays a real handler. GCC/Clang flag, hence not MSVC
+# (which would need /EHsc removed instead). The tests' copy of the app sources
+# (msga_test_support) reuses this variable; Catch2's own TUs do not.
+if(NOT MSVC)
+    set(MSGA_NO_EXCEPTIONS $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+endif()
+target_compile_options(msga PRIVATE ${MSGA_NO_EXCEPTIONS})
+
 # rcc only compresses a file when that saves at least --threshold percent
 # (default 70). Small SVGs shrink by 40-65%, so the default stored the whole of
 # resources.qrc raw; 5 lets them compress (~15 KB less in the binary). zlib,

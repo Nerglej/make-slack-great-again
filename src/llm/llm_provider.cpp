@@ -10,6 +10,8 @@
 #include <QPointer>
 #include <QUuid>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 // Slow local models: a 512-token summary on a CPU-hosted 7B can take a minute.
@@ -75,55 +77,57 @@ void requestModels(
 
 LlmProviderConfig LlmProviderConfig::anthropicPreset() {
     LlmProviderConfig c;
-    c.id           = "anthropic";
-    c.name         = "Anthropic";
+    c.id           = u"anthropic"_s;
+    c.name         = u"Anthropic"_s;
     c.wire         = LlmWire::Format::AnthropicMessages;
-    c.baseUrl      = "https://api.anthropic.com";
-    c.defaultModel = "claude-opus-5";
-    c.lightModel   = "claude-haiku-4-5";
+    c.baseUrl      = u"https://api.anthropic.com"_s;
+    c.defaultModel = u"claude-opus-5"_s;
+    c.lightModel   = u"claude-haiku-4-5"_s;
     c.isPreset     = true;
-    c.apiKeyUrl    = "https://console.anthropic.com/settings/keys";
-    c.knownModels  = {"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-fable-5-1"};
+    c.apiKeyUrl    = u"https://console.anthropic.com/settings/keys"_s;
+    c.knownModels  = {
+        u"claude-opus-5"_s, u"claude-sonnet-5"_s, u"claude-haiku-4-5"_s, u"claude-fable-5-1"_s
+    };
     // No audio endpoint in the Messages API — transcribe() refuses up front.
     return c;
 }
 
 LlmProviderConfig LlmProviderConfig::openAiPreset() {
     LlmProviderConfig c;
-    c.id                   = "openai";
-    c.name                 = "OpenAI";
+    c.id                   = u"openai"_s;
+    c.name                 = u"OpenAI"_s;
     c.wire                 = LlmWire::Format::OpenAiChat;
-    c.baseUrl              = "https://api.openai.com/v1";
-    c.defaultModel         = "gpt-5.6-terra";
+    c.baseUrl              = u"https://api.openai.com/v1"_s;
+    c.defaultModel         = u"gpt-5.6-terra"_s;
     // GPT-5.6 models default to medium reasoning effort, and
     // max_completion_tokens counts reasoning tokens — a 512-token summary
     // budget would be eaten by thinking. The light tier turns reasoning off.
-    c.lightModel           = "gpt-5.6-luna";
-    c.lightReasoningEffort = "none";
+    c.lightModel           = u"gpt-5.6-luna"_s;
+    c.lightReasoningEffort = u"none"_s;
     c.maxCompletionTokens  = true;
     c.isPreset             = true;
-    c.apiKeyUrl            = "https://platform.openai.com/api-keys";
-    c.knownModels          = {"gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-6-astra"};
+    c.apiKeyUrl            = u"https://platform.openai.com/api-keys"_s;
+    c.knownModels     = {u"gpt-5.6-terra"_s, u"gpt-5.6-sol"_s, u"gpt-5.6-luna"_s, u"gpt-6-astra"_s};
     // OpenAI's recommended file-transcription model (successor of
     // gpt-4o-transcribe; whisper-1 still works for those who override).
-    c.defaultSttModel      = "gpt-transcribe";
+    c.defaultSttModel = u"gpt-transcribe"_s;
     return c;
 }
 
 LlmProviderConfig LlmProviderConfig::newCustom() {
     LlmProviderConfig c;
-    c.id              = "custom-" + QUuid::createUuid().toString(QUuid::Id128).left(8);
+    c.id              = u"custom-"_s + QUuid::createUuid().toString(QUuid::Id128).left(8);
     c.wire            = LlmWire::Format::OpenAiChat;
     // What every self-hosted Whisper front (speaches, LocalAI, LiteLLM) answers
     // to; vLLM wants the served model's own name — hence the override.
-    c.defaultSttModel = "whisper-1";
+    c.defaultSttModel = u"whisper-1"_s;
     return c;
 }
 
 LlmProviderConfig LlmProviderConfig::presetById(const QString &id) {
-    if (id == "anthropic")
+    if (id == u"anthropic"_s)
         return anthropicPreset();
-    if (id == "openai")
+    if (id == u"openai"_s)
         return openAiPreset();
     return {};
 }

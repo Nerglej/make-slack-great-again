@@ -9,6 +9,8 @@
 #include <QSet>
 #include <QStandardPaths>
 
+using namespace Qt::StringLiterals;
+
 namespace slack::session {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,18 +48,18 @@ namespace {
 // first: native, Flatpak, Snap.
 QStringList slackConfigDirs() {
     const QString home = QDir::homePath();
-    const QString xdg  = qEnvironmentVariable("XDG_CONFIG_HOME", home + "/.config");
+    const QString xdg  = qEnvironmentVariable("XDG_CONFIG_HOME", home + u"/.config"_s);
     return {
-        xdg + "/Slack",
-        home + "/.var/app/com.slack.Slack/config/Slack", // Flatpak
-        home + "/snap/slack/current/.config/Slack",      // Snap
+        xdg + u"/Slack"_s,
+        home + u"/.var/app/com.slack.Slack/config/Slack"_s, // Flatpak
+        home + u"/snap/slack/current/.config/Slack"_s,      // Snap
     };
 }
 
 // The cookie DB moved under Network/ in newer Chromium; try both.
 QString findCookieDb(const QString &configDir) {
     for (const QString &rel : {QStringLiteral("Network/Cookies"), QStringLiteral("Cookies")}) {
-        const QString p = configDir + "/" + rel;
+        const QString p = configDir + u"/"_s + rel;
         if (QFileInfo::exists(p))
             return p;
     }
@@ -210,11 +212,11 @@ QString decryptCookie(const QByteArray &enc) {
 QList<TeamSession> discoverWorkspaces(const QString &configDir) {
     QList<TeamSession> teams;
     QSet<QString>      seen;
-    const QDir         db(configDir + "/Local Storage/leveldb");
+    const QDir         db(configDir + u"/Local Storage/leveldb"_s);
     if (!db.exists())
         return teams;
     static const QRegularExpression host(QStringLiteral("([a-z0-9][a-z0-9-]*)\\.slack\\.com"));
-    const auto                      files = db.entryList({"*.ldb", "*.log"}, QDir::Files);
+    const auto                      files = db.entryList({u"*.ldb"_s, u"*.log"_s}, QDir::Files);
     for (const QString &name : files) {
         QFile f(db.filePath(name));
         if (!f.open(QIODevice::ReadOnly))
@@ -224,12 +226,12 @@ QList<TeamSession> discoverWorkspaces(const QString &configDir) {
         while (it.hasNext()) {
             const QString sub = it.next().captured(1);
             // Skip Slack's own infra subdomains; keep real team domains.
-            if (sub == "app" || sub == "edgeapi" || sub == "files" || sub == "api" ||
-                sub == "www" || sub == "a" || sub == "downloads" || seen.contains(sub))
+            if (sub == u"app"_s || sub == u"edgeapi"_s || sub == u"files"_s || sub == u"api"_s ||
+                sub == u"www"_s || sub == u"a"_s || sub == u"downloads"_s || seen.contains(sub))
                 continue;
             seen.insert(sub);
             TeamSession t;
-            t.workspaceUrl = "https://" + sub + ".slack.com";
+            t.workspaceUrl = u"https://"_s + sub + u".slack.com"_s;
             teams.append(t);
         }
     }

@@ -33,6 +33,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 constexpr int kColumnMaxW  = 1040; // editor column width, matches Slack's measure
 constexpr int kSaveDelayMs = 2500; // autosave this long after typing stops
@@ -92,8 +94,8 @@ public:
         //                  to inline images; the trailing segment is a file id we
         //                  resolve through files.info.
         const bool emojiRef = url.scheme() == QLatin1String("emoji");
-        const bool blobRef  = url.scheme().isEmpty() && url.path().contains("collab-slack-blob");
-        const bool httpRef  = url.scheme().startsWith("http");
+        const bool blobRef  = url.scheme().isEmpty() && url.path().contains(u"collab-slack-blob"_s);
+        const bool httpRef  = url.scheme().startsWith(u"http"_s);
         if (!(emojiRef || blobRef || httpRef))
             return QTextBrowser::loadResource(type, url);
 
@@ -172,7 +174,7 @@ public:
             )
         );
         warn->setWordWrap(true);
-        warn->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.secondary)));
+        warn->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.secondary)));
         cl->addWidget(warn);
 
         auto *btnRow = new QHBoxLayout;
@@ -600,7 +602,7 @@ void CanvasPage::showMenu() {
                 Clipboard::setText(_permalink);
         },
         /*destructive=*/false,
-        ":/ui/link.svg"
+        u":/ui/link.svg"_s
     );
     menu->addSeparator();
     menu->addItem(tr("Delete canvas"), [this] { confirmDelete(); }, /*destructive=*/true);
@@ -654,26 +656,23 @@ void CanvasPage::resizeEvent(QResizeEvent *e) {
 void CanvasPage::applyTheme() {
     const auto &th = Th::c();
     Th::setStyleSheetIfChanged(
-        this, QString("QWidget#canvasPage { background: %1; }").arg(Th::qss(th.surface.content))
+        this, u"QWidget#canvasPage { background: %1; }"_s.arg(Th::qss(th.surface.content))
     );
     Th::setStyleSheetIfChanged(
         _title,
-        QString(
-            "QLineEdit#canvasTitle { background: transparent; border: none;"
-            " font-size: 28px; font-weight: bold; color: %1; }"
-        )
-            .arg(Th::qss(th.text.primary))
+        u"QLineEdit#canvasTitle { background: transparent; border: none;"
+        " font-size: 28px; font-weight: bold; color: %1; }"_s.arg(Th::qss(th.text.primary))
     );
     Th::setStyleSheetIfChanged(
         _roNotice,
-        QString("color: %1; font-size: %2px;").arg(Th::qss(th.text.warning)).arg(th.fonts.caption)
+        u"color: %1; font-size: %2px;"_s.arg(Th::qss(th.text.warning)).arg(th.fonts.caption)
     );
     Th::setStyleSheetIfChanged(
         _body,
         QString(
             // (color is the softer document-body tone, not near-black primary)
-            "QTextBrowser { background: transparent; border: none;"
-            " font-size: %1px; color: %2; }"
+            u"QTextBrowser { background: transparent; border: none;"
+            " font-size: %1px; color: %2; }"_s
         )
                 .arg(th.fonts.lg)
                 .arg(Th::qss(th.text.documentBody)) +
@@ -683,25 +682,19 @@ void CanvasPage::applyTheme() {
     // engine ignores font-size on h1..h6 in the default stylesheet), so this
     // sheet only covers links / code / quotes.
     _body->document()->setDefaultStyleSheet(
-        QString(
-            "a { color: %1; text-decoration: none; }"
-            "code, pre { background-color: %2; }"
-            "blockquote { color: %3; }"
+        u"a { color: %1; text-decoration: none; }"
+        "code, pre { background-color: %2; }"
+        "blockquote { color: %3; }"_s.arg(
+            Th::qss(th.accent.def), Th::qss(th.surface.sunken), Th::qss(th.text.secondary)
         )
-            .arg(Th::qss(th.accent.def), Th::qss(th.surface.sunken), Th::qss(th.text.secondary))
     );
     Th::setStyleSheetIfChanged(
         _menuBtn,
-        QString(
-            "QPushButton#canvasMenuBtn { background: %1;"
-            " border: 1px solid %2; border-radius: 8px; }"
-            "QPushButton#canvasMenuBtn:hover { background: %3; }"
+        u"QPushButton#canvasMenuBtn { background: %1;"
+        " border: 1px solid %2; border-radius: 8px; }"
+        "QPushButton#canvasMenuBtn:hover { background: %3; }"_s.arg(
+            Th::qss(th.surface.content), Th::qss(th.divider.strong), Th::qss(th.surface.highlight)
         )
-            .arg(
-                Th::qss(th.surface.content),
-                Th::qss(th.divider.strong),
-                Th::qss(th.surface.highlight)
-            )
     );
-    _menuBtn->setIcon(svgIcon(":/ui/ellipsis-vertical.svg", QSize(17, 17), th.icon.def));
+    _menuBtn->setIcon(svgIcon(u":/ui/ellipsis-vertical.svg"_s, QSize(17, 17), th.icon.def));
 }

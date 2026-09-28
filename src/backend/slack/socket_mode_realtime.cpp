@@ -19,6 +19,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace slack {
 
 SocketModeRealtime::SocketModeRealtime(QString xappToken, QObject *parent)
@@ -109,8 +111,8 @@ void SocketModeRealtime::openAndConnect() {
     _connecting = true;
 
     QNetworkRequest req(_openUrl);
-    req.setRawHeader("Authorization", ("Bearer " + _xappToken).toUtf8());
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setRawHeader("Authorization", (u"Bearer "_s + _xappToken).toUtf8());
+    req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/x-www-form-urlencoded"_s);
     // A hung handshake must not wedge the single-flight guard forever; on
     // timeout `finished` fires with an error and we back off and retry.
     req.setTransferTimeout(15000);
@@ -127,9 +129,9 @@ void SocketModeRealtime::openAndConnect() {
         }
 
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
-        if (!obj.value("ok").toBool()) {
+        if (!obj.value(u"ok"_s).toBool()) {
             qWarning() << "Socket Mode: apps.connections.open error:"
-                       << obj.value("error").toString();
+                       << obj.value(u"error"_s).toString();
             _connecting = false;
             scheduleReconnect();
             return;
@@ -145,7 +147,7 @@ void SocketModeRealtime::openAndConnect() {
         // _connecting stays set until the socket connects (onConnected) or the
         // attempt fails (onDisconnected / errorOccurred), so a stray reconnect
         // trigger in the meantime can't open a second socket.
-        connectWs(QUrl(obj.value("url").toString()));
+        connectWs(QUrl(obj.value(u"url"_s).toString()));
     });
 }
 
@@ -331,7 +333,7 @@ void SocketModeRealtime::sendPresenceSub() {
                 ids.append(id);
             }
     _ws->sendTextMessage(QJsonDocument(
-                             QJsonObject{{"type", "presence_sub"}, {"ids", ids}}
+                             QJsonObject{{u"type"_s, u"presence_sub"_s}, {u"ids"_s, ids}}
     ).toJson(QJsonDocument::Compact));
 }
 
@@ -418,9 +420,9 @@ void SocketModeRealtime::onDisconnected() {
 
 void SocketModeRealtime::onTextMessage(const QString &text) {
     const auto envelope = QJsonDocument::fromJson(text.toUtf8()).object();
-    const auto type     = envelope.value("type").toString();
+    const auto type     = envelope.value(u"type"_s).toString();
 
-    if (type == "hello") {
+    if (type == u"hello"_s) {
         // The hello frame reports num_connections: how many WebSocket connections
         // this app (identified by the xapp token) currently has open across the
         // whole fleet — not just ours. debug_info.host is Slack's edge host, not
@@ -428,8 +430,8 @@ void SocketModeRealtime::onTextMessage(const QString &text) {
         // us one exists. Count the sockets WE hold: onConnected has already
         // promoted this one to _ws (hello arrives after `connected`); a recycle may
         // still hold _pendingWs. Anything beyond ours belongs to another client.
-        const int    numConnections = envelope.value("num_connections").toInt(1);
-        const auto   host = envelope.value("debug_info").toObject().value("host").toString();
+        const int    numConnections = envelope.value(u"num_connections"_s).toInt(1);
+        const auto   host = envelope.value(u"debug_info"_s).toObject().value(u"host"_s).toString();
         const int    ours = (_ws ? 1 : 0) + (_pendingWs ? 1 : 0);
         const qint64 now  = QDateTime::currentMSecsSinceEpoch();
         const bool   recentOverlap =
@@ -458,14 +460,14 @@ void SocketModeRealtime::onTextMessage(const QString &text) {
         return;
     }
 
-    if (type == "disconnect") {
-        const auto reason = envelope.value("reason").toString();
+    if (type == u"disconnect"_s) {
+        const auto reason = envelope.value(u"reason"_s).toString();
         // Slack sends two flavours. "warning" is a heads-up that this socket
         // will be recycled *soon* — Slack expects us to KEEP handling events on
         // it until it actually closes (or a refresh_requested follows), so we
         // must not tear it down here. "refresh_requested" (and "too_many_-
         // websockets" / anything else) is the real signal to reconnect now.
-        if (reason == "warning") {
+        if (reason == u"warning"_s) {
             // Slack will recycle this socket soon but keeps it alive a little
             // longer, expecting us to bring up a replacement now and keep reading
             // this one until the new socket is live — so the handover drops no
@@ -483,7 +485,7 @@ void SocketModeRealtime::onTextMessage(const QString &text) {
         // is full: unambiguous contention (another instance on the shared xapp
         // token). Surface it now; the bare-close counter in onDisconnected covers
         // the case where Slack evicts us with no envelope at all.
-        if (reason == "too_many_connections" || reason == "too_many_websockets")
+        if (reason == u"too_many_connections"_s || reason == u"too_many_websockets"_s)
             maybeNotifyContention();
         // This close is one we asked for — mark it so onDisconnected doesn't count
         // it as an eviction (our close() reports the same code 1000 Slack uses).
@@ -492,12 +494,12 @@ void SocketModeRealtime::onTextMessage(const QString &text) {
         return; // onDisconnected will trigger reconnect
     }
 
-    if (type == "events_api") {
-        const auto envelopeId = envelope.value("envelope_id").toString();
+    if (type == u"events_api"_s) {
+        const auto envelopeId = envelope.value(u"envelope_id"_s).toString();
         ack(envelopeId); // always ack first
 
-        const auto payload = envelope.value("payload").toObject();
-        const auto event   = payload.value("event").toObject();
+        const auto payload = envelope.value(u"payload"_s).toObject();
+        const auto event   = payload.value(u"event"_s).toObject();
 
         // Broadcast to every workspace backend — sinks ignore events for
         // conversations/users they don't know (IDs are globally unique).
@@ -512,7 +514,7 @@ void SocketModeRealtime::onTextMessage(const QString &text) {
 }
 
 void SocketModeRealtime::ack(const QString &envelopeId) {
-    const QJsonObject obj{{"envelope_id", envelopeId}};
+    const QJsonObject obj{{u"envelope_id"_s, envelopeId}};
     _ws->sendTextMessage(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 }
 

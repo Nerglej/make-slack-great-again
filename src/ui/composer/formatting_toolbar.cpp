@@ -12,13 +12,15 @@
 #include <QFrame>
 #include <QEvent>
 
+using namespace Qt::StringLiterals;
+
 static constexpr QSize kToolIconSize{18, 18};
 
 // Tooltip with a natively-rendered key hint ("Bold (⌘B)"). The sequence comes
 // from the central registry (ui/shortcuts.h), so a hint can never advertise a
 // binding the composer no longer implements.
 static QString tip(const QString &label, Ui::Shortcut id) {
-    return label + " (" + Ui::Shortcuts::nativeKeys(id) + ")";
+    return label + u" ("_s + Ui::Shortcuts::nativeKeys(id) + u")"_s;
 }
 
 static QFrame *makeVSep(QWidget *parent) {
@@ -26,9 +28,7 @@ static QFrame *makeVSep(QWidget *parent) {
     sep->setObjectName("composerVSep"); // restyled on theme switch (recolor)
     sep->setFrameShape(QFrame::VLine);
     sep->setFixedSize(1, 16);
-    sep->setStyleSheet(
-        QString("QFrame { color: %1; }").arg(Th::qss(Th::c().composer.toolbarBorder))
-    );
+    sep->setStyleSheet(u"QFrame { color: %1; }"_s.arg(Th::qss(Th::c().composer.toolbarBorder)));
     return sep;
 }
 
@@ -56,19 +56,19 @@ FormattingToolbar::FormattingToolbar(QWidget *parent) : QWidget(parent) {
         return btn;
     };
 
-    auto *boldBtn   = makeBtn(":/ui/bold.svg", tip(tr("Bold"), Ui::Shortcut::Bold));
-    auto *italicBtn = makeBtn(":/ui/italic.svg", tip(tr("Italic"), Ui::Shortcut::Italic));
+    auto *boldBtn   = makeBtn(u":/ui/bold.svg"_s, tip(tr("Bold"), Ui::Shortcut::Bold));
+    auto *italicBtn = makeBtn(u":/ui/italic.svg"_s, tip(tr("Italic"), Ui::Shortcut::Italic));
     auto *underlineBtn =
-        makeBtn(":/ui/underline.svg", tip(tr("Underline"), Ui::Shortcut::Underline));
+        makeBtn(u":/ui/underline.svg"_s, tip(tr("Underline"), Ui::Shortcut::Underline));
     auto *strikeBtn =
-        makeBtn(":/ui/strikethrough.svg", tip(tr("Strikethrough"), Ui::Shortcut::Strikethrough));
-    auto *linkBtn = makeBtn(":/ui/link.svg", tip(tr("Link"), Ui::Shortcut::Link));
+        makeBtn(u":/ui/strikethrough.svg"_s, tip(tr("Strikethrough"), Ui::Shortcut::Strikethrough));
+    auto *linkBtn = makeBtn(u":/ui/link.svg"_s, tip(tr("Link"), Ui::Shortcut::Link));
     auto *olBtn =
-        makeBtn(":/ui/list-ordered.svg", tip(tr("Ordered list"), Ui::Shortcut::OrderedList));
-    auto *ulBtn   = makeBtn(":/ui/list.svg", tip(tr("Bullet list"), Ui::Shortcut::BulletList));
-    auto *bqBtn   = makeBtn(":/ui/quote.svg", tip(tr("Blockquote"), Ui::Shortcut::Quote));
-    auto *codeBtn = makeBtn(":/ui/code.svg", tip(tr("Inline code"), Ui::Shortcut::InlineCode));
-    auto *snipBtn = makeBtn(":/ui/braces.svg", tip(tr("Code block"), Ui::Shortcut::CodeBlock));
+        makeBtn(u":/ui/list-ordered.svg"_s, tip(tr("Ordered list"), Ui::Shortcut::OrderedList));
+    auto *ulBtn   = makeBtn(u":/ui/list.svg"_s, tip(tr("Bullet list"), Ui::Shortcut::BulletList));
+    auto *bqBtn   = makeBtn(u":/ui/quote.svg"_s, tip(tr("Blockquote"), Ui::Shortcut::Quote));
+    auto *codeBtn = makeBtn(u":/ui/code.svg"_s, tip(tr("Inline code"), Ui::Shortcut::InlineCode));
+    auto *snipBtn = makeBtn(u":/ui/braces.svg"_s, tip(tr("Code block"), Ui::Shortcut::CodeBlock));
 
     layout->addWidget(boldBtn);
     layout->addWidget(italicBtn);
@@ -115,24 +115,23 @@ void FormattingToolbar::recolor(const QColor &color) {
 void FormattingToolbar::applyTheme() {
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "QWidget#composerToolbar {"
-            "  background: %1;"
-            "  border-radius: 7px 7px 0 0;"
-            "}"
-            "QWidget#composerToolbar QToolButton {"
-            "  border: none; border-radius: 3px;"
-            "  background: transparent;"
-            "}"
-            "QWidget#composerToolbar QToolButton:hover   { background: %2; }"
-            "QWidget#composerToolbar QToolButton:pressed { background: %2; }"
+        u"QWidget#composerToolbar {"
+        "  background: %1;"
+        "  border-radius: 7px 7px 0 0;"
+        "}"
+        "QWidget#composerToolbar QToolButton {"
+        "  border: none; border-radius: 3px;"
+        "  background: transparent;"
+        "}"
+        "QWidget#composerToolbar QToolButton:hover   { background: %2; }"
+        "QWidget#composerToolbar QToolButton:pressed { background: %2; }"_s.arg(
+            Th::qss(Th::c().composer.toolbarBg), Th::qss(Th::c().surface.highlightStrong)
         )
-            .arg(Th::qss(Th::c().composer.toolbarBg), Th::qss(Th::c().surface.highlightStrong))
     );
     const auto vseps = findChildren<QFrame *>(QStringLiteral("composerVSep"));
     for (auto *sep : vseps)
         Th::setStyleSheetIfChanged(
-            sep, QString("QFrame { color: %1; }").arg(Th::qss(Th::c().composer.toolbarBorder))
+            sep, u"QFrame { color: %1; }"_s.arg(Th::qss(Th::c().composer.toolbarBorder))
         );
 }
 

@@ -21,6 +21,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 constexpr QSize kChipSize{160, 92};
@@ -29,7 +31,7 @@ constexpr int   kChipRadius = 8;
 // The QFrame chip-card stylesheet, shared by the plain-file (#fileChip) and
 // read-only (#fileChipRO) variants — same border + radius, different bg token.
 QString chipFrameQss(const QString &objName, const QColor &bg) {
-    return QString("QFrame#%1 { background: %2; border: 1px solid %3; border-radius: %4px; }")
+    return u"QFrame#%1 { background: %2; border: 1px solid %3; border-radius: %4px; }"_s
         .arg(objName, Th::qss(bg), Th::qss(Th::c().composer.attachmentChipBorder))
         .arg(kChipRadius);
 }
@@ -144,15 +146,15 @@ private:
 
 bool isTextFile(const QString &path) {
     const QMimeType mt = QMimeDatabase().mimeTypeForFile(path);
-    return mt.inherits("text/plain") || mt.name().startsWith("text/");
+    return mt.inherits(u"text/plain"_s) || mt.name().startsWith(u"text/"_s);
 }
 
 QString fmtSize(qint64 b) {
     if (b < 1024)
-        return QString::number(b) + " B";
+        return QString::number(b) + u" B"_s;
     if (b < 1024 * 1024)
-        return QString::number(b / 1024) + " KB";
-    return QString::number(b / (1024 * 1024)) + " MB";
+        return QString::number(b / 1024) + u" KB"_s;
+    return QString::number(b / (1024 * 1024)) + u" MB"_s;
 }
 
 } // namespace
@@ -192,10 +194,10 @@ AttachmentStrip::AttachmentStrip(QWidget *parent) : QWidget(parent) {
 void AttachmentStrip::applyTheme() {
     Th::setStyleSheetIfChanged(
         _scroll,
-        "QScrollArea#fileScrollArea { background: transparent; border: none; }"
-        "QScrollArea#fileScrollArea > QWidget { background: transparent; }"
+        u"QScrollArea#fileScrollArea { background: transparent; border: none; }"
+        "QScrollArea#fileScrollArea > QWidget { background: transparent; }"_s
     );
-    Th::setStyleSheetIfChanged(_strip, "QWidget#fileStrip { background: transparent; }");
+    Th::setStyleSheetIfChanged(_strip, u"QWidget#fileStrip { background: transparent; }"_s);
 }
 
 void AttachmentStrip::rebuild(const QStringList &pending, const std::vector<File> &readOnly) {
@@ -238,12 +240,12 @@ void AttachmentStrip::addPendingChip(const QString &path) {
     } else {
         chip = new QFrame(_strip);
         chip->setObjectName("fileChip");
-        chip->setStyleSheet(chipFrameQss("fileChip", Th::c().composer.attachmentChipBg));
+        chip->setStyleSheet(chipFrameQss(u"fileChip"_s, Th::c().composer.attachmentChipBg));
     }
     chip->setFixedSize(kChipSize);
 
     addOverlayLabels(
-        chip, name.length() > 18 ? name.left(15) + "…" + fi.suffix() : name, fmtSize(size)
+        chip, name.length() > 18 ? name.left(15) + u"…"_s + fi.suffix() : name, fmtSize(size)
     );
     addRemoveButton(chip, path, isImage);
 
@@ -259,20 +261,17 @@ void AttachmentStrip::addOverlayLabels(QFrame *chip, const QString &name, const 
     chipLayout->setSpacing(sp.xs);
 
     const auto plate = [](int fontPx) {
-        return QString(
-                   "font-size:%2px; color:%1; background:%3; border:none;"
-                   " border-radius:4px; padding:1px 4px;"
-        )
-            .arg(
-                Th::qss(Th::c().composer.attachmentOverlayText),
-                QString::number(fontPx),
-                Th::qss(Th::c().composer.attachmentOverlayBg)
-            );
+        return u"font-size:%2px; color:%1; background:%3; border:none;"
+               " border-radius:4px; padding:1px 4px;"_s.arg(
+                   Th::qss(Th::c().composer.attachmentOverlayText),
+                   QString::number(fontPx),
+                   Th::qss(Th::c().composer.attachmentOverlayBg)
+               );
     };
 
     auto *nameLabel = new QLabel(name, chip);
     nameLabel->setWordWrap(false);
-    nameLabel->setStyleSheet(plate(Th::c().fonts.sm) + "font-weight:600;");
+    nameLabel->setStyleSheet(plate(Th::c().fonts.sm) + u"font-weight:600;"_s);
 
     auto *subLabel = new QLabel(sub, chip);
     subLabel->setStyleSheet(plate(Th::c().fonts.xs));
@@ -287,7 +286,7 @@ void AttachmentStrip::addRemoveButton(QFrame *chip, const QString &path, bool on
     removeBtn->setFixedSize(16, 16);
     removeBtn->setIconSize(QSize(10, 10));
     removeBtn->setIcon(svgIcon(
-        ":/ui/x.svg",
+        u":/ui/x.svg"_s,
         QSize(10, 10),
         onImage ? Th::c().composer.attachmentOverlayText : Th::c().icon.def
     ));
@@ -296,17 +295,16 @@ void AttachmentStrip::addRemoveButton(QFrame *chip, const QString &path, bool on
     removeBtn->setAttribute(Qt::WA_Hover);
     removeBtn->installEventFilter(this);
     _tooltipBtns[removeBtn] = tr("Remove attachment");
-    removeBtn->setStyleSheet(QString(
-                                 "QToolButton { border:none; border-radius:8px; background:%1; }"
-                                 "QToolButton:hover { background:%2; }"
-    )
-                                 .arg(
-                                     Th::qss(
-                                         onImage ? Th::c().composer.attachmentOverlayBg
-                                                 : Th::c().composer.attachmentChipBorder
-                                     ),
-                                     Th::qss(Th::c().icon.dim)
-                                 ));
+    removeBtn->setStyleSheet(
+        u"QToolButton { border:none; border-radius:8px; background:%1; }"
+        "QToolButton:hover { background:%2; }"_s.arg(
+            Th::qss(
+                onImage ? Th::c().composer.attachmentOverlayBg
+                        : Th::c().composer.attachmentChipBorder
+            ),
+            Th::qss(Th::c().icon.dim)
+        )
+    );
     removeBtn->move(chip->width() - 20, 4);
     removeBtn->raise();
     connect(removeBtn, &QToolButton::clicked, this, [this, path] { emit removeRequested(path); });
@@ -327,12 +325,12 @@ void AttachmentStrip::addReadOnlyChip(const File &file) {
     auto *chip = new QFrame(_strip);
     chip->setObjectName("fileChipRO");
     chip->setFixedSize(kChipSize);
-    chip->setStyleSheet(chipFrameQss("fileChipRO", Th::c().surface.highlight));
+    chip->setStyleSheet(chipFrameQss(u"fileChipRO"_s, Th::c().surface.highlight));
 
     const QString name = file.name;
     addOverlayLabels(
         chip,
-        name.length() > 18 ? name.left(15) + "…" + QFileInfo(name).suffix() : name,
+        name.length() > 18 ? name.left(15) + u"…"_s + QFileInfo(name).suffix() : name,
         file.prettyType.isEmpty() ? file.mimeType : file.prettyType
     );
 

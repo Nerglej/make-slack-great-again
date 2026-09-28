@@ -10,6 +10,8 @@
 #include <QPainter>
 #include <QStyleOption>
 
+using namespace Qt::StringLiterals;
+
 UpdateBar::UpdateBar(QWidget *parent) : QWidget(parent) {
     setObjectName("updateBar");
     setFixedHeight(32);
@@ -46,13 +48,11 @@ void UpdateBar::applyTheme() {
     // The Restart button is a StyledButton (Danger / XSmall) — it themes itself.
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "QWidget#updateBar {"
-            "  background: %1;"
-            "  border-bottom: 1px solid %2;"
-            "}"
-            "QLabel { background: transparent; color: %3; font-size: %4px; font-weight: 600; }"
-        )
+        u"QWidget#updateBar {"
+        "  background: %1;"
+        "  border-bottom: 1px solid %2;"
+        "}"
+        "QLabel { background: transparent; color: %3; font-size: %4px; font-weight: 600; }"_s
             .arg(
                 Th::qss(th.updateBanner.bg),
                 Th::qss(th.updateBanner.border),

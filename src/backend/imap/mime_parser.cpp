@@ -5,6 +5,8 @@
 #include <QRegularExpression>
 #include <QStringDecoder>
 
+using namespace Qt::StringLiterals;
+
 namespace imap {
 
 namespace {
@@ -109,8 +111,8 @@ StructuredValue parseStructured(const QString &value) {
 // ── A recursively-parsed MIME entity ─────────────────────────────────────────
 struct Part {
     QMap<QString, QString> headers;
-    QString                type    = "text"; // RFC 2045 default
-    QString                subtype = "plain";
+    QString                type    = u"text"_s; // RFC 2045 default
+    QString                subtype = u"plain"_s;
     QMap<QString, QString> ctParams;
     QString                cte;         // content-transfer-encoding (lowercased)
     QString                disposition; // "inline" / "attachment"
@@ -122,9 +124,9 @@ struct Part {
 };
 
 QByteArray decodeBody(const Part &p) {
-    if (p.cte == "base64")
+    if (p.cte == u"base64"_s)
         return Mime::decodeBase64(p.body);
-    if (p.cte == "quoted-printable")
+    if (p.cte == u"quoted-printable"_s)
         return Mime::decodeQuotedPrintable(p.body);
     return p.body; // 7bit / 8bit / binary / none
 }
@@ -167,8 +169,8 @@ Part parsePart(const QByteArray &raw) {
     p.headers        = parseHeaders(hdr);
     p.body           = body;
 
-    if (p.headers.contains("content-type")) {
-        const StructuredValue ct = parseStructured(p.headers.value("content-type"));
+    if (p.headers.contains(u"content-type"_s)) {
+        const StructuredValue ct = parseStructured(p.headers.value(u"content-type"_s));
         const int             sl = ct.main.indexOf('/');
         if (sl > 0) {
             p.type    = ct.main.left(sl);
@@ -178,17 +180,17 @@ Part parsePart(const QByteArray &raw) {
         }
         p.ctParams = ct.params;
     }
-    p.cte = p.headers.value("content-transfer-encoding").toLower().trimmed();
-    if (p.headers.contains("content-disposition")) {
-        const StructuredValue cd = parseStructured(p.headers.value("content-disposition"));
+    p.cte = p.headers.value(u"content-transfer-encoding"_s).toLower().trimmed();
+    if (p.headers.contains(u"content-disposition"_s)) {
+        const StructuredValue cd = parseStructured(p.headers.value(u"content-disposition"_s));
         p.disposition            = cd.main;
-        p.dispFilename           = cd.params.value("filename");
+        p.dispFilename           = cd.params.value(u"filename"_s);
     }
-    p.contentId = Mime::stripAngles(p.headers.value("content-id"));
+    p.contentId = Mime::stripAngles(p.headers.value(u"content-id"_s));
 
-    if (p.type == "multipart" && p.ctParams.contains("boundary")) {
+    if (p.type == u"multipart"_s && p.ctParams.contains(u"boundary"_s)) {
         p.isMultipart             = true;
-        const QByteArray boundary = p.ctParams.value("boundary").toUtf8();
+        const QByteArray boundary = p.ctParams.value(u"boundary"_s).toUtf8();
         for (const QByteArray &child : splitMultipart(p.body, boundary))
             p.children.append(parsePart(child));
         p.body.clear(); // children own the content
@@ -204,13 +206,13 @@ void collect(const Part &p, ParsedMessage &msg) {
         return;
     }
     const bool isAttachment =
-        p.disposition == "attachment" || (!p.dispFilename.isEmpty() && p.type != "text") ||
-        (p.ctParams.contains("name") && p.type != "text" && p.disposition != "inline");
+        p.disposition == u"attachment"_s || (!p.dispFilename.isEmpty() && p.type != u"text"_s) ||
+        (p.ctParams.contains(u"name"_s) && p.type != u"text"_s && p.disposition != u"inline"_s);
 
-    if (p.type == "text" && !isAttachment) {
-        const QString charset = p.ctParams.value("charset", "utf-8");
+    if (p.type == u"text"_s && !isAttachment) {
+        const QString charset = p.ctParams.value(u"charset"_s, u"utf-8"_s);
         const QString text    = Mime::decodeText(decodeBody(p), charset);
-        if (p.subtype == "html") {
+        if (p.subtype == u"html"_s) {
             if (msg.textHtml.isEmpty())
                 msg.textHtml = text;
         } else { // plain (or any other text/*)
@@ -225,13 +227,14 @@ void collect(const Part &p, ParsedMessage &msg) {
     // The filename param (Content-Disposition filename= / Content-Type name=) is
     // frequently RFC 2047 encoded-word for non-ASCII names, just like the subject
     // and address display-names — decode it so we show "Protokoll_…" not "=?utf-8?B?…?=".
-    const QString  rawName = !p.dispFilename.isEmpty() ? p.dispFilename : p.ctParams.value("name");
-    a.filename             = Mime::decodeEncodedWords(rawName.toLatin1());
-    a.mimeType             = p.type + "/" + p.subtype;
-    a.contentId            = p.contentId;
-    a.isInline             = p.disposition == "inline" || !p.contentId.isEmpty();
-    a.content              = decodeBody(p);
-    a.size                 = a.content.size();
+    const QString  rawName =
+        !p.dispFilename.isEmpty() ? p.dispFilename : p.ctParams.value(u"name"_s);
+    a.filename  = Mime::decodeEncodedWords(rawName.toLatin1());
+    a.mimeType  = p.type + u"/"_s + p.subtype;
+    a.contentId = p.contentId;
+    a.isInline  = p.disposition == u"inline"_s || !p.contentId.isEmpty();
+    a.content   = decodeBody(p);
+    a.size      = a.content.size();
     msg.attachments.append(a);
 }
 
@@ -304,7 +307,7 @@ QString Mime::decodeEncodedWords(const QByteArray &headerValue) {
     int           i           = 0;
     bool          prevWasWord = false;
     while (i < in.size()) {
-        const int start = in.indexOf("=?", i);
+        const int start = in.indexOf(u"=?"_s, i);
         if (start < 0) {
             out += in.mid(i);
             break;
@@ -318,7 +321,7 @@ QString Mime::decodeEncodedWords(const QByteArray &headerValue) {
         // Parse =?charset?enc?text?=
         const int q1  = in.indexOf('?', start + 2);
         const int q2  = (q1 >= 0) ? in.indexOf('?', q1 + 1) : -1;
-        const int end = (q2 >= 0) ? in.indexOf("?=", q2 + 1) : -1;
+        const int end = (q2 >= 0) ? in.indexOf(u"?="_s, q2 + 1) : -1;
         if (q1 < 0 || q2 < 0 || end < 0) {
             out += in.mid(start, 2); // not a valid word; emit "=?" literally
             i           = start + 2;
@@ -329,9 +332,9 @@ QString Mime::decodeEncodedWords(const QByteArray &headerValue) {
         const QString    enc     = in.mid(q1 + 1, q2 - (q1 + 1)).toUpper();
         const QByteArray text    = in.mid(q2 + 1, end - (q2 + 1)).toLatin1();
         QByteArray       raw;
-        if (enc == "B") {
+        if (enc == u"B"_s) {
             raw = decodeBase64(text);
-        } else if (enc == "Q") {
+        } else if (enc == u"Q"_s) {
             // RFC 2047 Q: like QP but '_' is a space.
             QByteArray t = text;
             t.replace('_', ' ');
@@ -417,17 +420,17 @@ ParsedMessage Mime::parse(const QByteArray &rawMessage) {
     ParsedMessage msg;
     const Part    root = parsePart(rawMessage);
 
-    msg.messageId = stripAngles(root.headers.value("message-id"));
-    msg.inReplyTo = stripAngles(root.headers.value("in-reply-to"));
-    msg.subject   = decodeEncodedWords(root.headers.value("subject").toLatin1());
-    msg.from      = parseAddressList(root.headers.value("from"));
-    msg.to        = parseAddressList(root.headers.value("to"));
-    msg.cc        = parseAddressList(root.headers.value("cc"));
-    msg.replyTo   = parseAddressList(root.headers.value("reply-to"));
+    msg.messageId = stripAngles(root.headers.value(u"message-id"_s));
+    msg.inReplyTo = stripAngles(root.headers.value(u"in-reply-to"_s));
+    msg.subject   = decodeEncodedWords(root.headers.value(u"subject"_s).toLatin1());
+    msg.from      = parseAddressList(root.headers.value(u"from"_s));
+    msg.to        = parseAddressList(root.headers.value(u"to"_s));
+    msg.cc        = parseAddressList(root.headers.value(u"cc"_s));
+    msg.replyTo   = parseAddressList(root.headers.value(u"reply-to"_s));
 
     // References: whitespace-separated <id> tokens.
-    const QString refs = root.headers.value("references");
-    for (const QString &tok : refs.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts)) {
+    const QString refs = root.headers.value(u"references"_s);
+    for (const QString &tok : refs.split(QRegularExpression(u"\\s+"_s), Qt::SkipEmptyParts)) {
         const QString id = stripAngles(tok);
         if (!id.isEmpty())
             msg.references.append(id);
@@ -435,16 +438,16 @@ ParsedMessage Mime::parse(const QByteArray &rawMessage) {
 
     // List-Id: "Friendly Name <list.id.example.com>" → keep the bracketed token,
     // else the whole trimmed value.
-    if (root.headers.contains("list-id")) {
+    if (root.headers.contains(u"list-id"_s)) {
         // "Friendly Name <list.id.example.com>" → the bracketed token; else the
         // whole trimmed value (some lists omit the description).
-        const QString li = root.headers.value("list-id");
+        const QString li = root.headers.value(u"list-id"_s);
         const int     lt = li.indexOf('<');
         const int     gt = li.indexOf('>', lt + 1);
         msg.listId = (lt >= 0 && gt > lt) ? li.mid(lt + 1, gt - lt - 1).trimmed() : li.trimmed();
     }
 
-    msg.date = QDateTime::fromString(root.headers.value("date"), Qt::RFC2822Date);
+    msg.date = QDateTime::fromString(root.headers.value(u"date"_s), Qt::RFC2822Date);
 
     collect(root, msg);
     return msg;

@@ -11,9 +11,11 @@
 #include <QUrl>
 #include <QDebug>
 
+using namespace Qt::StringLiterals;
+
 namespace teams {
 
-const QString GraphClient::kBaseUrl = "https://graph.microsoft.com/v1.0/";
+const QString GraphClient::kBaseUrl = u"https://graph.microsoft.com/v1.0/"_s;
 
 GraphClient::GraphClient(QObject *parent) : net::HttpQueue(parent) {
     setBaseUrl(kBaseUrl);
@@ -37,8 +39,8 @@ void GraphClient::patchJson(
     const QString &path, const QJsonObject &body, OnSuccess onSuccess, OnError onError
 ) {
     QNetworkRequest req(QUrl(kBaseUrl + path));
-    req.setRawHeader("Authorization", ("Bearer " + token()).toUtf8());
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    req.setRawHeader("Authorization", (u"Bearer "_s + token()).toUtf8());
+    req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
     req.setAttribute(
         QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy
     );
@@ -57,7 +59,7 @@ void GraphClient::patchJson(
         const auto obj = QJsonDocument::fromJson(data).object();
         if (obj.contains(QStringLiteral("error"))) {
             if (onError)
-                onError(obj.value(QStringLiteral("error")).toObject().value("code").toString());
+                onError(obj.value(QStringLiteral("error")).toObject().value(u"code"_s).toString());
             return;
         }
         if (onSuccess)
@@ -73,7 +75,7 @@ void GraphClient::putBinary(
     OnError           onError
 ) {
     QNetworkRequest req(QUrl(kBaseUrl + path));
-    req.setRawHeader("Authorization", ("Bearer " + token()).toUtf8());
+    req.setRawHeader("Authorization", (u"Bearer "_s + token()).toUtf8());
     req.setHeader(QNetworkRequest::ContentTypeHeader, contentType);
     req.setAttribute(
         QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy
@@ -91,7 +93,7 @@ void GraphClient::putBinary(
         const auto obj = QJsonDocument::fromJson(data).object();
         if (obj.contains(QStringLiteral("error"))) {
             if (onError)
-                onError(obj.value(QStringLiteral("error")).toObject().value("code").toString());
+                onError(obj.value(QStringLiteral("error")).toObject().value(u"code"_s).toString());
             return;
         }
         if (onSuccess)
@@ -129,10 +131,10 @@ void GraphClient::paginate(
             p,
             q,
             [ctx](QJsonObject resp) {
-                const auto arr = resp.value("value").toArray();
+                const auto arr = resp.value(u"value"_s).toArray();
                 if (!arr.isEmpty())
                     ctx->onPage(arr);
-                const auto next = resp.value("@odata.nextLink").toString();
+                const auto next = resp.value(u"@odata.nextLink"_s).toString();
                 if (next.startsWith(kBaseUrl)) {
                     // nextLink is an absolute URL; split into path + query
                     // relative to the base so execute()'s baseUrl+path holds.

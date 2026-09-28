@@ -15,6 +15,8 @@
 #include <QUrl>
 #include <QUrlQuery>
 
+using namespace Qt::StringLiterals;
+
 namespace net {
 
 static constexpr char kSecretKey[] = "gif/giphy/apiKey";
@@ -85,7 +87,7 @@ QString GifSearch::requestUrl(const QString &query, int limit, const QString &ke
     if (!s_demoBase.isEmpty())
         base = s_demoBase;
 #endif
-    QUrl      url(base + (trending ? "trending" : "search"));
+    QUrl      url(base + (trending ? u"trending"_s : u"search"_s));
     QUrlQuery q;
     q.addQueryItem(QStringLiteral("api_key"), key);
     if (!trending)

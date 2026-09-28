@@ -24,6 +24,8 @@
 #include <QPainter>
 #include <QEasingCurve>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 
 // Takes Message::date (epoch micros) — the dedicated time field, not the id.
@@ -75,7 +77,7 @@ SearchWidget::SearchWidget(QWidget *parent) : QWidget(parent) {
 
     _searchIconLabel = new QLabel(_header);
     _searchIconLabel->setFixedSize(20, 20);
-    _searchIconLabel->setPixmap(svgPixmap(":/ui/search.svg", QSize(16, 16), Th::c().icon.def));
+    _searchIconLabel->setPixmap(svgPixmap(u":/ui/search.svg"_s, QSize(16, 16), Th::c().icon.def));
     _searchIconLabel->setAlignment(Qt::AlignCenter);
     _searchIconLabel->setAttribute(Qt::WA_Hover);
     _searchIconLabel->installEventFilter(this);
@@ -95,7 +97,7 @@ SearchWidget::SearchWidget(QWidget *parent) : QWidget(parent) {
     _closeBtn->setFlat(true);
     _closeBtn->setCursor(Qt::PointingHandCursor);
     _closeBtn->setIconSize(QSize(14, 14));
-    _closeBtn->setIcon(svgIcon(":/ui/x.svg", QSize(14, 14), Th::c().icon.def));
+    _closeBtn->setIcon(svgIcon(u":/ui/x.svg"_s, QSize(14, 14), Th::c().icon.def));
     _closeBtn->installEventFilter(this);
     connect(_closeBtn, &QPushButton::clicked, this, &SearchWidget::closeRequested);
     hRow->addWidget(_closeBtn);
@@ -436,7 +438,7 @@ QString SearchWidget::resolvePreview(const TextWithEntities &t) const {
             uid.value = e.data;
             if (const auto *user = _session->findUser(uid)) {
                 const QString name = user->displayName.isEmpty() ? user->name : user->displayName;
-                result += "@" + name;
+                result += u"@"_s + name;
             } else {
                 // Keep the parser's baked label if it's a real name (<@W|Name>);
                 // only a bare "@U…/@W…" is a raw id worth resolving away.
@@ -445,7 +447,7 @@ QString SearchWidget::resolvePreview(const TextWithEntities &t) const {
                 if (bareId.startsWith('@'))
                     bareId.remove(0, 1);
                 result += _session->isUnresolvedUserId(bareId)
-                              ? ("@" + _session->userDisplayName(uid))
+                              ? (u"@"_s + _session->userDisplayName(uid))
                               : baked;
             }
         } else {
@@ -485,7 +487,7 @@ void SearchWidget::populateResults(const std::vector<SearchResult> &results) {
                 if (const auto *conv = _session->findConversation(r.conv))
                     isDm = (conv->kind == ConvKind::Im || conv->kind == ConvKind::Mpim);
             }
-            convLabel = isDm ? name : "#" + name;
+            convLabel = isDm ? name : u"#"_s + name;
         }
 
         const QString tsLabel = formatTs(r.msg.date);
@@ -493,7 +495,7 @@ void SearchWidget::populateResults(const std::vector<SearchResult> &results) {
 
         auto *item = new QListWidgetItem(_resultList);
         item->setData(Qt::UserRole, i);
-        item->setText(convLabel + "  " + tsLabel + "\n" + preview);
+        item->setText(convLabel + u"  "_s + tsLabel + u"\n"_s + preview);
         item->setToolTip(r.msg.text.text);
     }
 }
@@ -505,58 +507,48 @@ void SearchWidget::applyTheme() {
 
     Th::setStyleSheetIfChanged(
         _header,
-        QString(
-            "QWidget#searchHeader {"
-            "  background: %1;"
-            "  border-bottom: 1px solid %2;"
-            "}"
-        )
-            .arg(Th::qss(th.surface.raised), Th::qss(th.divider.def))
+        u"QWidget#searchHeader {"
+        "  background: %1;"
+        "  border-bottom: 1px solid %2;"
+        "}"_s.arg(Th::qss(th.surface.raised), Th::qss(th.divider.def))
     );
     // Borderless Spotlight field: the header frame + the separate leading search
     // icon (with its own hover tooltip) are the chrome — see .rules (UI § search).
     Th::setStyleSheetIfChanged(
         _queryEdit,
-        QString(
-            "QLineEdit { border: none; background: transparent; padding: 4px 0; "
-            "font-size: %1px; color: %2; }"
-        )
-            .arg(th.fonts.base)
+        u"QLineEdit { border: none; background: transparent; padding: 4px 0; "
+        "font-size: %1px; color: %2; }"_s.arg(th.fonts.base)
             .arg(Th::qss(th.text.primary))
     );
     Th::setStyleSheetIfChanged(
-        _closeBtn, "QPushButton#searchCloseBtn { border: none; background: transparent; }"
+        _closeBtn, u"QPushButton#searchCloseBtn { border: none; background: transparent; }"_s
     );
-    _searchIconLabel->setPixmap(svgPixmap(":/ui/search.svg", QSize(16, 16), th.icon.def));
+    _searchIconLabel->setPixmap(svgPixmap(u":/ui/search.svg"_s, QSize(16, 16), th.icon.def));
 
     Th::setStyleSheetIfChanged(
         _resultList,
-        QString(
-            "QListWidget#searchResultList {"
-            "  border: none;"
-            "  background: %1;"
-            "  outline: 0;"
-            "}"
-            "QListWidget#searchResultList::item {"
-            "  padding: 8px 12px;"
-            "  border-bottom: 1px solid %2;"
-            "  color: %5;"
-            "}"
-            "QListWidget#searchResultList::item:hover {"
-            "  background: %3;"
-            "}"
-            "QListWidget#searchResultList::item:selected {"
-            "  background: %4;"
-            "  color: %5;"
-            "}"
-        )
-                .arg(
-                    Th::qss(th.surface.raised),          // %1 list bg
-                    Th::qss(th.divider.subtle),          // %2 item separator
-                    Th::qss(th.surface.highlight),       // %3 hover
-                    Th::qss(th.surface.highlightStrong), // %4 keyboard-selected (no accent blue)
-                    Th::qss(th.text.primary)             // %5 item text
-                ) +
-            Th::scrollBarQss() // fold the old drifted 6px/r3 bar to the standard 8px/r4
+        u"QListWidget#searchResultList {"
+        "  border: none;"
+        "  background: %1;"
+        "  outline: 0;"
+        "}"
+        "QListWidget#searchResultList::item {"
+        "  padding: 8px 12px;"
+        "  border-bottom: 1px solid %2;"
+        "  color: %5;"
+        "}"
+        "QListWidget#searchResultList::item:hover {"
+        "  background: %3;"
+        "}"
+        "QListWidget#searchResultList::item:selected {"
+        "  background: %4;"
+        "  color: %5;"
+        "}"_s.arg(
+            Th::qss(th.surface.raised),          // %1 list bg
+            Th::qss(th.divider.subtle),          // %2 item separator
+            Th::qss(th.surface.highlight),       // %3 hover
+            Th::qss(th.surface.highlightStrong), // %4 keyboard-selected (no accent blue)
+            Th::qss(th.text.primary)             // %5 item text
+        ) + Th::scrollBarQss() // fold the old drifted 6px/r3 bar to the standard 8px/r4
     );
 }

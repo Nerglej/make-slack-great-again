@@ -2,6 +2,8 @@
 // Copyright (C) 2026  Vladimir Osipov
 #include "backend/imap/imap_mappers.h"
 
+using namespace Qt::StringLiterals;
+
 namespace imap {
 
 namespace {
@@ -150,15 +152,15 @@ QDateTime parseMessageDate(const QByteArray &raw) {
         return dt;
     // Map an obsolete alphabetic zone in the last token to a numeric offset.
     static const QHash<QString, QString> zones = {
-        {"UT", "+0000"},
-        {"GMT", "+0000"},
-        {"UTC", "+0000"},
-        {"Z", "+0000"},
-        {"EST", "-0500"},
-        {"EDT", "-0400"},
-        {"CST", "-0600"},
-        {"CDT", "-0500"},
-        {"MST", "-0700"},
+        {u"UT"_s, u"+0000"_s},
+        {u"GMT"_s, u"+0000"_s},
+        {u"UTC"_s, u"+0000"_s},
+        {u"Z"_s, u"+0000"_s},
+        {u"EST"_s, u"-0500"_s},
+        {u"EDT"_s, u"-0400"_s},
+        {u"CST"_s, u"-0600"_s},
+        {u"CDT"_s, u"-0500"_s},
+        {u"MST"_s, "-0700"},
         {"MDT", "-0600"},
         {"PST", "-0800"},
         {"PDT", "-0700"},

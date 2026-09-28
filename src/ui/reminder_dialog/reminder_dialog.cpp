@@ -12,6 +12,8 @@
 #include <QTimeEdit>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 ReminderDialog::ReminderDialog(QWidget *parent) : AppDialog(tr("Reminder"), parent) {
     auto       *cl = contentLayout();
     const auto &sp = Th::c().spacing;
@@ -59,21 +61,18 @@ qint64 ReminderDialog::dueAt() const {
 
 void ReminderDialog::applyTheme() {
     AppDialog::applyTheme();
-    const QString labelQss =
-        QString("color: %1; font-weight: 600;").arg(Th::qss(Th::c().text.secondary));
+    const QString labelQss = u"color: %1; font-weight: 600;"_s.arg(Th::qss(Th::c().text.secondary));
     _whenLabel->setStyleSheet(labelQss);
     _timeLabel->setStyleSheet(labelQss);
     // QDateEdit/QTimeEdit are QAbstractSpinBoxes the app palette doesn't reach —
     // same hand styling as the composer's SchedulePopup.
-    const QString editQss = QString(
-                                "QDateEdit, QTimeEdit {"
-                                "  border: 1px solid %1; border-radius: 4px;"
-                                "  padding: 4px 8px; font-size: %4px; color: %2; background: %3;"
-                                "}"
-                                "QDateEdit:focus, QTimeEdit:focus { border-color: %5; }"
-                                "QDateEdit::up-button, QDateEdit::down-button,"
-                                "QTimeEdit::up-button, QTimeEdit::down-button { width: 14px; }"
-    )
+    const QString editQss = u"QDateEdit, QTimeEdit {"
+                            "  border: 1px solid %1; border-radius: 4px;"
+                            "  padding: 4px 8px; font-size: %4px; color: %2; background: %3;"
+                            "}"
+                            "QDateEdit:focus, QTimeEdit:focus { border-color: %5; }"
+                            "QDateEdit::up-button, QDateEdit::down-button,"
+                            "QTimeEdit::up-button, QTimeEdit::down-button { width: 14px; }"_s
                                 .arg(Th::qss(Th::c().divider.strong))
                                 .arg(Th::qss(Th::c().text.primary))
                                 .arg(Th::qss(Th::c().surface.raised))

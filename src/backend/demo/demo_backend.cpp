@@ -14,6 +14,8 @@
 #include <QUrl>
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace demo {
 
 namespace {
@@ -496,7 +498,7 @@ void DemoBackend::appendMessage(const ConversationId &conv, Message msg) {
 
 std::vector<Attachment> DemoBackend::unfurlsFor(const QString &rawText) const {
     std::vector<Attachment>         out;
-    static const QRegularExpression urlRe(R"(https?://[^\s<>|]+)");
+    static const QRegularExpression urlRe(uR"(https?://[^\s<>|]+)"_s);
     auto                            it = urlRe.globalMatch(rawText);
     while (it.hasNext()) {
         const QString url   = it.next().captured(0);
@@ -514,8 +516,8 @@ std::vector<Attachment> DemoBackend::unfurlsFor(const QString &rawText) const {
         const QString base = servicesBaseUrl();
         if (!base.isEmpty() && url.startsWith(base + QLatin1String("/gif/"))) {
             const QString file = QUrl(url).fileName();
-            const QSize   sz   = QImageReader(QDir(_fx.dir).filePath("assets/gifs/" + file)).size();
-            Attachment    a;
+            const QSize sz = QImageReader(QDir(_fx.dir).filePath(u"assets/gifs/"_s + file)).size();
+            Attachment  a;
             a.imageUrl      = url;
             a.imageWidth    = sz.width();
             a.imageHeight   = sz.height();

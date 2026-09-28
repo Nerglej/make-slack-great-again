@@ -742,7 +742,7 @@ private:
         return (!_showLinkPreviews && (att.isLinkPreview || att.isMsgUnfurl) &&
                 !MsgRender::isMediaAttachment(att)) ||
                (!_dismissedAttachments.isEmpty() &&
-                _dismissedAttachments.contains(msg.ts + "/" + QString::number(ai)));
+                _dismissedAttachments.contains(msg.ts + QStringLiteral("/") + QString::number(ai)));
     }
     bool hasVisibleAttachments(const Message &msg) const;
     // Whether the × on a preview removes it server-side, for everyone (an own

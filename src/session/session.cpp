@@ -19,6 +19,8 @@
 #include <QRegularExpression>
 #include <QUrl>
 
+using namespace Qt::StringLiterals;
+
 Session::Session(std::unique_ptr<Backend> backend, const QString &teamId)
     : _backend(std::move(backend)), _cache(std::make_unique<WorkspaceCache>(teamId)),
       _teamId(teamId) {}
@@ -2153,7 +2155,7 @@ static Ts makeFakeTs() {
     if (usec <= lastUsec)
         usec = lastUsec + 1;
     lastUsec = usec;
-    return QString("%1.%2").arg(usec / 1000000).arg(usec % 1000000, 6, 10, QChar('0'));
+    return u"%1.%2"_s.arg(usec / 1000000).arg(usec % 1000000, 6, 10, QChar('0'));
 }
 
 bool Session::channelsAreLabels() const {
@@ -2294,7 +2296,7 @@ QString Session::movedMessageText(const Message &msg, bool withNote) {
     }
     const QString body = msg.rawText.isEmpty() ? msg.text.text : msg.rawText;
     if (!body.trimmed().isEmpty())
-        text += text.isEmpty() ? body : ("\n\n" + body);
+        text += text.isEmpty() ? body : (u"\n\n"_s + body);
     for (const auto &f : msg.files) {
         if (f.permalink.isEmpty())
             continue;
@@ -2741,7 +2743,7 @@ Ts Session::uploadFiles(
         f.mimeType   = mimeDb.mimeTypeForFile(path).name();
         f.prettyType = info.suffix().toUpper();
         f.size       = info.size();
-        if (f.mimeType.startsWith("image/")) {
+        if (f.mimeType.startsWith(u"image/"_s)) {
             // Local preview: point at the file itself; the message list loads
             // file:// URLs straight from disk instead of downloading.
             QImageReader reader(path);

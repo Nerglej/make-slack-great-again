@@ -75,7 +75,7 @@ private:
     // reconnect storm (the exact bug the first cut had). Mirrors SocketModeRealtime.
     qint64                    _connectedSinceMs = 0;
     static constexpr int      _stableMs         = 30'000;
-    QUrl                      _rtmConnectUrl{"https://slack.com/api/rtm.connect"};
+    QUrl                      _rtmConnectUrl{QStringLiteral("https://slack.com/api/rtm.connect")};
 };
 
 } // namespace slack

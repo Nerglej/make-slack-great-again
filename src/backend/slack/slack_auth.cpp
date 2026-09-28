@@ -10,6 +10,8 @@
 #include <QJsonObject>
 #include <QSettings>
 
+using namespace Qt::StringLiterals;
+
 namespace slack {
 
 namespace {
@@ -20,7 +22,7 @@ constexpr auto kConnectionModeKey = "slack/connectionMode";
 } // namespace
 
 ConnectionMode connectionMode() {
-    QSettings     s("msga", "msga");
+    QSettings     s(u"msga"_s, u"msga"_s);
     const QString v = s.value(QString::fromLatin1(kConnectionModeKey)).toString();
     if (v == QLatin1String("session"))
         return ConnectionMode::Session;
@@ -40,7 +42,7 @@ ConnectionMode connectionMode() {
 }
 
 void setConnectionMode(ConnectionMode mode) {
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     s.setValue(
         QString::fromLatin1(kConnectionModeKey),
         mode == ConnectionMode::Session ? QStringLiteral("session") : QStringLiteral("appkeys")
@@ -48,7 +50,7 @@ void setConnectionMode(ConnectionMode mode) {
 }
 
 PersonalAppCredentials personalAppCredentials() {
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     // clientId is a public identifier — plain settings. The secret and the
     // app-level token are sensitive → keychain (with one-time migration from
     // any pre-keychain plaintext copy).
@@ -60,7 +62,7 @@ PersonalAppCredentials personalAppCredentials() {
 }
 
 void setPersonalAppCredentials(const PersonalAppCredentials &creds) {
-    QSettings     s("msga", "msga");
+    QSettings     s(u"msga"_s, u"msga"_s);
     // Store trimmed values; blank a field to fall back to the compiled-in build
     // credential. Blank fields are removed rather than stored empty.
     const QString clientId = creds.clientId.trimmed();

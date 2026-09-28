@@ -17,6 +17,8 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kCardPadH = 24;
 static constexpr int kCardPadT = 20;
 static constexpr int kCardPadB = 20;
@@ -27,7 +29,7 @@ SessionFinderDialog::SessionFinderDialog(ImageCache *imgCache, QWidget *parent)
 
     // ── Top bar: search + create + close, as in "Find a channel" ─────────────
     auto *topBar = new QWidget(card());
-    topBar->setStyleSheet("background: transparent;");
+    topBar->setStyleSheet(u"background: transparent;"_s);
     {
         auto       *lay = new QHBoxLayout(topBar);
         const auto &sp  = Th::c().spacing;
@@ -36,7 +38,7 @@ SessionFinderDialog::SessionFinderDialog(ImageCache *imgCache, QWidget *parent)
 
         _searchEdit = new StyledLineEdit(topBar);
         _searchEdit->setPlaceholderText(tr("Search for sessions"));
-        _searchEdit->setLeadingIcon(":/ui/search.svg");
+        _searchEdit->setLeadingIcon(u":/ui/search.svg"_s);
         _searchEdit->lineEdit()->setClearButtonEnabled(true);
         _searchEdit->lineEdit()->installEventFilter(this);
         _searchEdit->setMinimumWidth(200);
@@ -162,10 +164,10 @@ void SessionFinderDialog::applyTheme() {
     AppDialog::applyTheme();
     if (_divider)
         _divider->setStyleSheet(
-            QString("background: %1; border: none;").arg(Th::qss(Th::c().divider.subtle))
+            u"background: %1; border: none;"_s.arg(Th::qss(Th::c().divider.subtle))
         );
     if (_status)
         _status->setStyleSheet(
-            QString("color: %1; background: transparent;").arg(Th::qss(Th::c().text.secondary))
+            u"color: %1; background: transparent;"_s.arg(Th::qss(Th::c().text.secondary))
         );
 }

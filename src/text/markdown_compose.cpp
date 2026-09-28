@@ -8,6 +8,8 @@
 #include <QRegularExpression>
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace MarkdownCompose {
 namespace {
 
@@ -132,7 +134,7 @@ QString convertInline(const QString &s) {
                 if (close > 0) {
                     const QString inner = convertInline(s.mid(first, close - first));
                     if (width == 3)
-                        out += "*_" + inner + "_*";
+                        out += u"*_"_s + inner + u"_*"_s;
                     else
                         out += c + inner + c;
                     i = close + width;
@@ -170,13 +172,13 @@ struct Style {
     QJsonObject json(bool withCode = true) const {
         QJsonObject o;
         if (bold)
-            o["bold"] = true;
+            o[u"bold"_s] = true;
         if (italic)
-            o["italic"] = true;
+            o[u"italic"_s] = true;
         if (strike)
-            o["strike"] = true;
+            o[u"strike"_s] = true;
         if (code && withCode)
-            o["code"] = true;
+            o[u"code"_s] = true;
         return o;
     }
 };
@@ -187,16 +189,16 @@ void emitText(QJsonArray &out, const QString &t, const Style &st) {
     const QJsonObject style = st.json();
     if (!out.isEmpty()) {
         QJsonObject last = out.last().toObject();
-        if (last.value("type").toString() == QLatin1String("text") &&
-            last.value("style").toObject() == style) {
-            last["text"]        = last.value("text").toString() + t;
+        if (last.value(u"type"_s).toString() == QLatin1String("text") &&
+            last.value(u"style"_s).toObject() == style) {
+            last[u"text"_s]     = last.value(u"text"_s).toString() + t;
             out[out.size() - 1] = last;
             return;
         }
     }
-    QJsonObject o{{"type", "text"}, {"text", t}};
+    QJsonObject o{{u"type"_s, u"text"_s}, {u"text"_s, t}};
     if (!style.isEmpty())
-        o["style"] = style;
+        o[u"style"_s] = style;
     out.append(o);
 }
 
@@ -205,7 +207,7 @@ void emitText(QJsonArray &out, const QString &t, const Style &st) {
 void withStyle(QJsonObject &o, const Style &st, bool allowCode) {
     const QJsonObject style = st.json(allowCode);
     if (!style.isEmpty())
-        o["style"] = style;
+        o[u"style"_s] = style;
 }
 
 void emitEmoji(QJsonArray &out, const QString &name) {
@@ -214,14 +216,14 @@ void emitEmoji(QJsonArray &out, const QString &name) {
     static const QRegularExpression toneRe(QStringLiteral("^skin-tone-([2-6])$"));
     if (const auto m = toneRe.match(name); m.hasMatch() && !out.isEmpty()) {
         QJsonObject last = out.last().toObject();
-        if (last.value("type").toString() == QLatin1String("emoji") &&
-            !last.contains("skin_tone")) {
-            last["skin_tone"]   = m.captured(1).toInt();
-            out[out.size() - 1] = last;
+        if (last.value(u"type"_s).toString() == QLatin1String("emoji") &&
+            !last.contains(u"skin_tone"_s)) {
+            last[u"skin_tone"_s] = m.captured(1).toInt();
+            out[out.size() - 1]  = last;
             return;
         }
     }
-    out.append(QJsonObject{{"type", "emoji"}, {"name", name}});
+    out.append(QJsonObject{{u"type"_s, u"emoji"_s}, {u"name"_s, name}});
 }
 
 void emitLink(QJsonArray &out, const QString &url, const QString &label, const Style &st) {
@@ -231,9 +233,9 @@ void emitLink(QJsonArray &out, const QString &url, const QString &label, const S
         emitText(out, '<' + (label == url ? url : url + '|' + label) + '>', st);
         return;
     }
-    QJsonObject o{{"type", "link"}, {"url", url}};
+    QJsonObject o{{u"type"_s, u"link"_s}, {u"url"_s, url}};
     if (label != url)
-        o["text"] = label;
+        o[u"text"_s] = label;
     withStyle(o, st, /*allowCode=*/true);
     out.append(o);
 }
@@ -247,7 +249,7 @@ void emitCommand(QJsonArray &out, const QString &data, const QString &label, con
     else if (data == QLatin1String("channel") || data == QLatin1String("everyone"))
         range = data;
     if (!range.isEmpty()) {
-        out.append(QJsonObject{{"type", "broadcast"}, {"range", range}});
+        out.append(QJsonObject{{u"type"_s, u"broadcast"_s}, {u"range"_s, range}});
         return;
     }
     emitText(out, label, st); // an unknown command shows as its label
@@ -311,14 +313,14 @@ void walk(
             skipChildren();
             break;
         case EntityType::UserMention: {
-            QJsonObject o{{"type", "user"}, {"user_id", e.data}};
+            QJsonObject o{{u"type"_s, u"user"_s}, {u"user_id"_s, e.data}};
             withStyle(o, st, /*allowCode=*/false);
             out.append(o);
             skipChildren();
             break;
         }
         case EntityType::ChannelMention: {
-            QJsonObject o{{"type", "channel"}, {"channel_id", e.data}};
+            QJsonObject o{{u"type"_s, u"channel"_s}, {u"channel_id"_s, e.data}};
             withStyle(o, st, /*allowCode=*/false);
             out.append(o);
             skipChildren();
@@ -333,14 +335,14 @@ void walk(
             skipChildren();
             break;
         case EntityType::UsergroupMention: {
-            QJsonObject o{{"type", "usergroup"}, {"usergroup_id", e.data}};
+            QJsonObject o{{u"type"_s, u"usergroup"_s}, {u"usergroup_id"_s, e.data}};
             withStyle(o, st, /*allowCode=*/false);
             out.append(o);
             skipChildren();
             break;
         }
         case EntityType::ChannelCommand:
-            out.append(QJsonObject{{"type", "broadcast"}, {"range", "channel"}});
+            out.append(QJsonObject{{u"type"_s, u"broadcast"_s}, {u"range"_s, u"channel"_s}});
             skipChildren();
             break;
         }
@@ -440,8 +442,10 @@ bool quoteLine(const QString &line, QString *prefix, QString *content) {
 QJsonObject section(const char *type, const QString &mrkdwn) {
     QJsonArray els = richTextElements(MrkdwnParser::parse(mrkdwn));
     if (els.isEmpty()) // never an empty section — Slack refuses it
-        els.append(QJsonObject{{"type", "text"}, {"text", mrkdwn.isEmpty() ? " " : mrkdwn}});
-    return QJsonObject{{"type", type}, {"elements", els}};
+        els.append(
+            QJsonObject{{u"type"_s, u"text"_s}, {u"text"_s, mrkdwn.isEmpty() ? u" "_s : mrkdwn}}
+        );
+    return QJsonObject{{u"type"_s, type}, {u"elements"_s, els}};
 }
 
 QJsonArray listElements(const std::vector<Item> &items) {
@@ -457,14 +461,14 @@ QJsonArray listElements(const std::vector<Item> &items) {
              ++j)
             els.append(section("rich_text_section", items[j].text));
         QJsonObject list{
-            {"type", "rich_text_list"},
-            {"style", head.ordered ? "ordered" : "bullet"},
-            {"elements", els},
+            {u"type"_s, u"rich_text_list"_s},
+            {u"style"_s, head.ordered ? "ordered" : "bullet"},
+            {u"elements"_s, els},
         };
         if (head.level > 0)
-            list["indent"] = head.level;
+            list[u"indent"_s] = head.level;
         if (head.ordered && head.number > 1)
-            list["offset"] = head.number - 1;
+            list[u"offset"_s] = head.number - 1;
         out.append(list);
         i = j;
     }
@@ -651,10 +655,10 @@ Composed convert(const QString &composerText) {
         case Kind::Pre:
             elements.append(
                 QJsonObject{
-                    {"type", "rich_text_preformatted"},
-                    {"elements",
+                    {u"type"_s, u"rich_text_preformatted"_s},
+                    {u"elements"_s,
                      QJsonArray{QJsonObject{
-                         {"type", "text"}, {"text", MrkdwnParser::decodeEntities(ch.text)}
+                         {u"type"_s, u"text"_s}, {u"text"_s, MrkdwnParser::decodeEntities(ch.text)}
                      }}},
                 }
             );
@@ -665,7 +669,7 @@ Composed convert(const QString &composerText) {
             break;
         }
     }
-    c.blocks.append(QJsonObject{{"type", "rich_text"}, {"elements", elements}});
+    c.blocks.append(QJsonObject{{u"type"_s, u"rich_text"_s}, {u"elements"_s, elements}});
     return c;
 }
 

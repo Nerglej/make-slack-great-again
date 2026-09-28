@@ -17,6 +17,8 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kCardPadH = 24;
 static constexpr int kCardPadT = 20;
 static constexpr int kCardPadB = 20;
@@ -38,7 +40,7 @@ BrowseChannelsDialog::BrowseChannelsDialog(
 
     // ── Top bar: search + Create Channel + close ──────────────────────────────
     auto *topBar = new QWidget(card());
-    topBar->setStyleSheet("background: transparent;");
+    topBar->setStyleSheet(u"background: transparent;"_s);
     {
         auto       *lay = new QHBoxLayout(topBar);
         const auto &sp  = Th::c().spacing;
@@ -47,7 +49,7 @@ BrowseChannelsDialog::BrowseChannelsDialog(
 
         _searchEdit = new StyledLineEdit(topBar);
         _searchEdit->setPlaceholderText(tr("Search for channels"));
-        _searchEdit->setLeadingIcon(":/ui/search.svg");
+        _searchEdit->setLeadingIcon(u":/ui/search.svg"_s);
         _searchEdit->lineEdit()->setClearButtonEnabled(true);
         _searchEdit->setMinimumWidth(200);
         lay->addWidget(_searchEdit, 1);
@@ -63,7 +65,7 @@ BrowseChannelsDialog::BrowseChannelsDialog(
 
     // ── Tab bar ───────────────────────────────────────────────────────────────
     auto *tabBar = new QWidget(card());
-    tabBar->setStyleSheet("background: transparent;");
+    tabBar->setStyleSheet(u"background: transparent;"_s);
     {
         auto *lay = new QHBoxLayout(tabBar);
         lay->setContentsMargins(kCardPadH - 4, 0, kCardPadH, 0);
@@ -155,7 +157,7 @@ void BrowseChannelsDialog::buildChannelItems() {
                            .arg(conv->memberCount)
                            .arg(conv->memberCount == 1 ? tr("member") : tr("members"));
             if (!conv->description.isEmpty())
-                subtitle += " · " + conv->description;
+                subtitle += u" · "_s + conv->description;
         } else if (!conv->description.isEmpty()) {
             subtitle = conv->description;
         }
@@ -166,7 +168,7 @@ void BrowseChannelsDialog::buildChannelItems() {
         it.subtitle  = subtitle;
         it.isPrivate = conv->kind == ConvKind::PrivateChannel;
         it.isMember  = conv->isMember;
-        it.searchKey = (conv->name + " " + conv->description).toLower();
+        it.searchKey = (conv->name + u" "_s + conv->description).toLower();
         items.push_back(std::move(it));
     }
     _channelList->setItems(std::move(items));
@@ -199,8 +201,8 @@ void BrowseChannelsDialog::buildPeopleItems() {
         it.initial   = displayName.left(1);
         it.isPerson  = true;
         if (!user->name.isEmpty() && user->name != displayName)
-            it.subtitle = "@" + user->name;
-        it.searchKey = (displayName + " " + user->name).toLower();
+            it.subtitle = u"@"_s + user->name;
+        it.searchKey = (displayName + u" "_s + user->name).toLower();
         items.push_back(std::move(it));
     }
     _peopleList->setItems(std::move(items));
@@ -229,31 +231,26 @@ void BrowseChannelsDialog::applyTheme() {
     // Search input, Create button and close button self-theme
     // (StyledLineEdit / StyledButton / IconButton).
 
-    const QString tabActive = QString(
-                                  "QPushButton {"
-                                  "  border: none; border-bottom: 2px solid %1;"
-                                  "  padding: 8px 16px; background: transparent;"
-                                  "  color: %2; font-weight: bold;"
-                                  "}"
-    )
-                                  .arg(Th::qss(Th::c().accent.def), Th::qss(Th::c().text.primary));
+    const QString tabActive = u"QPushButton {"
+                              "  border: none; border-bottom: 2px solid %1;"
+                              "  padding: 8px 16px; background: transparent;"
+                              "  color: %2; font-weight: bold;"
+                              "}"_s.arg(Th::qss(Th::c().accent.def), Th::qss(Th::c().text.primary));
 
-    const QString tabInactive =
-        QString(
-            "QPushButton {"
-            "  border: none; border-bottom: 2px solid transparent;"
-            "  padding: 8px 16px; background: transparent; color: %1;"
-            "}"
-            "QPushButton:hover { color: %2; }"
-        )
-            .arg(Th::qss(Th::c().text.secondary), Th::qss(Th::c().text.primary));
+    const QString tabInactive = u"QPushButton {"
+                                "  border: none; border-bottom: 2px solid transparent;"
+                                "  padding: 8px 16px; background: transparent; color: %1;"
+                                "}"
+                                "QPushButton:hover { color: %2; }"_s.arg(
+                                    Th::qss(Th::c().text.secondary), Th::qss(Th::c().text.primary)
+                                );
 
     _channelsTab->setStyleSheet(_activeTab == 0 ? tabActive : tabInactive);
     _peopleTab->setStyleSheet(_activeTab == 1 ? tabActive : tabInactive);
 
     // Divider lines
     const QString lineStyle =
-        QString("background: %1; border: none;").arg(Th::qss(Th::c().divider.subtle));
+        u"background: %1; border: none;"_s.arg(Th::qss(Th::c().divider.subtle));
     for (auto *f : card()->findChildren<QFrame *>()) {
         if (f->frameShape() == QFrame::HLine)
             f->setStyleSheet(lineStyle);

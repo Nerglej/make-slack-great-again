@@ -16,6 +16,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 // Report card: 50% wider/taller than the AppDialog defaults (card 560 wide,
 // content-sized height). Width is clamped to the overlay by cardWidth(); the
@@ -115,7 +117,7 @@ int SummaryDialog::cardWidth(int availOverlayWidth) const {
 
 void SummaryDialog::applyTheme() {
     AppDialog::applyTheme();
-    _body->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+    _body->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
     if (_scroll)
         _scroll->setStyleSheet(
             QStringLiteral("QScrollArea { background: transparent; }") + Th::scrollBarQss()

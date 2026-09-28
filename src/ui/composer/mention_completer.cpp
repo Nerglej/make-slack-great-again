@@ -20,6 +20,8 @@
 #include <QSvgRenderer>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 // Hard cap on rows built (relevance/perf); the visible window scrolls within it.
 static constexpr int kMaxRows      = 50;
 // Rows shown before the list starts scrolling.
@@ -300,26 +302,21 @@ private:
 // Stylesheet for the plain one-line rows (users / channels / emoji).
 QString plainRowStyle(bool selected) {
     if (selected)
-        return QString(
-                   "QPushButton {"
-                   "  text-align: left; padding: 4px 10px;"
-                   "  font-size: %2px; color: %1;"
-                   "  background: %3; border: none; border-radius: 4px;"
-                   "}"
-        )
-            .arg(Th::qss(Th::c().text.primary))
-            .arg(Th::c().fonts.md)
-            .arg(Th::qss(Th::c().accent.subtleBg));
-    return QString(
-               "QPushButton {"
+        return u"QPushButton {"
                "  text-align: left; padding: 4px 10px;"
-               "  font-size: %3px; color: %1;"
-               "  background: transparent; border: none; border-radius: 4px;"
-               "}"
-               "QPushButton:hover { background: %2; }"
-    )
-        .arg(Th::qss(Th::c().text.primary), Th::qss(Th::c().surface.highlight))
-        .arg(Th::c().fonts.md);
+               "  font-size: %2px; color: %1;"
+               "  background: %3; border: none; border-radius: 4px;"
+               "}"_s.arg(Th::qss(Th::c().text.primary))
+                   .arg(Th::c().fonts.md)
+                   .arg(Th::qss(Th::c().accent.subtleBg));
+    return u"QPushButton {"
+           "  text-align: left; padding: 4px 10px;"
+           "  font-size: %3px; color: %1;"
+           "  background: transparent; border: none; border-radius: 4px;"
+           "}"
+           "QPushButton:hover { background: %2; }"_s
+               .arg(Th::qss(Th::c().text.primary), Th::qss(Th::c().surface.highlight))
+               .arg(Th::c().fonts.md);
 }
 
 } // namespace
@@ -345,7 +342,7 @@ MentionCompleter::MentionCompleter(QWidget *parent) : QFrame(parent) {
     _scroll->setWidgetResizable(true);
 
     _content = new QWidget(_scroll);
-    _content->setStyleSheet("background: transparent;");
+    _content->setStyleSheet(u"background: transparent;"_s);
     _layout = new QVBoxLayout(_content);
     _layout->setContentsMargins(0, 0, 0, 0);
     _layout->setSpacing(1);
@@ -360,15 +357,14 @@ MentionCompleter::MentionCompleter(QWidget *parent) : QFrame(parent) {
 
 void MentionCompleter::applyTheme() {
     setStyleSheet(
-        QString(
-            "QFrame#mentionCompleter {"
-            "  background: %1;"
-            "  border: 1px solid %2;"
-            "  border-radius: 6px;"
-            "}"
-            "QScrollArea { background: transparent; border: none; }"
-        )
-            .arg(Th::qss(Th::c().surface.raised), Th::qss(Th::c().divider.strong)) +
+        u"QFrame#mentionCompleter {"
+        "  background: %1;"
+        "  border: 1px solid %2;"
+        "  border-radius: 6px;"
+        "}"
+        "QScrollArea { background: transparent; border: none; }"_s.arg(
+            Th::qss(Th::c().surface.raised), Th::qss(Th::c().divider.strong)
+        ) +
         Th::popupScrollBarQss()
     );
 }

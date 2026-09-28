@@ -31,6 +31,8 @@
 #include "ui/context_menu/context_menu.h"
 #include "ui/popup_tooltip/popup_tooltip.h"
 
+using namespace Qt::StringLiterals;
+
 ConvListWidget::ConvListWidget(ImageCache *imgCache, QWidget *parent)
     : VirtualListWidget(parent), _imgCache(imgCache) {
     loadVisitedAt();
@@ -176,36 +178,36 @@ void ConvListWidget::rebuildIconPixmaps() {
         return svgPixmapPhys(path, sz, c, dpr);
     };
 
-    _iconPx.chevDown   = px(":/ui/chevron-down.svg", big, th.nav.itemTextDim);
-    _iconPx.chevRight  = px(":/ui/chevron-right.svg", big, th.nav.itemTextDim);
-    _iconPx.hash       = px(":/ui/hash.svg", big, th.nav.itemTextDim);
-    _iconPx.msg        = px(":/ui/messages-square.svg", big, th.nav.itemTextDim);
-    _iconPx.bot        = px(":/ui/bot.svg", big, th.nav.itemTextDim);
-    _iconPx.star       = px(":/ui/star.svg", big, th.nav.itemTextDim);
-    _iconPx.team       = px(":/ui/users.svg", big, th.nav.itemTextDim);
-    _iconPx.plusDim    = px(":/ui/plus.svg", big, th.nav.itemTextDim);
-    _iconPx.plusBright = px(":/ui/plus.svg", big, th.nav.itemText);
+    _iconPx.chevDown   = px(u":/ui/chevron-down.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.chevRight  = px(u":/ui/chevron-right.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.hash       = px(u":/ui/hash.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.msg        = px(u":/ui/messages-square.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.bot        = px(u":/ui/bot.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.star       = px(u":/ui/star.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.team       = px(u":/ui/users.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.plusDim    = px(u":/ui/plus.svg"_s, big, th.nav.itemTextDim);
+    _iconPx.plusBright = px(u":/ui/plus.svg"_s, big, th.nav.itemText);
 
-    _iconPx.lockDim        = px(":/ui/lock.svg", sm, th.nav.itemTextDim);
-    _iconPx.lockBright     = px(":/ui/lock.svg", sm, th.nav.itemText);
-    _iconPx.lockSelected   = px(":/ui/lock.svg", sm, th.nav.itemSelectedText);
-    _iconPx.hashSmDim      = px(":/ui/hash.svg", sm, th.nav.itemTextDim);
-    _iconPx.hashSmBright   = px(":/ui/hash.svg", sm, th.nav.itemText);
-    _iconPx.hashSmSelected = px(":/ui/hash.svg", sm, th.nav.itemSelectedText);
+    _iconPx.lockDim        = px(u":/ui/lock.svg"_s, sm, th.nav.itemTextDim);
+    _iconPx.lockBright     = px(u":/ui/lock.svg"_s, sm, th.nav.itemText);
+    _iconPx.lockSelected   = px(u":/ui/lock.svg"_s, sm, th.nav.itemSelectedText);
+    _iconPx.hashSmDim      = px(u":/ui/hash.svg"_s, sm, th.nav.itemTextDim);
+    _iconPx.hashSmBright   = px(u":/ui/hash.svg"_s, sm, th.nav.itemText);
+    _iconPx.hashSmSelected = px(u":/ui/hash.svg"_s, sm, th.nav.itemSelectedText);
 
-    _iconPx.huddle = px(":/ui/headphones.svg", QSize(13, 13), th.accent.text);
+    _iconPx.huddle = px(u":/ui/headphones.svg"_s, QSize(13, 13), th.accent.text);
 
     // Optically matched to the section icons rather than boxed the same — see
     // kThreadsIcon.
     const QSize thr         = QSize(kThreadsIcon, kThreadsIcon);
-    _iconPx.threadsDim      = px(":/ui/split.svg", thr, th.nav.itemTextDim);
-    _iconPx.threadsBright   = px(":/ui/split.svg", thr, th.nav.itemText);
-    _iconPx.threadsSelected = px(":/ui/split.svg", thr, th.nav.itemSelectedText);
+    _iconPx.threadsDim      = px(u":/ui/split.svg"_s, thr, th.nav.itemTextDim);
+    _iconPx.threadsBright   = px(u":/ui/split.svg"_s, thr, th.nav.itemText);
+    _iconPx.threadsSelected = px(u":/ui/split.svg"_s, thr, th.nav.itemSelectedText);
 
     // Same optical size as the Threads entry it sits under.
-    _iconPx.savedDim      = px(":/ui/bookmark.svg", thr, th.nav.itemTextDim);
-    _iconPx.savedBright   = px(":/ui/bookmark.svg", thr, th.nav.itemText);
-    _iconPx.savedSelected = px(":/ui/bookmark.svg", thr, th.nav.itemSelectedText);
+    _iconPx.savedDim      = px(u":/ui/bookmark.svg"_s, thr, th.nav.itemTextDim);
+    _iconPx.savedBright   = px(u":/ui/bookmark.svg"_s, thr, th.nav.itemText);
+    _iconPx.savedSelected = px(u":/ui/bookmark.svg"_s, thr, th.nav.itemSelectedText);
 }
 
 void ConvListWidget::updateRowHeight() {
@@ -347,7 +349,8 @@ void ConvListWidget::resetVisitedAt() {
 }
 
 void ConvListWidget::loadVisitedAt() {
-    const QByteArray  raw = QSettings("msga", "msga").value("conv/visitedAt").toString().toUtf8();
+    const QByteArray raw =
+        QSettings(u"msga"_s, u"msga"_s).value("conv/visitedAt").toString().toUtf8();
     const QJsonObject obj = QJsonDocument::fromJson(raw).object();
     for (auto it = obj.begin(); it != obj.end(); ++it)
         _visitedAt[it.key()] = it.value().toVariant().toLongLong();
@@ -361,7 +364,7 @@ void ConvListWidget::saveVisitedAt() {
         if (it.value() >= horizon)
             obj[it.key()] = it.value();
     }
-    QSettings("msga", "msga")
+    QSettings(u"msga"_s, u"msga"_s)
         .setValue(
             "conv/visitedAt", QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact))
         );
@@ -519,7 +522,7 @@ void ConvListWidget::rebuildFilteredConvs() {
             if (it != _userInfos.constEnd()) {
                 if (it->isDeactivated)
                     continue;
-                if (it->displayName == "deactivateduser")
+                if (it->displayName == u"deactivateduser"_s)
                     continue;
                 if (_session && _session->isUnresolvedUserId(it->displayName))
                     continue;
@@ -826,7 +829,7 @@ QString ConvListWidget::resolvedConvName(const Conversation &conv) const {
             }
         }
         if (!names.isEmpty())
-            return names.join(", ");
+            return names.join(u", "_s);
     }
     return Emoji::expandCodes(conv.name);
 }
@@ -1090,21 +1093,21 @@ static void buildNotifySection(
         ConvListWidget::tr("All new posts"),
         [self, id] { emit self->setNotificationLevelRequested(id, NotificationLevel::All); },
         false,
-        ":/ui/bell.svg",
+        u":/ui/bell.svg"_s,
         level == NotificationLevel::All
     );
     menu->addItem(
         ConvListWidget::tr("Just mentions"),
         [self, id] { emit self->setNotificationLevelRequested(id, NotificationLevel::Mentions); },
         false,
-        ":/ui/bell.svg",
+        u":/ui/bell.svg"_s,
         level == NotificationLevel::Mentions
     );
     menu->addItem(
         ConvListWidget::tr("Mute and hide"),
         [self, id] { emit self->setNotificationLevelRequested(id, NotificationLevel::Mute); },
         false,
-        ":/ui/bell-off.svg",
+        u":/ui/bell-off.svg"_s,
         level == NotificationLevel::Mute
     );
 }
@@ -1861,7 +1864,7 @@ void ConvListWidget::paintRow(QPainter &p, int row, int y) const {
         p.drawText(
             QRect(leftX, avY, kAvatarSize, kAvatarSize),
             Qt::AlignCenter,
-            displayCount > 0 ? QString::number(displayCount) : "+"
+            displayCount > 0 ? QString::number(displayCount) : u"+"_s
         );
 
         const int   nameX = leftX + kAvatarSize + kAvatarGap;
@@ -2055,7 +2058,7 @@ void ConvListWidget::paintRow(QPainter &p, int row, int y) const {
     // ── Unread indicator (left of the huddle indicator if both present) ──
     if (showRed) {
         // Red numbered badge for DM unreads and channel @mentions.
-        const QString badge = redCount > 99 ? "99+" : QString::number(redCount);
+        const QString badge = redCount > 99 ? u"99+"_s : QString::number(redCount);
         p.setFont(fonts.countBadge);
         const QFontMetrics &bfm = fonts.countBadgeFm;
         const int           bh  = bfm.height() + 4;

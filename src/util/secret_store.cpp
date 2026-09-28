@@ -9,6 +9,8 @@
 #include <QDebug>
 #include <QSettings>
 
+using namespace Qt::StringLiterals;
+
 namespace SecretStore {
 
 namespace {
@@ -25,7 +27,7 @@ QString readMigrating(const QString &key) {
         return v;
 
     // Keychain miss: pull a pre-keychain plaintext value forward, once.
-    QSettings     s("msga", "msga");
+    QSettings     s(u"msga"_s, u"msga"_s);
     const QString legacy = s.value(key).toString();
     if (legacy.isEmpty())
         return QString();
@@ -49,7 +51,7 @@ QString readMigrating(const QString &key) {
 bool writeScrubbingLegacy(const QString &key, const QString &value) {
     if (isKeychainBacked() && g_keychainRefused && !value.isEmpty()) {
         // Keychain already refused this process — go straight to the fallback.
-        QSettings("msga", "msga").setValue(key, value);
+        QSettings(u"msga"_s, u"msga"_s).setValue(key, value);
         return false;
     }
     if (!write(key, value)) {
@@ -61,7 +63,7 @@ bool writeScrubbingLegacy(const QString &key, const QString &value) {
             // readMigrating() looks for a legacy value, so the session works
             // and the promotion is retried on the next launch.
             g_keychainRefused = true;
-            QSettings s("msga", "msga");
+            QSettings s(u"msga"_s, u"msga"_s);
             if (value.isEmpty())
                 s.remove(key);
             else
@@ -74,7 +76,7 @@ bool writeScrubbingLegacy(const QString &key, const QString &value) {
         return false;
     }
     if (isKeychainBacked())
-        QSettings("msga", "msga").remove(key);
+        QSettings(u"msga"_s, u"msga"_s).remove(key);
     return true;
 }
 

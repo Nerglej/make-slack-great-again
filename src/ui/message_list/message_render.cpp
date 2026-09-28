@@ -31,6 +31,8 @@
 #include <limits>
 #include <optional>
 
+using namespace Qt::StringLiterals;
+
 namespace MsgRender {
 
 bool isMediaAttachment(const Attachment &att) {
@@ -71,7 +73,7 @@ EmojiResolved resolveEmojiRich(const QString &name, const QHash<QString, QString
             for (const QString &mod :
                  name.mid(sep + 2).split(QLatin1String("::"), Qt::SkipEmptyParts)) {
                 const QString glyph = Emoji::fromName(mod);
-                if (glyph != ":" + mod + ":")
+                if (glyph != u":"_s + mod + u":"_s)
                     out += glyph;
             }
             return {out, {}};
@@ -80,7 +82,7 @@ EmojiResolved resolveEmojiRich(const QString &name, const QHash<QString, QString
     }
 
     const QString unicode = Emoji::fromName(name);
-    if (unicode != ":" + name + ":")
+    if (unicode != u":"_s + name + u":"_s)
         return {unicode, {}};
     // `name` isn't a known shortcode. If it's already a raw emoji glyph, render it
     // directly instead of the ":name:" placeholder — MS Teams returns a reaction's
@@ -97,7 +99,7 @@ EmojiResolved resolveEmojiRich(const QString &name, const QHash<QString, QString
         if (it->startsWith(QLatin1String("alias:"))) {
             cur                   = it->mid(6);
             const QString aliased = Emoji::fromName(cur);
-            if (aliased != ":" + cur + ":")
+            if (aliased != u":"_s + cur + u":"_s)
                 return {aliased, {}};
             continue;
         }
@@ -138,10 +140,10 @@ static QString emojiHtml(const EmojiResolved &er, int px) {
     // image's BOTTOM on the baseline, which lifted custom emoji a descender
     // above the built-in ones and grew the line by the same amount.
     if (!er.imageUrl.isEmpty())
-        return "<img src='" + er.imageUrl.toHtmlEscaped() + "' width='" + s + "' height='" + s +
-               "' style='vertical-align:bottom'>";
-    return "<span style='font-family:" + emojiFontFamily() + ";font-size:" + s + "px'>" +
-           er.unicode.toHtmlEscaped() + "</span>";
+        return u"<img src='"_s + er.imageUrl.toHtmlEscaped() + u"' width='"_s + s +
+               u"' height='"_s + s + u"' style='vertical-align:bottom'>"_s;
+    return u"<span style='font-family:"_s + emojiFontFamily() + u";font-size:"_s + s + u"px'>"_s +
+           er.unicode.toHtmlEscaped() + u"</span>"_s;
 }
 
 QString docStyleSheet() {
@@ -150,7 +152,7 @@ QString docStyleSheet() {
     // the old fixed 135% overshot it and made paragraph gaps look bloated.
     const int natural = QFontMetrics(QApplication::font()).height();
     const int pct     = std::max(100, qRound(slackLinePx() * 100.0 / natural));
-    return QString("p { line-height: %1%; margin: 0; }").arg(pct);
+    return u"p { line-height: %1%; margin: 0; }"_s.arg(pct);
 }
 
 QStringList collectEmojiImageUrls(
@@ -170,7 +172,7 @@ QStringList collectEmojiImageUrls(
         }
     };
     auto addBlockImage = [&](const Block &b) {
-        if (b.typeStr == "image" && !b.imageUrl.isEmpty() && !seen.contains(b.imageUrl)) {
+        if (b.typeStr == u"image"_s && !b.imageUrl.isEmpty() && !seen.contains(b.imageUrl)) {
             seen.insert(b.imageUrl);
             out << b.imageUrl;
             if (mediaUrls)
@@ -265,8 +267,8 @@ static QString buttonWeightCss(const QColor &fg) {
     const QString regular = QFontInfo(f).styleName();
     if (semi != bold && semi != regular)
         return QStringLiteral("font-weight:600");
-    return "font-weight:normal;-qt-stroke-width:" + QString::number(px * 0.03, 'f', 2) +
-           "px;-qt-stroke-color:" + Th::qss(fg);
+    return u"font-weight:normal;-qt-stroke-width:"_s + QString::number(px * 0.03, 'f', 2) +
+           u"px;-qt-stroke-color:"_s + Th::qss(fg);
 }
 
 // Button cell padding for Slack's proportions — a 30px-tall face with 12px
@@ -280,7 +282,7 @@ static QString buttonPaddingCss() {
     const int lineH = QFontMetrics(label).height();
     const int vPad  = std::max(2, qRound((bodyPx * 2.0 - lineH) / 2.0));
     const int hPad  = std::max(6, qRound(bodyPx * 0.8));
-    return QString::number(vPad) + "px " + QString::number(hPad) + "px";
+    return QString::number(vPad) + u"px "_s + QString::number(hPad) + u"px"_s;
 }
 int footerIconPx() {
     return std::max(8, qRound(QFontInfo(QApplication::font()).pixelSize() * 16.0 / 15.0));
@@ -341,9 +343,9 @@ QString dateTimeLabel(qint64 dateMicros) {
 // Resolve a UserMention entity's display name via entity.data (the user ID).
 static QString resolveMentionImpl(const QString &userId, const Session *session) {
     if (!session)
-        return "@" + userId;
+        return u"@"_s + userId;
     const auto *u = session->findUser(UserId{userId});
-    return u ? ("@" + u->displayLabel()) : ("@" + userId);
+    return u ? (u"@"_s + u->displayLabel()) : (u"@"_s + userId);
 }
 
 QString resolveMention(const QString &userId, const Session *session) {
@@ -361,7 +363,7 @@ resolveChannelImpl(const QString &channelId, const QString &fallback, const Sess
     if (session) {
         const QString name = session->mentionedChannelName(ConversationId{channelId});
         if (!name.isEmpty())
-            return "#" + name;
+            return u"#"_s + name;
     }
     return fallback;
 }
@@ -383,7 +385,7 @@ QString convPlaceLabel(const QString &convId, const Session *session) {
         return custom.isEmpty() ? QCoreApplication::translate("MsgRender", "group message")
                                 : custom;
     }
-    return c->name.isEmpty() ? QString() : "#" + c->name;
+    return c->name.isEmpty() ? QString() : u"#"_s + c->name;
 }
 
 QString messageLinkLabel(const SlackLinks::MessageRef &ref, const Session *session) {
@@ -438,19 +440,18 @@ void registerMessageLinkIcon(QTextDocument *doc, qreal dpr) {
     doc->addResource(
         QTextDocument::ImageResource,
         QUrl(kMessageLinkIconRes),
-        svgPixmapPhys(":/ui/message-square.svg", QSize(11, 11), Th::c().text.link, dpr)
+        svgPixmapPhys(u":/ui/message-square.svg"_s, QSize(11, 11), Th::c().text.link, dpr)
     );
 }
 
 // The chip that replaces a bare message permalink: icon + conversation label on
 // a tinted rounded background, the same chrome as a #channel mention.
 static QString messageLinkChipHtml(const SlackLinks::MessageRef &ref, const Session *session) {
-    return "<a href='" + messageAnchor(ref).toHtmlEscaped() +
-           "' style='color:" + Th::qss(Th::c().text.link) +
-           ";background:" + Th::qss(Th::c().message.mentionBg) +
-           ";border-radius:3px;padding:0 2px;text-decoration:none'><img src='" +
-           kMessageLinkIconRes + "' width='11' height='11'>&nbsp;" +
-           messageLinkLabel(ref, session).toHtmlEscaped() + "</a>";
+    return u"<a href='"_s + messageAnchor(ref).toHtmlEscaped() + u"' style='color:"_s +
+           Th::qss(Th::c().text.link) + u";background:"_s + Th::qss(Th::c().message.mentionBg) +
+           u";border-radius:3px;padding:0 2px;text-decoration:none'><img src='"_s +
+           kMessageLinkIconRes + u"' width='11' height='11'>&nbsp;"_s +
+           messageLinkLabel(ref, session).toHtmlEscaped() + u"</a>"_s;
 }
 
 QString notificationText(const TextWithEntities &twe, const Session *session) {
@@ -474,7 +475,7 @@ QString notificationText(const TextWithEntities &twe, const Session *session) {
             repls.push_back(
                 {e.offset,
                  e.length,
-                 u ? ("@" + u->displayLabel()) : twe.text.mid(e.offset, e.length)}
+                 u ? (u"@"_s + u->displayLabel()) : twe.text.mid(e.offset, e.length)}
             );
             break;
         }
@@ -494,7 +495,7 @@ QString notificationText(const TextWithEntities &twe, const Session *session) {
         }
         case EntityType::Emoji: {
             const auto    er    = resolveEmojiRich(e.data, session);
-            const QString glyph = er.unicode.isEmpty() ? (":" + e.data + ":") : er.unicode;
+            const QString glyph = er.unicode.isEmpty() ? (u":"_s + e.data + u":"_s) : er.unicode;
             repls.push_back({e.offset, e.length, glyph});
             break;
         }
@@ -566,7 +567,7 @@ QString notificationPreview(const Message &msg, const Session *session) {
             // Field titles are plain strings straight off the API, like the
             // attachment title — decode their HTML escapes as the renderer does.
             const QString key = MrkdwnParser::decodeEntities(f.title).simplified();
-            pieces << (key.isEmpty() ? val : key + ": " + val);
+            pieces << (key.isEmpty() ? val : key + u": "_s + val);
         }
         addBlocks(att.blocks);
         // Slack authors `fallback` precisely as the notification-safe summary, so
@@ -631,7 +632,7 @@ static QString hrefAttr(const QString &url) {
 }
 
 static QString escapeAndBr(const QString &s) {
-    return s.toHtmlEscaped().replace("\n", "<br>");
+    return s.toHtmlEscaped().replace(u"\n"_s, u"<br>"_s);
 }
 
 // Inline code is literal text, but a URL quoted in backticks is still meant to
@@ -659,9 +660,9 @@ static QString linkCodeUrls(const QString &raw, const InlineStyle &style) {
         if (url.size() <= 8) // "https://" alone
             continue;
         html += raw.mid(last, start - last).toHtmlEscaped();
-        html += "<a href='" + hrefAttr(url) + "' style='color:" +
+        html += u"<a href='"_s + hrefAttr(url) + u"' style='color:"_s +
                 Th::qss(style.linkColor.isValid() ? style.linkColor : Th::c().text.link) +
-                ";text-decoration:none'>" + url.toHtmlEscaped() + "</a>";
+                u";text-decoration:none'>"_s + url.toHtmlEscaped() + u"</a>"_s;
         last = start + int(url.size());
     }
     return html + raw.mid(last).toHtmlEscaped();
@@ -721,22 +722,23 @@ static QString renderRange(
                                                   : rawInner.toHtmlEscaped();
         switch (e.type) {
         case EntityType::Bold:
-            html += "<b>" + inner + "</b>";
+            html += u"<b>"_s + inner + u"</b>"_s;
             break;
         case EntityType::Italic:
-            html += "<i>" + inner + "</i>";
+            html += u"<i>"_s + inner + u"</i>"_s;
             break;
         case EntityType::Underline:
-            html += "<u>" + inner + "</u>";
+            html += u"<u>"_s + inner + u"</u>"_s;
             break;
         case EntityType::Strike:
-            html += "<s>" + inner + "</s>";
+            html += u"<s>"_s + inner + u"</s>"_s;
             break;
         case EntityType::Code:
-            html += "<span style='background:" + Th::qss(Th::c().message.codeBlockBg) +
-                    ";color:" + Th::qss(Th::c().danger.text) +
-                    ";font-family:monospace;font-size:0.88em;padding:1px 3px;border-radius:3px'>" +
-                    linkCodeUrls(rawInner, style) + "</span>";
+            html +=
+                u"<span style='background:"_s + Th::qss(Th::c().message.codeBlockBg) +
+                u";color:"_s + Th::qss(Th::c().danger.text) +
+                u";font-family:monospace;font-size:0.88em;padding:1px 3px;border-radius:3px'>"_s +
+                linkCodeUrls(rawInner, style) + u"</span>"_s;
             break;
         case EntityType::Pre: {
             // A single-cell table, not <pre>: Qt paints a <pre> CSS background as a
@@ -744,16 +746,16 @@ static QString renderRange(
             // background/border itself — Qt rich text can't do border-radius, so the
             // rounded chrome is painted underneath by paintCodeBlockChrome(), which
             // finds these tables via codeBlockRects().
-            if (html.endsWith("<br>"))
+            if (html.endsWith(u"<br>"_s))
                 html.chop(4); // the block carries its own top margin
             QString code = inner;
             while (code.endsWith('\n'))
                 code.chop(1);
-            html += "<table width='100%' cellspacing='0' cellpadding='0' "
+            html += u"<table width='100%' cellspacing='0' cellpadding='0' "
                     "style='margin:4px 0'>"
                     "<tr><td style='padding:6px 10px;font-family:monospace;font-size:0.88em;"
-                    "white-space:pre-wrap;color:" +
-                    Th::qss(Th::c().message.codeText) + "'>" + code + "</td></tr></table>";
+                    "white-space:pre-wrap;color:"_s +
+                    Th::qss(Th::c().message.codeText) + u"'>"_s + code + u"</td></tr></table>"_s;
             break;
         }
         case EntityType::Blockquote:
@@ -766,13 +768,13 @@ static QString renderRange(
             } else {
                 // Use a table so the gray left bar renders reliably in Qt's HTML subset.
                 html +=
-                    "<table cellspacing='0' cellpadding='0' style='border-spacing:0;margin:4px 0'>"
+                    u"<table cellspacing='0' cellpadding='0' style='border-spacing:0;margin:4px 0'>"
                     "<tr>"
-                    "<td width='3' bgcolor='" +
+                    "<td width='3' bgcolor='"_s +
                     Th::c().message.codeBlockBorder.name() +
-                    "' style='padding:0;border-radius:2px'></td>"
-                    "<td style='padding:2px 0 2px 10px;color:" +
-                    Th::qss(Th::c().message.codeText) + "'>" + inner + "</td></tr></table>";
+                    u"' style='padding:0;border-radius:2px'></td>"
+                    "<td style='padding:2px 0 2px 10px;color:"_s +
+                    Th::qss(Th::c().message.codeText) + u"'>"_s + inner + u"</td></tr></table>"_s;
             }
             break;
         case EntityType::Link: {
@@ -782,11 +784,11 @@ static QString renderRange(
                 // as a "GIF" badge — a pill like a mention — with the link's own
                 // title after it when it has one.
                 const bool titled = !LinkLabels::isUrlLabel(rawInner, e.data);
-                html += "<a href='" + hrefAttr(e.data) +
-                        "' style='color:" + Th::qss(Th::c().message.mentionText) +
-                        ";background:" + Th::qss(Th::c().message.mentionBg) +
-                        ";border-radius:3px;padding:0 4px;text-decoration:none'><b>" +
-                        QCoreApplication::translate("MsgRender", "GIF") + "</b>" +
+                html += u"<a href='"_s + hrefAttr(e.data) + u"' style='color:"_s +
+                        Th::qss(Th::c().message.mentionText) + u";background:"_s +
+                        Th::qss(Th::c().message.mentionBg) +
+                        u";border-radius:3px;padding:0 4px;text-decoration:none'><b>"_s +
+                        QCoreApplication::translate("MsgRender", "GIF") + u"</b>"_s +
                         (titled ? QStringLiteral(" · ") + inner : QString()) + "</a>";
                 break;
             }
@@ -799,11 +801,11 @@ static QString renderRange(
                 LinkLabels::isShortenedUrlLabel(rawInner, e.data)
                     ? LinkLabels::expandedLabel(e.data, kMaxLinkLabelChars).toHtmlEscaped()
                     : inner;
-            html += "<a href='" + hrefAttr(e.data) + "' style='color:" +
+            html += u"<a href='"_s + hrefAttr(e.data) + u"' style='color:"_s +
                     Th::qss(style.linkColor.isValid() ? style.linkColor : Th::c().text.link) +
-                    (style.fontPx > 0 ? ";font-size:" + QString::number(style.fontPx) + "px"
+                    (style.fontPx > 0 ? u";font-size:"_s + QString::number(style.fontPx) + u"px"_s
                                       : QString()) +
-                    ";text-decoration:none'>" + label + "</a>";
+                    u";text-decoration:none'>"_s + label + u"</a>"_s;
             break;
         }
         case EntityType::MessageLink:
@@ -815,32 +817,33 @@ static QString renderRange(
             // than forcing the raw id — an external collaborator's mention reads
             // as a name the moment users.info resolves it.
             const User   *u     = session ? session->findUser(UserId{e.data}) : nullptr;
-            const QString label = u ? ("@" + u->displayLabel()) : rawInner;
+            const QString label = u ? (u"@"_s + u->displayLabel()) : rawInner;
             const bool    isMe  = session && UserId{e.data} == session->meUserId();
             // Anchor (not span) so the mention is hit-testable for the hover profile card.
-            html += "<a href='" + (kUserAnchorPrefix + e.data).toHtmlEscaped() +
-                    "' style='color:" + Th::qss(Th::c().message.mentionText) + ";background:" +
+            html += u"<a href='"_s + (kUserAnchorPrefix + e.data).toHtmlEscaped() +
+                    u"' style='color:"_s + Th::qss(Th::c().message.mentionText) +
+                    u";background:"_s +
                     Th::qss(isMe ? Th::c().message.mentionSelfBg : Th::c().message.mentionBg) +
-                    ";border-radius:3px;padding:0 2px;text-decoration:none'>" +
-                    label.toHtmlEscaped() + "</a>";
+                    u";border-radius:3px;padding:0 2px;text-decoration:none'>"_s +
+                    label.toHtmlEscaped() + u"</a>"_s;
             break;
         }
         case EntityType::ChannelMention: {
             const QString label = resolveChannelImpl(e.data, rawInner, session);
             // Anchor (not span) so the chip is clickable — the click handler
             // navigates to the channel.
-            html += "<a href='" + (kChannelAnchorPrefix + e.data).toHtmlEscaped() +
-                    "' style='color:" + Th::qss(Th::c().message.mentionText) +
-                    ";background:" + Th::qss(Th::c().message.mentionBg) +
-                    ";border-radius:3px;padding:0 2px;text-decoration:none'>" +
-                    label.toHtmlEscaped() + "</a>";
+            html += u"<a href='"_s + (kChannelAnchorPrefix + e.data).toHtmlEscaped() +
+                    u"' style='color:"_s + Th::qss(Th::c().message.mentionText) +
+                    u";background:"_s + Th::qss(Th::c().message.mentionBg) +
+                    u";border-radius:3px;padding:0 2px;text-decoration:none'>"_s +
+                    label.toHtmlEscaped() + u"</a>"_s;
             break;
         }
         case EntityType::HereCommand:
         case EntityType::ChannelCommand:
-            html += "<span style='color:" + Th::qss(Th::c().message.mentionText) +
-                    ";background:" + Th::qss(Th::c().message.mentionSelfBg) +
-                    ";border-radius:3px;padding:0 2px'>" + inner + "</span>";
+            html += u"<span style='color:"_s + Th::qss(Th::c().message.mentionText) +
+                    u";background:"_s + Th::qss(Th::c().message.mentionSelfBg) +
+                    u";border-radius:3px;padding:0 2px'>"_s + inner + u"</span>"_s;
             break;
         case EntityType::UsergroupMention: {
             // The parser's text is the message's own label (or the bare id);
@@ -848,9 +851,10 @@ static QString renderRange(
             const Usergroup *g    = session ? session->findUsergroup(e.data) : nullptr;
             const QString    text = g ? g->mentionLabel() : rawInner;
             const bool       mine = session && session->isMyUsergroup(e.data);
-            html += "<span style='color:" + Th::qss(Th::c().message.mentionText) + ";background:" +
+            html += u"<span style='color:"_s + Th::qss(Th::c().message.mentionText) +
+                    u";background:"_s +
                     Th::qss(mine ? Th::c().message.mentionSelfBg : Th::c().message.mentionBg) +
-                    ";border-radius:3px;padding:0 2px'>" + text.toHtmlEscaped() + "</span>";
+                    u";border-radius:3px;padding:0 2px'>"_s + text.toHtmlEscaped() + u"</span>"_s;
             break;
         }
         case EntityType::Emoji:
@@ -960,7 +964,7 @@ static QString wrapParagraph(const QString &inner, const QString &pStyle) {
     if (inner.isEmpty())
         return {};
     if (!inner.contains(QLatin1String("<table")))
-        return "<p style='" + pStyle + "'>" + inner + "</p>";
+        return u"<p style='"_s + pStyle + u"'>"_s + inner + u"</p>"_s;
     QString result;
     int     pos = 0;
     while (pos < inner.size()) {
@@ -970,7 +974,7 @@ static QString wrapParagraph(const QString &inner, const QString &pStyle) {
             // Qt SUMS the table's bottom margin with the next block's top margin
             // (no collapsing), so zero the top margin right after a table.
             if (!tail.isEmpty())
-                result += "<p style='" + pStyle + ";margin-top:0'>" + tail + "</p>";
+                result += u"<p style='"_s + pStyle + u";margin-top:0'>"_s + tail + u"</p>"_s;
             break;
         }
         // Text segment before the table — strip trailing <br> (the \n the parser appends
@@ -1006,20 +1010,20 @@ static QString imageBlockHtml(
     if (!gif || blk.imageUrl.isEmpty()) {
         if (blk.altText.isEmpty())
             return {};
-        return "<p style='color:" + Th::qss(Th::c().text.tertiary) +
-               ";font-style:italic;margin:1px 0'>" + blk.altText.toHtmlEscaped() + "</p>";
+        return u"<p style='color:"_s + Th::qss(Th::c().text.tertiary) +
+               u";font-style:italic;margin:1px 0'>"_s + blk.altText.toHtmlEscaped() + u"</p>"_s;
     }
-    const QString key       = gif->keyPrefix + "/b" + QString::number(blockIdx);
+    const QString key       = gif->keyPrefix + u"/b"_s + QString::number(blockIdx);
     const bool    collapsed = gif->collapsed && gif->collapsed->contains(key);
 
     QString html;
     if (!blk.text.text.isEmpty()) {
-        html += "<p style='margin:2px 0;font-size:0.9em'><a href='" +
-                (kGifToggleAnchorPrefix + key).toHtmlEscaped() +
-                "' style='color:" + Th::qss(Th::c().text.secondary) + ";text-decoration:none'>" +
-                toHtml(blk.text, session) + "&nbsp;<img src='" +
+        html += u"<p style='margin:2px 0;font-size:0.9em'><a href='"_s +
+                (kGifToggleAnchorPrefix + key).toHtmlEscaped() + u"' style='color:"_s +
+                Th::qss(Th::c().text.secondary) + u";text-decoration:none'>"_s +
+                toHtml(blk.text, session) + u"&nbsp;<img src='"_s +
                 (collapsed ? kGifChevronCollapsedRes : kGifChevronExpandedRes) +
-                "' width='10' height='10'></a></p>";
+                u"' width='10' height='10'></a></p>"_s;
     }
     if (!collapsed) {
         QString sizeAttrs;
@@ -1030,11 +1034,11 @@ static QString imageBlockHtml(
                     (double)kBlockImgMaxW / blk.imageWidth, (double)kBlockImgMaxH / blk.imageHeight
                 )
             );
-            sizeAttrs = " width='" + QString::number(qRound(blk.imageWidth * scale)) +
-                        "' height='" + QString::number(qRound(blk.imageHeight * scale)) + "'";
+            sizeAttrs = u" width='"_s + QString::number(qRound(blk.imageWidth * scale)) +
+                        u"' height='"_s + QString::number(qRound(blk.imageHeight * scale)) + u"'"_s;
         }
-        html += "<p style='margin:2px 0 0'><img src='" + blk.imageUrl.toHtmlEscaped() + "'" +
-                sizeAttrs + "></p>";
+        html += u"<p style='margin:2px 0 0'><img src='"_s + blk.imageUrl.toHtmlEscaped() + u"'"_s +
+                sizeAttrs + u"></p>"_s;
     }
     return html;
 }
@@ -1064,11 +1068,11 @@ static QString buttonsHtml(const std::vector<BotButton> &buttons) {
         const QColor fg = filled ? Th::c().text.onDark : Th::c().text.primary;
         QString      href;
         if (!btn.url.isEmpty())
-            href = kBotBtnAnchorPrefix +
-                   "url:" + QString::fromLatin1(QUrl::toPercentEncoding(btn.url));
+            href = kBotBtnAnchorPrefix + u"url:"_s +
+                   QString::fromLatin1(QUrl::toPercentEncoding(btn.url));
         else if (!btn.actionId.isEmpty())
-            href = kBotBtnAnchorPrefix +
-                   "act:" + QString::fromLatin1(QUrl::toPercentEncoding(btn.blockId)) + '/' +
+            href = kBotBtnAnchorPrefix + u"act:"_s +
+                   QString::fromLatin1(QUrl::toPercentEncoding(btn.blockId)) + '/' +
                    QString::fromLatin1(QUrl::toPercentEncoding(btn.actionId));
         else
             href = kBotBtnAnchorPrefix + QString::number(i);
@@ -1076,16 +1080,18 @@ static QString buttonsHtml(const std::vector<BotButton> &buttons) {
         // painted from document geometry, which knows nothing else about it).
         // Absolute px: an anchor's em size re-resolves from the document default.
         const QString name = filled ? kBotBtnStyleNamePrefix + btn.style : QString();
-        cells += "<table cellspacing='0' cellpadding='0' style='float:left;margin:0 8px " +
-                 QString::number(kBotBtnCellSpacing) + "px 0'><tr><td style='padding:" + padding +
-                 "'><a href='" + href.toHtmlEscaped() + "'" +
-                 (name.isEmpty() ? QString() : " name='" + name.toHtmlEscaped() + "'") +
-                 " style='color:" + Th::qss(fg) + ";font-size:" + QString::number(buttonFontPx()) +
-                 "px;" + buttonWeightCss(fg) + ";text-decoration:none'>" +
-                 btn.text.toHtmlEscaped() + "</a></td></tr></table>";
+        cells += u"<table cellspacing='0' cellpadding='0' style='float:left;margin:0 8px "_s +
+                 QString::number(kBotBtnCellSpacing) + u"px 0'><tr><td style='padding:"_s +
+                 padding + u"'><a href='"_s + href.toHtmlEscaped() + u"'"_s +
+                 (name.isEmpty() ? QString() : u" name='"_s + name.toHtmlEscaped() + u"'"_s) +
+                 u" style='color:"_s + Th::qss(fg) + u";font-size:"_s +
+                 QString::number(buttonFontPx()) + u"px;"_s + buttonWeightCss(fg) +
+                 u";text-decoration:none'>"_s + btn.text.toHtmlEscaped() +
+                 u"</a></td></tr></table>"_s;
     }
-    return "<table width='100%' cellspacing='" + QString::number(kBotBtnCellSpacing) +
-           "' cellpadding='0' style='margin:4px 0 2px'><tr><td>" + cells + "</td></tr></table>";
+    return u"<table width='100%' cellspacing='"_s + QString::number(kBotBtnCellSpacing) +
+           u"' cellpadding='0' style='margin:4px 0 2px'><tr><td>"_s + cells +
+           u"</td></tr></table>"_s;
 }
 
 static void collectButtonContainers(QTextFrame *frame, QVector<QTextTable *> &out) {
@@ -1190,20 +1196,20 @@ static bool blockHtml(
     const GifRenderContext *gif,
     int                     blockIdx
 ) {
-    if (blk.typeStr == "divider") {
-        html += "<hr style='border:0;border-top:1px solid " + Th::qss(Th::c().divider.def) +
-                ";margin:4px 0'>";
-    } else if (blk.typeStr == "header") {
-        html += "<p style='font-size:1.1em;font-weight:bold;margin:2px 0'>" +
-                toHtml(blk.text, session) + "</p>";
-    } else if (blk.typeStr == "image") {
+    if (blk.typeStr == u"divider"_s) {
+        html += u"<hr style='border:0;border-top:1px solid "_s + Th::qss(Th::c().divider.def) +
+                u";margin:4px 0'>"_s;
+    } else if (blk.typeStr == u"header"_s) {
+        html += u"<p style='font-size:1.1em;font-weight:bold;margin:2px 0'>"_s +
+                toHtml(blk.text, session) + u"</p>"_s;
+    } else if (blk.typeStr == u"image"_s) {
         html += imageBlockHtml(blk, session, gif, blockIdx);
         return gif && !blk.imageUrl.isEmpty();
-    } else if (blk.typeStr == "table" && !blk.tableRows.empty()) {
+    } else if (blk.typeStr == u"table"_s && !blk.tableRows.empty()) {
         html += tableBlockHtml(blk, session, kMaxInlineTableRows);
     } else {
         if (!blk.text.text.isEmpty())
-            html += wrapParagraph(toHtml(blk.text, session), "margin:2px 0");
+            html += wrapParagraph(toHtml(blk.text, session), u"margin:2px 0"_s);
         html += buttonsHtml(blk.buttons);
     }
     return false;
@@ -1228,14 +1234,14 @@ QString tableBlockHtml(const Block &blk, const Session *session, int maxRows) {
         // When rows were cut, the last visible row is shaded — the official
         // client's "there's more below" cue.
         if (shown < total && ri == shown - 1)
-            tdStyle += ";color:" + Th::qss(Th::c().text.tertiary);
-        rows += "<tr>";
+            tdStyle += u";color:"_s + Th::qss(Th::c().text.tertiary);
+        rows += u"<tr>"_s;
         for (const auto &cell : blk.tableRows[ri])
-            rows += "<td style='" + tdStyle + "'>" + toHtml(cell, session) + "</td>";
-        rows += "</tr>";
+            rows += u"<td style='"_s + tdStyle + u"'>"_s + toHtml(cell, session) + u"</td>"_s;
+        rows += u"</tr>"_s;
     }
-    return "<table cellspacing='0' cellpadding='0' style='margin:8px 0;border-collapse:collapse'>" +
-           rows + "</table>";
+    return u"<table cellspacing='0' cellpadding='0' style='margin:8px 0;border-collapse:collapse'>"_s +
+           rows + u"</table>"_s;
 }
 
 Block csvToTableBlock(const QByteArray &bytes) {
@@ -1267,7 +1273,7 @@ Block csvToTableBlock(const QByteArray &bytes) {
                                                         : QChar(',');
 
     Block blk;
-    blk.typeStr = "table";
+    blk.typeStr = u"table"_s;
     std::vector<TextWithEntities> row;
     QString                       cell;
     bool                          inQuotes = false;
@@ -1830,7 +1836,7 @@ QString buildMsgHtml(
         return wrapParagraph(
             QStringLiteral("<span style='color:%1'>%2</span>")
                 .arg(Th::qss(Th::c().text.secondary), line.toHtmlEscaped()),
-            "margin:0"
+            u"margin:0"_s
         );
     }
 
@@ -1840,11 +1846,12 @@ QString buildMsgHtml(
     const TextWithEntities *solo = nullptr;
     if (msg.blocks.empty())
         solo = &msg.text;
-    else if (msg.blocks.size() == 1 && msg.blocks[0].typeStr == "rich_text")
+    else if (msg.blocks.size() == 1 && msg.blocks[0].typeStr == u"rich_text"_s)
         solo = &msg.blocks[0].text;
     if (solo) {
         if (const auto er = soleEmoji(*solo, session))
-            return "<p style='margin:0'>" + emojiHtml(*er, qRound(inlineEmojiPx() * 1.5)) + "</p>";
+            return u"<p style='margin:0'>"_s + emojiHtml(*er, qRound(inlineEmojiPx() * 1.5)) +
+                   u"</p>"_s;
     }
 
     if (!msg.blocks.empty()) {
@@ -1859,7 +1866,8 @@ QString buildMsgHtml(
         );
         for (int bi = 0; bi < (int)msg.blocks.size(); ++bi) {
             const auto &block = msg.blocks[bi];
-            if (fallbackLinks && block.typeStr == "rich_text" && block.text.text == msg.text.text) {
+            if (fallbackLinks && block.typeStr == u"rich_text"_s &&
+                block.text.text == msg.text.text) {
                 auto linked = block;
                 linked.text = withFallbackLinks(block.text, msg.text);
                 anyImage    = blockHtml(html, linked, session, gif, bi) || anyImage;
@@ -1888,10 +1896,10 @@ QString buildMsgHtml(
         while (end > 0 && msg.text.text[end - 1].isSpace())
             --end;
         if (end > 0 && end < (int)msg.text.text.size())
-            return wrapParagraph(toHtml(sliceEntities(msg.text, 0, end), session), "margin:0");
+            return wrapParagraph(toHtml(sliceEntities(msg.text, 0, end), session), u"margin:0"_s);
     }
 
-    return wrapParagraph(toHtml(msg.text, session), "margin:0");
+    return wrapParagraph(toHtml(msg.text, session), u"margin:0"_s);
 }
 
 // Escaped inline HTML with ONLY emoji entities substituted; every other entity
@@ -1951,7 +1959,7 @@ msgUnfurlHtml(const Attachment &att, const Session *session, const GifRenderCont
     auto addText = [&](const TextWithEntities &twe) {
         const int cut = previewCut(twe.text, chars, lines);
         if (cut < 0) {
-            html += wrapParagraph(toHtml(twe, session), "margin:2px 0");
+            html += wrapParagraph(toHtml(twe, session), u"margin:2px 0"_s);
             chars -= (int)twe.text.size();
             lines -= (int)twe.text.count(QLatin1Char('\n'));
             return;
@@ -1959,7 +1967,7 @@ msgUnfurlHtml(const Attachment &att, const Session *session, const GifRenderCont
         truncated = true;
         if (cut > 0)
             html += wrapParagraph(
-                toHtml(sliceEntities(twe, 0, cut), session) + "\xE2\x80\xA6", "margin:2px 0"
+                toHtml(sliceEntities(twe, 0, cut), session) + u"\u2026"_s, "margin:2px 0"
             );
         chars = 0;
         lines = 0;
@@ -1985,13 +1993,13 @@ msgUnfurlHtml(const Attachment &att, const Session *session, const GifRenderCont
     // The toggle needs a host that owns the expand state; without one (preview
     // dialogs) the card just shows its preview.
     if ((truncated || expanded) && gif && gif->expanded)
-        html += "<p style='margin:2px 0 0'><a href='" +
+        html += u"<p style='margin:2px 0 0'><a href='"_s +
                 (kUnfurlToggleAnchorPrefix + gif->keyPrefix).toHtmlEscaped() +
-                "' style='color:" + Th::qss(Th::c().text.link) +
-                ";font-weight:bold;text-decoration:none'>" +
+                u"' style='color:"_s + Th::qss(Th::c().text.link) +
+                u";font-weight:bold;text-decoration:none'>"_s +
                 (expanded ? QCoreApplication::translate("MsgRender", "Show less")
                           : QCoreApplication::translate("MsgRender", "Show more")) +
-                "</a></p>";
+                u"</a></p>"_s;
     return html;
 }
 
@@ -2004,10 +2012,11 @@ buildAttachHtml(const Attachment &att, const Session *session, const GifRenderCo
 
     QString html;
     if (!att.pretext.isEmpty()) // pretext is mrkdwn, like text
-        html += wrapParagraph(toHtml(MrkdwnParser::parse(att.pretext), session), "margin:0 0 2px");
+        html +=
+            wrapParagraph(toHtml(MrkdwnParser::parse(att.pretext), session), u"margin:0 0 2px"_s);
     if (!att.authorName.isEmpty())
-        html += "<p style='margin:0;font-size:0.85em;color:" + Th::qss(Th::c().text.tertiary) +
-                "'>" + MrkdwnParser::decodeEntities(att.authorName).toHtmlEscaped() + "</p>";
+        html += u"<p style='margin:0;font-size:0.85em;color:"_s + Th::qss(Th::c().text.tertiary) +
+                u"'>"_s + MrkdwnParser::decodeEntities(att.authorName).toHtmlEscaped() + u"</p>"_s;
     if (!att.title.isEmpty()) {
         // Titles don't support mrkdwn marks, but bots (e.g. Outlook Calendar)
         // embed <!date^…> and <url|label> tokens in them and Slack's clients
@@ -2018,23 +2027,23 @@ buildAttachHtml(const Attachment &att, const Session *session, const GifRenderCo
             // The whole title is one link; embedded tokens collapse to their
             // resolved plain text (anchors can't nest) — except emoji, which
             // substitute their glyph/img inline.
-            html += "<p style='margin:0;font-weight:bold'><a href='" +
-                    hrefAttr(MrkdwnParser::decodeEntities(att.titleLink)) +
-                    "' style='color:" + Th::qss(Th::c().text.link) + ";text-decoration:none'>" +
-                    emojiOnlyHtml(title, session) + "</a></p>";
+            html += u"<p style='margin:0;font-weight:bold'><a href='"_s +
+                    hrefAttr(MrkdwnParser::decodeEntities(att.titleLink)) + u"' style='color:"_s +
+                    Th::qss(Th::c().text.link) + u";text-decoration:none'>"_s +
+                    emojiOnlyHtml(title, session) + u"</a></p>"_s;
         else
-            html += "<p style='margin:0;font-weight:bold'>" + toHtml(title, session) + "</p>";
+            html += u"<p style='margin:0;font-weight:bold'>"_s + toHtml(title, session) + u"</p>"_s;
     }
     if (!att.text.text.isEmpty())
-        html += wrapParagraph(toHtml(att.text, session), "margin:2px 0 0");
+        html += wrapParagraph(toHtml(att.text, session), u"margin:2px 0 0"_s);
 
     // Key/value fields (classic bot format): bold title line, value below.
     for (const auto &f : att.fields) {
         if (!f.title.isEmpty())
-            html += "<p style='margin:2px 0 0;font-weight:bold'>" +
-                    MrkdwnParser::decodeEntities(f.title).toHtmlEscaped() + "</p>";
+            html += u"<p style='margin:2px 0 0;font-weight:bold'>"_s +
+                    MrkdwnParser::decodeEntities(f.title).toHtmlEscaped() + u"</p>"_s;
         if (!f.value.text.isEmpty())
-            html += "<p style='margin:0'>" + toHtml(f.value, session) + "</p>";
+            html += u"<p style='margin:0'>"_s + toHtml(f.value, session) + u"</p>"_s;
     }
 
     // Render Block Kit blocks embedded in the attachment (modern bot format).
@@ -2048,8 +2057,8 @@ buildAttachHtml(const Attachment &att, const Session *session, const GifRenderCo
     // Skipped when an image block was embedded (it duplicates the alt text) or
     // when there are buttons to render (the fallback duplicates their purpose).
     if (html.isEmpty() && !anyImage && att.buttons.empty() && !att.fallback.isEmpty())
-        html += "<p style='margin:2px 0 0'>" + toHtml(MrkdwnParser::parse(att.fallback), session) +
-                "</p>";
+        html += u"<p style='margin:2px 0 0'>"_s +
+                toHtml(MrkdwnParser::parse(att.fallback), session) + u"</p>"_s;
 
     // Legacy attachment "actions" buttons render after text/fields, like Slack.
     html += buttonsHtml(att.buttons);
@@ -2062,14 +2071,16 @@ buildAttachHtml(const Attachment &att, const Session *session, const GifRenderCo
     // document default, so an em-sized paragraph rendered its link a size larger
     // than the plain text beside it.
     if (!att.footer.isEmpty() || att.msgDate > 0) {
-        const QColor  fg   = Th::c().text.secondary; // Slack: #616061, links too
-        const QString px   = QString::number(footerFontPx());
-        const QString span = "<span style='font-size:" + px + "px;color:" + Th::qss(fg) + "'>";
-        QString       inner;
+        const QColor  fg = Th::c().text.secondary; // Slack: #616061, links too
+        const QString px = QString::number(footerFontPx());
+        const QString span =
+            u"<span style='font-size:"_s + px + u"px;color:"_s + Th::qss(fg) + u"'>"_s;
+        QString inner;
         if (!att.footerIcon.isEmpty()) {
             const QString s = QString::number(footerIconPx());
-            inner += "<img src='" + att.footerIcon.toHtmlEscaped() + "' width='" + s +
-                     "' height='" + s + "' style='vertical-align:middle'>" + span + "&nbsp;</span>";
+            inner += u"<img src='"_s + att.footerIcon.toHtmlEscaped() + u"' width='"_s + s +
+                     u"' height='"_s + s + u"' style='vertical-align:middle'>"_s + span +
+                     u"&nbsp;</span>"_s;
         }
         if (!att.footer.isEmpty())
             inner += span +
@@ -2078,15 +2089,15 @@ buildAttachHtml(const Attachment &att, const Session *session, const GifRenderCo
                          session,
                          InlineStyle{.linkColor = fg, .fontPx = footerFontPx()}
                      ) +
-                     "</span>";
+                     u"</span>"_s;
         if (att.msgDate > 0) {
             if (!att.footer.isEmpty())
-                inner += "<span style='font-size:" + px +
-                         "px;color:" + Th::qss(Th::c().text.tertiary) + "'>&nbsp;|&nbsp;</span>";
-            inner += span + formatFooterTs(att.msgDate).toHtmlEscaped() + "</span>";
+                inner += u"<span style='font-size:"_s + px + u"px;color:"_s +
+                         Th::qss(Th::c().text.tertiary) + u"'>&nbsp;|&nbsp;</span>"_s;
+            inner += span + formatFooterTs(att.msgDate).toHtmlEscaped() + u"</span>"_s;
         }
-        html += "<p style='margin:5px 0 0;font-size:" + px + "px;color:" + Th::qss(fg) + "'>" +
-                inner + "</p>";
+        html += u"<p style='margin:5px 0 0;font-size:"_s + px + u"px;color:"_s + Th::qss(fg) +
+                u"'>"_s + inner + u"</p>"_s;
     }
 
     return html;
@@ -2095,7 +2106,7 @@ buildAttachHtml(const Attachment &att, const Session *session, const GifRenderCo
 bool attachIsImageOnly(const Attachment &att) {
     const bool hasImageBlock =
         std::any_of(att.blocks.begin(), att.blocks.end(), [](const Block &b) {
-            return b.typeStr == "image" && !b.imageUrl.isEmpty();
+            return b.typeStr == u"image"_s && !b.imageUrl.isEmpty();
         });
     if (!hasImageBlock)
         return false;
@@ -2104,8 +2115,8 @@ bool attachIsImageOnly(const Attachment &att) {
         !att.imageUrl.isEmpty() || !att.thumbUrl.isEmpty() || !att.buttons.empty())
         return false;
     for (const auto &b : att.blocks)
-        if (b.typeStr != "image" && (b.typeStr == "divider" || !b.text.text.isEmpty() ||
-                                     !b.buttons.empty() || !b.tableRows.empty()))
+        if (b.typeStr != u"image"_s && (b.typeStr == u"divider"_s || !b.text.text.isEmpty() ||
+                                        !b.buttons.empty() || !b.tableRows.empty()))
             return false;
     return true;
 }
@@ -2121,7 +2132,7 @@ QColor attachmentBarColor(const Attachment &att) {
         return m.namedBarDanger;
     if (name.isEmpty())
         return m.attachmentBar;
-    const QColor c(name.startsWith('#') ? name : "#" + name);
+    const QColor c(name.startsWith('#') ? name : u"#"_s + name);
     return c.isValid() ? c : m.attachmentBar;
 }
 
@@ -2141,7 +2152,7 @@ bool attachIsTableOnly(const Attachment &att) {
         !att.imageUrl.isEmpty() || !att.thumbUrl.isEmpty() || !att.buttons.empty())
         return false;
     for (const auto &b : att.blocks)
-        if (b.tableRows.empty() && (b.typeStr == "divider" || b.typeStr == "image" ||
+        if (b.tableRows.empty() && (b.typeStr == u"divider"_s || b.typeStr == u"image"_s ||
                                     !b.text.text.isEmpty() || !b.buttons.empty()))
             return false;
     return true;
@@ -2162,60 +2173,114 @@ bool fileIsCode(const File &f) {
     // Slack's filetype ids for languages / markup (its snippet types). "text",
     // "csv", "tsv" and friends are documents, not code.
     static const QSet<QString> kCodeTypes = {
-        "applescript", "c",          "clojure",   "coffeescript", "cfm",        "cpp",
-        "csharp",      "css",        "d",         "dart",         "diff",       "dockerfile",
-        "elixir",      "erlang",     "fortran",   "fsharp",       "go",         "groovy",
-        "handlebars",  "haskell",    "haxe",      "html",         "java",       "javascript",
-        "json",        "jsx",        "julia",     "kotlin",       "latex",      "lisp",
-        "lua",         "markdown",   "matlab",    "mumps",        "objc",       "ocaml",
-        "pascal",      "perl",       "php",       "pig",          "powershell", "puppet",
-        "python",      "r",          "ruby",      "rust",         "sass",       "scala",
-        "scheme",      "shell",      "smalltalk", "sql",          "swift",      "toml",
-        "tsx",         "typescript", "vb",        "vbscript",     "velocity",   "verilog",
-        "vhdl",        "xml",        "yaml",
+        u"applescript"_s,
+        u"c"_s,
+        u"clojure"_s,
+        u"coffeescript"_s,
+        u"cfm"_s,
+        u"cpp"_s,
+        u"csharp"_s,
+        u"css"_s,
+        u"d"_s,
+        u"dart"_s,
+        u"diff"_s,
+        u"dockerfile"_s,
+        u"elixir"_s,
+        u"erlang"_s,
+        u"fortran"_s,
+        "fsharp",
+        "go",
+        "groovy",
+        "handlebars",
+        "haskell",
+        "haxe",
+        "html",
+        "java",
+        "javascript",
+        "json",
+        "jsx",
+        "julia",
+        "kotlin",
+        "latex",
+        "lisp",
+        "lua",
+        "markdown",
+        "matlab",
+        "mumps",
+        "objc",
+        "ocaml",
+        "pascal",
+        "perl",
+        "php",
+        "pig",
+        "powershell",
+        "puppet",
+        "python",
+        "r",
+        "ruby",
+        "rust",
+        "sass",
+        "scala",
+        "scheme",
+        "shell",
+        "smalltalk",
+        "sql",
+        "swift",
+        "toml",
+        "tsx",
+        "typescript",
+        "vb",
+        "vbscript",
+        "velocity",
+        "verilog",
+        "vhdl",
+        "xml",
+        "yaml",
     };
     if (!f.fileType.isEmpty())
         return kCodeTypes.contains(f.fileType.toLower());
     // No filetype (other backends, pending uploads): go by the extension.
     static const QSet<QString> kCodeExts = {
-        "bash", "c",    "cc",   "cjs",   "clj",   "cmake", "cpp", "cs",     "css",   "cxx",
-        "dart", "diff", "erl",  "ex",    "exs",   "go",    "h",   "hpp",    "hs",    "htm",
-        "html", "java", "jl",   "js",    "json",  "jsx",   "kt",  "kts",    "less",  "lua",
-        "m",    "md",   "mjs",  "mm",    "patch", "php",   "pl",  "ps1",    "py",    "r",
-        "rb",   "rs",   "sass", "scala", "scss",  "sh",    "sql", "svelte", "swift", "tex",
-        "toml", "ts",   "tsx",  "vue",   "xml",   "yaml",  "yml", "zsh",
+        u"bash"_s, u"c"_s,   u"cc"_s,   u"cjs"_s,  u"clj"_s, u"cmake"_s, u"cpp"_s, u"cs"_s,
+        u"css"_s,  u"cxx"_s, u"dart"_s, u"diff"_s, u"erl"_s, u"ex"_s,    u"exs"_s, "go",
+        "h",       "hpp",    "hs",      "htm",     "html",   "java",     "jl",     "js",
+        "json",    "jsx",    "kt",      "kts",     "less",   "lua",      "m",      "md",
+        "mjs",     "mm",     "patch",   "php",     "pl",     "ps1",      "py",     "r",
+        "rb",      "rs",     "sass",    "scala",   "scss",   "sh",       "sql",    "svelte",
+        "swift",   "tex",    "toml",    "ts",      "tsx",    "vue",      "xml",    "yaml",
+        "yml",     "zsh",
     };
     return kCodeExts.contains(fileExtension(f));
 }
 
 bool fileIsHtml(const File &f) {
     if (!f.fileType.isEmpty())
-        return f.fileType.compare("html", Qt::CaseInsensitive) == 0;
+        return f.fileType.compare(u"html"_s, Qt::CaseInsensitive) == 0;
     const QString ext = fileExtension(f);
-    return ext == "html" || ext == "htm" ||
-           f.mimeType.compare("text/html", Qt::CaseInsensitive) == 0;
+    return ext == u"html"_s || ext == u"htm"_s ||
+           f.mimeType.compare(u"text/html"_s, Qt::CaseInsensitive) == 0;
 }
 
 QColor fileTypeColor(const File &f) {
     if (fileIsCode(f))
         return QColor("#DE4E2B"); // Slack's code-file orange
     const QString mt = f.mimeType.toLower();
-    if (mt.contains("pdf"))
+    if (mt.contains(u"pdf"_s))
         return QColor("#E44D4D");
-    if (mt.contains("word") || mt.contains("document"))
+    if (mt.contains(u"word"_s) || mt.contains(u"document"_s))
         return QColor("#2B579A");
-    if (mt.contains("excel") || mt.contains("spreadsheet"))
+    if (mt.contains(u"excel"_s) || mt.contains(u"spreadsheet"_s))
         return QColor("#217346");
-    if (mt.contains("powerpoint") || mt.contains("presentation"))
+    if (mt.contains(u"powerpoint"_s) || mt.contains(u"presentation"_s))
         return QColor("#D24726");
-    if (mt.startsWith("video/"))
+    if (mt.startsWith(u"video/"_s))
         return QColor("#7B2D8B");
-    if (mt.startsWith("audio/"))
+    if (mt.startsWith(u"audio/"_s))
         return QColor("#1E7A6E");
-    if (mt.contains("zip") || mt.contains("x-tar") || mt.contains("gzip") || mt.contains("x-7z") ||
-        mt.contains("x-rar"))
+    if (mt.contains(u"zip"_s) || mt.contains(u"x-tar"_s) || mt.contains(u"gzip"_s) ||
+        mt.contains(u"x-7z"_s) || mt.contains(u"x-rar"_s))
         return QColor("#8B6914");
-    if (mt.startsWith("text/") || mt.contains("json") || mt.contains("xml"))
+    if (mt.startsWith(u"text/"_s) || mt.contains(u"json"_s) || mt.contains(u"xml"_s))
         return QColor("#555555");
     return QColor("#888888");
 }
@@ -2229,18 +2294,18 @@ QString fileIconLabel(const File &f) {
     }
     if (!f.prettyType.isEmpty())
         return f.prettyType.left(4).toUpper();
-    return "FILE";
+    return u"FILE"_s;
 }
 
 QString formatFileSize(qint64 bytes) {
     if (bytes <= 0)
         return {};
     if (bytes < 1024)
-        return QString("%1 B").arg(bytes);
+        return u"%1 B"_s.arg(bytes);
     if (bytes < 1024 * 1024)
-        return QString("%1 KB").arg(bytes / 1024);
+        return u"%1 KB"_s.arg(bytes / 1024);
     const double mb = bytes / (1024.0 * 1024.0);
-    return QString("%1 MB").arg(mb, 0, 'f', mb < 10 ? 1 : 0);
+    return u"%1 MB"_s.arg(mb, 0, 'f', mb < 10 ? 1 : 0);
 }
 
 namespace {
@@ -2283,7 +2348,7 @@ QString chipSubtitle(const File &f) {
     QString       sub = f.prettyType;
     const QString sz  = formatFileSize(f.size);
     if (!sz.isEmpty())
-        sub += (sub.isEmpty() ? "" : " · ") + sz;
+        sub += (sub.isEmpty() ? u""_s : u" · "_s) + sz;
     return sub;
 }
 
@@ -2344,7 +2409,7 @@ void paintPlainChip(QPainter &p, const File &f, const QRect &rect) {
         static QPixmap     kCode;
         if (const qreal d = p.device()->devicePixelRatioF(); !qFuzzyCompare(d, kDpr)) {
             kDpr  = d;
-            kCode = svgPixmapPhys(":/ui/code-file.svg", kGlyphSz, Qt::white, d);
+            kCode = svgPixmapPhys(u":/ui/code-file.svg"_s, kGlyphSz, Qt::white, d);
         }
         p.drawPixmap(
             t.icon.x() + (t.icon.width() - kGlyphSz.width()) / 2,
@@ -2411,10 +2476,10 @@ void paintAudioCard(QPainter &p, const File &f, const QRect &rect, const AudioCh
         kDpr            = d;
         kAccent         = accent;
         kMuted          = muted;
-        kPlay           = svgPixmapPhys(":/ui/play.svg", kGlyphSz, accent, d);
-        kPause          = svgPixmapPhys(":/ui/pause.svg", kGlyphSz, accent, d);
-        kCaptionsAccent = svgPixmapPhys(":/ui/captions.svg", kGlyphSz, accent, d);
-        kCaptionsMuted  = svgPixmapPhys(":/ui/captions.svg", kGlyphSz, muted, d);
+        kPlay           = svgPixmapPhys(u":/ui/play.svg"_s, kGlyphSz, accent, d);
+        kPause          = svgPixmapPhys(u":/ui/pause.svg"_s, kGlyphSz, accent, d);
+        kCaptionsAccent = svgPixmapPhys(u":/ui/captions.svg"_s, kGlyphSz, accent, d);
+        kCaptionsMuted  = svgPixmapPhys(u":/ui/captions.svg"_s, kGlyphSz, muted, d);
     }
 
     // Round play/pause button
@@ -2613,9 +2678,9 @@ AudioTranscriptLayout audioChipTranscriptLayout(const QRect &chipRect, const Fil
 std::vector<VttCue> parseVtt(const QByteArray &vtt) {
     // WEBVTT header, blank line, then cues: optional id line, "hh:mm:ss.mmm -->
     // hh:mm:ss.mmm", payload lines until a blank line.
-    static const QRegularExpression kTiming(R"(^(?:(\d+):)?(\d{1,2}):(\d{2})\.(\d{3})\s*-->)");
-    static const QRegularExpression kTag("<[^>]*>"); // <v Speaker>, <c>, <i>…
-    static const QRegularExpression kEol("\\r?\\n");
+    static const QRegularExpression kTiming(uR"(^(?:(\d+):)?(\d{1,2}):(\d{2})\.(\d{3})\s*-->)"_s);
+    static const QRegularExpression kTag(u"<[^>]*>"_s); // <v Speaker>, <c>, <i>…
+    static const QRegularExpression kEol(u"\\r?\\n"_s);
     std::vector<VttCue>             cues;
     QString                         text = QString::fromUtf8(vtt);
     if (text.startsWith(QChar(0xFEFF)))

@@ -9,6 +9,8 @@
 #include <QJsonObject>
 #include <QUuid>
 
+using namespace Qt::StringLiterals;
+
 namespace LlmWire {
 
 namespace {
@@ -33,12 +35,12 @@ QString joinUrl(const QString &base, const QString &path) {
 QJsonArray chatMessages(const Llm::Request &req, bool systemAsMessage) {
     QJsonArray messages;
     if (systemAsMessage && !req.system.isEmpty())
-        messages.append(QJsonObject{{"role", "system"}, {"content", req.system}});
+        messages.append(QJsonObject{{u"role"_s, u"system"_s}, {u"content"_s, req.system}});
     for (const auto &m : req.messages) {
         messages.append(
             QJsonObject{
-                {"role", m.role == Llm::Message::Role::User ? "user" : "assistant"},
-                {"content", m.text},
+                {u"role"_s, m.role == Llm::Message::Role::User ? "user" : "assistant"},
+                {u"content"_s, m.text},
             }
         );
     }
@@ -53,8 +55,8 @@ QString contentText(const QJsonValue &content) {
     QString out;
     for (const auto &partRef : content.toArray()) {
         const QJsonObject part = partRef.toObject();
-        if (part.value("type").toString() == "text" || part.contains("text"))
-            out += part.value("text").toString();
+        if (part.value(u"type"_s).toString() == u"text"_s || part.contains(u"text"_s))
+            out += part.value(u"text"_s).toString();
     }
     return out;
 }
@@ -65,15 +67,15 @@ QString contentText(const QJsonValue &content) {
 //   {"object":"error","message":…}   older vLLM (flat)
 //   {"message":…} on a 4xx/5xx       generic
 QString jsonErrorMessage(const QJsonObject &obj, int httpStatus) {
-    const QJsonValue err = obj.value("error");
+    const QJsonValue err = obj.value(u"error"_s);
     if (err.isObject()) {
-        const QString msg = err.toObject().value("message").toString();
+        const QString msg = err.toObject().value(u"message"_s).toString();
         return msg.isEmpty() ? tr("unknown error") : msg;
     }
     if (err.isString())
         return err.toString();
-    if (obj.value("object").toString() == "error" || httpStatus >= 400) {
-        const QString msg = obj.value("message").toString();
+    if (obj.value(u"object"_s).toString() == u"error"_s || httpStatus >= 400) {
+        const QString msg = obj.value(u"message"_s).toString();
         if (!msg.isEmpty())
             return msg;
     }
@@ -146,28 +148,28 @@ HttpRequest buildChat(const Endpoint &ep, const Llm::Request &req) {
     HttpRequest out;
     addHeader(out, "Content-Type", "application/json");
     QJsonObject body{
-        {"model", req.model}, {"messages", chatMessages(req, ep.format == Format::OpenAiChat)}
+        {u"model"_s, req.model}, {u"messages"_s, chatMessages(req, ep.format == Format::OpenAiChat)}
     };
 
     if (ep.format == Format::AnthropicMessages) {
-        out.url = QUrl(joinUrl(ep.baseUrl, "/v1/messages"));
+        out.url = QUrl(joinUrl(ep.baseUrl, u"/v1/messages"_s));
         addHeader(out, "anthropic-version", kAnthropicVersion);
         addHeader(out, "x-api-key", ep.apiKey.toUtf8());
-        body["max_tokens"] = req.maxTokens;
+        body[u"max_tokens"_s] = req.maxTokens;
         if (!req.system.isEmpty())
-            body["system"] = req.system;
+            body[u"system"_s] = req.system;
         if (req.temperature)
-            body["temperature"] = std::clamp(*req.temperature, 0.0, 1.0);
+            body[u"temperature"_s] = std::clamp(*req.temperature, 0.0, 1.0);
     } else {
-        out.url = QUrl(joinUrl(ep.baseUrl, "/chat/completions"));
+        out.url = QUrl(joinUrl(ep.baseUrl, u"/chat/completions"_s));
         if (!ep.apiKey.isEmpty())
             addHeader(out, "Authorization", "Bearer " + ep.apiKey.toUtf8());
-        body[ep.maxCompletionTokens ? "max_completion_tokens" : "max_tokens"] = req.maxTokens;
-        const bool reasoningOn = !ep.reasoningEffort.isEmpty() && ep.reasoningEffort != "none";
+        body[ep.maxCompletionTokens ? u"max_completion_tokens"_s : u"max_tokens"_s] = req.maxTokens;
+        const bool reasoningOn = !ep.reasoningEffort.isEmpty() && ep.reasoningEffort != u"none"_s;
         if (!ep.reasoningEffort.isEmpty())
-            body["reasoning_effort"] = ep.reasoningEffort;
+            body[u"reasoning_effort"_s] = ep.reasoningEffort;
         if (req.temperature && !reasoningOn)
-            body["temperature"] = *req.temperature;
+            body[u"temperature"_s] = *req.temperature;
     }
     out.body = QJsonDocument(body).toJson(QJsonDocument::Compact);
     return out;
@@ -176,11 +178,11 @@ HttpRequest buildChat(const Endpoint &ep, const Llm::Request &req) {
 HttpRequest buildListModels(const Endpoint &ep) {
     HttpRequest out;
     if (ep.format == Format::AnthropicMessages) {
-        out.url = QUrl(joinUrl(ep.baseUrl, "/v1/models"));
+        out.url = QUrl(joinUrl(ep.baseUrl, u"/v1/models"_s));
         addHeader(out, "anthropic-version", kAnthropicVersion);
         addHeader(out, "x-api-key", ep.apiKey.toUtf8());
     } else {
-        out.url = QUrl(joinUrl(ep.baseUrl, "/models"));
+        out.url = QUrl(joinUrl(ep.baseUrl, u"/models"_s));
         if (!ep.apiKey.isEmpty())
             addHeader(out, "Authorization", "Bearer " + ep.apiKey.toUtf8());
     }
@@ -194,7 +196,7 @@ bool supportsTranscription(Format format) {
 HttpRequest
 buildTranscription(const Endpoint &ep, const TranscriptionInput &in, const QByteArray &boundaryIn) {
     HttpRequest out;
-    out.url = QUrl(joinUrl(ep.baseUrl, "/audio/transcriptions"));
+    out.url = QUrl(joinUrl(ep.baseUrl, u"/audio/transcriptions"_s));
     if (!ep.apiKey.isEmpty())
         addHeader(out, "Authorization", "Bearer " + ep.apiKey.toUtf8());
     // A UUID never occurs inside compressed audio; no need to scan the bytes.
@@ -267,33 +269,33 @@ TranscriptionResult parseTranscription(int httpStatus, const QByteArray &body) {
         }
         return r;
     }
-    if (!obj.contains("text")) {
+    if (!obj.contains(u"text"_s)) {
         r.error = tr("Unexpected response from server (no text)");
         return r;
     }
-    r.text = obj.value("text").toString().trimmed();
+    r.text = obj.value(u"text"_s).toString().trimmed();
     r.ok   = true;
     return r;
 }
 
 QString audioMimeForExtension(const QString &extIn) {
     const QString ext = extIn.toLower();
-    if (ext == "mp3" || ext == "mpga" || ext == "mpeg")
-        return "audio/mpeg";
-    if (ext == "mp4" || ext == "m4a")
-        return "audio/mp4";
-    if (ext == "wav")
-        return "audio/wav";
-    if (ext == "flac")
-        return "audio/flac";
-    if (ext == "ogg" || ext == "oga")
-        return "audio/ogg";
-    if (ext == "opus")
-        return "audio/opus";
-    if (ext == "webm")
-        return "audio/webm";
-    if (ext == "aac")
-        return "audio/aac";
+    if (ext == u"mp3"_s || ext == u"mpga"_s || ext == u"mpeg"_s)
+        return u"audio/mpeg"_s;
+    if (ext == u"mp4"_s || ext == u"m4a"_s)
+        return u"audio/mp4"_s;
+    if (ext == u"wav"_s)
+        return u"audio/wav"_s;
+    if (ext == u"flac"_s)
+        return u"audio/flac"_s;
+    if (ext == u"ogg"_s || ext == u"oga"_s)
+        return u"audio/ogg"_s;
+    if (ext == u"opus"_s)
+        return u"audio/opus"_s;
+    if (ext == u"webm"_s)
+        return u"audio/webm"_s;
+    if (ext == u"aac"_s)
+        return u"audio/aac"_s;
     return {};
 }
 
@@ -303,29 +305,29 @@ ChatResult parseChat(Format format, int httpStatus, const QByteArray &body) {
     if (!preflight(httpStatus, body, obj, r.error))
         return r;
 
-    r.response.model = obj.value("model").toString();
+    r.response.model = obj.value(u"model"_s).toString();
     if (format == Format::AnthropicMessages) {
-        r.response.stopReason = obj.value("stop_reason").toString();
+        r.response.stopReason = obj.value(u"stop_reason"_s).toString();
         // Safety classifiers can refuse with an empty content array — surface
         // that as an error rather than an empty completion.
-        if (r.response.stopReason == "refusal") {
-            r.error = "refusal";
+        if (r.response.stopReason == u"refusal"_s) {
+            r.error = u"refusal"_s;
             return r;
         }
-        for (const auto &blockRef : obj.value("content").toArray()) {
+        for (const auto &blockRef : obj.value(u"content"_s).toArray()) {
             const QJsonObject block = blockRef.toObject();
-            if (block.value("type").toString() == "text")
-                r.response.text += block.value("text").toString();
+            if (block.value(u"type"_s).toString() == u"text"_s)
+                r.response.text += block.value(u"text"_s).toString();
         }
     } else {
-        const QJsonArray choices = obj.value("choices").toArray();
+        const QJsonArray choices = obj.value(u"choices"_s).toArray();
         if (choices.isEmpty()) {
             r.error = tr("Unexpected response from server (no choices)");
             return r;
         }
         const QJsonObject choice = choices.at(0).toObject();
-        r.response.stopReason    = choice.value("finish_reason").toString();
-        r.response.text          = contentText(choice.value("message").toObject().value("content"));
+        r.response.stopReason    = choice.value(u"finish_reason"_s).toString();
+        r.response.text = contentText(choice.value(u"message"_s).toObject().value(u"content"_s));
     }
     r.ok = true;
     return r;
@@ -337,8 +339,8 @@ ModelsResult parseModels(Format, int httpStatus, const QByteArray &body) {
     if (!preflight(httpStatus, body, obj, r.error))
         return r;
     // OpenAI and Anthropic agree on {"data":[{"id":…},…]}.
-    for (const auto &mRef : obj.value("data").toArray()) {
-        const QString id = mRef.toObject().value("id").toString();
+    for (const auto &mRef : obj.value(u"data"_s).toArray()) {
+        const QString id = mRef.toObject().value(u"id"_s).toString();
         if (!id.isEmpty())
             r.models.append(id);
     }
@@ -350,27 +352,27 @@ QString normalizeOpenAiBaseUrl(const QString &raw) {
     QString s = raw.trimmed();
     if (s.isEmpty())
         return {};
-    if (!s.contains("://"))
+    if (!s.contains(u"://"_s))
         s.prepend("http://");
     while (s.endsWith('/'))
         s.chop(1);
-    if (s.endsWith("/chat/completions"))
+    if (s.endsWith(u"/chat/completions"_s))
         s.chop(int(qstrlen("/chat/completions")));
     const QUrl url(s);
     if (!url.isValid() || url.host().isEmpty() ||
-        (url.scheme() != "http" && url.scheme() != "https"))
+        (url.scheme() != u"http"_s && url.scheme() != u"https"_s))
         return {};
     if (url.path().isEmpty())
-        s += "/v1";
+        s += u"/v1"_s;
     return s;
 }
 
 bool isCleartextRemote(const QString &urlStr) {
     const QUrl url(urlStr);
-    if (url.scheme() != "http")
+    if (url.scheme() != u"http"_s)
         return false;
     const QString host = url.host().toLower();
-    if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local"))
+    if (host == u"localhost"_s || host.endsWith(u".localhost"_s) || host.endsWith(u".local"_s))
         return false;
     QHostAddress addr;
     if (!addr.setAddress(host))

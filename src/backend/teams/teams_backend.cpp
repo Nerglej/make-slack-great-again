@@ -27,6 +27,8 @@
 #include <tuple>
 #include <QDebug>
 
+using namespace Qt::StringLiterals;
+
 namespace teams {
 
 namespace {
@@ -65,12 +67,12 @@ MessagePage pageFromMessages(const QJsonObject &resp) {
 QString messagesPath(const ConversationId &conv, const std::optional<Ts> &threadRoot) {
     if (teams::isChannelConvId(conv.value)) {
         const auto [teamId, chanId] = teams::splitChannelConvId(conv.value);
-        QString base                = "teams/" + teamId + "/channels/" + chanId + "/messages";
+        QString base = u"teams/"_s + teamId + u"/channels/"_s + chanId + u"/messages"_s;
         if (threadRoot && !threadRoot->isEmpty())
-            base += "/" + *threadRoot + "/replies";
+            base += u"/"_s + *threadRoot + u"/replies"_s;
         return base;
     }
-    return "chats/" + conv.value + "/messages";
+    return u"chats/"_s + conv.value + u"/messages"_s;
 }
 
 // Graph path of a single (top-level) message — for edit/delete/react. NOTE:
@@ -92,7 +94,7 @@ void Backend::fetchPhoto(const QString &userId, std::function<void(QString)> cb)
     // Authenticated GET of the user's photo; downloadUrl adds the Bearer token and
     // bypasses the queue. 404 (no photo) / error → empty string.
     _client->downloadUrl(
-        QUrl(GraphClient::kBaseUrl + "users/" + userId + "/photo/$value"),
+        QUrl(GraphClient::kBaseUrl + u"users/"_s + userId + u"/photo/$value"_s),
         [cb](QByteArray bytes) {
             if (bytes.isEmpty())
                 cb(QString());
@@ -172,20 +174,20 @@ void Backend::resolveMessageMedia(const ConversationId &conv, const Message &msg
                                     QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals
                                 ));
         QUrlQuery     q;
-        q.addQueryItem("$expand", "thumbnails");
+        q.addQueryItem(u"$expand"_s, u"thumbnails"_s);
         _client->get(
-            "shares/" + shareId + "/driveItem",
+            u"shares/"_s + shareId + u"/driveItem"_s,
             q,
             [base, idx, done](QJsonObject item) mutable {
                 File &f = base->files[idx];
-                if (const auto th = item.value("thumbnails").toArray(); !th.isEmpty()) {
-                    const auto large = th.first().toObject().value("large").toObject();
-                    f.thumbUrl       = large.value("url").toString(); // public svc.ms URL
-                    f.imageWidth     = large.value("width").toInt();
-                    f.imageHeight    = large.value("height").toInt();
+                if (const auto th = item.value(u"thumbnails"_s).toArray(); !th.isEmpty()) {
+                    const auto large = th.first().toObject().value(u"large"_s).toObject();
+                    f.thumbUrl       = large.value(u"url"_s).toString(); // public svc.ms URL
+                    f.imageWidth     = large.value(u"width"_s).toInt();
+                    f.imageHeight    = large.value(u"height"_s).toInt();
                 }
                 // Full-size for the image viewer (a public pre-authenticated URL).
-                if (const auto dl = item.value("@microsoft.graph.downloadUrl").toString();
+                if (const auto dl = item.value(u"@microsoft.graph.downloadUrl"_s).toString();
                     !dl.isEmpty())
                     f.urlPrivate = dl;
                 if (f.imageWidth == 0)
@@ -259,7 +261,7 @@ void Backend::pollTracked() {
     for (const QString &cid : _tracked) {
         const ConversationId conv{cid};
         QUrlQuery            q;
-        q.addQueryItem("$top", "20");
+        q.addQueryItem(u"$top"_s, u"20"_s);
         _client->get(
             messagesPath(conv, std::nullopt),
             q,
@@ -297,7 +299,7 @@ void Backend::pollTracked() {
 rpl::producer<UserId> Backend::loadMe() {
     return [this](auto consumer) mutable {
         _client->get(
-            "me",
+            u"me"_s,
             QUrlQuery{},
             [this, consumer](QJsonObject resp) mutable {
                 const User self = teams::JsonMappers::toUser(resp);
@@ -332,7 +334,7 @@ bool Backend::isUserId(UserId id) const {
 rpl::producer<User> Backend::loadUser(UserId id) {
     return [this, id](auto consumer) mutable {
         _client->get(
-            "users/" + id.value,
+            u"users/"_s + id.value,
             QUrlQuery{},
             [this, consumer](QJsonObject resp) mutable {
                 const User u = teams::JsonMappers::toUser(resp);
@@ -365,11 +367,11 @@ rpl::producer<std::vector<Conversation>> Backend::loadConversations() {
         auto out = std::make_shared<std::vector<Conversation>>();
 
         QUrlQuery chatsQ;
-        chatsQ.addQueryItem("$expand", "members");
-        chatsQ.addQueryItem("$top", "50");
+        chatsQ.addQueryItem(u"$expand"_s, u"members"_s);
+        chatsQ.addQueryItem(u"$top"_s, u"50"_s);
 
         _client->paginate(
-            "me/chats",
+            u"me/chats"_s,
             chatsQ,
             [out, me](QJsonArray page) {
                 for (const auto v : page)
@@ -378,13 +380,13 @@ rpl::producer<std::vector<Conversation>> Backend::loadConversations() {
             [this, out, consumer]() mutable {
                 auto teams = std::make_shared<std::vector<QPair<QString, QString>>>();
                 _client->paginate(
-                    "me/joinedTeams",
+                    u"me/joinedTeams"_s,
                     QUrlQuery{},
                     [teams](QJsonArray page) {
                         for (const auto v : page) {
                             const auto t = v.toObject();
                             teams->push_back(
-                                {t.value("id").toString(), t.value("displayName").toString()}
+                                {t.value(u"id"_s).toString(), t.value(u"displayName"_s).toString()}
                             );
                         }
                     },
@@ -404,7 +406,7 @@ rpl::producer<std::vector<Conversation>> Backend::loadConversations() {
                         for (const auto &tp : *teams) {
                             const QString teamId = tp.first, teamName = tp.second;
                             _client->paginate(
-                                "teams/" + teamId + "/channels",
+                                u"teams/"_s + teamId + u"/channels"_s,
                                 QUrlQuery{},
                                 [out, teamId, teamName](QJsonArray page) {
                                     for (const auto v : page)
@@ -444,16 +446,16 @@ rpl::producer<std::vector<User>> Backend::loadUsers() {
         auto      users = std::make_shared<std::vector<User>>();
         auto      seen  = std::make_shared<QSet<QString>>();
         QUrlQuery q;
-        q.addQueryItem("$expand", "members");
-        q.addQueryItem("$top", "50");
+        q.addQueryItem(u"$expand"_s, u"members"_s);
+        q.addQueryItem(u"$top"_s, u"50"_s);
         _client->paginate(
-            "me/chats",
+            u"me/chats"_s,
             q,
             [this, users, seen](QJsonArray page) {
                 for (const auto cv : page)
-                    for (const auto mv : cv.toObject().value("members").toArray()) {
+                    for (const auto mv : cv.toObject().value(u"members"_s).toArray()) {
                         const auto m   = mv.toObject();
-                        const auto uid = m.value("userId").toString();
+                        const auto uid = m.value(u"userId"_s).toString();
                         if (uid.isEmpty() || seen->contains(uid))
                             continue;
                         seen->insert(uid);
@@ -489,11 +491,11 @@ rpl::producer<std::vector<User>> Backend::loadUsers() {
 rpl::producer<bool> Backend::loadPresence(UserId id) {
     return [this, id](auto consumer) mutable {
         _client->get(
-            "users/" + id.value + "/presence",
+            u"users/"_s + id.value + u"/presence"_s,
             QUrlQuery{},
             [consumer](QJsonObject resp) mutable {
                 consumer.put_next(
-                    teams::JsonMappers::presenceActive(resp.value("availability").toString())
+                    teams::JsonMappers::presenceActive(resp.value(u"availability"_s).toString())
                 );
                 consumer.put_done();
             },
@@ -516,14 +518,14 @@ Backend::loadHistory(ConversationId conv, std::optional<QString> cursor) {
             std::tie(path, q) = relFromNextLink(*cursor); // follow @odata.nextLink
         } else if (teams::isChannelConvId(conv.value)) {
             const auto [teamId, chanId] = teams::splitChannelConvId(conv.value);
-            path                        = "teams/" + teamId + "/channels/" + chanId + "/messages";
-            q.addQueryItem("$top", "30");
+            path = u"teams/"_s + teamId + u"/channels/"_s + chanId + u"/messages"_s;
+            q.addQueryItem(u"$top"_s, u"30"_s);
             // Embed each message's replies (+ a replies@odata.count sibling) so the
             // reply bar can show the thread; the full chain loads via loadThread.
-            q.addQueryItem("$expand", "replies");
+            q.addQueryItem(u"$expand"_s, u"replies"_s);
         } else {
-            path = "chats/" + conv.value + "/messages";
-            q.addQueryItem("$top", "30");
+            path = u"chats/"_s + conv.value + u"/messages"_s;
+            q.addQueryItem(u"$top"_s, u"30"_s);
         }
         _client->get(
             path,
@@ -565,8 +567,9 @@ Backend::loadThread(ConversationId conv, Ts root, std::optional<QString> cursor)
             std::tie(path, q) = relFromNextLink(*cursor);
         } else {
             const auto [teamId, chanId] = teams::splitChannelConvId(conv.value);
-            path = "teams/" + teamId + "/channels/" + chanId + "/messages/" + root + "/replies";
-            q.addQueryItem("$top", "50");
+            path = u"teams/"_s + teamId + u"/channels/"_s + chanId + u"/messages/"_s + root +
+                   u"/replies"_s;
+            q.addQueryItem(u"$top"_s, u"50"_s);
         }
         _client->get(
             path,
@@ -598,8 +601,10 @@ void Backend::sendMessage(
     // Send as plain text (contentType "text"); Graph escapes it. Rich
     // mrkdwn→HTML formatting is a later refinement.
     const QString content = msg.rawText.isEmpty() ? msg.text.text : msg.rawText;
-    QJsonObject   body{{"body", QJsonObject{{"contentType", "text"}, {"content", content}}}};
-    auto          shared = std::make_shared<std::function<void(bool, QString)>>(std::move(done));
+    QJsonObject   body{
+        {u"body"_s, QJsonObject{{u"contentType"_s, u"text"_s}, {u"content"_s, content}}}
+    };
+    auto shared = std::make_shared<std::function<void(bool, QString)>>(std::move(done));
     _client->postJson(
         messagesPath(conv, msg.threadRoot),
         body,
@@ -625,18 +630,20 @@ void Backend::sendMessage(
 QString Backend::messageItemPath(const ConversationId &conv, const Ts &ts) const {
     if (teams::isChannelConvId(conv.value)) {
         const auto [teamId, chanId] = teams::splitChannelConvId(conv.value);
-        const QString base          = "teams/" + teamId + "/channels/" + chanId + "/messages/";
-        const auto    it            = _replyParent.find(ts);
+        const QString base = u"teams/"_s + teamId + u"/channels/"_s + chanId + u"/messages/"_s;
+        const auto    it   = _replyParent.find(ts);
         if (it != _replyParent.end())
-            return base + it.value() + "/replies/" + ts; // a known channel reply
+            return base + it.value() + u"/replies/"_s + ts; // a known channel reply
         return base + ts;
     }
-    return "chats/" + conv.value + "/messages/" + ts;
+    return u"chats/"_s + conv.value + u"/messages/"_s + ts;
 }
 
 void Backend::editMessage(ConversationId conv, Ts ts, OutgoingMessage msg) {
     const QString content = msg.rawText.isEmpty() ? msg.text.text : msg.rawText;
-    QJsonObject   body{{"body", QJsonObject{{"contentType", "text"}, {"content", content}}}};
+    QJsonObject   body{
+        {u"body"_s, QJsonObject{{u"contentType"_s, u"text"_s}, {u"content"_s, content}}}
+    };
     // PATCH returns 204; the edit reflects via the realtime echo (increment 4) or
     // a refetch — mirrors slack::editMessage, which relies on the realtime echo.
     _client->patchJson(messageItemPath(conv, ts), body, {}, [](QString e) {
@@ -646,7 +653,7 @@ void Backend::editMessage(ConversationId conv, Ts ts, OutgoingMessage msg) {
 
 void Backend::deleteMessage(ConversationId conv, Ts ts) {
     _client->postJson(
-        messageItemPath(conv, ts) + "/softDelete",
+        messageItemPath(conv, ts) + u"/softDelete"_s,
         QJsonObject{}, // no body → POSTed as an empty action
         [this, conv, ts](QJsonObject) { _events.fire(EvMessageDeleted{conv, ts}); },
         [](QString e) { qWarning() << "teams deleteMessage error:" << e; }
@@ -656,8 +663,8 @@ void Backend::deleteMessage(ConversationId conv, Ts ts) {
 void Backend::addReaction(ConversationId conv, Ts ts, QString emoji) {
     const QString type = teams::graphReactionType(emoji);
     _client->postJson(
-        messageItemPath(conv, ts) + "/setReaction",
-        QJsonObject{{"reactionType", type}},
+        messageItemPath(conv, ts) + u"/setReaction"_s,
+        QJsonObject{{u"reactionType"_s, type}},
         [this, conv, ts, emoji](QJsonObject) {
             // setReaction returns 204; fire the echo ourselves (the reaction is
             // ours) so the UI updates without waiting for the next poll.
@@ -670,8 +677,8 @@ void Backend::addReaction(ConversationId conv, Ts ts, QString emoji) {
 void Backend::removeReaction(ConversationId conv, Ts ts, QString emoji) {
     const QString type = teams::graphReactionType(emoji);
     _client->postJson(
-        messageItemPath(conv, ts) + "/unsetReaction",
-        QJsonObject{{"reactionType", type}},
+        messageItemPath(conv, ts) + u"/unsetReaction"_s,
+        QJsonObject{{u"reactionType"_s, type}},
         [this, conv, ts, emoji](QJsonObject) {
             _events.fire(EvReactionRemoved{conv, ts, emoji, UserId{_creds.userId}});
         },
@@ -693,23 +700,23 @@ void Backend::markRead(ConversationId, Ts) {}
 rpl::producer<std::vector<SearchResult>> Backend::searchMessages(const QString &query) {
     return [this, query](auto consumer) mutable {
         QJsonObject req{
-            {"requests",
+            {u"requests"_s,
              QJsonArray{QJsonObject{
-                 {"entityTypes", QJsonArray{"chatMessage"}},
-                 {"query", QJsonObject{{"queryString", query}}},
-                 {"from", 0},
-                 {"size", 25},
+                 {u"entityTypes"_s, QJsonArray{u"chatMessage"_s}},
+                 {u"query"_s, QJsonObject{{u"queryString"_s, query}}},
+                 {u"from"_s, 0},
+                 {u"size"_s, 25},
              }}}
         };
         _client->postJson(
-            "search/query",
+            u"search/query"_s,
             req,
             [consumer](QJsonObject resp) mutable {
                 std::vector<SearchResult> out;
-                for (const auto rv : resp.value("value").toArray())
-                    for (const auto hcv : rv.toObject().value("hitsContainers").toArray())
-                        for (const auto hv : hcv.toObject().value("hits").toArray()) {
-                            const auto res = hv.toObject().value("resource").toObject();
+                for (const auto rv : resp.value(u"value"_s).toArray())
+                    for (const auto hcv : rv.toObject().value(u"hitsContainers"_s).toArray())
+                        for (const auto hv : hcv.toObject().value(u"hits"_s).toArray()) {
+                            const auto res = hv.toObject().value(u"resource"_s).toObject();
                             if (!res.isEmpty())
                                 out.push_back(teams::JsonMappers::toSearchResult(res));
                         }
@@ -738,13 +745,13 @@ void Backend::setPresence(bool away, std::function<void(bool, QString)> done) {
     if (away)
         // A preferred "Away"; clears (auto) when the user goes active again.
         _client->postJson(
-            "me/presence/setUserPreferredPresence",
-            QJsonObject{{"availability", "Away"}, {"activity", "Away"}},
+            u"me/presence/setUserPreferredPresence"_s,
+            QJsonObject{{u"availability"_s, u"Away"_s}, {u"activity"_s, u"Away"_s}},
             ok,
             err
         );
     else
-        _client->postJson("me/presence/clearUserPreferredPresence", QJsonObject{}, ok, err);
+        _client->postJson(u"me/presence/clearUserPreferredPresence"_s, QJsonObject{}, ok, err);
 }
 
 void Backend::setStatus(
@@ -754,15 +761,18 @@ void Backend::setStatus(
     std::function<void(bool, QString)> done
 ) {
     // Teams status messages carry text only — no emoji field — so the emoji is dropped.
-    QJsonObject sm{{"message", QJsonObject{{"content", text}, {"contentType", "text"}}}};
+    QJsonObject sm{
+        {u"message"_s, QJsonObject{{u"content"_s, text}, {u"contentType"_s, u"text"_s}}}
+    };
     if (expirationTs > 0)
-        sm["expiryDateTime"] = QJsonObject{
-            {"dateTime", QDateTime::fromSecsSinceEpoch(expirationTs).toUTC().toString(Qt::ISODate)},
-            {"timeZone", "UTC"}
+        sm[u"expiryDateTime"_s] = QJsonObject{
+            {u"dateTime"_s,
+             QDateTime::fromSecsSinceEpoch(expirationTs).toUTC().toString(Qt::ISODate)},
+            {u"timeZone"_s, u"UTC"_s}
         };
     _client->postJson(
-        "me/presence/setStatusMessage",
-        QJsonObject{{"statusMessage", sm}},
+        u"me/presence/setStatusMessage"_s,
+        QJsonObject{{u"statusMessage"_s, sm}},
         [done](QJsonObject) {
             if (done)
                 done(true, {});
@@ -785,24 +795,24 @@ void Backend::setDndSnooze(int minutes, std::function<void(bool, QString)> done)
     };
     if (minutes > 0)
         _client->postJson(
-            "me/presence/setUserPreferredPresence",
+            u"me/presence/setUserPreferredPresence"_s,
             QJsonObject{
-                {"availability", "DoNotDisturb"},
-                {"activity", "DoNotDisturb"},
-                {"expirationDuration", QStringLiteral("PT%1M").arg(minutes)},
+                {u"availability"_s, u"DoNotDisturb"_s},
+                {u"activity"_s, u"DoNotDisturb"_s},
+                {u"expirationDuration"_s, QStringLiteral("PT%1M").arg(minutes)},
             },
             ok,
             err
         );
     else
-        _client->postJson("me/presence/clearUserPreferredPresence", QJsonObject{}, ok, err);
+        _client->postJson(u"me/presence/clearUserPreferredPresence"_s, QJsonObject{}, ok, err);
 }
 
 void Backend::loadMyProfile(std::function<void(MyProfile)> done) {
     if (!done)
         return;
     _client->get(
-        "me",
+        u"me"_s,
         QUrlQuery{},
         [this, done](QJsonObject resp) {
             MyProfile p = teams::JsonMappers::toMyProfile(resp);
@@ -826,21 +836,21 @@ void Backend::updateProfile(
     // Map Slack profile keys → the writable Graph /me properties. Email is omitted
     // (a user can't change their own primary mail via Graph).
     QJsonObject body;
-    if (fields.contains("display_name"))
-        body["displayName"] = fields.value("display_name");
-    else if (fields.contains("real_name"))
-        body["displayName"] = fields.value("real_name");
-    if (fields.contains("title"))
-        body["jobTitle"] = fields.value("title");
-    if (fields.contains("phone"))
-        body["mobilePhone"] = fields.value("phone");
+    if (fields.contains(u"display_name"_s))
+        body[u"displayName"_s] = fields.value(u"display_name"_s);
+    else if (fields.contains(u"real_name"_s))
+        body[u"displayName"_s] = fields.value(u"real_name"_s);
+    if (fields.contains(u"title"_s))
+        body[u"jobTitle"_s] = fields.value(u"title"_s);
+    if (fields.contains(u"phone"_s))
+        body[u"mobilePhone"_s] = fields.value(u"phone"_s);
     if (body.isEmpty()) {
         if (done)
             done(true, {});
         return;
     }
     _client->patchJson(
-        "me",
+        u"me"_s,
         body,
         [done](QJsonObject) {
             if (done)
@@ -863,14 +873,14 @@ void Backend::setPhoto(const QString &filePath, std::function<void(bool, QString
     const QByteArray bytes = f.readAll();
     f.close();
     _client->putBinary(
-        "me/photo/$value",
+        u"me/photo/$value"_s,
         bytes,
         "image/jpeg",
         [this, done](QJsonObject) {
             // Re-fetch as a data URI and refresh self in the user map app-wide.
             fetchPhoto(_creds.userId, [this, done](QString uri) {
                 _client->get(
-                    "me",
+                    u"me"_s,
                     QUrlQuery{},
                     [this, done, uri](QJsonObject me) {
                         User self = teams::JsonMappers::toUser(me);
@@ -904,21 +914,21 @@ void Backend::openDm(
     };
     const auto member = [&](const QString &id) {
         return QJsonObject{
-            {"@odata.type", "#microsoft.graph.aadUserConversationMember"},
-            {"roles", QJsonArray{"owner"}},
-            {"user@odata.bind", bind(id)},
+            {u"@odata.type"_s, u"#microsoft.graph.aadUserConversationMember"_s},
+            {u"roles"_s, QJsonArray{u"owner"_s}},
+            {u"user@odata.bind"_s, bind(id)},
         };
     };
     QJsonObject body{
-        {"chatType", "oneOnOne"},
-        {"members", QJsonArray{member(_creds.userId), member(user.value)}},
+        {u"chatType"_s, u"oneOnOne"_s},
+        {u"members"_s, QJsonArray{member(_creds.userId), member(user.value)}},
     };
     _client->postJson(
-        "chats",
+        u"chats"_s,
         body,
         [onSuccess](QJsonObject resp) {
             if (onSuccess)
-                onSuccess(ConversationId{resp.value("id").toString()});
+                onSuccess(ConversationId{resp.value(u"id"_s).toString()});
         },
         [onError](QString e) {
             qWarning() << "teams openDm error:" << e;
@@ -997,10 +1007,10 @@ void Backend::uploadFiles(
         QString body = initialComment.toHtmlEscaped();
         for (const auto av : attArr)
             body += QStringLiteral("<attachment id=\"%1\"></attachment>")
-                        .arg(av.toObject().value("id").toString());
+                        .arg(av.toObject().value(u"id"_s).toString());
         QJsonObject msg{
-            {"body", QJsonObject{{"contentType", "html"}, {"content", body}}},
-            {"attachments", attArr},
+            {u"body"_s, QJsonObject{{u"contentType"_s, u"html"_s}, {u"content"_s, body}}},
+            {u"attachments"_s, attArr},
         };
         _client->postJson(
             messagesPath(conv, std::nullopt),
@@ -1029,11 +1039,14 @@ void Backend::uploadFiles(
     // attachment by the file's eTag GUID (must match the body's <attachment id>).
     auto attachmentFor = [](const QJsonObject &item, const QString &name, const QString &url) {
         const auto    m = QRegularExpression(QStringLiteral("[0-9a-fA-F-]{36}"))
-                              .match(item.value("eTag").toString());
+                              .match(item.value(u"eTag"_s).toString());
         const QString id =
             m.hasMatch() ? m.captured(0) : QUuid::createUuid().toString(QUuid::WithoutBraces);
         return QJsonObject{
-            {"id", id}, {"contentType", "reference"}, {"contentUrl", url}, {"name", name}
+            {u"id"_s, id},
+            {u"contentType"_s, u"reference"_s},
+            {u"contentUrl"_s, url},
+            {u"name"_s, name}
         };
     };
 
@@ -1047,7 +1060,7 @@ void Backend::uploadFiles(
             (*files)[i].mime,
             [this, i, files, atts, finishOne, isChat, attachmentFor](QJsonObject item) mutable {
                 const QString name   = (*files)[i].name;
-                const QString webUrl = item.value("webUrl").toString();
+                const QString webUrl = item.value(u"webUrl"_s).toString();
                 if (!isChat) {
                     (*atts)[i] = attachmentFor(item, name, webUrl);
                     finishOne();
@@ -1057,16 +1070,17 @@ void Backend::uploadFiles(
                 // access via an org-scoped sharing link (channel files are already
                 // shared with the team and skip this).
                 const QString driveId =
-                    item.value("parentReference").toObject().value("driveId").toString();
-                const QString itemId = item.value("id").toString();
+                    item.value(u"parentReference"_s).toObject().value(u"driveId"_s).toString();
+                const QString itemId = item.value(u"id"_s).toString();
                 _client->postJson(
-                    "drives/" + driveId + "/items/" + itemId + "/createLink",
-                    QJsonObject{{"type", "view"}, {"scope", "organization"}},
+                    u"drives/"_s + driveId + u"/items/"_s + itemId + u"/createLink"_s,
+                    QJsonObject{{u"type"_s, u"view"_s}, {u"scope"_s, u"organization"_s}},
                     [i, item, name, webUrl, atts, finishOne, attachmentFor](
                         QJsonObject link
                     ) mutable {
-                        const QString lu = link.value("link").toObject().value("webUrl").toString();
-                        (*atts)[i]       = attachmentFor(item, name, lu.isEmpty() ? webUrl : lu);
+                        const QString lu =
+                            link.value(u"link"_s).toObject().value(u"webUrl"_s).toString();
+                        (*atts)[i] = attachmentFor(item, name, lu.isEmpty() ? webUrl : lu);
                         finishOne();
                     },
                     [i, item, name, webUrl, atts, finishOne, attachmentFor](QString) mutable {
@@ -1091,18 +1105,18 @@ void Backend::uploadFiles(
         for (int i = 0; i < static_cast<int>(files->size()); ++i)
             uploadAt(
                 i,
-                "me/drive/root:/" + enc("Microsoft Teams Chat Files/" + (*files)[i].name) +
-                    ":/content"
+                u"me/drive/root:/"_s + enc(u"Microsoft Teams Chat Files/"_s + (*files)[i].name) +
+                    u":/content"_s
             );
     } else {
         const auto [teamId, chanId] = teams::splitChannelConvId(conv.value);
         _client->get(
-            "teams/" + teamId + "/channels/" + chanId + "/filesFolder",
+            u"teams/"_s + teamId + u"/channels/"_s + chanId + u"/filesFolder"_s,
             QUrlQuery{},
             [files, uploadAt, finishOne, enc](QJsonObject folder) mutable {
                 const QString driveId =
-                    folder.value("parentReference").toObject().value("driveId").toString();
-                const QString folderId = folder.value("id").toString();
+                    folder.value(u"parentReference"_s).toObject().value(u"driveId"_s).toString();
+                const QString folderId = folder.value(u"id"_s).toString();
                 if (driveId.isEmpty() || folderId.isEmpty()) {
                     for (int i = 0; i < static_cast<int>(files->size()); ++i)
                         finishOne();
@@ -1111,8 +1125,8 @@ void Backend::uploadFiles(
                 for (int i = 0; i < static_cast<int>(files->size()); ++i)
                     uploadAt(
                         i,
-                        "drives/" + driveId + "/items/" + folderId + ":/" + enc((*files)[i].name) +
-                            ":/content"
+                        u"drives/"_s + driveId + u"/items/"_s + folderId + u":/"_s +
+                            enc((*files)[i].name) + u":/content"_s
                     );
             },
             [files, finishOne](QString) mutable {
@@ -1182,9 +1196,9 @@ void Backend::doRefresh(std::function<void(bool)> done) {
     _refreshInProgress = true;
 
     QUrlQuery params;
-    params.addQueryItem("client_id", _app.clientId);
-    params.addQueryItem("grant_type", "refresh_token");
-    params.addQueryItem("refresh_token", _creds.refreshToken);
+    params.addQueryItem(u"client_id"_s, _app.clientId);
+    params.addQueryItem(u"grant_type"_s, u"refresh_token"_s);
+    params.addQueryItem(u"refresh_token"_s, _creds.refreshToken);
     // Deliberately NO `scope`: a refresh_token grant must request a SUBSET of the
     // scopes the token was granted, so sending the full app scope list fails with
     // invalid_grant whenever the stored token predates a scope addition (or an
@@ -1199,19 +1213,19 @@ void Backend::doRefresh(std::function<void(bool)> done) {
     QNetworkRequest req(
         QUrl(QStringLiteral("https://login.microsoftonline.com/%1/oauth2/v2.0/token").arg(tenant))
     );
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/x-www-form-urlencoded"_s);
     auto *reply = nam->post(req, net::formUrlEncode(params));
     QObject::connect(reply, &QNetworkReply::finished, _client, [this, reply, nam] {
         reply->deleteLater();
         nam->deleteLater();
         const auto obj     = QJsonDocument::fromJson(reply->readAll()).object();
-        const bool success = !obj.contains("error") && obj.contains("access_token");
+        const bool success = !obj.contains(u"error"_s) && obj.contains(u"access_token"_s);
         if (success) {
-            _creds.accessToken = obj.value("access_token").toString();
-            const auto rt      = obj.value("refresh_token").toString();
+            _creds.accessToken = obj.value(u"access_token"_s).toString();
+            const auto rt      = obj.value(u"refresh_token"_s).toString();
             if (!rt.isEmpty())
                 _creds.refreshToken = rt;
-            const qint64 expiresIn = obj.value("expires_in").toInteger(0);
+            const qint64 expiresIn = obj.value(u"expires_in"_s).toInteger(0);
             _creds.expiresAt = expiresIn > 0 ? QDateTime::currentSecsSinceEpoch() + expiresIn : 0;
             _client->setToken(_creds.accessToken);
             TokenStore::saveWorkspace(toRecord(_creds)); // persist the rotated token
@@ -1220,13 +1234,13 @@ void Backend::doRefresh(std::function<void(bool)> done) {
         // or consent withdrawn) means the user must sign in again. A transient
         // failure (network blip on resume, 5xx, empty body) must NOT log them out —
         // leave the session intact so the next call retries the refresh.
-        const QString err                   = obj.value("error").toString();
+        const QString err                   = obj.value(u"error"_s).toString();
         const bool    definitiveAuthFailure = err == QLatin1String("invalid_grant") ||
                                               err == QLatin1String("invalid_client") ||
                                               err == QLatin1String("unauthorized_client") ||
                                               err == QLatin1String("interaction_required");
         if (!success)
-            qWarning() << "teams token refresh failed:" << (err.isEmpty() ? "(transport)" : err)
+            qWarning() << "teams token refresh failed:" << (err.isEmpty() ? u"(transport)"_s : err)
                        << (definitiveAuthFailure ? "— signing out" : "— will retry");
 
         _refreshInProgress = false;

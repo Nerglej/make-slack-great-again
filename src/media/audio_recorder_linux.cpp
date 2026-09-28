@@ -13,6 +13,8 @@
 #include <deque>
 #include <vector>
 
+using namespace Qt::StringLiterals;
+
 // Linux: the sound server's own capture CLI writing raw 16 kHz mono s16le to
 // stdout — the mirror of the playback engine's pw-cat / paplay / aplay sink
 // (audio_engine_linux.cpp), and for the same reason: every in-process capture
@@ -123,9 +125,12 @@ private:
     static std::vector<Candidate> candidates() {
         const QString rate = QString::number(kSampleRate), ch = QString::number(kChannels);
         return {
-            {"pw-record", {"--raw", "--format", "s16", "--rate", rate, "--channels", ch, "-"}},
-            {"parecord", {"--raw", "--format=s16le", "--rate=" + rate, "--channels=" + ch}},
-            {"arecord", {"-q", "-t", "raw", "-f", "S16_LE", "-r", rate, "-c", ch, "-"}},
+            {u"pw-record"_s,
+             {u"--raw"_s, u"--format"_s, u"s16"_s, u"--rate"_s, rate, u"--channels"_s, ch, u"-"_s}},
+            {u"parecord"_s,
+             {u"--raw"_s, u"--format=s16le"_s, u"--rate="_s + rate, u"--channels="_s + ch}},
+            {u"arecord"_s,
+             {u"-q"_s, u"-t"_s, u"raw"_s, u"-f"_s, u"S16_LE"_s, "-r", rate, "-c", ch, "-"}},
         };
     }
 

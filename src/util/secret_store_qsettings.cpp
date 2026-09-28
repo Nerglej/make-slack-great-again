@@ -10,6 +10,8 @@
 
 #include <QSettings>
 
+using namespace Qt::StringLiterals;
+
 namespace SecretStore {
 
 bool isKeychainBacked() {
@@ -17,11 +19,11 @@ bool isKeychainBacked() {
 }
 
 QString read(const QString &key) {
-    return QSettings("msga", "msga").value(key).toString();
+    return QSettings(u"msga"_s, u"msga"_s).value(key).toString();
 }
 
 bool write(const QString &key, const QString &value) {
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     if (value.isEmpty())
         s.remove(key);
     else
@@ -30,7 +32,7 @@ bool write(const QString &key, const QString &value) {
 }
 
 void remove(const QString &key) {
-    QSettings("msga", "msga").remove(key);
+    QSettings(u"msga"_s, u"msga"_s).remove(key);
 }
 
 } // namespace SecretStore

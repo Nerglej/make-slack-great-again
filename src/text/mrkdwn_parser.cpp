@@ -9,6 +9,8 @@
 #include <QDateTime>
 #include <QRegularExpression>
 
+using namespace Qt::StringLiterals;
+
 namespace MrkdwnParser {
 
 // Single-pass scanner. We build plain text while recording entity spans.
@@ -144,10 +146,11 @@ static QString formatDateToken(qint64 secs, const QString &fmt) {
         ) {
             val = prettyDay(date, TimeFmt::formatDate(date));
         } else if (name == QLatin1String("date_long")) {
-            val = TimeFmt::locale().dayName(date.dayOfWeek()) + ", " + TimeFmt::formatDate(date);
+            val = TimeFmt::locale().dayName(date.dayOfWeek()) + u", "_s + TimeFmt::formatDate(date);
         } else if (name == QLatin1String("date_long_pretty")) {
             val = prettyDay(
-                date, TimeFmt::locale().dayName(date.dayOfWeek()) + ", " + TimeFmt::formatDate(date)
+                date,
+                TimeFmt::locale().dayName(date.dayOfWeek()) + u", "_s + TimeFmt::formatDate(date)
             );
         } else if (name == QLatin1String("time")) {
             val = TimeFmt::formatTime(dt);
@@ -222,7 +225,7 @@ static std::vector<bool> urlWordMask(const QString &s) {
 // mrkdwn marks, but Slack's clients do render emoji in them (CI bots title
 // their notifications ":white_check_mark: …" inside a <url|label> token).
 static void appendPlainWithEmoji(Builder &b, const QString &s) {
-    static const QRegularExpression shortcode(":(" + emojiNameClass() + "):");
+    static const QRegularExpression shortcode(u":("_s + emojiNameClass() + u"):"_s);
     const auto                      inUrl = urlWordMask(s);
     int                             pos   = 0;
     auto                            it    = shortcode.globalMatch(s);
@@ -272,13 +275,13 @@ static void appendAngleConstruct(Builder &b, const QString &inner, bool requireS
     // Special commands: <!here>, <!channel>, <!date^…>, <!subteam^S|@name>
     if (inner.startsWith('!')) {
         auto cmd = inner.mid(1);
-        if (cmd == "here") {
+        if (cmd == u"here"_s) {
             int s = b.text.size();
-            b.appendPlain("@here");
+            b.appendPlain(u"@here"_s);
             b.addSpan(EntityType::HereCommand, s);
-        } else if (cmd == "channel") {
+        } else if (cmd == u"channel"_s) {
             int s = b.text.size();
-            b.appendPlain("@channel");
+            b.appendPlain(u"@channel"_s);
             b.addSpan(EntityType::ChannelCommand, s);
         } else if (cmd.startsWith(QLatin1String("date^"))) {
             // <!date^unix-ts^format-string[^link]|fallback>
@@ -308,7 +311,7 @@ static void appendAngleConstruct(Builder &b, const QString &inner, bool requireS
             if (label.startsWith('@'))
                 label.remove(0, 1);
             const int s = b.text.size();
-            b.appendPlain("@" + label);
+            b.appendPlain(u"@"_s + label);
             b.addSpan(EntityType::UsergroupMention, s, id);
         } else {
             // <!everyone> and unknown commands: show as @name
@@ -478,10 +481,10 @@ static TextWithEntities parseImpl(const QString &mrkdwn, int depth, bool inQuote
             if (close != -1 && close > i + 1) {
                 auto                      name = mrkdwn.mid(i + 1, close - i - 1);
                 // Validate: emoji names are [a-z0-9_+-]+
-                static QRegularExpression validEmoji("^[a-zA-Z0-9_+\\-]+$");
+                static QRegularExpression validEmoji(u"^[a-zA-Z0-9_+\\-]+$"_s);
                 if (validEmoji.match(name).hasMatch() && !numericColonRun(mrkdwn, i, close)) {
                     int entityStart = b.text.size();
-                    b.appendPlain(":" + name + ":");
+                    b.appendPlain(u":"_s + name + u":"_s);
                     b.addSpan(EntityType::Emoji, entityStart, name);
                     i = close + 1;
                     continue;
@@ -590,10 +593,10 @@ TextWithEntities resolveTokens(const QString &src) {
             const int close = src.indexOf(':', i + 1);
             if (close != -1 && close > i + 1) {
                 const auto                      name = src.mid(i + 1, close - i - 1);
-                static const QRegularExpression validEmoji("^" + emojiNameClass() + "$");
+                static const QRegularExpression validEmoji(u"^"_s + emojiNameClass() + u"$"_s);
                 if (validEmoji.match(name).hasMatch() && !numericColonRun(src, i, close)) {
                     const int entityStart = b.text.size();
-                    b.appendPlain(":" + name + ":");
+                    b.appendPlain(u":"_s + name + u":"_s);
                     b.addSpan(EntityType::Emoji, entityStart, name);
                     i = close + 1;
                     continue;

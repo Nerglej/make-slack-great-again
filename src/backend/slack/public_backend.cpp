@@ -26,6 +26,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace slack {
 
 namespace {
@@ -225,9 +227,9 @@ void PublicBackend::triggerRefresh(std::function<void(bool)> done) {
             // Ctx — orphaned forever. Done before force_assign so the queues are
             // emptied while the backend is still alive (force_assign may notify
             // subscribers that tear the session down synchronously).
-            _api->failAllPending("token_expired");
-            _historyApi->failAllPending("token_expired");
-            _infoApi->failAllPending("token_expired");
+            _api->failAllPending(u"token_expired"_s);
+            _historyApi->failAllPending(u"token_expired"_s);
+            _infoApi->failAllPending(u"token_expired"_s);
             _authState.force_assign(AuthState::NotLoggedIn);
         }
         // TransientError: stay logged in — the periodic check retries within 60 s.
@@ -263,12 +265,12 @@ void PublicBackend::doRefresh(std::function<void(RefreshResult)> done) {
     };
     auto           *nam = new QNetworkAccessManager(_api); // _api owns it → cleaned up with backend
     QNetworkRequest req(endpoint);
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/x-www-form-urlencoded"_s);
     QUrlQuery body;
-    body.addQueryItem("grant_type", "refresh_token");
-    body.addQueryItem("client_id", _appCfg.clientId);
-    body.addQueryItem("client_secret", _appCfg.clientSecret);
-    body.addQueryItem("refresh_token", _refreshToken);
+    body.addQueryItem(u"grant_type"_s, u"refresh_token"_s);
+    body.addQueryItem(u"client_id"_s, _appCfg.clientId);
+    body.addQueryItem(u"client_secret"_s, _appCfg.clientSecret);
+    body.addQueryItem(u"refresh_token"_s, _refreshToken);
     auto *reply = nam->post(req, net::formUrlEncode(body));
 
     QObject::connect(reply, &QNetworkReply::finished, _api, [this, reply, nam, done]() mutable {
@@ -281,8 +283,8 @@ void PublicBackend::doRefresh(std::function<void(RefreshResult)> done) {
         }
         const auto raw = reply->readAll();
         auto       obj = QJsonDocument::fromJson(raw).object();
-        if (!obj.value("ok").toBool()) {
-            const QString err = obj.value("error").toString();
+        if (!obj.value(u"ok"_s).toBool()) {
+            const QString err = obj.value(u"error"_s).toString();
             qWarning() << "[TokenRefresh] Slack error:" << err;
             // Server-side hiccups are retried later; anything else (e.g.
             // invalid_refresh_token) means the credentials are dead.
@@ -293,8 +295,8 @@ void PublicBackend::doRefresh(std::function<void(RefreshResult)> done) {
             done(transient ? RefreshResult::TransientError : RefreshResult::AuthError);
             return;
         }
-        const QString newToken   = obj.value("access_token").toString();
-        const QString newRefresh = obj.value("refresh_token").toString();
+        const QString newToken   = obj.value(u"access_token"_s).toString();
+        const QString newRefresh = obj.value(u"refresh_token"_s).toString();
         if (newToken.isEmpty()) {
             qWarning() << "[TokenRefresh] empty access_token in successful response";
             done(RefreshResult::TransientError);
@@ -306,7 +308,7 @@ void PublicBackend::doRefresh(std::function<void(RefreshResult)> done) {
         _historyApi->setToken(newToken);
         _infoApi->setToken(newToken);
         _refreshToken          = newRefresh.isEmpty() ? _refreshToken : newRefresh;
-        const qint64 expiresIn = obj.value("expires_in").toInteger(0);
+        const qint64 expiresIn = obj.value(u"expires_in"_s).toInteger(0);
         if (expiresIn > 0)
             _tokenExpiresAt = QDateTime::currentSecsSinceEpoch() + expiresIn;
 
@@ -496,21 +498,21 @@ void PublicBackend::reestablishRealtime() {
 rpl::producer<UserId> PublicBackend::loadMe() {
     return [this](auto consumer) mutable {
         _api->call(
-            "auth.test",
+            u"auth.test"_s,
             QUrlQuery{},
             [this, consumer](QJsonObject resp) mutable {
-                _meUserId = UserId{resp.value("user_id").toString()};
-                _teamUrl  = resp.value("url").toString();
+                _meUserId = UserId{resp.value(u"user_id"_s).toString()};
+                _teamUrl  = resp.value(u"url"_s).toString();
                 // auth.test's `url` is the authoritative workspace host. Adopt it
                 // for a session workspace whose stored credentials predate
                 // workspaceUrl (or carry a stale one) — see apiBaseFor.
                 if (_sessionAuth)
                     applyApiBase(apiBaseFor(_teamUrl));
-                if (!resp.value("enterprise_id").toString().isEmpty())
+                if (!resp.value(u"enterprise_id"_s).toString().isEmpty())
                     qInfo().noquote()
                         << "Slack workspace" << _teamId << "is part of Enterprise Grid org"
-                        << resp.value("enterprise_id").toString();
-                consumer.put_next(UserId{resp.value("user_id").toString()});
+                        << resp.value(u"enterprise_id"_s).toString();
+                consumer.put_next(UserId{resp.value(u"user_id"_s).toString()});
                 consumer.put_done();
             },
             [consumer](QString err) mutable {
@@ -541,20 +543,20 @@ rpl::producer<std::vector<Conversation>> PublicBackend::loadConversations() {
 
         auto      accum = std::make_shared<std::vector<Conversation>>();
         QUrlQuery params;
-        params.addQueryItem("types", "public_channel,private_channel,im,mpim");
-        params.addQueryItem("exclude_archived", "true");
+        params.addQueryItem(u"types"_s, u"public_channel,private_channel,im,mpim"_s);
+        params.addQueryItem(u"exclude_archived"_s, u"true"_s);
         // Slack's default page is 100; conversations.list is heavily rate-limited
         // (Tier 2), so pull the max 1000 per page to minimise the number of calls
         // a full reload costs (fewer pages = fewer chances to trip a 429).
-        params.addQueryItem("limit", "1000");
+        params.addQueryItem(u"limit"_s, u"1000"_s);
         // Required when the token resolves as org-level (Enterprise Grid), and
         // documented as ignored for a workspace-level one — so it is always safe.
         if (!_teamId.isEmpty())
-            params.addQueryItem("team_id", _teamId);
+            params.addQueryItem(u"team_id"_s, _teamId);
 
         _api->paginate(
-            "conversations.list",
-            "channels",
+            u"conversations.list"_s,
+            u"channels"_s,
             params,
             [accum](QJsonArray page) {
                 auto batch = JsonMappers::toConversations(page);
@@ -621,16 +623,16 @@ void PublicBackend::loadConversationsViaWebClient(
     acc->fail = std::move(fail);
 
     QUrlQuery bootParams;
-    bootParams.addQueryItem("min_channel_updated", "0");
+    bootParams.addQueryItem(u"min_channel_updated"_s, u"0"_s);
     _api->call(
-        "client.userBoot",
+        u"client.userBoot"_s,
         bootParams,
         [acc](QJsonObject resp) {
             // conversations.list was asked for exclude_archived; userBoot has no
             // such switch, so drop archived channels here to keep parity.
             QJsonArray live;
-            for (const auto v : resp.value("channels").toArray())
-                if (!v.toObject().value("is_archived").toBool())
+            for (const auto v : resp.value(u"channels"_s).toArray())
+                if (!v.toObject().value(u"is_archived"_s).toBool())
                     live.append(v);
             auto batch = JsonMappers::toConversations(live);
             acc->convs.insert(acc->convs.end(), batch.begin(), batch.end());
@@ -644,17 +646,17 @@ void PublicBackend::loadConversationsViaWebClient(
     );
 
     QUrlQuery imParams;
-    imParams.addQueryItem("get_latest", "true");
-    imParams.addQueryItem("get_read_state", "true");
-    imParams.addQueryItem("limit", "1000");
+    imParams.addQueryItem(u"get_latest"_s, u"true"_s);
+    imParams.addQueryItem(u"get_read_state"_s, u"true"_s);
+    imParams.addQueryItem(u"limit"_s, u"1000"_s);
     _api->paginate(
-        "im.list",
-        "ims",
+        u"im.list"_s,
+        u"ims"_s,
         imParams,
         [acc](QJsonArray page) {
             QJsonArray live;
             for (const auto v : page)
-                if (!v.toObject().value("is_archived").toBool())
+                if (!v.toObject().value(u"is_archived"_s).toBool())
                     live.append(v);
             auto batch = JsonMappers::toConversations(live);
             acc->convs.insert(acc->convs.end(), batch.begin(), batch.end());
@@ -672,9 +674,9 @@ rpl::producer<Conversation>
 PublicBackend::loadConversationInfo(ConversationId id, bool background) {
     return [this, id, background](auto consumer) mutable {
         QUrlQuery params;
-        params.addQueryItem("channel", id.value);
+        params.addQueryItem(u"channel"_s, id.value);
         auto onOk = [consumer](QJsonObject resp) mutable {
-            consumer.put_next(JsonMappers::toConversation(resp.value("channel").toObject()));
+            consumer.put_next(JsonMappers::toConversation(resp.value(u"channel"_s).toObject()));
             consumer.put_done();
         };
         auto onErr = [consumer, id](QString err) mutable {
@@ -694,10 +696,10 @@ PublicBackend::loadConversationInfo(ConversationId id, bool background) {
         // or burst past conversations.info's rate-limit tier.
         if (background)
             _infoApi->callBackground(
-                "conversations.info", params, std::move(onOk), std::move(onErr)
+                u"conversations.info"_s, params, std::move(onOk), std::move(onErr)
             );
         else
-            _infoApi->call("conversations.info", params, std::move(onOk), std::move(onErr));
+            _infoApi->call(u"conversations.info"_s, params, std::move(onOk), std::move(onErr));
         return rpl::lifetime();
     };
 }
@@ -713,7 +715,7 @@ rpl::producer<std::vector<ConvCounts>> PublicBackend::loadUnreadCounts() {
             return rpl::lifetime();
         }
         _api->call(
-            "client.counts",
+            u"client.counts"_s,
             QUrlQuery{},
             [consumer](QJsonObject resp) mutable {
                 consumer.put_next(JsonMappers::toConvCounts(resp));
@@ -746,10 +748,10 @@ rpl::producer<std::vector<User>> PublicBackend::loadUsers() {
         // Same org-token rule as conversations.list: required for an org-level
         // token, ignored for a workspace-level one.
         if (!_teamId.isEmpty())
-            params.addQueryItem("team_id", _teamId);
+            params.addQueryItem(u"team_id"_s, _teamId);
         _historyApi->paginate(
-            "users.list",
-            "members",
+            u"users.list"_s,
+            u"members"_s,
             params,
             [accum, myTeam = _teamId](QJsonArray page) {
                 auto batch = JsonMappers::toUsers(page);
@@ -779,14 +781,14 @@ rpl::producer<std::vector<Usergroup>> PublicBackend::loadUsergroups() {
         // token, ignored for a workspace-level one) — without it a member
         // workspace sees an empty list and every <!subteam^S…> stays raw.
         if (!_teamId.isEmpty())
-            params.addQueryItem("team_id", _teamId);
+            params.addQueryItem(u"team_id"_s, _teamId);
         // Member ids, so a mention of a group I belong to counts as a mention.
-        params.addQueryItem("include_users", "1");
+        params.addQueryItem(u"include_users"_s, u"1"_s);
         _api->call(
-            "usergroups.list",
+            u"usergroups.list"_s,
             params,
             [consumer](QJsonObject resp) mutable {
-                consumer.put_next(JsonMappers::toUsergroups(resp.value("usergroups").toArray()));
+                consumer.put_next(JsonMappers::toUsergroups(resp.value(u"usergroups"_s).toArray()));
                 consumer.put_done();
             },
             [consumer](QString err) mutable {
@@ -812,9 +814,9 @@ rpl::producer<bool> PublicBackend::loadPresenceBackground(UserId userId) {
 rpl::producer<bool> PublicBackend::loadPresenceImpl(UserId userId, bool background) {
     return [this, userId, background](auto consumer) mutable {
         QUrlQuery params;
-        params.addQueryItem("user", userId.value);
+        params.addQueryItem(u"user"_s, userId.value);
         auto onOk = [consumer](QJsonObject resp) mutable {
-            bool active = resp.value("presence").toString() == "active";
+            bool active = resp.value(u"presence"_s).toString() == u"active"_s;
             consumer.put_next(std::move(active));
             consumer.put_done();
         };
@@ -827,10 +829,10 @@ rpl::producer<bool> PublicBackend::loadPresenceImpl(UserId userId, bool backgrou
         // interactive probe (opening a DM, the hover card) goes straight out.
         if (background)
             _infoApi->callBackground(
-                "users.getPresence", params, std::move(onOk), std::move(onErr)
+                u"users.getPresence"_s, params, std::move(onOk), std::move(onErr)
             );
         else
-            _api->call("users.getPresence", params, std::move(onOk), std::move(onErr));
+            _api->call(u"users.getPresence"_s, params, std::move(onOk), std::move(onErr));
         return rpl::lifetime();
     };
 }
@@ -840,7 +842,7 @@ rpl::producer<SelfPresence> PublicBackend::loadSelfPresence() {
         // No "user" param → Slack returns the rich self snapshot
         // (online / auto_away / manual_away / connection_count).
         _api->call(
-            "users.getPresence",
+            u"users.getPresence"_s,
             QUrlQuery{},
             [consumer](QJsonObject resp) mutable {
                 consumer.put_next(JsonMappers::toSelfPresence(resp));
@@ -858,23 +860,21 @@ rpl::producer<SelfPresence> PublicBackend::loadSelfPresence() {
 rpl::producer<User> PublicBackend::loadBotInfo(UserId botId) {
     return [this, botId](auto consumer) mutable {
         QUrlQuery params;
-        params.addQueryItem("bot", botId.value);
+        params.addQueryItem(u"bot"_s, botId.value);
         _api->call(
-            "bots.info",
+            u"bots.info"_s,
             params,
             [consumer](QJsonObject resp) mutable {
-                const auto bot   = resp.value("bot").toObject();
-                const auto icons = bot.value("icons").toObject();
+                const auto bot   = resp.value(u"bot"_s).toObject();
+                const auto icons = bot.value(u"icons"_s).toObject();
                 User       u;
-                u.id          = UserId{bot.value("id").toString()};
-                u.name        = bot.value("name").toString();
-                u.displayName = bot.value("name").toString();
-                u.avatarUrl =
-                    icons.value("image_72")
-                        .toString(
-                            icons.value("image_48").toString(icons.value("image_36").toString())
-                        );
-                u.isBot = true;
+                u.id          = UserId{bot.value(u"id"_s).toString()};
+                u.name        = bot.value(u"name"_s).toString();
+                u.displayName = bot.value(u"name"_s).toString();
+                u.avatarUrl   = icons.value(u"image_72"_s)
+                                    .toString(icons.value(u"image_48"_s)
+                                                  .toString(icons.value(u"image_36"_s).toString()));
+                u.isBot       = true;
                 consumer.put_next(std::move(u));
                 consumer.put_done();
             },
@@ -898,9 +898,9 @@ rpl::producer<User> PublicBackend::loadUserBackground(UserId userId) {
 rpl::producer<User> PublicBackend::loadUserImpl(UserId userId, bool background) {
     return [this, userId, background](auto consumer) mutable {
         QUrlQuery params;
-        params.addQueryItem("user", userId.value);
+        params.addQueryItem(u"user"_s, userId.value);
         auto onOk = [consumer, myTeam = _teamId](QJsonObject resp) mutable {
-            auto u = JsonMappers::toUser(resp.value("user").toObject());
+            auto u = JsonMappers::toUser(resp.value(u"user"_s).toObject());
             u.isExternal =
                 u.isExternal || (!u.teamId.isEmpty() && !myTeam.isEmpty() && u.teamId != myTeam);
             consumer.put_next(std::move(u));
@@ -914,9 +914,9 @@ rpl::producer<User> PublicBackend::loadUserImpl(UserId userId, bool background) 
         // lane like the conversations.info sweeps; an on-demand resolve (a DM peer
         // users.list omitted, an unknown author) goes straight out.
         if (background)
-            _infoApi->callBackground("users.info", params, std::move(onOk), std::move(onErr));
+            _infoApi->callBackground(u"users.info"_s, params, std::move(onOk), std::move(onErr));
         else
-            _api->call("users.info", params, std::move(onOk), std::move(onErr));
+            _api->call(u"users.info"_s, params, std::move(onOk), std::move(onErr));
         return rpl::lifetime();
     };
 }
@@ -930,9 +930,9 @@ void PublicBackend::reconcileHuddleFromHistory(
     QString     newestTs;
     for (const auto &v : messages) {
         const auto m = v.toObject();
-        if (m.value("subtype").toString() != QLatin1String("huddle_thread"))
+        if (m.value(u"subtype"_s).toString() != QLatin1String("huddle_thread"))
             continue;
-        const auto ts = m.value("ts").toString();
+        const auto ts = m.value(u"ts"_s).toString();
         if (newestTs.isEmpty() || ts.toDouble() > newestTs.toDouble()) {
             newest   = m;
             newestTs = ts;
@@ -941,8 +941,8 @@ void PublicBackend::reconcileHuddleFromHistory(
     // Only act when the message carries a usable huddle `room`. If it's absent
     // (no huddle_thread in the window, or the token can't read `room`), stay
     // silent rather than emitting active=false and wiping a live huddle.
-    const auto room = newest.value("room").toObject();
-    if (room.isEmpty() || room.value("call_family").toString() != QLatin1String("huddle"))
+    const auto room = newest.value(u"room"_s).toObject();
+    if (room.isEmpty() || room.value(u"call_family"_s).toString() != QLatin1String("huddle"))
         return;
     const auto h = JsonMappers::readHuddleRoom(room);
     _events.fire(EvHuddleChanged{conv, h.active, h.link, h.participants});
@@ -952,17 +952,17 @@ rpl::producer<MessagePage>
 PublicBackend::loadHistory(ConversationId conv, std::optional<QString> cursor) {
     return [this, conv, cursor](auto consumer) mutable {
         QUrlQuery params;
-        params.addQueryItem("channel", conv.value);
-        params.addQueryItem("limit", "50");
+        params.addQueryItem(u"channel"_s, conv.value);
+        params.addQueryItem(u"limit"_s, u"50"_s);
         if (cursor)
-            params.addQueryItem("cursor", *cursor);
+            params.addQueryItem(u"cursor"_s, *cursor);
 
         const bool firstPage = !cursor;
         _historyApi->call(
-            "conversations.history",
+            u"conversations.history"_s,
             params,
             [this, conv, firstPage, consumer](QJsonObject resp) mutable {
-                const auto messages = resp.value("messages").toArray();
+                const auto messages = resp.value(u"messages"_s).toArray();
                 // Self-heal huddle state from the authoritative huddle_thread
                 // message. Only on the newest page — older (scroll-up) pages may
                 // hold a long-ended huddle that must not clobber a live one.
@@ -970,8 +970,8 @@ PublicBackend::loadHistory(ConversationId conv, std::optional<QString> cursor) {
                     reconcileHuddleFromHistory(conv, messages);
                 MessagePage page;
                 page.messages = JsonMappers::toMessages(messages);
-                auto meta     = resp.value("response_metadata").toObject();
-                auto next     = meta.value("next_cursor").toString();
+                auto meta     = resp.value(u"response_metadata"_s).toObject();
+                auto next     = meta.value(u"next_cursor"_s).toString();
                 if (!next.isEmpty())
                     page.olderCursor = next;
                 consumer.put_next(std::move(page));
@@ -990,21 +990,21 @@ rpl::producer<MessagePage>
 PublicBackend::loadThread(ConversationId conv, Ts root, std::optional<QString> cursor) {
     return [this, conv, root, cursor](auto consumer) mutable {
         QUrlQuery params;
-        params.addQueryItem("channel", conv.value);
-        params.addQueryItem("ts", root);
-        params.addQueryItem("limit", "50");
+        params.addQueryItem(u"channel"_s, conv.value);
+        params.addQueryItem(u"ts"_s, root);
+        params.addQueryItem(u"limit"_s, u"50"_s);
         if (cursor)
-            params.addQueryItem("cursor", *cursor);
+            params.addQueryItem(u"cursor"_s, *cursor);
 
         _historyApi->call(
-            "conversations.replies",
+            u"conversations.replies"_s,
             params,
             [consumer](QJsonObject resp) mutable {
                 MessagePage page;
                 // conversations.replies returns oldest-first; no reversal needed.
-                page.messages = JsonMappers::toMessages(resp.value("messages").toArray(), false);
-                auto meta     = resp.value("response_metadata").toObject();
-                auto next     = meta.value("next_cursor").toString();
+                page.messages = JsonMappers::toMessages(resp.value(u"messages"_s).toArray(), false);
+                auto meta     = resp.value(u"response_metadata"_s).toObject();
+                auto next     = meta.value(u"next_cursor"_s).toString();
                 if (!next.isEmpty())
                     page.olderCursor = next;
                 consumer.put_next(std::move(page));
@@ -1031,14 +1031,14 @@ rpl::producer<Message> PublicBackend::loadMessageAt(ConversationId conv, Ts ts) 
         // — which conversations.history cannot do at all, it never lists
         // replies. Verified live against both shapes.
         QUrlQuery params;
-        params.addQueryItem("channel", conv.value);
-        params.addQueryItem("ts", ts);
-        params.addQueryItem("limit", "1");
+        params.addQueryItem(u"channel"_s, conv.value);
+        params.addQueryItem(u"ts"_s, ts);
+        params.addQueryItem(u"limit"_s, u"1"_s);
         _infoApi->callBackground(
-            "conversations.replies",
+            u"conversations.replies"_s,
             params,
             [consumer, ts](QJsonObject resp) mutable {
-                for (const auto v : resp.value("messages").toArray()) {
+                for (const auto v : resp.value(u"messages"_s).toArray()) {
                     auto m = JsonMappers::toMessage(v.toObject());
                     if (m.ts != ts)
                         continue; // a thread root came back instead of the reply
@@ -1063,14 +1063,14 @@ rpl::producer<ThreadsViewPage> PublicBackend::loadThreadsView(const QString &cur
             return rpl::lifetime();
         }
         QUrlQuery params;
-        params.addQueryItem("limit", "10");
+        params.addQueryItem(u"limit"_s, u"10"_s);
         // Every subscribed thread; other modes ("important") would filter.
-        params.addQueryItem("priority_mode", "all");
+        params.addQueryItem(u"priority_mode"_s, u"all"_s);
         // Continuation is the previous response's max_ts (no next_cursor here).
         if (!cursor.isEmpty())
-            params.addQueryItem("current_ts", cursor);
+            params.addQueryItem(u"current_ts"_s, cursor);
         _historyApi->call(
-            "subscriptions.thread.getView",
+            u"subscriptions.thread.getView"_s,
             params,
             [consumer](QJsonObject resp) mutable {
                 consumer.put_next(JsonMappers::toThreadsViewPage(resp));
@@ -1096,13 +1096,13 @@ void PublicBackend::markThreadRead(ConversationId conv, Ts root, Ts ts) {
     if (!_sessionAuth || _threadsViewUnavailable)
         return;
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("thread_ts", root);
-    params.addQueryItem("ts", ts);
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"thread_ts"_s, root);
+    params.addQueryItem(u"ts"_s, ts);
     // Best-effort write (a stale read cursor is harmless); non-idempotent lane
     // like every other write so a dying connection can't double-apply it.
     _api->callNonIdempotent(
-        "subscriptions.thread.mark",
+        u"subscriptions.thread.mark"_s,
         params,
         [](QJsonObject) {},
         [](QString err) { qWarning() << "subscriptions.thread.mark error:" << err; }
@@ -1124,10 +1124,10 @@ rpl::producer<std::vector<MessageReminder>> PublicBackend::loadMessageReminders(
         // handful of items in practice. 50 is what Slack's own Later panel
         // requests — and the endpoint's ceiling is close by (200 answers
         // invalid_arguments; verified live).
-        params.addQueryItem("limit", "50");
-        params.addQueryItem("filter", "saved");
+        params.addQueryItem(u"limit"_s, u"50"_s);
+        params.addQueryItem(u"filter"_s, u"saved"_s);
         _api->call(
-            "saved.list",
+            u"saved.list"_s,
             params,
             [consumer](QJsonObject resp) mutable {
                 consumer.put_next(JsonMappers::toMessageReminders(resp));
@@ -1158,15 +1158,15 @@ void PublicBackend::setMessageReminder(
         return;
     }
     QUrlQuery params;
-    params.addQueryItem("item_type", "message");
-    params.addQueryItem("item_id", conv.value);
-    params.addQueryItem("ts", ts);
+    params.addQueryItem(u"item_type"_s, u"message"_s);
+    params.addQueryItem(u"item_id"_s, conv.value);
+    params.addQueryItem(u"ts"_s, ts);
     // No date_due = a plain "Save for later" bookmark (the server answers
     // date_due 0, todo_state "saved"; verified live).
     if (dueAt > 0)
-        params.addQueryItem("date_due", QString::number(dueAt));
+        params.addQueryItem(u"date_due"_s, QString::number(dueAt));
     _api->callNonIdempotent(
-        "saved.add",
+        u"saved.add"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1191,11 +1191,11 @@ void PublicBackend::removeMessageReminder(
         return;
     }
     QUrlQuery params;
-    params.addQueryItem("item_type", "message");
-    params.addQueryItem("item_id", conv.value);
-    params.addQueryItem("ts", ts);
+    params.addQueryItem(u"item_type"_s, u"message"_s);
+    params.addQueryItem(u"item_id"_s, conv.value);
+    params.addQueryItem(u"ts"_s, ts);
     _api->callNonIdempotent(
-        "saved.delete",
+        u"saved.delete"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1215,9 +1215,9 @@ void PublicBackend::removeMessageReminder(
 
 void PublicBackend::setPresence(bool away, std::function<void(bool, QString)> done) {
     QUrlQuery params;
-    params.addQueryItem("presence", away ? "away" : "auto");
+    params.addQueryItem(u"presence"_s, away ? u"away"_s : u"auto"_s);
     _api->call(
-        "users.setPresence",
+        u"users.setPresence"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1248,16 +1248,16 @@ void PublicBackend::setStatus(
     std::function<void(bool, QString)> done
 ) {
     const QJsonObject profile{
-        {"status_text", text},
-        {"status_emoji", emoji},
-        {"status_expiration", expirationTs},
+        {u"status_text"_s, text},
+        {u"status_emoji"_s, emoji},
+        {u"status_expiration"_s, expirationTs},
     };
     QUrlQuery params;
     params.addQueryItem(
-        "profile", QString::fromUtf8(QJsonDocument(profile).toJson(QJsonDocument::Compact))
+        u"profile"_s, QString::fromUtf8(QJsonDocument(profile).toJson(QJsonDocument::Compact))
     );
     _api->call(
-        "users.profile.set",
+        u"users.profile.set"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1274,9 +1274,9 @@ void PublicBackend::setStatus(
 void PublicBackend::setDndSnooze(int minutes, std::function<void(bool, QString)> done) {
     QUrlQuery params;
     if (minutes > 0)
-        params.addQueryItem("num_minutes", QString::number(minutes));
+        params.addQueryItem(u"num_minutes"_s, QString::number(minutes));
     _api->call(
-        minutes > 0 ? "dnd.setSnooze" : "dnd.endSnooze",
+        minutes > 0 ? u"dnd.setSnooze"_s : u"dnd.endSnooze"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1299,16 +1299,16 @@ void PublicBackend::loadSidebarTheme(std::function<void(SidebarThemePrefs, QStri
         return;
     }
     _api->call(
-        "users.prefs.get",
+        u"users.prefs.get"_s,
         QUrlQuery{},
         [done](QJsonObject resp) {
-            const QJsonObject prefs = resp.value("prefs").toObject();
+            const QJsonObject prefs = resp.value(u"prefs"_s).toObject();
             SidebarThemePrefs out;
-            out.iaTheme       = prefs.value("ia_theme").toString();
+            out.iaTheme       = prefs.value(u"ia_theme"_s).toString();
             // The legacy custom values arrive as a JSON object — usually
             // serialised into a string — keyed by slot; re-emit them as the
             // share string every importer understands, in Slack's slot order.
-            QJsonValue legacy = prefs.value("sidebar_theme_custom_values");
+            QJsonValue legacy = prefs.value(u"sidebar_theme_custom_values"_s);
             if (legacy.isString())
                 legacy = QJsonDocument::fromJson(legacy.toString().toUtf8()).object();
             if (legacy.isObject()) {
@@ -1324,8 +1324,9 @@ void PublicBackend::loadSidebarTheme(std::function<void(SidebarThemePrefs, QStri
                       "active_presence",
                       "badge"})
                     parts << o.value(QLatin1String(key)).toString();
-                if (o.contains("top_nav_bg") && o.contains("top_nav_text"))
-                    parts << o.value("top_nav_bg").toString() << o.value("top_nav_text").toString();
+                if (o.contains(u"top_nav_bg"_s) && o.contains(u"top_nav_text"_s))
+                    parts << o.value(u"top_nav_bg"_s).toString()
+                          << o.value(u"top_nav_text"_s).toString();
                 if (!parts.contains(QString()))
                     out.legacyValues = parts.join(QLatin1Char(','));
             }
@@ -1345,12 +1346,12 @@ void PublicBackend::loadMembers(
     ConversationId conv, std::function<void(std::vector<UserId>, QString)> done
 ) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("limit", "1000");
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"limit"_s, u"1000"_s);
     auto members = std::make_shared<std::vector<UserId>>();
     _api->paginate(
-        "conversations.members",
-        "members",
+        u"conversations.members"_s,
+        u"members"_s,
         params,
         [members](QJsonArray page) {
             for (const auto v : page)
@@ -1370,18 +1371,18 @@ void PublicBackend::loadMembers(
 
 void PublicBackend::loadMyProfile(std::function<void(MyProfile)> done) {
     _api->call(
-        "users.profile.get",
+        u"users.profile.get"_s,
         QUrlQuery{},
         [done](QJsonObject resp) {
-            const auto p = resp.value("profile").toObject();
+            const auto p = resp.value(u"profile"_s).toObject();
             MyProfile  mp;
-            mp.realName    = p.value("real_name").toString();
-            mp.displayName = p.value("display_name").toString();
-            mp.email       = p.value("email").toString();
-            mp.phone       = p.value("phone").toString();
-            mp.avatarUrl   = p.value("image_512").toString();
+            mp.realName    = p.value(u"real_name"_s).toString();
+            mp.displayName = p.value(u"display_name"_s).toString();
+            mp.email       = p.value(u"email"_s).toString();
+            mp.phone       = p.value(u"phone"_s).toString();
+            mp.avatarUrl   = p.value(u"image_512"_s).toString();
             if (mp.avatarUrl.isEmpty())
-                mp.avatarUrl = p.value("image_192").toString();
+                mp.avatarUrl = p.value(u"image_192"_s).toString();
             if (done)
                 done(mp);
         },
@@ -1401,10 +1402,10 @@ void PublicBackend::updateProfile(
         profile.insert(it.key(), it.value());
     QUrlQuery params;
     params.addQueryItem(
-        "profile", QString::fromUtf8(QJsonDocument(profile).toJson(QJsonDocument::Compact))
+        u"profile"_s, QString::fromUtf8(QJsonDocument(profile).toJson(QJsonDocument::Compact))
     );
     _api->call(
-        "users.profile.set",
+        u"users.profile.set"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1442,13 +1443,13 @@ void PublicBackend::setPhoto(
     mp->append(imagePart);
 
     _api->postMultipart(
-        "users.setPhoto",
+        u"users.setPhoto"_s,
         mp,
         [done](QJsonObject resp) {
-            const auto profile = resp.value("profile").toObject();
-            QString    url     = profile.value("image_512").toString();
+            const auto profile = resp.value(u"profile"_s).toObject();
+            QString    url     = profile.value(u"image_512"_s).toString();
             if (url.isEmpty())
-                url = profile.value("image_192").toString();
+                url = profile.value(u"image_192"_s).toString();
             if (done)
                 done(true, {}, url);
         },
@@ -1478,10 +1479,10 @@ std::vector<SlashCommand> PublicBackend::nativeCommands() const {
 rpl::producer<std::vector<SlashCommand>> PublicBackend::listCommands() {
     return [this](auto consumer) mutable {
         _api->call(
-            "commands.list",
+            u"commands.list"_s,
             {},
             [consumer](QJsonObject resp) mutable {
-                consumer.put_next(JsonMappers::toSlashCommands(resp.value("commands")));
+                consumer.put_next(JsonMappers::toSlashCommands(resp.value(u"commands"_s)));
                 consumer.put_done();
             },
             [consumer](QString err) mutable {
@@ -1504,16 +1505,16 @@ void PublicBackend::runCommand(
     std::function<void(bool ok, QString message)> done
 ) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("command", command);
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"command"_s, command);
     if (!text.isEmpty())
-        params.addQueryItem("text", text);
+        params.addQueryItem(u"text"_s, text);
     _api->callNonIdempotent(
-        "chat.command",
+        u"chat.command"_s,
         params,
         [done](QJsonObject resp) {
             if (done)
-                done(true, resp.value("response").toString());
+                done(true, resp.value(u"response"_s).toString());
         },
         [done](QString err) {
             qWarning() << "runCommand error:" << err;
@@ -1565,7 +1566,7 @@ void addBlocks(QUrlQuery &params, const QJsonArray &blocks) {
     if (blocks.isEmpty())
         return;
     params.addQueryItem(
-        "blocks", QString::fromUtf8(QJsonDocument(blocks).toJson(QJsonDocument::Compact))
+        u"blocks"_s, QString::fromUtf8(QJsonDocument(blocks).toJson(QJsonDocument::Compact))
     );
 }
 
@@ -1578,20 +1579,22 @@ void addGifAttachments(QUrlQuery &params, const std::vector<OutgoingGif> &gifs) 
     QJsonArray attachments;
     for (const auto &gif : gifs) {
         const QJsonObject image{
-            {"type", "image"},
-            {"image_url", gif.url},
-            {"alt_text", gif.altText.isEmpty() ? QStringLiteral("GIF") : gif.altText}, // required
-            {"title", QJsonObject{{"type", "plain_text"}, {"text", "GIF"}}},
+            {u"type"_s, u"image"_s},
+            {u"image_url"_s, gif.url},
+            {u"alt_text"_s,
+             gif.altText.isEmpty() ? QStringLiteral("GIF") : gif.altText}, // required
+            {u"title"_s, QJsonObject{{u"type"_s, u"plain_text"_s}, {u"text"_s, u"GIF"_s}}},
         };
         attachments.append(
             QJsonObject{
-                {"fallback", "shared a GIF"},
-                {"blocks", QJsonArray{image}},
+                {u"fallback"_s, u"shared a GIF"_s},
+                {u"blocks"_s, QJsonArray{image}},
             }
         );
     }
     params.addQueryItem(
-        "attachments", QString::fromUtf8(QJsonDocument(attachments).toJson(QJsonDocument::Compact))
+        u"attachments"_s,
+        QString::fromUtf8(QJsonDocument(attachments).toJson(QJsonDocument::Compact))
     );
 }
 
@@ -1599,9 +1602,9 @@ void addGifAttachments(QUrlQuery &params, const std::vector<OutgoingGif> &gifs) 
 // check, how reconcileSend recognises a GIF post whose text is empty.
 bool carriesGifs(const QJsonObject &o, const std::vector<OutgoingGif> &gifs) {
     QSet<QString> urls;
-    for (const auto a : o.value("attachments").toArray())
-        for (const auto b : a.toObject().value("blocks").toArray())
-            urls.insert(b.toObject().value("image_url").toString());
+    for (const auto a : o.value(u"attachments"_s).toArray())
+        for (const auto b : a.toObject().value(u"blocks"_s).toArray())
+            urls.insert(b.toObject().value(u"image_url"_s).toString());
     return std::all_of(gifs.begin(), gifs.end(), [&](const OutgoingGif &g) {
         return urls.contains(g.url);
     });
@@ -1625,24 +1628,24 @@ void PublicBackend::sendMessage(
 
 void PublicBackend::postMessageAttempt(std::shared_ptr<SendState> st) {
     QUrlQuery params;
-    params.addQueryItem("channel", st->conv.value);
-    params.addQueryItem("text", st->wireText);
+    params.addQueryItem(u"channel"_s, st->conv.value);
+    params.addQueryItem(u"text"_s, st->wireText);
     addBlocks(params, st->msg.blocks);
     addGifAttachments(params, st->msg.gifs);
     if (st->msg.threadRoot)
-        params.addQueryItem("thread_ts", *st->msg.threadRoot);
+        params.addQueryItem(u"thread_ts"_s, *st->msg.threadRoot);
     if (st->msg.threadRoot && st->msg.replyBroadcast)
-        params.addQueryItem("reply_broadcast", "true");
+        params.addQueryItem(u"reply_broadcast"_s, u"true"_s);
     _api->callNonIdempotent(
-        "chat.postMessage",
+        u"chat.postMessage"_s,
         params,
         [this, st](QJsonObject resp) {
             // Confirm from the HTTP response instead of waiting for the
             // realtime echo — the websocket may be down while HTTP works.
             // Session drops the second copy when the echo arrives anyway.
-            Message m = JsonMappers::toMessage(resp.value("message").toObject());
+            Message m = JsonMappers::toMessage(resp.value(u"message"_s).toObject());
             if (m.ts.isEmpty())
-                m.ts = resp.value("ts").toString();
+                m.ts = resp.value(u"ts"_s).toString();
             _events.fire(EvMessageNew{st->conv, std::move(m)});
             st->finish(true, {});
         },
@@ -1665,26 +1668,26 @@ void PublicBackend::postMessageAttempt(std::shared_ptr<SendState> st) {
 void PublicBackend::reconcileSend(std::shared_ptr<SendState> st) {
     const bool inThread = st->msg.threadRoot.has_value();
     QUrlQuery  params;
-    params.addQueryItem("channel", st->conv.value);
-    params.addQueryItem("oldest", st->oldestTs);
-    params.addQueryItem("limit", "100");
+    params.addQueryItem(u"channel"_s, st->conv.value);
+    params.addQueryItem(u"oldest"_s, st->oldestTs);
+    params.addQueryItem(u"limit"_s, u"100"_s);
     if (inThread)
-        params.addQueryItem("ts", *st->msg.threadRoot);
+        params.addQueryItem(u"ts"_s, *st->msg.threadRoot);
     _api->call(
-        inThread ? "conversations.replies" : "conversations.history",
+        inThread ? u"conversations.replies"_s : u"conversations.history"_s,
         params,
         [this, st, inThread](QJsonObject resp) {
             const QString want = unescapedText(st->wireText);
-            for (const auto v : resp.value("messages").toArray()) {
+            for (const auto v : resp.value(u"messages"_s).toArray()) {
                 const auto o = v.toObject();
-                if (inThread && o.value("ts").toString() == *st->msg.threadRoot)
+                if (inThread && o.value(u"ts"_s).toString() == *st->msg.threadRoot)
                     continue; // the thread root itself, not a reply
-                if (!_meUserId.value.isEmpty() && o.value("user").toString() != _meUserId.value)
+                if (!_meUserId.value.isEmpty() && o.value(u"user"_s).toString() != _meUserId.value)
                     continue;
-                if (unescapedText(o.value("text").toString()) != want ||
+                if (unescapedText(o.value(u"text"_s).toString()) != want ||
                     !carriesGifs(o, st->msg.gifs))
                     continue;
-                qDebug() << "sendMessage: message" << o.value("ts").toString()
+                qDebug() << "sendMessage: message" << o.value(u"ts"_s).toString()
                          << "was delivered after all — not resending";
                 _events.fire(EvMessageNew{st->conv, JsonMappers::toMessage(o)});
                 st->finish(true, {});
@@ -1713,26 +1716,26 @@ void PublicBackend::reconcileUpload(
         return;
     const bool inThread = threadRoot.has_value();
     QUrlQuery  params;
-    params.addQueryItem("channel", conv.value);
+    params.addQueryItem(u"channel"_s, conv.value);
     // The share lands at "now"; a small window absorbs clock skew and history
     // lag without trawling the whole channel.
-    params.addQueryItem("oldest", QString::number(QDateTime::currentSecsSinceEpoch() - 120));
-    params.addQueryItem("limit", "30");
+    params.addQueryItem(u"oldest"_s, QString::number(QDateTime::currentSecsSinceEpoch() - 120));
+    params.addQueryItem(u"limit"_s, u"30"_s);
     // A threaded share only surfaces in conversations.replies, never the channel
     // history — mirror reconcileSend and scan the thread when we have a root.
     if (inThread)
-        params.addQueryItem("ts", *threadRoot);
+        params.addQueryItem(u"ts"_s, *threadRoot);
     _api->call(
-        inThread ? "conversations.replies" : "conversations.history",
+        inThread ? u"conversations.replies"_s : u"conversations.history"_s,
         params,
         [this, conv, fileIds, threadRoot, attempt](QJsonObject resp) {
-            for (const auto v : resp.value("messages").toArray()) {
+            for (const auto v : resp.value(u"messages"_s).toArray()) {
                 const auto o = v.toObject();
-                if (!_meUserId.value.isEmpty() && o.value("user").toString() != _meUserId.value)
+                if (!_meUserId.value.isEmpty() && o.value(u"user"_s).toString() != _meUserId.value)
                     continue;
                 bool match = false;
-                for (const auto fv : o.value("files").toArray()) {
-                    if (fileIds.contains(fv.toObject().value("id").toString())) {
+                for (const auto fv : o.value(u"files"_s).toArray()) {
+                    if (fileIds.contains(fv.toObject().value(u"id"_s).toString())) {
                         match = true;
                         break;
                     }
@@ -1763,9 +1766,9 @@ void PublicBackend::reconcileUpload(
 
 void PublicBackend::editMessage(ConversationId conv, Ts ts, OutgoingMessage msg) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("ts", ts);
-    params.addQueryItem("text", msg.rawText.isEmpty() ? msg.text.text : msg.rawText);
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"ts"_s, ts);
+    params.addQueryItem(u"text"_s, msg.rawText.isEmpty() ? msg.text.text : msg.rawText);
     // Text without blocks makes chat.update DROP the message's blocks (documented),
     // which is right for a plain edit and why a list must travel again here.
     addBlocks(params, msg.blocks);
@@ -1774,9 +1777,9 @@ void PublicBackend::editMessage(ConversationId conv, Ts ts, OutgoingMessage msg)
     // outgrow a query string (a long list, percent-encoded), so that one POSTs.
     const auto call = [&](auto &&onOk, auto &&onErr) {
         if (msg.blocks.isEmpty())
-            _api->call("chat.update", params, onOk, onErr);
+            _api->call(u"chat.update"_s, params, onOk, onErr);
         else
-            _api->callNonIdempotent("chat.update", params, onOk, onErr);
+            _api->callNonIdempotent(u"chat.update"_s, params, onOk, onErr);
     };
     call(
         [this, conv, ts](QJsonObject resp) {
@@ -1788,8 +1791,8 @@ void PublicBackend::editMessage(ConversationId conv, Ts ts, OutgoingMessage msg)
             // returns only text/user in `message`, hence textOnly: the UI
             // merges the new text into the existing row; the realtime echo,
             // when it does arrive, carries the full message and replaces it.
-            auto msg   = JsonMappers::toMessage(resp.value("message").toObject());
-            msg.ts     = resp.value("ts").toString(ts);
+            auto msg   = JsonMappers::toMessage(resp.value(u"message"_s).toObject());
+            msg.ts     = resp.value(u"ts"_s).toString(ts);
             msg.edited = true;
             _events.fire(EvMessageChanged{conv, std::move(msg), /*textOnly=*/true});
         },
@@ -1803,15 +1806,15 @@ void PublicBackend::deleteMessage(ConversationId conv, Ts ts) {
 
 void PublicBackend::deleteMessageAttempt(ConversationId conv, Ts ts, int attempts) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("ts", ts);
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"ts"_s, ts);
     // POST (non-idempotent): Qt silently retransmits a GET whose connection
     // died mid-flight, which would fire a second chat.delete that comes back
     // message_not_found. Deletion is naturally idempotent, but routing it as a
     // write method keeps it off the auto-retransmit path and consistent with
     // the other chat.* writes.
     _api->callNonIdempotent(
-        "chat.delete",
+        u"chat.delete"_s,
         params,
         [this, conv, ts](QJsonObject) {
             // Confirm the deletion from the response itself rather than waiting
@@ -1858,11 +1861,11 @@ void PublicBackend::deleteAttachment(
     // methods — capabilities() gates the UI accordingly. POST like every write:
     // an auto-retransmitted GET would address a renumbered attachment.
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("ts", ts);
-    params.addQueryItem("attachment", QString::number(attachmentId));
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"ts"_s, ts);
+    params.addQueryItem(u"attachment"_s, QString::number(attachmentId));
     _api->callNonIdempotent(
-        "chat.deleteAttachment",
+        u"chat.deleteAttachment"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1895,39 +1898,39 @@ void PublicBackend::pressBotButton(
     // twice, and a lost one is simply clicked again.
     const QString nowTs = QString::number(QDateTime::currentMSecsSinceEpoch() / 1000.0, 'f', 6);
     QJsonObject   action{
-        {"action_id", button.actionId},
-        {"block_id", button.blockId},
-        {"type", "button"},
-        {"text", QJsonObject{{"type", "plain_text"}, {"text", button.text}}},
-        {"action_ts", nowTs},
+        {u"action_id"_s, button.actionId},
+        {u"block_id"_s, button.blockId},
+        {u"type"_s, u"button"_s},
+        {u"text"_s, QJsonObject{{u"type"_s, u"plain_text"_s}, {u"text"_s, button.text}}},
+        {u"action_ts"_s, nowTs},
     };
     if (!button.value.isEmpty())
-        action.insert("value", button.value);
+        action.insert(u"value"_s, button.value);
     if (!button.style.isEmpty())
-        action.insert("style", button.style);
+        action.insert(u"style"_s, button.style);
     QJsonObject container{
-        {"type", "message"},
-        {"message_ts", ts},
-        {"channel_id", conv.value},
-        {"is_ephemeral", false},
+        {u"type"_s, u"message"_s},
+        {u"message_ts"_s, ts},
+        {u"channel_id"_s, conv.value},
+        {u"is_ephemeral"_s, false},
     };
     if (threadTs)
-        container.insert("thread_ts", *threadTs);
+        container.insert(u"thread_ts"_s, *threadTs);
 
     QUrlQuery params;
-    params.addQueryItem("service_id", botId);
+    params.addQueryItem(u"service_id"_s, botId);
     params.addQueryItem(
-        "client_token", "msga-" + QString::number(QDateTime::currentMSecsSinceEpoch())
+        u"client_token"_s, u"msga-"_s + QString::number(QDateTime::currentMSecsSinceEpoch())
     );
     params.addQueryItem(
-        "actions",
+        u"actions"_s,
         QString::fromUtf8(QJsonDocument(QJsonArray{action}).toJson(QJsonDocument::Compact))
     );
     params.addQueryItem(
-        "container", QString::fromUtf8(QJsonDocument(container).toJson(QJsonDocument::Compact))
+        u"container"_s, QString::fromUtf8(QJsonDocument(container).toJson(QJsonDocument::Compact))
     );
     _api->callNonIdempotent(
-        "blocks.actions",
+        u"blocks.actions"_s,
         params,
         [done](QJsonObject) {
             if (done)
@@ -1943,37 +1946,37 @@ void PublicBackend::pressBotButton(
 
 void PublicBackend::deleteFile(const QString &fileId) {
     QUrlQuery params;
-    params.addQueryItem("file", fileId);
-    _api->call("files.delete", params, {}, [](QString e) {
+    params.addQueryItem(u"file"_s, fileId);
+    _api->call(u"files.delete"_s, params, {}, [](QString e) {
         qWarning() << "deleteFile error:" << e;
     });
 }
 
 void PublicBackend::addReaction(ConversationId conv, Ts ts, QString emoji) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("timestamp", ts);
-    params.addQueryItem("name", emoji);
-    _api->call("reactions.add", params, {}, [](QString e) {
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"timestamp"_s, ts);
+    params.addQueryItem(u"name"_s, emoji);
+    _api->call(u"reactions.add"_s, params, {}, [](QString e) {
         qWarning() << "addReaction error:" << e;
     });
 }
 
 void PublicBackend::removeReaction(ConversationId conv, Ts ts, QString emoji) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("timestamp", ts);
-    params.addQueryItem("name", emoji);
-    _api->call("reactions.remove", params, {}, [](QString e) {
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"timestamp"_s, ts);
+    params.addQueryItem(u"name"_s, emoji);
+    _api->call(u"reactions.remove"_s, params, {}, [](QString e) {
         qWarning() << "removeReaction error:" << e;
     });
 }
 
 void PublicBackend::markRead(ConversationId conv, Ts ts) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("ts", ts);
-    _api->call("conversations.mark", params, {}, [](QString e) {
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"ts"_s, ts);
+    _api->call(u"conversations.mark"_s, params, {}, [](QString e) {
         qWarning() << "markRead error:" << e;
     });
 }
@@ -1984,38 +1987,40 @@ void PublicBackend::sendTyping(ConversationId) {
 
 void PublicBackend::scheduleMessage(ConversationId conv, OutgoingMessage msg, qint64 postAt) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("text", msg.rawText.isEmpty() ? msg.text.text : msg.rawText);
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"text"_s, msg.rawText.isEmpty() ? msg.text.text : msg.rawText);
     addBlocks(params, msg.blocks);
     addGifAttachments(params, msg.gifs);
-    params.addQueryItem("post_at", QString::number(postAt));
+    params.addQueryItem(u"post_at"_s, QString::number(postAt));
     if (msg.threadRoot)
-        params.addQueryItem("thread_ts", *msg.threadRoot);
-    _api->callNonIdempotent("chat.scheduleMessage", params, {}, [](QString e) {
+        params.addQueryItem(u"thread_ts"_s, *msg.threadRoot);
+    _api->callNonIdempotent(u"chat.scheduleMessage"_s, params, {}, [](QString e) {
         qWarning() << "scheduleMessage error:" << e;
     });
 }
 
 void PublicBackend::pinMessage(ConversationId conv, Ts ts) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("timestamp", ts);
-    _api->call("pins.add", params, {}, [](QString e) { qWarning() << "pinMessage error:" << e; });
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"timestamp"_s, ts);
+    _api->call(u"pins.add"_s, params, {}, [](QString e) {
+        qWarning() << "pinMessage error:" << e;
+    });
 }
 
 void PublicBackend::unpinMessage(ConversationId conv, Ts ts) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    params.addQueryItem("timestamp", ts);
-    _api->call("pins.remove", params, {}, [](QString e) {
+    params.addQueryItem(u"channel"_s, conv.value);
+    params.addQueryItem(u"timestamp"_s, ts);
+    _api->call(u"pins.remove"_s, params, {}, [](QString e) {
         qWarning() << "unpinMessage error:" << e;
     });
 }
 
 void PublicBackend::starConversation(ConversationId conv, bool star) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    _api->call(star ? "stars.add" : "stars.remove", params, {}, [star](QString e) {
+    params.addQueryItem(u"channel"_s, conv.value);
+    _api->call(star ? u"stars.add"_s : u"stars.remove"_s, params, {}, [star](QString e) {
         qWarning() << (star ? "starConversation" : "unstarConversation") << "error:" << e;
     });
 }
@@ -2030,8 +2035,8 @@ rpl::producer<std::vector<ConversationId>> PublicBackend::loadStarredConversatio
         }
         auto acc = std::make_shared<std::vector<ConversationId>>();
         _api->paginate(
-            "stars.list",
-            "items",
+            u"stars.list"_s,
+            u"items"_s,
             {},
             [acc](QJsonArray page) {
                 auto ids = JsonMappers::toStarredConversationIds(page);
@@ -2060,8 +2065,8 @@ rpl::producer<std::vector<ConversationId>> PublicBackend::loadStarredConversatio
 
 void PublicBackend::leaveConversation(ConversationId conv) {
     QUrlQuery params;
-    params.addQueryItem("channel", conv.value);
-    _api->call("conversations.leave", params, {}, [](QString e) {
+    params.addQueryItem(u"channel"_s, conv.value);
+    _api->call(u"conversations.leave"_s, params, {}, [](QString e) {
         qWarning() << "leaveConversation error:" << e;
     });
 }
@@ -2073,13 +2078,13 @@ void PublicBackend::createChannel(
     std::function<void(QString)>        onError
 ) {
     QJsonObject body;
-    body["name"]       = name;
-    body["is_private"] = isPrivate;
+    body[u"name"_s]       = name;
+    body[u"is_private"_s] = isPrivate;
     _api->postJson(
-        "conversations.create",
+        u"conversations.create"_s,
         body,
         [onSuccess](QJsonObject resp) {
-            const QString id = resp.value("channel").toObject().value("id").toString();
+            const QString id = resp.value(u"channel"_s).toObject().value(u"id"_s).toString();
             if (!id.isEmpty() && onSuccess)
                 onSuccess(ConversationId{id});
         },
@@ -2097,9 +2102,9 @@ void PublicBackend::joinChannel(
     std::function<void(QString)>        onError
 ) {
     QJsonObject body;
-    body["channel"] = id.value;
+    body[u"channel"_s] = id.value;
     _api->postJson(
-        "conversations.join",
+        u"conversations.join"_s,
         body,
         [id, onSuccess](QJsonObject) {
             if (onSuccess)
@@ -2117,13 +2122,15 @@ void PublicBackend::openDm(
     UserId user, std::function<void(ConversationId)> onSuccess, std::function<void(QString)> onError
 ) {
     QJsonObject body;
-    body["users"] = user.value;
+    body[u"users"_s] = user.value;
     _api->postJson(
-        "conversations.open",
+        u"conversations.open"_s,
         body,
         [onSuccess](QJsonObject resp) {
             if (onSuccess)
-                onSuccess(ConversationId{resp.value("channel").toObject().value("id").toString()});
+                onSuccess(
+                    ConversationId{resp.value(u"channel"_s).toObject().value(u"id"_s).toString()}
+                );
         },
         [onError](QString e) {
             qWarning() << "openDm error:" << e;
@@ -2153,14 +2160,14 @@ rpl::producer<Event> PublicBackend::events() const {
 rpl::producer<std::vector<SearchResult>> PublicBackend::searchMessages(const QString &query) {
     return [this, query](auto consumer) mutable {
         QUrlQuery params;
-        params.addQueryItem("query", query);
-        params.addQueryItem("count", "20");
+        params.addQueryItem(u"query"_s, query);
+        params.addQueryItem(u"count"_s, u"20"_s);
 
         _api->call(
-            "search.messages",
+            u"search.messages"_s,
             params,
             [consumer](QJsonObject resp) mutable {
-                auto msgs = resp.value("messages").toObject().value("matches").toArray();
+                auto msgs = resp.value(u"messages"_s).toObject().value(u"matches"_s).toArray();
                 consumer.put_next(JsonMappers::toSearchResults(msgs));
                 consumer.put_done();
             },
@@ -2176,11 +2183,11 @@ rpl::producer<std::vector<SearchResult>> PublicBackend::searchMessages(const QSt
 rpl::producer<QHash<QString, QString>> PublicBackend::loadEmojiList() {
     return [this](auto consumer) mutable {
         _api->call(
-            "emoji.list",
+            u"emoji.list"_s,
             QUrlQuery{},
             [consumer](QJsonObject resp) mutable {
                 QHash<QString, QString> map;
-                const auto              emoji = resp.value("emoji").toObject();
+                const auto              emoji = resp.value(u"emoji"_s).toObject();
                 for (auto it = emoji.begin(); it != emoji.end(); ++it)
                     map.insert(it.key(), it.value().toString());
                 consumer.put_next(std::move(map));
@@ -2223,21 +2230,21 @@ void PublicBackend::uploadFiles(
             return;
         }
         QJsonObject body;
-        body["channel_id"] = conv.value;
-        body["files"]      = batch->files;
+        body[u"channel_id"_s] = conv.value;
+        body[u"files"_s]      = batch->files;
         if (!initialComment.isEmpty())
-            body["initial_comment"] = initialComment;
+            body[u"initial_comment"_s] = initialComment;
         if (threadRoot)
-            body["thread_ts"] = *threadRoot;
+            body[u"thread_ts"_s] = *threadRoot;
 
         // Collect the uploaded file ids so the post-upload reconcile can match
         // the shared message even when there's no initial_comment to compare.
         QSet<QString> fileIds;
         for (const auto v : std::as_const(batch->files))
-            fileIds.insert(v.toObject().value("id").toString());
+            fileIds.insert(v.toObject().value(u"id"_s).toString());
 
         _api->postJson(
-            "files.completeUploadExternal",
+            u"files.completeUploadExternal"_s,
             body,
             [this, conv, fileIds, threadRoot, settle](QJsonObject) {
                 // The upload landed but the response carries no message ts;
@@ -2267,15 +2274,15 @@ void PublicBackend::uploadFiles(
 
         // Step 1: get upload URL (filename + length are the only request args)
         QUrlQuery params;
-        params.addQueryItem("filename", filename);
-        params.addQueryItem("length", QString::number(data.size()));
+        params.addQueryItem(u"filename"_s, filename);
+        params.addQueryItem(u"length"_s, QString::number(data.size()));
 
         _api->call(
-            "files.getUploadURLExternal",
+            u"files.getUploadURLExternal"_s,
             params,
             [this, filename, data, finishOne, batch](QJsonObject resp) mutable {
-                const QString uploadUrl = resp.value("upload_url").toString();
-                const QString fileId    = resp.value("file_id").toString();
+                const QString uploadUrl = resp.value(u"upload_url"_s).toString();
+                const QString fileId    = resp.value(u"file_id"_s).toString();
 
                 // Step 2: POST bytes to the upload URL (no auth header)
                 _api->rawPost(
@@ -2283,8 +2290,8 @@ void PublicBackend::uploadFiles(
                     data,
                     [filename, fileId, finishOne, batch]() mutable {
                         QJsonObject entry;
-                        entry["id"]    = fileId;
-                        entry["title"] = filename;
+                        entry[u"id"_s]    = fileId;
+                        entry[u"title"_s] = filename;
                         batch->files.append(entry);
                         finishOne();
                     },
@@ -2314,13 +2321,13 @@ void PublicBackend::downloadFile(
 
 void PublicBackend::loadChannelCanvas(ConversationId id, std::function<void(QString, bool)> done) {
     QUrlQuery params;
-    params.addQueryItem("channel", id.value);
+    params.addQueryItem(u"channel"_s, id.value);
     _api->call(
-        "conversations.info",
+        u"conversations.info"_s,
         params,
         [done](QJsonObject resp) {
             const auto [fileId, isEmpty] =
-                JsonMappers::channelCanvas(resp.value("channel").toObject());
+                JsonMappers::channelCanvas(resp.value(u"channel"_s).toObject());
             if (done)
                 done(fileId, isEmpty);
         },
@@ -2340,12 +2347,12 @@ void PublicBackend::loadCanvasContent(
     // files.info → url_private → authed GET; canvases come back as HTML
     // (content-type text/html, <div class="quip-canvas-content">…).
     QUrlQuery params;
-    params.addQueryItem("file", fileId);
+    params.addQueryItem(u"file"_s, fileId);
     _api->call(
-        "files.info",
+        u"files.info"_s,
         params,
         [this, onHtml, onError](QJsonObject resp) {
-            const QString url = resp.value("file").toObject().value("url_private").toString();
+            const QString url = resp.value(u"file"_s).toObject().value(u"url_private"_s).toString();
             if (url.isEmpty()) {
                 if (onError)
                     onError(QStringLiteral("canvas has no url_private"));
@@ -2383,12 +2390,12 @@ void PublicBackend::loadCanvasImage(
     // images downscaled) → authed GET. The relative blob URL in the HTML has
     // no host or token, so it can't be fetched directly.
     QUrlQuery params;
-    params.addQueryItem("file", fileId);
+    params.addQueryItem(u"file"_s, fileId);
     _api->call(
-        "files.info",
+        u"files.info"_s,
         params,
         [this, onData, onError](QJsonObject resp) {
-            const QJsonObject f = resp.value("file").toObject();
+            const QJsonObject f = resp.value(u"file"_s).toObject();
             QString           url;
             // Prefer the original (url_private): at HiDPI the column needs more
             // pixels than the 1024px thumbnail provides, so a thumb would look
@@ -2427,15 +2434,16 @@ void PublicBackend::createChannelCanvas(
     std::function<void(QString)>        onError
 ) {
     QJsonObject body;
-    body["channel_id"] = id.value;
+    body[u"channel_id"_s] = id.value;
     if (!markdown.isEmpty())
-        body["document_content"] = QJsonObject{{"type", "markdown"}, {"markdown", markdown}};
+        body[u"document_content"_s] =
+            QJsonObject{{u"type"_s, u"markdown"_s}, {u"markdown"_s, markdown}};
     _api->postJson(
-        "conversations.canvases.create",
+        u"conversations.canvases.create"_s,
         body,
         [onSuccess](QJsonObject resp) {
             if (onSuccess)
-                onSuccess(resp.value("canvas_id").toString());
+                onSuccess(resp.value(u"canvas_id"_s).toString());
         },
         [onError](QString e) {
             qWarning() << "createChannelCanvas error:" << e;
@@ -2450,16 +2458,16 @@ void PublicBackend::loadCanvasMeta(
     std::function<void(QString title, QString permalink, CanvasMetaState state)> done
 ) {
     QUrlQuery params;
-    params.addQueryItem("file", fileId);
+    params.addQueryItem(u"file"_s, fileId);
     _api->call(
-        "files.info",
+        u"files.info"_s,
         params,
         [done](QJsonObject resp) {
-            const auto file = resp.value("file").toObject();
+            const auto file = resp.value(u"file"_s).toObject();
             if (done)
                 done(
-                    file.value("title").toString(),
-                    file.value("permalink").toString(),
+                    file.value(u"title"_s).toString(),
+                    file.value(u"permalink"_s).toString(),
                     CanvasMetaState::Ok
                 );
         },
@@ -2489,9 +2497,9 @@ void PublicBackend::deleteCanvas(
     const QString &canvasId, std::function<void(bool ok, QString err)> done
 ) {
     QJsonObject body;
-    body["canvas_id"] = canvasId;
+    body[u"canvas_id"_s] = canvasId;
     _api->postJson(
-        "canvases.delete",
+        u"canvases.delete"_s,
         body,
         [done](QJsonObject) {
             if (done)
@@ -2531,10 +2539,10 @@ void PublicBackend::sendNextCanvasChange(
     queue->pop_front();
 
     QJsonObject body;
-    body["canvas_id"] = canvasId;
-    body["changes"]   = JsonMappers::toCanvasChanges({change});
+    body[u"canvas_id"_s] = canvasId;
+    body[u"changes"_s]   = JsonMappers::toCanvasChanges({change});
     _api->postJson(
-        "canvases.edit",
+        u"canvases.edit"_s,
         body,
         [this, canvasId, queue = std::move(queue), done](QJsonObject) mutable {
             if (queue->empty()) {

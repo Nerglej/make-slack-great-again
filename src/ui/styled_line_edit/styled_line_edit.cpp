@@ -13,6 +13,8 @@
 #include <QLineEdit>
 #include <QMouseEvent>
 
+using namespace Qt::StringLiterals;
+
 StyledLineEdit::StyledLineEdit(QWidget *parent) : QFrame(parent) {
     setFrameShape(QFrame::NoFrame);
     setCursor(Qt::IBeamCursor);
@@ -158,23 +160,19 @@ void StyledLineEdit::applyTheme() {
     if (_prefixLabel)
         Th::setStyleSheetIfChanged(
             _prefixLabel,
-            QString("color: %1; font-size: %2px;")
-                .arg(Th::qss(Th::c().text.tertiary))
+            u"color: %1; font-size: %2px;"_s.arg(Th::qss(Th::c().text.tertiary))
                 .arg(Th::c().fonts.base)
         );
     if (_counterLabel)
         Th::setStyleSheetIfChanged(
             _counterLabel,
-            QString("color: %1; font-size: %2px;")
-                .arg(Th::qss(Th::c().text.tertiary))
+            u"color: %1; font-size: %2px;"_s.arg(Th::qss(Th::c().text.tertiary))
                 .arg(Th::c().fonts.sm)
         );
     if (_edit)
         Th::setStyleSheetIfChanged(
             _edit,
-            QString(
-                "QLineEdit { background: transparent; border: none; color: %1; font-size: %2px; }"
-            )
+            u"QLineEdit { background: transparent; border: none; color: %1; font-size: %2px; }"_s
                 .arg(Th::qss(Th::c().text.primary))
                 .arg(Th::c().fonts.base)
         );
@@ -196,14 +194,11 @@ void StyledLineEdit::updateBorderStyle(bool focused) {
     const int    bw     = focused ? 2 : 1;
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "StyledLineEdit {"
-            "  border: %1px solid %2;"
-            "  border-radius: %3px;"
-            "  background: %4;"
-            "}"
-        )
-            .arg(bw)
+        u"StyledLineEdit {"
+        "  border: %1px solid %2;"
+        "  border-radius: %3px;"
+        "  background: %4;"
+        "}"_s.arg(bw)
             .arg(Th::qss(border))
             .arg(Ui::kControlRadius)
             .arg(Th::qss(Th::c().surface.raised))

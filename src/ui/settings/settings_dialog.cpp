@@ -62,6 +62,8 @@
 #include <QDesktopServices>
 #include <QUrl>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kPanelW    = 720; // fits the four theme cards per row without a scrollbar
 static constexpr int kPanelH    = 540;
 static constexpr int kPanelMinW = 480;
@@ -440,9 +442,9 @@ void SettingsDialog::buildPanel() {
     _language->setSize(Dropdown::Size::Small);
     // Language names are intentionally not translated — each stays readable
     // to a speaker of that language regardless of the active locale.
-    _language->addItem(tr("System default"), "system");
-    _language->addItem("English", "en");
-    _language->addItem("日本語", "ja");
+    _language->addItem(tr("System default"), u"system"_s);
+    _language->addItem(u"English"_s, u"en"_s);
+    _language->addItem(u"日本語"_s, u"ja"_s);
     _language->setFixedWidth(180);
     langRow->addWidget(_language);
     langRow->addStretch();
@@ -815,7 +817,7 @@ void SettingsDialog::buildPanel() {
     sizePrefixLabel->setObjectName("sizePrefixLabel");
     sizeRow->addWidget(sizePrefixLabel);
 
-    _cacheSize = new QLabel("–", storagePage);
+    _cacheSize = new QLabel(u"–"_s, storagePage);
     sizeRow->addWidget(_cacheSize);
     sizeRow->addStretch();
     slay->addLayout(sizeRow);
@@ -947,11 +949,11 @@ void SettingsDialog::buildPanel() {
     checkRow->addStretch();
     updLayout->addLayout(checkRow);
 
-    _updateStatus = new QLabel("", updBox);
+    _updateStatus = new QLabel(u""_s, updBox);
     _updateStatus->setWordWrap(true);
     updLayout->addWidget(_updateStatus);
 
-    _lastChecked = new QLabel("", updBox);
+    _lastChecked = new QLabel(u""_s, updBox);
     updLayout->addWidget(_lastChecked);
 
     sylay->addWidget(updBox);
@@ -975,10 +977,10 @@ void SettingsDialog::buildPanel() {
 
     _minimizeToTray = new QCheckBox(tr("Minimize to tray"), winBox);
     _minimizeToTray->setChecked(
-        QSettings("msga", "msga").value("window/minimizeToTray", false).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("window/minimizeToTray", false).toBool()
     );
     connect(_minimizeToTray, &QCheckBox::toggled, this, [](bool on) {
-        QSettings("msga", "msga").setValue("window/minimizeToTray", on);
+        QSettings(u"msga"_s, u"msga"_s).setValue("window/minimizeToTray", on);
     });
     winLayout->addWidget(_minimizeToTray);
 
@@ -1444,7 +1446,7 @@ void SettingsDialog::buildPanel() {
         new StyledButton(tr("View full license"), StyledButton::Variant::Link, aboutPage);
     connect(licenseLink, &QPushButton::clicked, this, [] {
         QDesktopServices::openUrl(
-            QUrl("https://github.com/punarinta/make-slack-great-again/blob/master/LICENSE")
+            QUrl(u"https://github.com/punarinta/make-slack-great-again/blob/master/LICENSE"_s)
         );
     });
     auto *licenseLinkRow = new QHBoxLayout;
@@ -1481,7 +1483,7 @@ void SettingsDialog::buildPanel() {
     bugBtn->setSize(StyledButton::Size::Small);
     connect(bugBtn, &QPushButton::clicked, this, [] {
         QDesktopServices::openUrl(
-            QUrl("https://github.com/punarinta/make-slack-great-again/issues")
+            QUrl(u"https://github.com/punarinta/make-slack-great-again/issues"_s)
         );
     });
     bugRow->addWidget(bugBtn);
@@ -1583,7 +1585,7 @@ QWidget *SettingsDialog::buildAiPage() {
     urlLine->addWidget(urlLabel);
     _aiUrl = new StyledLineEdit(_aiUrlRow);
     _aiUrl->setSize(StyledLineEdit::Size::Small);
-    _aiUrl->setPlaceholderText("http://localhost:8000/v1");
+    _aiUrl->setPlaceholderText(u"http://localhost:8000/v1"_s);
     urlLine->addWidget(_aiUrl, 1);
     urlCol->addLayout(urlLine);
     auto *urlHint = new QLabel(
@@ -2202,17 +2204,14 @@ void SettingsDialog::applyAiTheme() {
     for (auto *w : _panel->findChildren<QLabel *>("aiRowName")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; font-weight: 600; color: %2;")
-                .arg(th.fonts.md)
+            u"font-size: %1px; font-weight: 600; color: %2;"_s.arg(th.fonts.md)
                 .arg(Th::qss(th.text.primary))
         );
     }
     for (auto *w : _panel->findChildren<QLabel *>("aiRowDetail")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
 }
@@ -2225,14 +2224,11 @@ void SettingsDialog::applyTheme() {
     // re-polishes the panel's subtree once rather than once more per page.
     Th::setStyleSheetIfChanged(
         _panel,
-        QString(
-            "QFrame#settingsPanel {"
-            "  background: %1;"
-            "  border-radius: 8px;"
-            "  border: 1px solid %2;"
-            "}"
-        )
-                .arg(Th::qss(th.surface.raised), Th::qss(th.divider.strong)) +
+        u"QFrame#settingsPanel {"
+        "  background: %1;"
+        "  border-radius: 8px;"
+        "  border: 1px solid %2;"
+        "}"_s.arg(Th::qss(th.surface.raised), Th::qss(th.divider.strong)) +
             settingsScrollQss()
     );
 
@@ -2240,23 +2236,19 @@ void SettingsDialog::applyTheme() {
     if (auto *w = _panel->findChild<QWidget *>("settingsHeader")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString(
-                "background: %1;"
-                "border-bottom: 1px solid %2;"
-                "border-top-left-radius: 8px;"
-                "border-top-right-radius: 8px;"
+            u"background: %1;"
+            "border-bottom: 1px solid %2;"
+            "border-top-left-radius: 8px;"
+            "border-top-right-radius: 8px;"_s.arg(
+                Th::qss(th.surface.highlight), Th::qss(th.divider.def)
             )
-                .arg(Th::qss(th.surface.highlight), Th::qss(th.divider.def))
         );
     }
     if (auto *w = _panel->findChild<QLabel *>("settingsTitleLabel")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString(
-                "font-size: %1px; font-weight: 600; color: %2;"
-                "background: transparent; border: none;"
-            )
-                .arg(th.fonts.lg)
+            u"font-size: %1px; font-weight: 600; color: %2;"
+            "background: transparent; border: none;"_s.arg(th.fonts.lg)
                 .arg(Th::qss(th.text.primary))
         );
     }
@@ -2265,31 +2257,28 @@ void SettingsDialog::applyTheme() {
     // Tabs list
     Th::setStyleSheetIfChanged(
         _tabs,
-        QString(
-            "QListWidget {"
-            "  background: %1;"
-            "  border: none;"
-            "  border-right: 1px solid %2;"
-            "  border-bottom-left-radius: 8px;"
-            "  outline: none;"
-            "  padding: 8px 0;"
-            "}"
-            "QListWidget::item {"
-            "  padding: 9px 14px;"
-            "  color: %3;"
-            "  font-size: %4px;"
-            "  border-radius: 4px;"
-            "  margin: 1px 6px;"
-            "}"
-            "QListWidget::item:selected {"
-            "  background: %5;"
-            "  color: %3;"
-            "}"
-            "QListWidget::item:hover:!selected {"
-            "  background: %6;"
-            "}"
-        )
-            .arg(Th::qss(th.surface.sunken), Th::qss(th.divider.def), Th::qss(th.text.primary))
+        u"QListWidget {"
+        "  background: %1;"
+        "  border: none;"
+        "  border-right: 1px solid %2;"
+        "  border-bottom-left-radius: 8px;"
+        "  outline: none;"
+        "  padding: 8px 0;"
+        "}"
+        "QListWidget::item {"
+        "  padding: 9px 14px;"
+        "  color: %3;"
+        "  font-size: %4px;"
+        "  border-radius: 4px;"
+        "  margin: 1px 6px;"
+        "}"
+        "QListWidget::item:selected {"
+        "  background: %5;"
+        "  color: %3;"
+        "}"
+        "QListWidget::item:hover:!selected {"
+        "  background: %6;"
+        "}"_s.arg(Th::qss(th.surface.sunken), Th::qss(th.divider.def), Th::qss(th.text.primary))
             .arg(th.fonts.md)
             .arg(Th::qss(th.surface.highlightStrong), Th::qss(th.surface.highlight))
     );
@@ -2298,8 +2287,7 @@ void SettingsDialog::applyTheme() {
     for (auto *w : _panel->findChildren<QLabel *>("sectionHeading")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; font-weight: 600; color: %2;")
-                .arg(th.fonts.base)
+            u"font-size: %1px; font-weight: 600; color: %2;"_s.arg(th.fonts.base)
                 .arg(Th::qss(th.text.primary))
         );
     }
@@ -2307,31 +2295,28 @@ void SettingsDialog::applyTheme() {
     // ── Appearance page ───────────────────────────────────────────────
     // The section containers are now titleless; just strip the default frame.
     for (const auto &boxName :
-         {QString("sidebarBox"),
-          QString("langBox"),
-          QString("timeBox"),
-          QString("themeBox"),
-          QString("customBox"),
-          QString("colorModeBox"),
-          QString("threadBox"),
-          QString("fontBox")}) {
+         {u"sidebarBox"_s,
+          u"langBox"_s,
+          u"timeBox"_s,
+          u"themeBox"_s,
+          u"customBox"_s,
+          u"colorModeBox"_s,
+          u"threadBox"_s,
+          u"fontBox"_s}) {
         // findChildren, not findChild: the theme rows share one name.
         for (auto *w : _panel->findChildren<QGroupBox *>(boxName))
-            Th::setStyleSheetIfChanged(w, "QGroupBox { border: none; }");
+            Th::setStyleSheetIfChanged(w, u"QGroupBox { border: none; }"_s);
     }
     if (auto *w = _panel->findChild<QLabel *>("langLabel")) {
         Th::setStyleSheetIfChanged(
-            w, QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
         );
     }
     // _language self-themes (Dropdown).
     Th::setStyleSheetIfChanged(
         _langRestartNote,
-        QString(
-            "font-size: %1px; color: %2; background: %3;"
-            "border: 1px solid %4; border-radius: 4px; padding: 6px 8px;"
-        )
-            .arg(th.fonts.caption)
+        u"font-size: %1px; color: %2; background: %3;"
+        "border: 1px solid %4; border-radius: 4px; padding: 6px 8px;"_s.arg(th.fonts.caption)
             .arg(
                 Th::qss(th.editBanner.text),
                 Th::qss(th.editBanner.bg),
@@ -2354,11 +2339,11 @@ void SettingsDialog::applyTheme() {
     Th::setStyleSheetIfChanged(_modeSystem, radioQss);
     Th::setStyleSheetIfChanged(
         _modeHint,
-        QString("font-size: %1px; color: %2;").arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
+        u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
     );
     for (auto *w : _panel->findChildren<QLabel *>("themeRowLabel")) {
         Th::setStyleSheetIfChanged(
-            w, QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
         );
     }
     Th::setStyleSheetIfChanged(_ctrlEnterSends, checkQss);
@@ -2374,11 +2359,8 @@ void SettingsDialog::applyTheme() {
     if (auto *w = _panel->findChild<QLabel *>("daysPrefix")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString(
-                "QLabel { font-size: %1px; color: %2; }"
-                "QLabel:disabled { color: %3; }"
-            )
-                .arg(th.fonts.md)
+            u"QLabel { font-size: %1px; color: %2; }"
+            "QLabel:disabled { color: %3; }"_s.arg(th.fonts.md)
                 .arg(Th::qss(th.text.primary), Th::qss(th.text.tertiary))
         );
     }
@@ -2387,11 +2369,8 @@ void SettingsDialog::applyTheme() {
         if (auto *w = _panel->findChild<QLabel *>(QLatin1String(name))) {
             Th::setStyleSheetIfChanged(
                 w,
-                QString(
-                    "QLabel { font-size: %1px; color: %2; }"
-                    "QLabel:disabled { color: %3; }"
-                )
-                    .arg(th.fonts.caption)
+                u"QLabel { font-size: %1px; color: %2; }"
+                "QLabel:disabled { color: %3; }"_s.arg(th.fonts.caption)
                     .arg(Th::qss(th.text.secondary), Th::qss(th.text.tertiary))
             );
         }
@@ -2401,7 +2380,7 @@ void SettingsDialog::applyTheme() {
     // ── Notifications page ────────────────────────────────────────────
     Th::setStyleSheetIfChanged(_notifEnabled, checkQss);
     if (auto *w = _panel->findChild<QGroupBox *>("levelBox"))
-        Th::setStyleSheetIfChanged(w, "QGroupBox { border: none; }");
+        Th::setStyleSheetIfChanged(w, u"QGroupBox { border: none; }"_s);
     Th::setStyleSheetIfChanged(_notifAll, radioQss);
     Th::setStyleSheetIfChanged(_notifMentions, radioQss);
     if (_modeSession)
@@ -2416,7 +2395,7 @@ void SettingsDialog::applyTheme() {
     Th::setStyleSheetIfChanged(_notifSound, checkQss);
     if (auto *w = _panel->findChild<QLabel *>("soundLabel")) {
         Th::setStyleSheetIfChanged(
-            w, QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
         );
     }
     // (Save button self-themes — StyledButton)
@@ -2425,26 +2404,21 @@ void SettingsDialog::applyTheme() {
     for (auto *w : _panel->findChildren<QLabel *>("aiDesc")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
     for (auto *w : _panel->findChildren<QLabel *>("aiFieldLabel")) {
         Th::setStyleSheetIfChanged(
-            w, QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
         );
     }
     for (auto *w : _panel->findChildren<QGroupBox *>("aiBox"))
-        Th::setStyleSheetIfChanged(w, "QGroupBox { border: none; }");
+        Th::setStyleSheetIfChanged(w, u"QGroupBox { border: none; }"_s);
     // (Buttons, inputs and dropdowns self-theme — StyledButton / StyledLineEdit
     // / Dropdown; the provider rows are rebuilt on the fly → applyAiTheme.)
     for (auto *w : _panel->findChildren<QLabel *>("aiError")) {
         Th::setStyleSheetIfChanged(
-            w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.danger))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.danger))
         );
     }
     if (_voiceCleanup)
@@ -2452,12 +2426,9 @@ void SettingsDialog::applyTheme() {
     if (_voiceGlossary)
         Th::setStyleSheetIfChanged(
             _voiceGlossary,
-            QString(
-                "QPlainTextEdit { border: 1px solid %1; border-radius: %2px; "
-                "background: %3; color: %4; font-size: %5px; padding: 4px; }"
-                "QPlainTextEdit:focus { border-color: %6; }"
-            )
-                    .arg(Th::qss(th.composer.border))
+            u"QPlainTextEdit { border: 1px solid %1; border-radius: %2px; "
+            "background: %3; color: %4; font-size: %5px; padding: 4px; }"
+            "QPlainTextEdit:focus { border-color: %6; }"_s.arg(Th::qss(th.composer.border))
                     .arg(Ui::kControlRadius)
                     .arg(Th::qss(th.surface.raised))
                     .arg(Th::qss(th.text.primary))
@@ -2470,45 +2441,37 @@ void SettingsDialog::applyTheme() {
     // ── Storage page ──────────────────────────────────────────────────
     if (auto *w = _panel->findChild<QLabel *>("sizePrefixLabel")) {
         Th::setStyleSheetIfChanged(
-            w,
-            QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.secondary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.secondary))
         );
     }
     Th::setStyleSheetIfChanged(
         _cacheSize,
-        QString("font-size: %1px; font-weight: 600; color: %2;")
-            .arg(th.fonts.md)
+        u"font-size: %1px; font-weight: 600; color: %2;"_s.arg(th.fonts.md)
             .arg(Th::qss(th.text.primary))
     );
     if (auto *w = _panel->findChild<QLabel *>("cacheDesc")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
     if (auto *w = _panel->findChild<QLabel *>("capPrefix")) {
         Th::setStyleSheetIfChanged(
-            w, QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
         );
     }
     Th::setStyleSheetIfChanged(_cacheCap, spinQss);
     if (auto *w = _panel->findChild<QLabel *>("capDesc")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
     // (Clear Cache button self-themes — StyledButton Danger)
     if (auto *w = _panel->findChild<QLabel *>("stateDesc")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
     // (Clear State button self-themes — StyledButton Danger)
@@ -2516,12 +2479,11 @@ void SettingsDialog::applyTheme() {
     // ── System page ───────────────────────────────────────────────────
     if (auto *w = _panel->findChild<QLabel *>("verLabel")) {
         Th::setStyleSheetIfChanged(
-            w,
-            QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.secondary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.secondary))
         );
     }
     for (auto *w : _panel->findChildren<QGroupBox *>("updBox"))
-        Th::setStyleSheetIfChanged(w, "QGroupBox { border: none; }");
+        Th::setStyleSheetIfChanged(w, u"QGroupBox { border: none; }"_s);
     if (_autoUpdates)
         Th::setStyleSheetIfChanged(_autoUpdates, checkQss);
     if (_minimizeToTray)
@@ -2529,88 +2491,78 @@ void SettingsDialog::applyTheme() {
     for (auto *w : _panel->findChildren<QLabel *>("autoUpdDesc")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
     // Slack connection / Teams / GIF picker blocks.
     for (auto *w : _panel->findChildren<QLabel *>("credDesc")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
     for (auto *w : _panel->findChildren<QLabel *>("credStatus")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
     for (auto *w : _panel->findChildren<QLabel *>("credFieldLabel")) {
         Th::setStyleSheetIfChanged(
-            w, QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
         );
     }
     for (auto *w : _panel->findChildren<QGroupBox *>("credBox")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("QGroupBox#credBox { border: 1px solid %1; border-radius: 4px; }")
-                .arg(Th::qss(th.divider.def))
+            u"QGroupBox#credBox { border: 1px solid %1; border-radius: 4px; }"_s.arg(
+                Th::qss(th.divider.def)
+            )
         );
     }
     // (Check-for-updates button self-themes — StyledButton Ghost)
     Th::setStyleSheetIfChanged(
         _updateStatus,
-        QString("font-size: %1px; color: %2;").arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
+        u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
     );
     Th::setStyleSheetIfChanged(
         _lastChecked,
-        QString("font-size: %1px; color: %2;").arg(th.fonts.sm).arg(Th::qss(th.text.tertiary))
+        u"font-size: %1px; color: %2;"_s.arg(th.fonts.sm).arg(Th::qss(th.text.tertiary))
     );
     if (auto *w = _panel->findChild<QGroupBox *>("memBox"))
-        Th::setStyleSheetIfChanged(w, "QGroupBox { border: none; }");
+        Th::setStyleSheetIfChanged(w, u"QGroupBox { border: none; }"_s);
     Th::setStyleSheetIfChanged(
-        _ramLabel,
-        QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+        _ramLabel, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
     );
 
     // ── About page ────────────────────────────────────────────────────
     if (auto *w = _panel->findChild<QLabel *>("aboutLicense")) {
         Th::setStyleSheetIfChanged(
-            w,
-            QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.secondary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.secondary))
         );
     }
     if (auto *w = _panel->findChild<QLabel *>("aboutContact")) {
         Th::setStyleSheetIfChanged(
-            w, QString("font-size: %1px; color: %2;").arg(th.fonts.md).arg(Th::qss(th.text.primary))
+            w, u"font-size: %1px; color: %2;"_s.arg(th.fonts.md).arg(Th::qss(th.text.primary))
         );
         // Inline colour on the anchor: a palette Link colour is dropped once a
         // stylesheet is in play, leaving the OS default blue.
         w->setText(tr("Questions or feedback: %1")
-                       .arg(QString(
-                                "<a href=\"mailto:vladimir@msga.app\" style=\"color: %1;\">"
-                                "vladimir@msga.app</a>"
-                       )
-                                .arg(Th::qss(th.text.link))));
+                       .arg(
+                           u"<a href=\"mailto:vladimir@msga.app\" style=\"color: %1;\">"
+                           "vladimir@msga.app</a>"_s.arg(Th::qss(th.text.link))
+                       ));
     }
     if (auto *w = _panel->findChild<QLabel *>("aboutBugDesc")) {
         Th::setStyleSheetIfChanged(
             w,
-            QString("font-size: %1px; color: %2;")
-                .arg(th.fonts.caption)
-                .arg(Th::qss(th.text.secondary))
+            u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.secondary))
         );
     }
 }
 
 void SettingsDialog::loadNotifications() {
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     _notifEnabled->setChecked(s.value("notifications/enabled", true).toBool());
     _notifHuddles->setChecked(s.value("notifications/huddles", true).toBool());
     _notifBoldMentionsOnly->setChecked(s.value("notifications/boldMentionsOnly", true).toBool());
@@ -2645,7 +2597,7 @@ void SettingsDialog::loadNotifications() {
 }
 
 void SettingsDialog::saveNotifications() {
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     s.setValue("notifications/enabled", _notifEnabled->isChecked());
     s.setValue("notifications/huddles", _notifHuddles->isChecked());
     s.setValue("notifications/boldMentionsOnly", _notifBoldMentionsOnly->isChecked());
@@ -2657,7 +2609,7 @@ void SettingsDialog::saveNotifications() {
 }
 
 void SettingsDialog::loadAppearance() {
-    const int days = QSettings("msga", "msga").value("appearance/relevantDays", 14).toInt();
+    const int days = QSettings(u"msga"_s, u"msga"_s).value("appearance/relevantDays", 14).toInt();
     _relevantDays->setValue(std::max(1, days));
 
     const int idx = _language->findData(TimeFmt::language());
@@ -2666,7 +2618,7 @@ void SettingsDialog::loadAppearance() {
     (TimeFmt::use24h() ? _time24 : _time12)->setChecked(true);
 
     const bool inlineThreads =
-        QSettings("msga", "msga").value("appearance/threadsInline", false).toBool();
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/threadsInline", false).toBool();
     (inlineThreads ? _threadInline : _threadStandalone)->setChecked(true);
 
     const QString fontId = ThemeManager::instance().fontSizeId();
@@ -2676,20 +2628,20 @@ void SettingsDialog::loadAppearance() {
         ->setChecked(true);
 
     _showAgentsApps->setChecked(
-        QSettings("msga", "msga").value("appearance/showAgentsApps", true).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/showAgentsApps", true).toBool()
     );
     _unreadsOnly->setChecked(
-        QSettings("msga", "msga").value("appearance/unreadsOnly", false).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/unreadsOnly", false).toBool()
     );
     _ctrlEnterSends->setChecked(Ui::Shortcuts::ctrlEnterSends());
     _showLinkPreviews->setChecked(
-        QSettings("msga", "msga").value("appearance/showLinkPreviews", true).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/showLinkPreviews", true).toBool()
     );
     _animateEmoji->setChecked(
-        QSettings("msga", "msga").value("appearance/animateEmoji", true).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/animateEmoji", true).toBool()
     );
     _animateMedia->setChecked(
-        QSettings("msga", "msga").value("appearance/animateMedia", true).toBool()
+        QSettings(u"msga"_s, u"msga"_s).value("appearance/animateMedia", true).toBool()
     );
 
     auto &mgr = ThemeManager::instance();
@@ -2765,31 +2717,31 @@ void SettingsDialog::refreshModeHint() {
 
 void SettingsDialog::saveAppearance() {
     const int days = _relevantDays->value();
-    QSettings("msga", "msga").setValue("appearance/relevantDays", days);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/relevantDays", days);
 
     TimeFmt::setLanguage(_language->currentData().toString());
     TimeFmt::setUse24h(_time24->isChecked());
 
     const bool inlineThreads = _threadInline->isChecked();
-    QSettings("msga", "msga").setValue("appearance/threadsInline", inlineThreads);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/threadsInline", inlineThreads);
 
     const bool showAgents = _showAgentsApps->isChecked();
-    QSettings("msga", "msga").setValue("appearance/showAgentsApps", showAgents);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/showAgentsApps", showAgents);
 
     const bool unreadsOnly = _unreadsOnly->isChecked();
-    QSettings("msga", "msga").setValue("appearance/unreadsOnly", unreadsOnly);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/unreadsOnly", unreadsOnly);
 
     const bool showLinkPreviews = _showLinkPreviews->isChecked();
-    QSettings("msga", "msga").setValue("appearance/showLinkPreviews", showLinkPreviews);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/showLinkPreviews", showLinkPreviews);
 
     const bool animateEmoji = _animateEmoji->isChecked();
-    QSettings("msga", "msga").setValue("appearance/animateEmoji", animateEmoji);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/animateEmoji", animateEmoji);
     const bool animateMedia = _animateMedia->isChecked();
-    QSettings("msga", "msga").setValue("appearance/animateMedia", animateMedia);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/animateMedia", animateMedia);
 
     const bool ctrlEnter        = _ctrlEnterSends->isChecked();
     const bool sendKeyDidChange = ctrlEnter != Ui::Shortcuts::ctrlEnterSends();
-    QSettings("msga", "msga").setValue(Ui::Shortcuts::kCtrlEnterSendsKey, ctrlEnter);
+    QSettings(u"msga"_s, u"msga"_s).setValue(Ui::Shortcuts::kCtrlEnterSendsKey, ctrlEnter);
     Ui::Shortcuts::setCtrlEnterSends(ctrlEnter);
     if (sendKeyDidChange)
         emit sendKeyChanged();
@@ -2813,10 +2765,10 @@ void SettingsDialog::saveAppearance() {
 
 static QString formatBytes(qint64 bytes) {
     if (bytes < 1024)
-        return QString("%1 B").arg(bytes);
+        return u"%1 B"_s.arg(bytes);
     if (bytes < 1024 * 1024)
-        return QString("%1 KB").arg(bytes / 1024);
-    return QString("%1 MB").arg(bytes / (1024 * 1024));
+        return u"%1 KB"_s.arg(bytes / 1024);
+    return u"%1 MB"_s.arg(bytes / (1024 * 1024));
 }
 
 static qint64 dirSizeBytes(const QString &path) {
@@ -2831,7 +2783,7 @@ static qint64 dirSizeBytes(const QString &path) {
 
 void SettingsDialog::refreshCacheSize() {
     const QString cacheDir =
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cache";
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + u"/cache"_s;
     _cacheSize->setText(formatBytes(dirSizeBytes(cacheDir)));
 }
 
@@ -2839,7 +2791,7 @@ void SettingsDialog::clearCache() {
     if (auto *btn = _panel->findChild<QPushButton *>("clearCacheBtn"))
         btn->setEnabled(false);
     const QString cacheDir =
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cache";
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + u"/cache"_s;
     QDir(cacheDir).removeRecursively();
     refreshCacheSize();
 }
@@ -2847,7 +2799,7 @@ void SettingsDialog::clearCache() {
 void SettingsDialog::clearState() {
     if (auto *btn = _panel->findChild<QPushButton *>("clearStateBtn"))
         btn->setEnabled(false);
-    QSettings("msga", "msga").remove("conv/visitedAt");
+    QSettings(u"msga"_s, u"msga"_s).remove("conv/visitedAt");
     emit stateCleared();
 }
 
@@ -2948,7 +2900,7 @@ static QString timeAgo(qint64 epochSecs) {
 void SettingsDialog::refreshLastChecked() {
     if (!_lastChecked)
         return;
-    const qint64 ts = QSettings("msga", "msga").value("updates/lastChecked", 0).toLongLong();
+    const qint64 ts = QSettings(u"msga"_s, u"msga"_s).value("updates/lastChecked", 0).toLongLong();
     _lastChecked->setText(tr("Last checked: %1").arg(timeAgo(ts)));
 }
 

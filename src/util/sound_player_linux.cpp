@@ -7,6 +7,8 @@
 #include <QStandardPaths>
 #include <QStringList>
 
+using namespace Qt::StringLiterals;
+
 // Linux has no dependency-free in-process audio path (every sound server needs
 // a shared lib that won't link into the static binary), so we hand playback to
 // whichever helper the desktop ships and enumerate system sounds by scanning
@@ -26,17 +28,17 @@ QStringList soundBaseDirs() {
     QStringList   dirs;
     const QString xdgData = qEnvironmentVariable("XDG_DATA_HOME");
     if (!xdgData.isEmpty())
-        dirs << xdgData + "/sounds";
-    dirs << QDir::homePath() + "/.local/share/sounds";
-    dirs << "/usr/local/share/sounds";
-    dirs << "/usr/share/sounds";
+        dirs << xdgData + u"/sounds"_s;
+    dirs << QDir::homePath() + u"/.local/share/sounds"_s;
+    dirs << u"/usr/local/share/sounds"_s;
+    dirs << u"/usr/share/sounds"_s;
     return dirs;
 }
 
 // Best-effort current theme name; falls back to the freedesktop default.
 QString currentThemeName() {
     QProcess p;
-    p.start("gsettings", {"get", "org.gnome.desktop.sound", "theme-name"});
+    p.start(u"gsettings"_s, {u"get"_s, u"org.gnome.desktop.sound"_s, u"theme-name"_s});
     if (p.waitForStarted(300) && p.waitForFinished(500)) {
         QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
         out.remove('\'').remove('"');
@@ -49,7 +51,7 @@ QString currentThemeName() {
 // Directory holding a theme's event sounds (.../<theme>/stereo), or empty.
 QString themeStereoDir(const QString &theme) {
     for (const QString &base : soundBaseDirs()) {
-        const QString dir = base + "/" + theme + "/stereo";
+        const QString dir = base + u"/"_s + theme + u"/stereo"_s;
         if (QFileInfo::exists(dir))
             return dir;
     }
@@ -78,8 +80,9 @@ std::vector<Entry> enumerateSystemSounds() {
     if (dir.isEmpty())
         return out;
 
-    QDir          d(dir);
-    const auto    files = d.entryInfoList({"*.oga", "*.ogg", "*.wav"}, QDir::Files, QDir::Name);
+    QDir       d(dir);
+    const auto files =
+        d.entryInfoList({u"*.oga"_s, u"*.ogg"_s, u"*.wav"_s}, QDir::Files, QDir::Name);
     QSet<QString> seen;
     for (const QFileInfo &fi : files) {
         const QString name = fi.completeBaseName();
@@ -93,7 +96,7 @@ std::vector<Entry> enumerateSystemSounds() {
 
 bool playSystem(const QString &nativeId) {
     // Prefer canberra: it understands the theme and decodes .oga natively.
-    if (spawn("canberra-gtk-play", {"-i", nativeId}))
+    if (spawn(u"canberra-gtk-play"_s, {u"-i"_s, nativeId}))
         return true;
     // Otherwise resolve the theme file and play it directly.
     QString dir = themeStereoDir(currentThemeName());
@@ -101,7 +104,7 @@ bool playSystem(const QString &nativeId) {
         dir = themeStereoDir(QStringLiteral("freedesktop"));
     if (!dir.isEmpty()) {
         for (const char *ext : {".oga", ".ogg", ".wav"}) {
-            const QString path = dir + "/" + nativeId + ext;
+            const QString path = dir + u"/"_s + nativeId + ext;
             if (QFileInfo::exists(path))
                 return playFile(path);
         }
@@ -111,15 +114,15 @@ bool playSystem(const QString &nativeId) {
 
 bool playFile(const QString &path) {
     // Try the common players in order; first one that launches wins.
-    if (spawn("pw-play", {path}))
+    if (spawn(u"pw-play"_s, {path}))
         return true;
-    if (spawn("paplay", {path}))
+    if (spawn(u"paplay"_s, {path}))
         return true;
-    if (spawn("ffplay", {"-nodisp", "-autoexit", "-loglevel", "quiet", path}))
+    if (spawn(u"ffplay"_s, {u"-nodisp"_s, u"-autoexit"_s, u"-loglevel"_s, u"quiet"_s, path}))
         return true;
-    if (spawn("aplay", {"-q", path})) // WAV only, fine for the bundled chime
+    if (spawn(u"aplay"_s, {u"-q"_s, path})) // WAV only, fine for the bundled chime
         return true;
-    if (spawn("canberra-gtk-play", {"-f", path}))
+    if (spawn(u"canberra-gtk-play"_s, {u"-f"_s, path}))
         return true;
     return false;
 }

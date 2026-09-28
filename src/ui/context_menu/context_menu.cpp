@@ -16,6 +16,8 @@
 #include <QApplication>
 #include <QFontMetrics>
 
+using namespace Qt::StringLiterals;
+
 #if defined(MSGA_DEMO)
 static bool s_flatPopups = false;
 
@@ -170,7 +172,7 @@ void ContextMenu::updateGeometry(const QPoint &globalPos) {
         if (const QString &right = rightText(it); !right.isEmpty())
             itemW += kShortcutGap + sfm.horizontalAdvance(right) + kPadH;
         if (it.submenu)
-            itemW += kShortcutGap + sfm.horizontalAdvance("›") + kPadH;
+            itemW += kShortcutGap + sfm.horizontalAdvance(u"›"_s) + kPadH;
         w = std::max(w, itemW);
     }
 
@@ -342,7 +344,7 @@ void ContextMenu::paintEvent(QPaintEvent *) {
             p.drawText(
                 QRect(ir.left(), ir.top(), ir.width() - kPadH, ir.height()),
                 Qt::AlignVCenter | Qt::AlignRight,
-                "›"
+                u"›"_s
             );
         }
 
@@ -372,8 +374,9 @@ void ContextMenu::paintEvent(QPaintEvent *) {
         p.setFont(baseFont);
         p.setPen(textColor);
         const int rightHintW =
-            !right.isEmpty() ? kShortcutGap + sfm.horizontalAdvance(right)
-                             : (_items[i].submenu ? kShortcutGap + sfm.horizontalAdvance("›") : 0);
+            !right.isEmpty()
+                ? kShortcutGap + sfm.horizontalAdvance(right)
+                : (_items[i].submenu ? kShortcutGap + sfm.horizontalAdvance(u"›"_s) : 0);
         const int availW = ir.width() - kPadH - checkInset - iconW - kPadH - rightHintW;
         p.drawText(
             QRect(contentX + iconW, ir.top(), availW, ir.height()),

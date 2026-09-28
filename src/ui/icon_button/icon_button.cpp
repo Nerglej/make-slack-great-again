@@ -6,6 +6,8 @@
 #include "ui/theme.h"
 #include "ui/theme_manager.h"
 
+using namespace Qt::StringLiterals;
+
 IconButton::IconButton(const QString &svgPath, int side, int iconPx, QWidget *parent)
     : QPushButton(parent), _svgPath(svgPath), _side(side), _iconPx(iconPx) {
     setFixedSize(_side, _side);
@@ -35,11 +37,8 @@ void IconButton::applyTheme() {
     setIcon(svgIcon(_svgPath, QSize(_iconPx, _iconPx), tint));
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "IconButton { border: none; background: transparent; border-radius: %1px; }"
-            "IconButton:hover { background: %2; }"
-        )
-            .arg(_side / 2)
+        u"IconButton { border: none; background: transparent; border-radius: %1px; }"
+        "IconButton:hover { background: %2; }"_s.arg(_side / 2)
             .arg(Th::qss(Th::c().surface.highlight))
     );
 }

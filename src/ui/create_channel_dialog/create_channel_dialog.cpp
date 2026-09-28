@@ -13,6 +13,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+using namespace Qt::StringLiterals;
+
 static constexpr int kMaxNameLen = 80;
 
 CreateChannelDialog::CreateChannelDialog(const QString &workspaceName, QWidget *parent)
@@ -37,7 +39,7 @@ CreateChannelDialog::CreateChannelDialog(const QString &workspaceName, QWidget *
         lay->addWidget(_nameSectionLabel);
 
         _nameEdit = new StyledLineEdit(page1);
-        _nameEdit->setPrefix("#");
+        _nameEdit->setPrefix(u"#"_s);
         _nameEdit->setMaxLength(kMaxNameLen);
         _nameEdit->setPlaceholderText(tr("e.g. plan-budget"));
         lay->addWidget(_nameEdit);
@@ -156,22 +158,22 @@ void CreateChannelDialog::applyTheme() {
     AppDialog::applyTheme();
 
     if (_nameSectionLabel)
-        _nameSectionLabel->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+        _nameSectionLabel->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
 
     if (_helperLabel)
-        _helperLabel->setStyleSheet(QString("color: %1; font-size: %2px;")
+        _helperLabel->setStyleSheet(u"color: %1; font-size: %2px;"_s
                                         .arg(Th::qss(Th::c().text.secondary))
                                         .arg(Th::c().fonts.sm));
 
     // Next/Back/Create buttons self-theme (StyledButton).
 
     if (_channelSubtitle)
-        _channelSubtitle->setStyleSheet(QString("color: %1; font-size: %2px;")
+        _channelSubtitle->setStyleSheet(u"color: %1; font-size: %2px;"_s
                                             .arg(Th::qss(Th::c().text.secondary))
                                             .arg(Th::c().fonts.sm));
 
     if (_visSectionLabel)
-        _visSectionLabel->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+        _visSectionLabel->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
 
     if (_publicRadio)
         _publicRadio->setStyleSheet(Th::radioQss());
@@ -180,12 +182,12 @@ void CreateChannelDialog::applyTheme() {
         _privateRadio->setStyleSheet(Th::radioQss());
 
     if (_privateDesc)
-        _privateDesc->setStyleSheet(QString("color: %1; font-size: %2px;")
+        _privateDesc->setStyleSheet(u"color: %1; font-size: %2px;"_s
                                         .arg(Th::qss(Th::c().text.secondary))
                                         .arg(Th::c().fonts.sm));
 
     if (_stepLabel)
-        _stepLabel->setStyleSheet(QString("color: %1; font-size: %2px;")
+        _stepLabel->setStyleSheet(u"color: %1; font-size: %2px;"_s
                                       .arg(Th::qss(Th::c().text.secondary))
                                       .arg(Th::c().fonts.sm));
 }

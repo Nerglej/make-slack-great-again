@@ -4,6 +4,8 @@
 
 #include "ui/message_list/message_render.h"
 
+using namespace Qt::StringLiterals;
+
 namespace CanvasEmoji {
 namespace {
 
@@ -28,12 +30,12 @@ QString expandInText(const QString &text, const QHash<QString, QString> &customE
             const QString name = text.mid(i + 1, j - i - 1);
             const auto    er   = MsgRender::resolveEmojiRich(name, customEmoji);
             if (!er.imageUrl.isEmpty()) {
-                out += "<img src='emoji:" + name.toHtmlEscaped() + "' width='" + px + "' height='" +
-                       px + "'>";
+                out += u"<img src='emoji:"_s + name.toHtmlEscaped() + u"' width='"_s + px +
+                       u"' height='"_s + px + u"'>"_s;
                 i = j + 1;
                 continue;
             }
-            if (!er.unicode.isEmpty() && er.unicode != ":" + name + ":") {
+            if (!er.unicode.isEmpty() && er.unicode != u":"_s + name + u":"_s) {
                 out += er.unicode;
                 i = j + 1;
                 continue;

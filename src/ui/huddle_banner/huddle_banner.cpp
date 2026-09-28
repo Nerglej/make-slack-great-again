@@ -13,6 +13,8 @@
 #include <QPushButton>
 #include <QStyleOption>
 
+using namespace Qt::StringLiterals;
+
 HuddleBanner::HuddleBanner(QWidget *parent) : QWidget(parent) {
     setObjectName("huddleBanner");
     setAttribute(Qt::WA_StyledBackground);
@@ -75,21 +77,19 @@ void HuddleBanner::applyTheme() {
     // Solid green bar (Slack's huddle colour), white text/icon, white Join pill
     // with green label — high contrast and unmistakably actionable. Rebuilt on
     // every theme change so the icon tint never goes stale (see .rules).
-    _icon->setPixmap(svgPixmap(":/ui/headphones.svg", QSize(16, 16), th.text.onDark));
+    _icon->setPixmap(svgPixmap(u":/ui/headphones.svg"_s, QSize(16, 16), th.text.onDark));
 
     Th::setStyleSheetIfChanged(
         this,
-        QString(
-            "QWidget#huddleBanner { background: %1; }"
-            "QLabel { background: transparent; color: %2; font-size: %3px; font-weight: 600; }"
-            "QPushButton {"
-            "  background: %2; color: %1;"
-            "  border: none; border-radius: 3px;"
-            "  font-size: %3px; font-weight: 600; padding: 0 12px;"
-            "}"
-            "QPushButton:hover   { background: %4; }"
-            "QPushButton:pressed { background: %4; }"
-        )
+        u"QWidget#huddleBanner { background: %1; }"
+        "QLabel { background: transparent; color: %2; font-size: %3px; font-weight: 600; }"
+        "QPushButton {"
+        "  background: %2; color: %1;"
+        "  border: none; border-radius: 3px;"
+        "  font-size: %3px; font-weight: 600; padding: 0 12px;"
+        "}"
+        "QPushButton:hover   { background: %4; }"
+        "QPushButton:pressed { background: %4; }"_s
             .arg(Th::qss(th.presence.online), Th::qss(th.text.onDark))
             .arg(th.fonts.caption)
             .arg(Th::qss(th.surface.raised))

@@ -3,6 +3,8 @@
 #include "time_format.h"
 #include <QSettings>
 
+using namespace Qt::StringLiterals;
+
 namespace TimeFmt {
 namespace {
 
@@ -15,9 +17,9 @@ struct Prefs {
 Prefs g_prefs;
 
 QLocale resolveLocale(const QString &lang) {
-    if (lang == "en")
+    if (lang == u"en"_s)
         return QLocale(QLocale::English, QLocale::UnitedStates);
-    if (lang == "ja")
+    if (lang == u"ja"_s)
         return QLocale(QLocale::Japanese, QLocale::Japan);
     return QLocale::system();
 }
@@ -25,13 +27,14 @@ QLocale resolveLocale(const QString &lang) {
 void ensureLoaded() {
     if (g_prefs.loaded)
         return;
-    QSettings s("msga", "msga");
-    g_prefs.language          = s.value("appearance/language", "system").toString();
+    QSettings s(u"msga"_s, u"msga"_s);
+    g_prefs.language          = s.value("appearance/language", u"system"_s).toString();
     // Japanese convention is 24-hour time; English-speaking locales 12-hour.
     const bool    ja24Default = resolveLocale(g_prefs.language).language() == QLocale::Japanese;
-    const QString fmt = s.value("appearance/timeFormat", ja24Default ? "24h" : "12h").toString();
-    g_prefs.use24h    = (fmt == "24h");
-    g_prefs.loaded    = true;
+    const QString fmt =
+        s.value("appearance/timeFormat", ja24Default ? u"24h"_s : u"12h"_s).toString();
+    g_prefs.use24h = (fmt == u"24h"_s);
+    g_prefs.loaded = true;
 }
 
 bool isJa() {
@@ -44,18 +47,18 @@ QString timePattern() {
     // 24-hour convention uses a two-digit hour (09:05); 12-hour omits the
     // leading zero (9:05 AM).
     if (use24h())
-        return "HH:mm";
-    return isJa() ? "APh:mm" : "h:mm AP";
+        return u"HH:mm"_s;
+    return isJa() ? u"APh:mm"_s : u"h:mm AP"_s;
 }
 
 QString datePattern(bool withYear) {
     if (isJa())
-        return withYear ? "yyyy年M月d日" : "M月d日";
-    return withYear ? "MMMM d, yyyy" : "MMMM d";
+        return withYear ? u"yyyy年M月d日"_s : u"M月d日"_s;
+    return withYear ? u"MMMM d, yyyy"_s : u"MMMM d"_s;
 }
 
 QString shortDatePattern() {
-    return isJa() ? "M月d日" : "MMM d";
+    return isJa() ? u"M月d日"_s : u"MMM d"_s;
 }
 
 } // namespace
@@ -68,7 +71,7 @@ bool use24h() {
 void setUse24h(bool on) {
     ensureLoaded();
     g_prefs.use24h = on;
-    QSettings("msga", "msga").setValue("appearance/timeFormat", on ? "24h" : "12h");
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/timeFormat", on ? u"24h"_s : u"12h"_s);
 }
 
 QString language() {
@@ -79,7 +82,7 @@ QString language() {
 void setLanguage(const QString &lang) {
     ensureLoaded();
     g_prefs.language = lang;
-    QSettings("msga", "msga").setValue("appearance/language", lang);
+    QSettings(u"msga"_s, u"msga"_s).setValue("appearance/language", lang);
 }
 
 QLocale locale() {
@@ -107,13 +110,13 @@ QString formatDate(const QDate &date) {
 
 QString formatDateTime(qint64 unixSecs) {
     const QDateTime dt = QDateTime::fromSecsSinceEpoch(unixSecs);
-    return locale().toString(dt, shortDatePattern() + (isJa() ? " " : ", ") + timePattern());
+    return locale().toString(dt, shortDatePattern() + (isJa() ? u" "_s : u", "_s) + timePattern());
 }
 
 QString editFormat() {
     if (isJa())
-        return "yyyy年M月d日 " + timePattern();
-    return "MMM d, yyyy " + timePattern();
+        return u"yyyy年M月d日 "_s + timePattern();
+    return u"MMM d, yyyy "_s + timePattern();
 }
 
 } // namespace TimeFmt

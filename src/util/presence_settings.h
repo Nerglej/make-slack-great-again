@@ -17,8 +17,9 @@ inline constexpr char kKey[] = "presence/mode";
 // Default: active for as long as msga runs — the whole point of the feature (see
 // GitHub issue #69: without it a msga-only user is away to everyone).
 inline PresenceMode mode() {
-    const QString v =
-        QSettings("msga", "msga").value(QLatin1String(kKey), QStringLiteral("running")).toString();
+    const QString v = QSettings(QStringLiteral("msga"), QStringLiteral("msga"))
+                          .value(QLatin1String(kKey), QStringLiteral("running"))
+                          .toString();
     if (v == QLatin1String("native"))
         return PresenceMode::Native;
     if (v == QLatin1String("using"))
@@ -30,7 +31,8 @@ inline void setMode(PresenceMode m) {
     const char *v = m == PresenceMode::Native       ? "native"
                     : m == PresenceMode::WhileUsing ? "using"
                                                     : "running";
-    QSettings("msga", "msga").setValue(QLatin1String(kKey), QLatin1String(v));
+    QSettings(QStringLiteral("msga"), QStringLiteral("msga"))
+        .setValue(QLatin1String(kKey), QLatin1String(v));
 }
 
 } // namespace PresenceSettings

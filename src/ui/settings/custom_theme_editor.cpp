@@ -13,6 +13,8 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 CustomThemeEditor::CustomThemeEditor(QWidget *parent) : QWidget(parent) {
     const auto &sp  = Th::c().spacing;
     auto       *lay = new QVBoxLayout(this);
@@ -163,12 +165,11 @@ void CustomThemeEditor::applyTheme() {
     Th::setStyleSheetIfChanged(_gradient, checkQss);
     Th::setStyleSheetIfChanged(
         _contrast,
-        QString("font-size: %1px; color: %2;").arg(th.fonts.caption).arg(Th::qss(th.text.warning))
+        u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption).arg(Th::qss(th.text.warning))
     );
     Th::setStyleSheetIfChanged(
         _status,
-        QString("font-size: %1px; color: %2;")
-            .arg(th.fonts.caption)
+        u"font-size: %1px; color: %2;"_s.arg(th.fonts.caption)
             .arg(Th::qss(_statusError ? th.text.danger : th.text.secondary))
     );
 }

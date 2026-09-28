@@ -14,6 +14,8 @@
 
 #include "miniaudio.h"
 
+using namespace Qt::StringLiterals;
+
 // Linux has no dependency-free in-process audio output (every sound server
 // needs a shared lib that won't link into the static release binary — same
 // constraint as sound_player_linux.cpp), so playback is a two-stage pipe:
@@ -122,7 +124,7 @@ private:
 // with -ss. Duration is parsed from ffmpeg's own "Duration:" banner on stderr.
 class FfmpegSource : public QObject, public PcmSource {
 public:
-    static QString executable() { return QStandardPaths::findExecutable("ffmpeg"); }
+    static QString executable() { return QStandardPaths::findExecutable(u"ffmpeg"_s); }
 
     ~FfmpegSource() override { killProc(); }
 
@@ -174,11 +176,14 @@ private:
         _gotData         = false;
         _proc            = new QProcess(this);
         const double sec = (double)frame / _fmt.rate;
-        QStringList  args{"-nostdin", "-hide_banner", "-nostats", "-loglevel", "info"};
+        QStringList  args{
+            u"-nostdin"_s, u"-hide_banner"_s, u"-nostats"_s, u"-loglevel"_s, u"info"_s
+        };
         if (frame > 0)
-            args << "-ss" << QString::number(sec, 'f', 3);
-        args << "-i" << _path << "-vn" << "-f" << "s16le" << "-ac" << QString::number(_fmt.channels)
-             << "-ar" << QString::number(_fmt.rate) << "pipe:1";
+            args << u"-ss"_s << QString::number(sec, 'f', 3);
+        args << u"-i"_s << _path << u"-vn"_s << u"-f"_s << u"s16le"_s << u"-ac"_s
+             << QString::number(_fmt.channels) << u"-ar"_s << QString::number(_fmt.rate)
+             << u"pipe:1"_s;
         connect(_proc, &QProcess::readyReadStandardOutput, this, [this] {
             _buf += _proc->readAllStandardOutput();
             _gotData = true;
@@ -188,7 +193,7 @@ private:
         connect(_proc, &QProcess::readyReadStandardError, this, [this] {
             _errOut += _proc->readAllStandardError();
             if (_total == 0) {
-                static const QRegularExpression re(R"(Duration:\s*(\d+):(\d\d):(\d\d)\.(\d\d))");
+                static const QRegularExpression re(uR"(Duration:\s*(\d+):(\d\d):(\d\d)\.(\d\d))"_s);
                 const auto                      m = re.match(QString::fromUtf8(_errOut));
                 if (m.hasMatch()) {
                     const qint64 ms =
@@ -248,10 +253,20 @@ public:
     static std::vector<Candidate> candidates(const PcmFormat &f) {
         const QString rate = QString::number(f.rate), ch = QString::number(f.channels);
         return {
-            {"pw-cat",
-             {"--playback", "--raw", "--format", "s16", "--rate", rate, "--channels", ch, "-"}},
-            {"paplay", {"--raw", "--format=s16le", "--rate=" + rate, "--channels=" + ch}},
-            {"aplay", {"-q", "-t", "raw", "-f", "S16_LE", "-r", rate, "-c", ch, "-"}},
+            {u"pw-cat"_s,
+             {u"--playback"_s,
+              u"--raw"_s,
+              u"--format"_s,
+              u"s16"_s,
+              u"--rate"_s,
+              rate,
+              u"--channels"_s,
+              ch,
+              u"-"_s}},
+            {u"paplay"_s,
+             {u"--raw"_s, u"--format=s16le"_s, u"--rate="_s + rate, u"--channels="_s + ch}},
+            {u"aplay"_s,
+             {u"-q"_s, u"-t"_s, u"raw"_s, u"-f"_s, u"S16_LE"_s, "-r", rate, "-c", ch, "-"}},
         };
     }
 
@@ -406,7 +421,7 @@ public:
     qint64 durationMs() const override { return _src ? _src->totalFrames() * 1000 / _fmt.rate : 0; }
 
     bool supportsExtension(const QString &ext) const override {
-        static const QStringList kInProcess{"mp3", "wav", "flac", "ogg", "oga"};
+        static const QStringList kInProcess{u"mp3"_s, u"wav"_s, u"flac"_s, u"ogg"_s, u"oga"_s};
         if (kInProcess.contains(ext))
             return true;
         return !FfmpegSource::executable().isEmpty();

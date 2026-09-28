@@ -18,6 +18,8 @@
 
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 // Narrower than the AppDialog default (480..560): the card holds one small
 // picture, two buttons and at most one option.
@@ -163,8 +165,7 @@ void IconPickerDialog::refreshButtons() {
 void IconPickerDialog::applyTheme() {
     AppDialog::applyTheme();
     if (_hint)
-        _hint->setStyleSheet(QString("color: %1; font-size: %2px;")
-                                 .arg(Th::qss(Th::c().text.secondary))
+        _hint->setStyleSheet(u"color: %1; font-size: %2px;"_s.arg(Th::qss(Th::c().text.secondary))
                                  .arg(Th::c().fonts.sm));
     if (_preview)
         _preview->update();

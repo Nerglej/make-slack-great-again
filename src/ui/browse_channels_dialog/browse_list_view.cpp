@@ -17,6 +17,8 @@
 #include <QWheelEvent>
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 BrowseListView::BrowseListView(ImageCache *imgCache, QWidget *parent)
     : VirtualListWidget(parent), _imgCache(imgCache) {
     viewport()->setCursor(Qt::PointingHandCursor);
@@ -139,9 +141,9 @@ QString BrowseListView::idAt(int visibleRow) const {
 }
 
 void BrowseListView::rebuildIcons() {
-    _hashPx  = svgPixmap(":/ui/hash.svg", QSize(14, 14), Th::c().text.secondary);
-    _lockPx  = svgPixmap(":/ui/lock.svg", QSize(14, 14), Th::c().text.secondary);
-    _checkPx = svgPixmap(":/ui/check.svg", QSize(13, 13), Th::c().text.secondary);
+    _hashPx  = svgPixmap(u":/ui/hash.svg"_s, QSize(14, 14), Th::c().text.secondary);
+    _lockPx  = svgPixmap(u":/ui/lock.svg"_s, QSize(14, 14), Th::c().text.secondary);
+    _checkPx = svgPixmap(u":/ui/check.svg"_s, QSize(13, 13), Th::c().text.secondary);
 }
 
 void BrowseListView::updateScrollRange() {

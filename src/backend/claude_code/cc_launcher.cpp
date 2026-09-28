@@ -19,6 +19,8 @@
 #include <windows.h>
 #endif
 
+using namespace Qt::StringLiterals;
+
 namespace claude_code {
 
 QString parseBackgroundedShortId(const QString &output) {
@@ -118,7 +120,7 @@ std::vector<SlashCommand> parseCommandList(const QByteArray &output) {
             // Skills say where they come from at the end: "… (user)", "… (project)".
             static const QRegularExpression kOrigin(QStringLiteral("\\s*\\((user|project)\\)$"));
             const auto                      m      = kOrigin.match(cmd.desc);
-            const bool                      isProj = m.hasMatch() && m.captured(1) == "project";
+            const bool                      isProj = m.hasMatch() && m.captured(1) == u"project"_s;
             if (m.hasMatch())
                 cmd.desc.truncate(m.capturedStart());
             cmd.source = c.value(QLatin1String("builtin")).toBool()

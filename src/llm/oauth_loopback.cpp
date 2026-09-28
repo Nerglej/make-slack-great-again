@@ -15,6 +15,8 @@
 #include <QJsonDocument>
 #include <QCoreApplication>
 
+using namespace Qt::StringLiterals;
+
 OAuthLoopbackFlow::OAuthLoopbackFlow(OAuthConfig cfg, QObject *parent)
     : QObject(parent), _cfg(std::move(cfg)) {}
 
@@ -42,13 +44,13 @@ void OAuthLoopbackFlow::start() {
 
     QUrl      url(_cfg.authorizeUrl);
     QUrlQuery q;
-    q.addQueryItem("response_type", "code");
-    q.addQueryItem("client_id", _cfg.clientId);
-    q.addQueryItem("redirect_uri", redirectUri());
-    q.addQueryItem("scope", _cfg.scopes);
-    q.addQueryItem("state", _state);
-    q.addQueryItem("code_challenge", QString::fromLatin1(pkce.challenge));
-    q.addQueryItem("code_challenge_method", "S256");
+    q.addQueryItem(u"response_type"_s, u"code"_s);
+    q.addQueryItem(u"client_id"_s, _cfg.clientId);
+    q.addQueryItem(u"redirect_uri"_s, redirectUri());
+    q.addQueryItem(u"scope"_s, _cfg.scopes);
+    q.addQueryItem(u"state"_s, _state);
+    q.addQueryItem(u"code_challenge"_s, QString::fromLatin1(pkce.challenge));
+    q.addQueryItem(u"code_challenge_method"_s, u"S256"_s);
     for (const auto &[k, v] : _cfg.extraAuthParams)
         q.addQueryItem(k, v);
     url.setQuery(q);
@@ -77,7 +79,7 @@ void OAuthLoopbackFlow::onNewConnection() {
         const QByteArray        line  = sock->readLine();
         const QList<QByteArray> parts = line.split(' ');
         const QString target = parts.size() >= 2 ? QString::fromLatin1(parts[1]) : QString();
-        const QUrl    url("http://localhost" + target);
+        const QUrl    url(u"http://localhost"_s + target);
 
         const QString    page = tr("You can close this window and return to msga.");
         const QByteArray body =
@@ -107,20 +109,20 @@ void OAuthLoopbackFlow::onNewConnection() {
 
 void OAuthLoopbackFlow::exchangeCode(const QString &code) {
     postTokenRequest({
-        {"grant_type", "authorization_code"},
-        {"code", code},
-        {"redirect_uri", redirectUri()},
-        {"client_id", _cfg.clientId},
-        {"code_verifier", _codeVerifier},
-        {"state", _state},
+        {u"grant_type"_s, u"authorization_code"_s},
+        {u"code"_s, code},
+        {u"redirect_uri"_s, redirectUri()},
+        {u"client_id"_s, _cfg.clientId},
+        {u"code_verifier"_s, _codeVerifier},
+        {u"state"_s, _state},
     });
 }
 
 void OAuthLoopbackFlow::refresh(const QString &refreshToken) {
     postTokenRequest({
-        {"grant_type", "refresh_token"},
-        {"refresh_token", refreshToken},
-        {"client_id", _cfg.clientId},
+        {u"grant_type"_s, u"refresh_token"_s},
+        {u"refresh_token"_s, refreshToken},
+        {u"client_id"_s, _cfg.clientId},
     });
 }
 
@@ -137,25 +139,26 @@ void OAuthLoopbackFlow::postTokenRequest(const QList<QPair<QString, QString>> &p
         for (const auto &[k, v] : params)
             obj[k] = v;
         payload = QJsonDocument(obj).toJson(QJsonDocument::Compact);
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/json"_s);
     } else {
         QUrlQuery q;
         for (const auto &[k, v] : params)
             q.addQueryItem(k, v);
         payload = net::formUrlEncode(q);
-        req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+        req.setHeader(QNetworkRequest::ContentTypeHeader, u"application/x-www-form-urlencoded"_s);
     }
 
     net::oauth::post(this, req, payload, [this](QNetworkReply *reply) {
         const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError) {
-            const QString detail = obj.value("error_description")
-                                       .toString(obj.value("error").toString(reply->errorString()));
-            emit          failed(detail);
+            const QString detail =
+                obj.value(u"error_description"_s)
+                    .toString(obj.value(u"error"_s).toString(reply->errorString()));
+            emit failed(detail);
             return;
         }
-        if (!obj.contains("access_token")) {
-            emit failed(obj.value("error").toString("no_access_token"));
+        if (!obj.contains(u"access_token"_s)) {
+            emit failed(obj.value(u"error"_s).toString(u"no_access_token"_s));
             return;
         }
         emit done(obj);

@@ -19,6 +19,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 using OverviewCard::kAvatarSize;
 using OverviewCard::kTextLeft;
 
@@ -203,7 +205,7 @@ public:
             dueCol
         ));
         _dueIcon->setStyleSheet(QStringLiteral("background: transparent;"));
-        _dueLabel->setStyleSheet(QString("background: transparent; color: %1; font-size: %2px;")
+        _dueLabel->setStyleSheet(u"background: transparent; color: %1; font-size: %2px;"_s
                                      .arg(Th::qss(dueCol))
                                      .arg(th.fonts.caption));
         for (auto *row : findChildren<SavedMsgRow *>())

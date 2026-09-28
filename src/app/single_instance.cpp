@@ -5,11 +5,13 @@
 #include <QDataStream>
 #include <QDir>
 
+using namespace Qt::StringLiterals;
+
 SingleInstance::SingleInstance(QObject *parent) : QObject(parent) {}
 
 // Per-user socket name prevents cross-user socket collisions.
 QString SingleInstance::socketName() {
-    return "msga-" + QDir::home().dirName();
+    return u"msga-"_s + QDir::home().dirName();
 }
 
 bool SingleInstance::init(const QString &urlArg) {

@@ -6,6 +6,8 @@
 
 #include <QSettings>
 
+using namespace Qt::StringLiterals;
+
 namespace LlmTokenStore {
 
 static QString key(const QString &providerId, const char *field) {
@@ -22,13 +24,13 @@ void saveApiKey(const QString &providerId, const QString &apiKey) {
 
 void clear(const QString &providerId) {
     SecretStore::remove(key(providerId, "apiKey"));
-    QSettings("msga", "msga").remove(QStringLiteral("llm/%1").arg(providerId));
+    QSettings(u"msga"_s, u"msga"_s).remove(QStringLiteral("llm/%1").arg(providerId));
 }
 
 void scrubLegacyOAuth(const QString &providerId) {
     SecretStore::remove(key(providerId, "accessToken"));
     SecretStore::remove(key(providerId, "refreshToken"));
-    QSettings s("msga", "msga");
+    QSettings s(u"msga"_s, u"msga"_s);
     s.remove(key(providerId, "expiresAt"));
     s.remove(key(providerId, "accountLabel")); // now derived from the key
 }

@@ -10,6 +10,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+using namespace Qt::StringLiterals;
+
 SessionStatusDialog::SessionStatusDialog(
     const std::vector<std::pair<QString, QString>> &rows, QWidget *parent
 )
@@ -51,7 +53,7 @@ int SessionStatusDialog::cardWidth(int availOverlayWidth) const {
 void SessionStatusDialog::applyTheme() {
     AppDialog::applyTheme();
     for (auto *l : _labels)
-        l->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.secondary)));
+        l->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.secondary)));
     for (auto *v : _values)
-        v->setStyleSheet(QString("color: %1;").arg(Th::qss(Th::c().text.primary)));
+        v->setStyleSheet(u"color: %1;"_s.arg(Th::qss(Th::c().text.primary)));
 }
