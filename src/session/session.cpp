@@ -486,6 +486,8 @@ void Session::start() {
                         // other device, so a 5 s transient banner would be useless.
                         _parallelUsageHub.fire({});
                     }
+                } else if (auto *ev = std::get_if<EvNotice>(&e)) {
+                    _errorHub.fire_copy(ev->text);
                 } else if (auto *ev = std::get_if<EvRateLimited>(&e)) {
                     // Surface a transient notice naming the throttled method, so
                     // it's clear whether it's a background sweep (conversations.info

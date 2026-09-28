@@ -33,6 +33,7 @@
 #include "backend/claude_code/claude_code_backend.h"
 
 using namespace claude_code;
+using namespace Qt::StringLiterals;
 using Kind  = TranscriptItem::Kind;
 using State = TranscriptItem::State;
 
@@ -811,6 +812,13 @@ TEST_CASE("roster files parse into sessions", "[claude][roster]") {
     CHECK_FALSE(job->running); // done: msga may continue it
     CHECK(job->transcriptPath == "/p/S2.jsonl");
     CHECK(job->statusSinceMs > 0);
+    CHECK(job->worktreePath.isEmpty());
+    const auto inWorktree = parseBackgroundJob(
+        R"({"state":"done","sessionId":"S4","cwd":"/src/x/.claude/worktrees/w",)"
+        R"("worktreePath":"/src/x/.claude/worktrees/w","worktreeBranch":"worktree-w"})"
+    );
+    REQUIRE(inWorktree);
+    CHECK(inWorktree->worktreePath == "/src/x/.claude/worktrees/w");
 
     // Waiting for an approval: "working" plus a needs line (verified live).
     const auto approval = parseBackgroundJob(
@@ -917,6 +925,30 @@ std::vector<T> collect(rpl::producer<T> p) {
 }
 
 } // namespace
+
+TEST_CASE("claude rm says why it kept a session", "[claude][launcher]") {
+    using claude_code::parseRemoveRefusal;
+    CHECK(parseRemoveRefusal("removed abcdef11\n  worktree: /src/x/.claude/worktrees/w\n", 0)
+              .isEmpty());
+    CHECK(
+        parseRemoveRefusal(
+            u"kept abcdef11 — its worktree is still at /src/x/.claude/worktrees/w\n"
+            u"  it has uncommitted changes\n"
+            u"  claude rm abcdef11 --discard-unpushed 1a2b@3c4d\n"_s,
+            1
+        ) == "it has uncommitted changes"
+    );
+    CHECK(
+        parseRemoveRefusal(u"kept abcdef11 — its worktree is still at /w\n"_s, 1) ==
+        "its worktree is still at /w"
+    );
+    CHECK(
+        parseRemoveRefusal(u"couldn't remove abcdef11 — its worker didn't stop\n"_s, 1) ==
+        "its worker didn't stop"
+    );
+    CHECK(parseRemoveRefusal("error: unknown command 'rm'\n", 1) == "error: unknown command 'rm'");
+    CHECK_FALSE(parseRemoveRefusal("", 1).isEmpty());
+}
 
 TEST_CASE("a session title names the teammates it mentions", "[claude][backend]") {
     FakeClaudeHome home;
@@ -1293,6 +1325,141 @@ printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
     CHECK(isProcessAlive(workers[0]));
     CHECK(isProcessAlive(workers[2]));
     CHECK(calls().filter("stop").size() == 1);
+    for (const qint64 pid : workers)
+        signalProcess(pid, true);
+}
+
+TEST_CASE(
+    "removing a session msga started deletes its worktree with claude rm", "[claude][backend][bg]"
+) {
+    FakeClaudeHome home;
+    QTemporaryDir  work;
+    QDir(home.dir.path()).mkpath("jobs");
+    // `rm` removes aaaa1111 (dropping its job, as Claude Code does) and keeps
+    // dddd4444's worktree; the worker it would end lingers, as with stop.
+    const QString cli = work.path() + "/claude";
+    writeFile(cli, R"SH(#!/bin/sh
+if [ "$1" = auth ]; then echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
+printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
+printf '%s %s\n' "$2" "$(pwd -P)" >> "$CLAUDE_CONFIG_DIR/cwds.log"
+if [ "$1" = rm ] && [ "$2" = aaaa1111 ]; then
+  rm -rf "$CLAUDE_CONFIG_DIR/jobs/$2"
+  echo "removed $2"; echo "  worktree: gone"; exit 0
+fi
+if [ "$1" = rm ]; then
+  echo "kept $2 — its worktree is still at somewhere"
+  echo "  it has uncommitted changes"
+  echo "  claude rm $2 --discard-unpushed 1a2b@3c4d"
+  exit 1
+fi
+)SH");
+    QFile(cli).setPermissions(QFile(cli).permissions() | QFileDevice::ExeOwner);
+    const QString withTree = "aaaa1111-0000-4000-8000-000000000001"; // msga's, a worktree
+    const QString plain    = "bbbb2222-0000-4000-8000-000000000002"; // msga's, none
+    const QString foreign  = "cccc3333-0000-4000-8000-000000000003"; // elsewhere's, a worktree
+    const QString kept     = "dddd4444-0000-4000-8000-000000000004"; // msga's, exited, kept
+    const QString treeA    = work.path() + "/repo/.claude/worktrees/a";
+    QDir().mkpath(treeA);
+    std::vector<qint64> workers;
+    int                 n = 0;
+    for (const QString &sid : {withTree, plain, foreign, kept}) {
+        const QString short8 = sid.left(8);
+        QDir(home.dir.path()).mkpath("jobs/" + short8);
+        QJsonObject job{
+            {"state", "done"},
+            {"sessionId", sid},
+            {"cwd", sid == withTree ? treeA : work.path()},
+            {"name", short8},
+            {"linkScanPath", home.dir.path() + "/projects/-src-app/" + sid + ".jsonl"},
+        };
+        if (sid != plain) {
+            job["worktreePath"]   = sid == withTree ? treeA : work.path() + "/wt-" + short8;
+            job["worktreeBranch"] = "worktree-" + short8;
+        }
+        writeFile(home.dir.path() + "/jobs/" + short8 + "/state.json", QJsonDocument(job).toJson());
+        if (sid == kept)
+            continue; // its worker has exited
+        qint64 pid = 0;
+        REQUIRE(QProcess::startDetached("sleep", {"60"}, {}, &pid));
+        workers.push_back(pid);
+        writeFile(
+            home.dir.path() + QStringLiteral("/sessions/w%1.json").arg(++n),
+            QJsonDocument(
+                QJsonObject{
+                    {"pid", pid},
+                    {"sessionId", sid},
+                    {"jobId", short8},
+                    {"kind", "bg"},
+                    {"status", "idle"}
+                }
+            )
+                .toJson()
+        );
+    }
+    const QString known = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                          "/claude-code/known-sessions.json";
+    QDir().mkpath(QFileInfo(known).absolutePath());
+    writeFile(
+        known,
+        QJsonDocument(
+            QJsonObject{{"sessions", QJsonArray{}}, {"started", QJsonArray{withTree, plain, kept}}}
+        ).toJson()
+    );
+    auto readLines = [&](const QString &name) {
+        QFile f(home.dir.path() + "/" + name);
+        return f.open(QIODevice::ReadOnly)
+                   ? QString::fromUtf8(f.readAll()).split('\n', Qt::SkipEmptyParts)
+                   : QStringList{};
+    };
+    auto calls = [&] { return readLines("calls.log"); };
+
+    claude_code::Backend backend(Credentials{cli});
+    std::vector<Event>   events;
+    rpl::lifetime        lt;
+    backend.events() | rpl::on_next([&](Event e) { events.push_back(std::move(e)); }, lt);
+    backend.connectRealtime();
+    REQUIRE(collect(backend.loadConversations())[0].size() == 4);
+
+    // Started elsewhere: it only leaves the list, worktree and all.
+    backend.leaveConversation(ConversationId{foreign});
+    QTest::qWait(1500);
+    CHECK(calls().filter("cccc3333").isEmpty());
+    CHECK(isProcessAlive(workers[2]));
+
+    // msga's, without a worktree: stopped as before.
+    backend.leaveConversation(ConversationId{plain});
+    REQUIRE(QTest::qWaitFor([&] { return calls().contains("stop bbbb2222"); }, 5000));
+    CHECK(QTest::qWaitFor([&] { return !isProcessAlive(workers[1]); }, 16000));
+
+    // msga's, in a worktree: deleted with `rm` (not stopped), run from outside
+    // the worktree, and its lingering worker ended all the same.
+    backend.leaveConversation(ConversationId{withTree});
+    REQUIRE(QTest::qWaitFor([&] { return calls().contains("rm aaaa1111"); }, 5000));
+    CHECK(QTest::qWaitFor([&] { return !isProcessAlive(workers[0]); }, 16000));
+    CHECK(calls().filter("aaaa1111").size() == 1);
+    CHECK(
+        readLines("cwds.log").contains("aaaa1111 " + QFileInfo(treeA + "/..").canonicalFilePath())
+    );
+    CHECK_FALSE(QFileInfo::exists(home.dir.path() + "/jobs/aaaa1111"));
+
+    // msga's, exited, its worktree kept by Claude Code: `rm` all the same; the
+    // user is told why, and the session stays removed.
+    backend.leaveConversation(ConversationId{kept});
+    REQUIRE(QTest::qWaitFor([&] { return calls().contains("rm dddd4444"); }, 5000));
+    auto notice = [&] {
+        for (const auto &e : events)
+            if (const auto *ev = std::get_if<EvNotice>(&e))
+                return ev->text;
+        return QString();
+    };
+    REQUIRE(QTest::qWaitFor([&] { return !notice().isEmpty(); }, 5000));
+    CHECK(notice().contains("it has uncommitted changes"));
+    CHECK(calls().filter("dddd4444").size() == 1);
+    CHECK(calls().filter("stop").size() == 1); // bbbb2222's only
+    CHECK(isProcessAlive(workers[2]));
+    const auto after = collect(backend.loadConversations());
+    CHECK(after[0].empty());
+
     for (const qint64 pid : workers)
         signalProcess(pid, true);
 }

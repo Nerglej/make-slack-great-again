@@ -190,11 +190,13 @@ private:
     void     diffAndAnnounce(Tracked &t);
     void     hideSession(const QString &convId); // "Remove from msga", one session
     // Stop a background session that was removed from msga, keeping it hidden.
-    void     stopRemoved(const QString &sessionId, const QString &cwd);
+    // With its job's `worktree`, delete the session instead (Launcher::remove),
+    // which removes the worktree unless Claude Code keeps it (then says why).
+    void stopRemoved(const QString &sessionId, const QString &cwd, const QString &worktree = {});
     // Whether msga started session `sessionId`, or a session msga started did
     // (see _launchedHere): only those are stopped when removed from msga.
-    bool     startedByMsga(const QString &sessionId) const;
-    bool     startedByMsga(const QString &sessionId, QSet<QString> &seen) const;
+    bool startedByMsga(const QString &sessionId) const;
+    bool startedByMsga(const QString &sessionId, QSet<QString> &seen) const;
     std::vector<std::pair<QString, QString>> conversationStatus(Tracked &t);
     // Why no session can be started in `dir` ("" = it can), and a new one there
     // (a "+" session: it starts with its first message).

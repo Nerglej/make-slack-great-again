@@ -1541,13 +1541,19 @@ void Backend::dispatch(Tracked &t) {
     t.flying               = std::move(next);
     const QString convId   = t.convId;
     const QString cwd      = t.info.cwd;
-    auto          settled  = [this, convId, cwd](QString sessionId, QString error) {
+    const bool    fresh    = t.info.sessionId.isEmpty(); // a "+" session: msga's
+    auto          settled  = [this, convId, cwd, fresh](QString sessionId, QString error) {
         Tracked *t = find(convId);
         if (!t) {
             // Removed from msga while the CLI was starting the turn: stop it
-            // there, and keep it away.
-            if (!sessionId.isEmpty())
-                stopRemoved(sessionId, cwd);
+            // there, and keep it away — its worktree too, if it's msga's.
+            if (!sessionId.isEmpty()) {
+                QString worktree;
+                if (fresh || startedByMsga(sessionId))
+                    if (const auto job = readJob(_paths, sessionId))
+                        worktree = job->worktreePath;
+                stopRemoved(sessionId, cwd, worktree);
+            }
             return;
         }
         t->launching = false;
@@ -2787,9 +2793,10 @@ void Backend::hideSession(const QString &convId) {
         h.seenSize = sizeOf(transcript);
         _hidden.insert(t.info.sessionId, h);
         _convOf.remove(t.info.sessionId);
-        if (t.info.kind == SessionInfo::Kind::Background && t.info.running && !t.stopping &&
-            startedByMsga(t.info.sessionId))
-            stopRemoved(t.info.sessionId, t.info.cwd);
+        // One with a worktree loses that too, worker running or not.
+        if (t.info.kind == SessionInfo::Kind::Background && !t.stopping &&
+            (t.info.running || !t.info.worktreePath.isEmpty()) && startedByMsga(t.info.sessionId))
+            stopRemoved(t.info.sessionId, t.info.cwd, t.info.worktreePath);
     }
     clearOutputs(convId); // the copies of the files it made
     _reactions.remove(convId);
@@ -2856,14 +2863,14 @@ bool Backend::startedByMsga(const QString &sessionId, QSet<QString> &seen) const
     return false;
 }
 
-void Backend::stopRemoved(const QString &sessionId, const QString &cwd) {
+void Backend::stopRemoved(const QString &sessionId, const QString &cwd, const QString &worktree) {
     if (!_hidden.contains(sessionId)) {
         Hidden h{nowMs(), _paths.findTranscript(sessionId)};
         h.seenSize = sizeOf(h.transcript);
         _hidden.insert(sessionId, h);
     }
     _hidden[sessionId].stopping = true;
-    _launcher->stop(sessionId, cwd, [this, sessionId] {
+    auto stopped                = [this, sessionId] {
         // The worker writes its last records as it exits; that is no new
         // activity to bring the session back for.
         if (const auto h = _hidden.find(sessionId); h != _hidden.end()) {
@@ -2874,6 +2881,35 @@ void Backend::stopRemoved(const QString &sessionId, const QString &cwd) {
             h->seenSize = sizeOf(h->transcript);
             saveKnown();
         }
+    };
+    if (worktree.isEmpty()) {
+        _launcher->stop(sessionId, cwd, stopped);
+        return;
+    }
+    // `claude rm` deletes the worktree; no process of its own should sit in it
+    // (on Windows that would hold the folder), so it runs from beside it.
+    const QString inside = QDir::cleanPath(worktree);
+    const QString here   = QDir::cleanPath(cwd);
+    const QString from   = here == inside || here.startsWith(inside + QLatin1Char('/'))
+                               ? QFileInfo(inside).absolutePath()
+                               : cwd;
+    _launcher->remove(sessionId, from, [this, sessionId, worktree, stopped](QString refusal) {
+        stopped();
+        if (refusal.isEmpty())
+            return;
+        // It stays where it is, with its job; the session stays removed.
+        qInfo(
+            "claude code: kept worktree %s of %s: %s",
+            qPrintable(worktree),
+            qPrintable(sessionId.left(8)),
+            qPrintable(refusal)
+        );
+        _events.fire(
+            EvNotice{QCoreApplication::translate(
+                         "claude_code", "Claude Code kept the session's worktree: %1"
+            )
+                         .arg(refusal)}
+        );
     });
 }
 

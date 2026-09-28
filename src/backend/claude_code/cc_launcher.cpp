@@ -33,6 +33,38 @@ bool startedACopy(const QString &output) {
     return output.contains(QLatin1String("started a copy"));
 }
 
+QString parseRemoveRefusal(const QString &output, int exitCode) {
+    if (exitCode == 0)
+        return {};
+    const QStringList lines     = output.split(QLatin1Char('\n'));
+    // "<head> — <why>" → "<why>"
+    auto              afterDash = [](const QString &line) {
+        const qsizetype dash = line.indexOf(u" — "_s);
+        return (dash < 0 ? line : line.mid(dash + 3)).trimmed();
+    };
+    for (qsizetype i = 0; i < lines.size(); ++i) {
+        const QString &line = lines[i];
+        if (line.startsWith(QLatin1String("kept "))) {
+            for (qsizetype j = i + 1; j < lines.size(); ++j) {
+                const QString &next = lines[j];
+                if (next.trimmed().isEmpty())
+                    continue;
+                if (!next.front().isSpace())
+                    break;
+                return next.trimmed();
+            }
+            return afterDash(line);
+        }
+        if (line.startsWith(QLatin1String("couldn't remove ")))
+            return afterDash(line);
+    }
+    for (const QString &line : lines)
+        if (!line.trimmed().isEmpty())
+            return line.trimmed();
+    return QCoreApplication::translate("claude_code", "Claude Code exited (code %1).")
+        .arg(exitCode);
+}
+
 Launcher::Launcher(QString claudePath, Paths paths, QObject *parent)
     : QObject(parent), _claudePath(std::move(claudePath)), _paths(std::move(paths)) {}
 
@@ -290,6 +322,21 @@ void Launcher::stop(const QString &sessionId, const QString &cwd, std::function<
         // `stop` returns before the worker exits. Up to 10 s.
         waitStopped(sessionId, pids, 40, [this, sessionId, done] {
             reapLeftovers(sessionId, done);
+        });
+    });
+}
+
+void Launcher::remove(
+    const QString &sessionId, const QString &cwd, std::function<void(QString)> done
+) {
+    const QString shortId = sessionId.left(8);
+    const auto    pids    = liveWorkerPids(_paths, sessionId);
+    run({QStringLiteral("rm"), shortId}, cwd, [this, sessionId, pids, done](int code, QString out) {
+        const QString refusal = parseRemoveRefusal(out, code);
+        // Like `stop`, it may return before the worker has exited (and
+        // one it couldn't end is ended here). Up to 10 s.
+        waitStopped(sessionId, pids, 40, [this, sessionId, done, refusal] {
+            reapLeftovers(sessionId, [done, refusal] { done(refusal); });
         });
     });
 }

@@ -129,11 +129,20 @@ std::optional<SessionInfo> parseBackgroundJob(const QByteArray &json) {
         !o.value(QLatin1String("block")).toObject().contains(QLatin1String("questions")))
         s.suggestedReply = o.value(QLatin1String("suggestedReply")).toString().trimmed();
     s.transcriptPath = o.value(QLatin1String("linkScanPath")).toString();
+    s.worktreePath   = o.value(QLatin1String("worktreePath")).toString();
     s.statusSinceMs  = isoToMs(o.value(QLatin1String("updatedAt")).toString());
     // Running = its worker process is alive, which only the worker's own
     // sessions/<pid>.json tells (applyWorker); a job file alone runs nothing.
     s.running        = false;
     return s;
+}
+
+std::optional<SessionInfo> readJob(const Paths &paths, const QString &sessionId) {
+    if (sessionId.isEmpty())
+        return std::nullopt;
+    return parseBackgroundJob(readSmallFile(
+        paths.jobsDir() + QLatin1Char('/') + sessionId.left(8) + QStringLiteral("/state.json")
+    ));
 }
 
 bool isProcessAlive(qint64 pid) {

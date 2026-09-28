@@ -58,6 +58,9 @@ struct SessionInfo {
     // worker with its job even once the worker's session id is another — a
     // `/clear` sent to the job starts a new session in the same worker.
     QString jobId;
+    // Background: the worktree Claude Code made for the job (state.json
+    // "worktreePath"), "" when it works in its folder as it is.
+    QString worktreePath;
     bool    operator==(const SessionInfo &) const = default;
 };
 
@@ -73,6 +76,9 @@ bool statusHasShell(const QString &status);
 
 std::optional<SessionInfo> parseInteractiveSession(const QByteArray &json);
 std::optional<SessionInfo> parseBackgroundJob(const QByteArray &json);
+// Background session `sessionId`'s job as its state.json reads now (no worker
+// folded in); nullopt when it has none.
+std::optional<SessionInfo> readJob(const Paths &paths, const QString &sessionId);
 
 // Fold a background session's live worker (its sessions/<pid>.json, kind "bg")
 // into the job's entry: running while the worker lives, busy per its status.

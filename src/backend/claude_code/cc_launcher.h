@@ -120,6 +120,18 @@ public:
     // is waited for up to 10 s).
     void stop(const QString &sessionId, const QString &cwd, std::function<void()> done);
 
+    // Delete background session `sessionId` the way Claude Code's own `claude
+    // rm <short>` does: its worker is ended (running or not), its worktree
+    // removed with the branch made for it, and its job dropped — the
+    // transcript stays. Claude Code keeps a worktree that holds uncommitted
+    // changes or unpushed commits, or that another session uses: then the job
+    // stays too, and `refusal` says why (the first line of its explanation);
+    // "" = removed. What the worker left running is ended as by stop(). Only
+    // for a job with a worktree: without one there is nothing for rm to do
+    // that stop() doesn't, but drop the job.
+    void
+    remove(const QString &sessionId, const QString &cwd, std::function<void(QString refusal)> done);
+
     // `claude auth status`: a claude.ai login and an API key (from the
     // environment or settings) both count. Takes a fraction of a second.
     void checkLogin(std::function<void(Login)> done);
@@ -175,5 +187,12 @@ Login parseLoginStatus(const QByteArray &output, int exitCode);
 QString parseBackgroundedShortId(const QString &output);
 // Whether the CLI answered by starting a copy instead of continuing the session.
 bool    startedACopy(const QString &output);
+// Why `claude rm` (exit code `exitCode`, stdout and stderr merged) kept the
+// session, "" when it removed it (read from Claude Code 2.1.283's source):
+//   removed <id>                              exit 0
+//   kept <id> — its worktree is still at <p>  exit 1, then indented lines
+//     <why>                                     saying why (the first is it)
+//   couldn't remove <id> — <why>              exit 1, the worker didn't end
+QString parseRemoveRefusal(const QString &output, int exitCode);
 
 } // namespace claude_code

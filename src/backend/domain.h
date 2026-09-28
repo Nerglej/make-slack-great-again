@@ -1335,6 +1335,12 @@ struct EvSendFailed {
     ConversationId conv;
     QString        reason; // Slack error string, e.g. "not_in_channel"
 };
+// Something the user should know that belongs to no conversation (Claude Code:
+// a removed session's worktree was kept, and why). Session shows `text` as it
+// shows its own errors.
+struct EvNotice {
+    QString text;
+};
 // A huddle started or ended in a conversation. Derived from the huddle_thread
 // message event (USLACKBOT posts/edits one in the conversation as the room's
 // state changes); carries the channel and live/ended state. Session patches
@@ -1499,6 +1505,7 @@ using Event = std::variant<
     EvUsersChanged,
     EvUsergroupsChanged,
     EvSendFailed,
+    EvNotice,
     EvHuddleChanged,
     EvRealtimeReconnected,
     EvRealtimeContended,
