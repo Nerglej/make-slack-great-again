@@ -42,6 +42,23 @@ TEST_CASE("italic _text_", "[mrkdwn]") {
     checkOne(MrkdwnParser::parse("_italic_"), "italic", EntityType::Italic, 0, 6);
 }
 
+TEST_CASE("underscores inside a word stay literal", "[mrkdwn]") {
+    auto r = MrkdwnParser::parse("docs/DEPENDENCY_BUILD_AUDIT.md and snake_case_name");
+    CHECK(r.text == "docs/DEPENDENCY_BUILD_AUDIT.md and snake_case_name");
+    CHECK(r.entities.empty());
+
+    r = MrkdwnParser::parse("MAX__LEN__X");
+    CHECK(r.text == "MAX__LEN__X");
+    CHECK(r.entities.empty());
+}
+
+TEST_CASE("italic skips an intraword closer", "[mrkdwn]") {
+    checkOne(
+        MrkdwnParser::parse("_see foo_bar_ now"), "see foo_bar now", EntityType::Italic, 0, 11
+    );
+    checkOne(MrkdwnParser::parse("(_word_)."), "(word).", EntityType::Italic, 1, 4);
+}
+
 TEST_CASE("strikethrough ~text~", "[mrkdwn]") {
     checkOne(MrkdwnParser::parse("~strike~"), "strike", EntityType::Strike, 0, 6);
 }

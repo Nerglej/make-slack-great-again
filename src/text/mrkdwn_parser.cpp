@@ -63,13 +63,33 @@ static int findClose(const QString &src, int start, QChar delim) {
     return -1;
 }
 
-// Find position after a doubled closing delimiter (e.g. __ for underline).
-static int findDoubleClose(const QString &src, int start, QChar delim) {
-    for (int i = start; i + 1 < src.size(); ++i) {
-        if (src[i] == delim && src[i + 1] == delim)
-            return i + 2;
+// Slack reads '_' inside a word as a literal, so snake_case names and
+// FILE_NAME_LIKE_THIS stay intact: an opener can't follow a letter or digit, and
+// a closer can't precede one.
+static bool isWordChar(QChar c) {
+    return c.isLetterOrNumber();
+}
+
+// A run of underscores counts as one mark: "MAX__LEN" opens at neither '_'.
+static bool underscoreOpens(const QString &src, int pos) {
+    while (pos > 0 && src[pos - 1] == '_')
+        --pos;
+    return pos == 0 || !isWordChar(src[pos - 1]);
+}
+
+// Position after the `width` closing underscores (_ italic, __ underline), or -1.
+static int findUnderscoreClose(const QString &src, int start, int width) {
+    for (int i = start; i + width <= src.size(); ++i) {
         if (src[i] == '\n')
             return -1;
+        bool all = i == 0 || src[i - 1] != '\\';
+        for (int k = 0; k < width && all; ++k)
+            all = src[i + k] == '_';
+        if (!all)
+            continue;
+        const int after = i + width;
+        if (after == src.size() || !isWordChar(src[after]))
+            return after;
     }
     return -1;
 }
@@ -403,8 +423,8 @@ static TextWithEntities parseImpl(const QString &mrkdwn, int depth, bool inQuote
         }
 
         // ── Underline __text__ (must be checked before single _ italic) ──
-        if (c == '_' && i + 1 < n && mrkdwn[i + 1] == '_') {
-            int close = findDoubleClose(mrkdwn, i + 2, '_');
+        if (c == '_' && i + 1 < n && mrkdwn[i + 1] == '_' && underscoreOpens(mrkdwn, i)) {
+            int close = findUnderscoreClose(mrkdwn, i + 2, 2);
             if (close != -1) {
                 b.appendNested(
                     EntityType::Underline,
@@ -416,8 +436,8 @@ static TextWithEntities parseImpl(const QString &mrkdwn, int depth, bool inQuote
         }
 
         // ── Italic _text_ ──
-        if (c == '_') {
-            int close = findClose(mrkdwn, i + 1, '_');
+        if (c == '_' && underscoreOpens(mrkdwn, i)) {
+            int close = findUnderscoreClose(mrkdwn, i + 1, 1);
             if (close != -1) {
                 b.appendNested(
                     EntityType::Italic,
