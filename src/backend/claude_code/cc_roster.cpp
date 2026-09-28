@@ -100,6 +100,7 @@ std::optional<SessionInfo> parseInteractiveSession(const QByteArray &json) {
     s.entrypoint    = o.value(QLatin1String("entrypoint")).toString();
     s.statusSinceMs = o.value(QLatin1String("statusUpdatedAt")).toInteger();
     s.peerSocket    = o.value(QLatin1String("messagingSocketPath")).toString();
+    s.jobId         = o.value(QLatin1String("jobId")).toString();
     s.running       = true; // the caller checks the pid
     return s;
 }
@@ -153,10 +154,12 @@ bool isProcessAlive(qint64 pid) {
 
 std::vector<qint64> liveWorkerPids(const Paths &paths, const QString &sessionId) {
     std::vector<qint64> out;
+    const QString       jobId = sessionId.left(8);
     const QDir          sessions(paths.sessionsDir());
     for (const auto &f : sessions.entryList({QStringLiteral("*.json")}, QDir::Files)) {
         const auto s = parseInteractiveSession(readSmallFile(sessions.filePath(f)));
-        if (s && s->kind == SessionInfo::Kind::Background && s->sessionId == sessionId &&
+        if (s && s->kind == SessionInfo::Kind::Background &&
+            (s->sessionId == sessionId || (!s->jobId.isEmpty() && s->jobId == jobId)) &&
             isProcessAlive(s->pid))
             out.push_back(s->pid);
     }
@@ -234,6 +237,22 @@ std::vector<qint64> leftoverProcesses(const QString &sessionId, const QString &s
     return out;
 }
 
+std::vector<qint64> strandedWorker(const Paths &paths, const QString &sessionId) {
+    std::vector<qint64> out;
+#if defined(Q_OS_LINUX)
+    for (const qint64 pid : liveWorkerPids(paths, sessionId)) {
+        out.push_back(pid);
+        const qint64 host = parentPid(pid);
+        if (host > 1 && procStrings(host, "cmdline").contains("--bg-pty-host"))
+            out.push_back(host);
+    }
+#else
+    Q_UNUSED(paths);
+    Q_UNUSED(sessionId);
+#endif
+    return out;
+}
+
 void signalProcess(qint64 pid, bool force) {
 #if defined(Q_OS_WIN)
     Q_UNUSED(pid);
@@ -263,15 +282,18 @@ void applyWorker(SessionInfo &job, const SessionInfo &worker) {
 
 std::vector<SessionInfo> scanSessions(const Paths &paths) {
     std::vector<SessionInfo>    out;
-    QHash<QString, SessionInfo> workers; // background workers, by session id
+    QHash<QString, SessionInfo> workers;      // background workers, by session id
+    QHash<QString, SessionInfo> workersOfJob; // …and by job, when they name it
     const QDir                  sessions(paths.sessionsDir());
     for (const auto &f : sessions.entryList({QStringLiteral("*.json")}, QDir::Files)) {
         auto s = parseInteractiveSession(readSmallFile(sessions.filePath(f)));
         if (!s || !isProcessAlive(s->pid))
             continue;
-        if (s->kind == SessionInfo::Kind::Background)
+        if (s->kind == SessionInfo::Kind::Background) {
+            if (!s->jobId.isEmpty())
+                workersOfJob.insert(s->jobId, *s);
             workers.insert(s->sessionId, std::move(*s));
-        else
+        } else
             out.push_back(std::move(*s));
     }
     const QDir jobs(paths.jobsDir());
@@ -287,7 +309,9 @@ std::vector<SessionInfo> scanSessions(const Paths &paths) {
         });
         if (dup)
             continue;
-        if (const auto w = workers.constFind(s->sessionId); w != workers.cend())
+        if (const auto w = workersOfJob.constFind(d); w != workersOfJob.cend())
+            applyWorker(*s, *w);
+        else if (const auto w = workers.constFind(s->sessionId); w != workers.cend())
             applyWorker(*s, *w);
         out.push_back(std::move(*s));
     }

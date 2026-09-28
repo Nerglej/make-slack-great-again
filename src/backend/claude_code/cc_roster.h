@@ -54,6 +54,10 @@ struct SessionInfo {
     // Background: the live worker's own status (idle/busy/shell), which `status`
     // shows unless the job reads "blocked" — "" = no worker.
     QString workerStatus;
+    // A background worker's job (sessions/<pid>.json "jobId"): it pairs the
+    // worker with its job even once the worker's session id is another — a
+    // `/clear` sent to the job starts a new session in the same worker.
+    QString jobId;
     bool    operator==(const SessionInfo &) const = default;
 };
 
@@ -78,8 +82,8 @@ void applyWorker(SessionInfo &job, const SessionInfo &worker);
 bool isProcessAlive(qint64 pid);
 
 // Whether a live background worker holds session `sessionId` (its
-// sessions/<pid>.json, kind "bg"). After `claude stop` this is what tells the
-// worker has exited: an idle job's state.json keeps reading "done".
+// sessions/<pid>.json, kind "bg"; by its job too, see SessionInfo::jobId). After `claude stop` this
+// is what tells the worker has exited: an idle job's state.json keeps reading "done".
 bool                hasLiveWorker(const Paths &paths, const QString &sessionId);
 // …and their pids. The pid file can go before the process has exited, and a
 // resume in between only starts a copy: waiting for a stop watches both.
@@ -96,6 +100,12 @@ std::vector<qint64> liveWorkerPids(const Paths &paths, const QString &sessionId)
 // shell that first started them — those, msga and msga's children are never
 // listed. Linux only (/proc); empty elsewhere.
 std::vector<qint64> leftoverProcesses(const QString &sessionId, const QString &shortId);
+// The worker of background session `sessionId` still alive after `claude
+// stop` had its time, with the pty host that holds it (one per worker, argv
+// --bg-pty-host). A worker the daemon lost track of — a daemon restarted
+// under it (seen 2026-09-28: a worker idling on for 3 days, its pty host
+// reparented to init) — takes no `stop`. Linux only (/proc); empty elsewhere.
+std::vector<qint64> strandedWorker(const Paths &paths, const QString &sessionId);
 // SIGTERM, or SIGKILL when `force`. Not on Windows.
 void                signalProcess(qint64 pid, bool force);
 

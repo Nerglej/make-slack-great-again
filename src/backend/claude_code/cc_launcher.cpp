@@ -262,7 +262,9 @@ void Launcher::waitStopped(
 
 void Launcher::reapLeftovers(const QString &sessionId, std::function<void()> done) {
     const QString shortId = sessionId.left(8);
-    const auto    pids    = leftoverProcesses(sessionId, shortId);
+    auto          pids    = leftoverProcesses(sessionId, shortId);
+    for (const qint64 pid : strandedWorker(_paths, sessionId))
+        pids.push_back(pid);
     if (pids.empty()) {
         if (done)
             done();
@@ -271,8 +273,10 @@ void Launcher::reapLeftovers(const QString &sessionId, std::function<void()> don
     for (const qint64 pid : pids)
         signalProcess(pid, false);
     // What ignores SIGTERM gets SIGKILL — looked up again, never by stale pid.
-    QTimer::singleShot(2000, this, [sessionId, shortId, done] {
+    QTimer::singleShot(2000, this, [paths = _paths, sessionId, shortId, done] {
         for (const qint64 pid : leftoverProcesses(sessionId, shortId))
+            signalProcess(pid, true);
+        for (const qint64 pid : strandedWorker(paths, sessionId))
             signalProcess(pid, true);
         if (done)
             done();

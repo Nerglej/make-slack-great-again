@@ -332,7 +332,13 @@ void Backend::loadKnown() {
         t.localName       = o.value(QLatin1String("localName")).toString();
         t.standalone      = o.value(QLatin1String("standalone")).toBool();
         t.role            = o.value(QLatin1String("role")).toString();
+        if (convId.startsWith(kNewPrefix))
+            _launchedHere.insert(sid); // a "+" session, remembered before `started` was
     }
+    for (const auto &v :
+         QJsonDocument::fromJson(data).object().value(QLatin1String("started")).toArray())
+        if (const QString sid = v.toString(); !sid.isEmpty())
+            _launchedHere.insert(sid);
     const QJsonArray hidden =
         QJsonDocument::fromJson(data).object().value(QLatin1String("hidden")).toArray();
     for (const auto &v : hidden) {
@@ -389,6 +395,11 @@ void Backend::saveKnown() {
             o[QStringLiteral("size")] = double(it->seenSize);
         hidden.append(o);
     }
+    QJsonArray started;
+    for (const QString &sid : std::as_const(_launchedHere))
+        if (_convOf.contains(sid) || _hidden.contains(sid) ||
+            QFileInfo::exists(_paths.jobsDir() + QLatin1Char('/') + sid.left(8)))
+            started.append(sid);
     QDir().mkpath(QFileInfo(knownSessionsPath()).absolutePath());
     QSaveFile f(knownSessionsPath());
     if (!f.open(QIODevice::WriteOnly))
@@ -396,6 +407,7 @@ void Backend::saveKnown() {
     QJsonObject root;
     root[QStringLiteral("sessions")] = arr;
     root[QStringLiteral("hidden")]   = hidden;
+    root[QStringLiteral("started")]  = started;
     f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
     f.commit();
 }
@@ -1551,6 +1563,7 @@ void Backend::dispatch(Tracked &t) {
             t->info.sessionId = sessionId;
             t->info.kind      = SessionInfo::Kind::Background;
             _convOf.insert(sessionId, convId);
+            _launchedHere.insert(sessionId);
             t->skipPermissionChecks = false; // saved with the session from here on
         } else if (sessionId != t->info.sessionId) {
             adoptCopy(*t, sessionId); // Claude Code went on in a copy of it
@@ -1601,6 +1614,8 @@ void Backend::adoptCopy(Tracked &t, const QString &copyId) {
     t.info.sessionId = copyId;
     t.transcriptPath = _paths.findTranscript(copyId); // "" until it's written: tail looks again
     t.offset         = 0;
+    if (_launchedHere.contains(old))
+        _launchedHere.insert(copyId);
     stopRemoved(old, t.info.cwd);
 }
 
@@ -2472,6 +2487,7 @@ void Backend::launchFork(
                 scheduleRefresh();
                 return;
             }
+            _launchedHere.insert(sessionId);
             Tracked &f          = ensureTracked(convIdFor(sessionId));
             f.info.sessionId    = sessionId;
             f.info.cwd          = cwd;
@@ -2757,10 +2773,11 @@ void Backend::hideSession(const QString &convId) {
     if (it == _sessions.end())
         return;
     Tracked &t = *it.value();
-    // Messages still waiting here are dropped, and a background session is
-    // stopped with all it runs: nothing of it goes on once it's out of sight.
-    // (A turn being launched right now is stopped once it has: dispatch.)
-    // A terminal's session is the terminal's.
+    // Messages still waiting here are dropped, and a background session msga
+    // started is stopped with all it runs: nothing of it goes on once it's out
+    // of sight. (A turn being launched right now is stopped once it has:
+    // dispatch.) A terminal's session is the terminal's, and a background one
+    // started elsewhere is whoever's started it: it only leaves msga's list.
     failSends(t, QCoreApplication::translate("claude_code", "The session was removed from msga."));
     if (!t.info.sessionId.isEmpty()) {
         QString transcript = t.transcriptPath;
@@ -2770,12 +2787,73 @@ void Backend::hideSession(const QString &convId) {
         h.seenSize = sizeOf(transcript);
         _hidden.insert(t.info.sessionId, h);
         _convOf.remove(t.info.sessionId);
-        if (t.info.kind == SessionInfo::Kind::Background && t.info.running && !t.stopping)
+        if (t.info.kind == SessionInfo::Kind::Background && t.info.running && !t.stopping &&
+            startedByMsga(t.info.sessionId))
             stopRemoved(t.info.sessionId, t.info.cwd);
     }
     clearOutputs(convId); // the copies of the files it made
     _reactions.remove(convId);
     _sessions.erase(it);
+}
+
+namespace {
+
+// Whether a transcript, or one of its subagents', has `needle`.
+bool transcriptHas(const QString &path, const QByteArray &needle) {
+    if (path.isEmpty())
+        return false;
+    QStringList     files{path};
+    const QFileInfo fi(path);
+    const QDir      subagents(
+        fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QStringLiteral("/subagents")
+    );
+    for (const QString &name : subagents.entryList({QStringLiteral("*.jsonl")}, QDir::Files))
+        files << subagents.filePath(name);
+    for (const QString &file : files) {
+        QFile f(file);
+        if (!f.open(QIODevice::ReadOnly) || f.size() <= 0)
+            continue;
+        const uchar *data = f.map(0, f.size());
+        if (data ? QByteArrayView(data, f.size()).contains(needle) : f.readAll().contains(needle))
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+bool Backend::startedByMsga(const QString &sessionId) const {
+    QSet<QString> seen;
+    return startedByMsga(sessionId, seen);
+}
+
+bool Backend::startedByMsga(const QString &sessionId, QSet<QString> &seen) const {
+    if (_launchedHere.contains(sessionId))
+        return true;
+    if (seen.contains(sessionId) || seen.size() > 16)
+        return false;
+    seen.insert(sessionId);
+    // Claude Code records no parent either: a session a session of msga's
+    // started with `claude --bg` has the CLI's answer in its parent's
+    // transcript, the Bash tool's output "backgrounded · <short id>".
+    const QByteArray needle =
+        QByteArrayLiteral("backgrounded \xc2\xb7 ") + sessionId.left(8).toUtf8();
+    auto parentOf = [&](const QString &other, const QString &transcript) {
+        return other != sessionId && transcriptHas(transcript, needle) &&
+               startedByMsga(other, seen);
+    };
+    for (const auto &t : _sessions)
+        if (!t->info.sessionId.isEmpty() &&
+            parentOf(
+                t->info.sessionId,
+                t->transcriptPath.isEmpty() ? _paths.findTranscript(t->info.sessionId)
+                                            : t->transcriptPath
+            ))
+            return true;
+    for (auto it = _hidden.cbegin(); it != _hidden.cend(); ++it)
+        if (parentOf(it.key(), it->transcript))
+            return true;
+    return false;
 }
 
 void Backend::stopRemoved(const QString &sessionId, const QString &cwd) {

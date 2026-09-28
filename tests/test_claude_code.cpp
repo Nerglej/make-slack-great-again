@@ -901,6 +901,13 @@ struct FakeClaudeHome {
     }
 };
 
+void writeFile(const QString &path, const QByteArray &bytes) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile f(path);
+    REQUIRE(f.open(QIODevice::WriteOnly));
+    f.write(bytes);
+}
+
 template <typename T>
 std::vector<T> collect(rpl::producer<T> p) {
     std::vector<T> out;
@@ -1150,6 +1157,146 @@ TEST_CASE(
         return c.id == conv;
     }));
 }
+
+TEST_CASE("a background worker is paired with its job by job id", "[claude][roster]") {
+    // A `/clear` sent to a job starts a new session in the same worker: its
+    // sessions/<pid>.json names another session, and only its jobId the job
+    // (seen with 2.1.282).
+    FakeClaudeHome home;
+    QDir(home.dir.path()).mkpath("jobs/ed076643");
+    const QString sid = "ed076643-40f1-4f2f-aeb1-a0c39466257b";
+    writeFile(
+        home.dir.path() + "/jobs/ed076643/state.json",
+        QJsonDocument(QJsonObject{{"state", "done"}, {"sessionId", sid}, {"cwd", "/src/app"}})
+            .toJson()
+    );
+    writeFile(
+        home.dir.path() + "/sessions/2.json",
+        QJsonDocument(
+            QJsonObject{
+                {"pid", QCoreApplication::applicationPid()}, // alive
+                {"sessionId", "b06f80b6-a8d7-45cc-a904-52553cf4e38e"},
+                {"jobId", "ed076643"},
+                {"kind", "bg"},
+                {"status", "idle"},
+            }
+        )
+            .toJson()
+    );
+    const Paths paths = Paths::detect();
+    const auto  all   = scanSessions(paths);
+    const auto  job   = std::find_if(all.begin(), all.end(), [&](const SessionInfo &s) {
+        return s.sessionId == sid;
+    });
+    REQUIRE(job != all.end());
+    CHECK(job->running);
+    CHECK(job->status == "idle");
+    CHECK(liveWorkerPids(paths, sid) == std::vector<qint64>{QCoreApplication::applicationPid()});
+}
+
+#if defined(Q_OS_LINUX)
+TEST_CASE(
+    "removing a session stops it only when msga, or a session of msga's, started it",
+    "[claude][backend][bg]"
+) {
+    FakeClaudeHome home;
+    QTemporaryDir  work;
+    QDir(home.dir.path()).mkpath("jobs");
+    // A CLI whose `stop` the daemon doesn't act on: the worker lingers, and
+    // msga has to end it itself.
+    const QString cli = work.path() + "/claude";
+    writeFile(cli, R"SH(#!/bin/sh
+if [ "$1" = auth ]; then echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
+printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
+)SH");
+    QFile(cli).setPermissions(QFile(cli).permissions() | QFileDevice::ExeOwner);
+    const QString parent           = "aaaa1111-0000-4000-8000-000000000001";
+    const QString child            = "bbbb2222-0000-4000-8000-000000000002";
+    const QString other            = "cccc3333-0000-4000-8000-000000000003";
+    const QString parentTranscript = home.dir.path() + "/projects/-src-app/" + parent + ".jsonl";
+    // The session msga started ran `claude --bg`, which started `child`.
+    writeFile(
+        parentTranscript,
+        prompt("start a helper", "2026-09-25T10:00:00.000Z") +
+            "{\"type\":\"user\",\"timestamp\":\"2026-09-25T10:00:01.000Z\",\"message\":{\"role\":"
+            "\"user\",\"content\":[{\"tool_use_id\":\"t1\",\"type\":\"tool_result\",\"content\":"
+            "\"backgrounded \xc2\xb7 bbbb2222\\n  claude agents\"}]}}\n"
+    );
+    std::vector<qint64> workers;
+    int                 n = 0;
+    for (const QString &sid : {parent, child, other}) {
+        const QString short8 = sid.left(8);
+        QDir(home.dir.path()).mkpath("jobs/" + short8);
+        writeFile(
+            home.dir.path() + "/jobs/" + short8 + "/state.json",
+            QJsonDocument(
+                QJsonObject{
+                    {"state", "done"},
+                    {"sessionId", sid},
+                    {"cwd", work.path()},
+                    {"name", short8},
+                    {"linkScanPath",
+                     sid == parent ? parentTranscript
+                                   : home.dir.path() + "/projects/-src-app/" + sid + ".jsonl"},
+                }
+            )
+                .toJson()
+        );
+        qint64 pid = 0;
+        REQUIRE(QProcess::startDetached("sleep", {"60"}, {}, &pid));
+        workers.push_back(pid);
+        writeFile(
+            home.dir.path() + QStringLiteral("/sessions/w%1.json").arg(++n),
+            QJsonDocument(
+                QJsonObject{
+                    {"pid", pid},
+                    {"sessionId", sid},
+                    {"jobId", short8},
+                    {"kind", "bg"},
+                    {"status", "idle"}
+                }
+            )
+                .toJson()
+        );
+    }
+    // msga started `parent` in an earlier run.
+    const QString known = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                          "/claude-code/known-sessions.json";
+    QDir().mkpath(QFileInfo(known).absolutePath());
+    writeFile(
+        known,
+        QJsonDocument(
+            QJsonObject{{"sessions", QJsonArray{}}, {"started", QJsonArray{parent}}}
+        ).toJson()
+    );
+    auto calls = [&] {
+        QFile f(home.dir.path() + "/calls.log");
+        return f.open(QIODevice::ReadOnly)
+                   ? QString::fromUtf8(f.readAll()).split('\n', Qt::SkipEmptyParts)
+                   : QStringList{};
+    };
+
+    claude_code::Backend backend(Credentials{cli});
+    backend.connectRealtime();
+    REQUIRE(collect(backend.loadConversations())[0].size() == 3);
+
+    // Started elsewhere: it only leaves the list.
+    backend.leaveConversation(ConversationId{other});
+    QTest::qWait(1500);
+    CHECK(calls().filter("stop").isEmpty());
+    CHECK(isProcessAlive(workers[2]));
+
+    // Started by msga's session: stopped, its lingering worker too.
+    backend.leaveConversation(ConversationId{child});
+    REQUIRE(QTest::qWaitFor([&] { return calls().contains("stop bbbb2222"); }, 5000));
+    CHECK(QTest::qWaitFor([&] { return !isProcessAlive(workers[1]); }, 16000));
+    CHECK(isProcessAlive(workers[0]));
+    CHECK(isProcessAlive(workers[2]));
+    CHECK(calls().filter("stop").size() == 1);
+    for (const qint64 pid : workers)
+        signalProcess(pid, true);
+}
+#endif
 
 TEST_CASE("files sent to a session go with its prompt", "[claude][backend]") {
     FakeClaudeHome home;
@@ -3601,13 +3748,6 @@ namespace {
 
 QByteArray titled(const char *type, const char *key, const QString &value) {
     return line({{"type", type}, {key, value}});
-}
-
-void writeFile(const QString &path, const QByteArray &bytes) {
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QFile f(path);
-    REQUIRE(f.open(QIODevice::WriteOnly));
-    f.write(bytes);
 }
 
 } // namespace
