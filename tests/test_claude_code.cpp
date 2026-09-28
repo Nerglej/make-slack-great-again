@@ -2530,6 +2530,31 @@ TEST_CASE("the terminal screen shows when Claude Code's prompt takes typing", "[
     }
 }
 
+TEST_CASE("the question on screen is matched to the job's needs", "[claude][attach]") {
+    const auto question = [](const QString &text) {
+        PermissionQuestion q;
+        q.text    = text;
+        q.options = {{1, "Yes"}, {2, "No"}};
+        return q;
+    };
+    // A command, wrapped and framed on screen.
+    const auto rm =
+        question("Bash command │ rm -rf /home/robin/src/msga/ │ build Do you want to proceed?");
+    CHECK(questionIsFor("approve Bash: rm -rf /home/robin/src/msga/build", rm));
+    CHECK_FALSE(questionIsFor("approve Bash: git push", rm));
+    // A label alone, which the question words its own way (EnterWorktree with
+    // a path, Claude Code 2.1.283): "approve Entering worktree" asks this.
+    const auto worktree = question(
+        "Enter the worktree at \"/home/robin/src/citycity/monorepo\"? This moves the session's "
+        "working directory and write access there, and loads project configuration (CLAUDE.md, "
+        "settings) from that location."
+    );
+    CHECK(questionIsFor("approve Entering worktree", worktree));
+    CHECK(questionIsFor("approve Web fetch", question("Web fetch https://example.com")));
+    CHECK_FALSE(questionIsFor("approve Entering worktree", rm));
+    CHECK_FALSE(questionIsFor("approve ", worktree));
+}
+
 TEST_CASE("a message is typed line by line, never as one big paste", "[claude][attach]") {
     const auto paste = [](const QString &t) {
         return QByteArray("\x1b[200~") + t.toUtf8() + "\x1b[201~";

@@ -38,6 +38,8 @@ class QTimer;
 
 namespace claude_code {
 
+struct PermissionQuestion;
+
 class Backend : public ::Backend {
 public:
     explicit Backend(const Credentials &creds);
@@ -346,5 +348,9 @@ private:
 // "projects" map of Claude Code's global config (~/.claude.json, or
 // $CLAUDE_CONFIG_DIR/.claude.json when that is set).
 bool isFolderTrusted(const QString &dir);
+
+// Whether the permission question on a session's screen is the one its job's
+// `needs` names ("approve Bash: rm -rf build", "approve Entering worktree").
+bool questionIsFor(const QString &needs, const PermissionQuestion &q);
 
 } // namespace claude_code

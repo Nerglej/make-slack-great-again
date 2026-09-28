@@ -102,11 +102,11 @@ bool needsLogin(const SessionInfo &s) {
     return s.needs.startsWith(QLatin1String("login required"));
 }
 
-// Whether the question on a session's screen is the one its `needs` names
-// ("approve Bash: rm -rf build"): the screen shows the command wrapped and
-// framed ("│ rm -rf …"), so both are compared without spaces or frames — the
-// command's start, or for a file (Edit, Write) its name, which may be shown
-// relative to the folder.
+} // namespace
+
+// The screen shows the command wrapped and framed ("│ rm -rf …"), so both are
+// compared without spaces or frames — the command's start, or for a file
+// (Edit, Write) its name, which may be shown relative to the folder.
 bool questionIsFor(const QString &needs, const PermissionQuestion &q) {
     const auto squash = [](const QString &s) {
         QString out;
@@ -120,13 +120,26 @@ bool questionIsFor(const QString &needs, const PermissionQuestion &q) {
     const QString tool   = colon < 0 ? detail : detail.left(colon);
     const QString arg    = colon < 0 ? QString() : detail.mid(colon + 2).trimmed();
     const QString text   = squash(q.text);
-    if (arg.isEmpty())
-        return !tool.isEmpty() && text.contains(tool);
+    if (arg.isEmpty()) {
+        // Only the tool's label, which the question needn't repeat: "Entering
+        // worktree" asks "Enter the worktree at …?" (verified 2.1.283). A word
+        // of it will do.
+        if (tool.isEmpty())
+            return false;
+        if (text.contains(squash(tool)))
+            return true;
+        const QStringList words = tool.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        return std::any_of(words.begin(), words.end(), [&](const QString &w) {
+            return w.size() >= 4 && text.contains(w, Qt::CaseInsensitive);
+        });
+    }
     if (text.contains(squash(arg).left(40)))
         return true;
     const QString file = QFileInfo(arg).fileName();
     return QDir::isAbsolutePath(arg) && !file.isEmpty() && text.contains(squash(file));
 }
+
+namespace {
 
 constexpr int kApprovalReads   = 3;     // tries at reading a question's options
 constexpr int kApprovalRetryMs = 4'000; // between them
