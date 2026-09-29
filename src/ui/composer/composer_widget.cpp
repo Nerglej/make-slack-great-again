@@ -6,6 +6,8 @@
 #include "edit_mode_banner.h"
 #include "undo_send_pill.h"
 #include "voice_recording_strip.h"
+#include "spell_highlighter.h"
+#include "spell/spell_checker.h"
 #include "ui/emoji_picker/emoji_picker_popup.h"
 #include "ui/gif_picker/gif_picker_popup.h"
 #include "network/gif_search.h"
@@ -36,6 +38,8 @@
 #include <QPushButton>
 #include <QToolButton>
 #include <QKeyEvent>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QFileDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -160,6 +164,10 @@ static std::pair<int, int> mentionRangeAt(const QTextDocument *doc, int pos) {
 // composer instead of inserting them inline. Overriding insertFromMimeData
 // covers every paste path — Ctrl+V / ⌘V, Shift+Insert, context menu, middle
 // click — without per-platform shortcut handling.
+//
+// Its context menu leads with the spelling actions when the word under the
+// click is underlined (SpellHighlighter): up to five suggestions, "Add to
+// dictionary" and "Ignore", above the standard edit actions.
 
 class ComposerTextEdit : public QTextEdit {
 public:
@@ -168,7 +176,17 @@ public:
     // Returns true when the mime data was consumed (attached as a file).
     std::function<bool(const QMimeData *)> onMediaPaste;
 
+    SpellHighlighter *spell = nullptr;
+
 protected:
+    void contextMenuEvent(QContextMenuEvent *event) override {
+        QMenu *menu = createStandardContextMenu(event->pos());
+        if (spell)
+            addSpellingActions(menu, cursorForPosition(event->pos()).position());
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+        menu->popup(event->globalPos());
+    }
+
     bool canInsertFromMimeData(const QMimeData *source) const override {
         // Without this, paste is a no-op when the clipboard holds only an image.
         return source->hasImage() || QTextEdit::canInsertFromMimeData(source);
@@ -178,6 +196,56 @@ protected:
         if (onMediaPaste && onMediaPaste(source))
             return;
         QTextEdit::insertFromMimeData(source);
+    }
+
+private:
+    void addSpellingActions(QMenu *menu, int pos) {
+        const auto [start, end] = spell->misspelledRangeAt(pos);
+        if (start < 0)
+            return;
+        // Follows the text, so a replacement lands on the word even if the
+        // document changed while the menu was open.
+        QTextCursor word(document());
+        word.setPosition(start);
+        word.setPosition(end, QTextCursor::KeepAnchor);
+        const QString text    = word.selectedText();
+        auto         &checker = Spell::Checker::instance();
+
+        QList<QAction *>  actions;
+        // Computed now, not per keystroke: Hunspell can take 15–120 ms.
+        const QStringList suggestions = checker.suggestions(text, 5);
+        for (const QString &s : suggestions) {
+            auto *a = new QAction(s, menu);
+            QFont f = a->font();
+            f.setBold(true);
+            a->setFont(f);
+            // One insertText over the selection = one undo step.
+            connect(a, &QAction::triggered, this, [word, s]() mutable { word.insertText(s); });
+            actions << a;
+        }
+        if (suggestions.isEmpty()) {
+            auto *none = new QAction(ComposerWidget::tr("No spelling suggestions"), menu);
+            none->setEnabled(false);
+            actions << none;
+        }
+        auto *sep = new QAction(menu);
+        sep->setSeparator(true);
+        actions << sep;
+        auto *add = new QAction(ComposerWidget::tr("Add to dictionary"), menu);
+        connect(add, &QAction::triggered, this, [text] {
+            Spell::Checker::instance().addToDictionary(text);
+        });
+        actions << add;
+        //: Spelling: stop underlining this word until MSGA restarts
+        auto *ignore = new QAction(ComposerWidget::tr("Ignore"), menu);
+        connect(ignore, &QAction::triggered, this, [text] {
+            Spell::Checker::instance().ignore(text);
+        });
+        actions << ignore;
+        auto *sep2 = new QAction(menu);
+        sep2->setSeparator(true);
+        actions << sep2;
+        menu->insertActions(menu->actions().value(0), actions);
     }
 };
 
@@ -511,6 +579,8 @@ ComposerWidget::ComposerWidget(QWidget *parent) : QWidget(parent) {
     // ── Text input ────────────────────────────────────────────────────────────
     auto *edit         = new ComposerTextEdit(_box);
     edit->onMediaPaste = [this](const QMimeData *source) { return attachFromMimeData(source); };
+    // Idle unless spell checking is on (Settings → Appearance → Composer).
+    edit->spell        = new SpellHighlighter(edit, kMentionRawProp);
     _edit              = edit;
     _edit->setObjectName("composerEdit");
     _placeholder = tr("Message #channel");

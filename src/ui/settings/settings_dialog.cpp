@@ -12,6 +12,7 @@
 #include "ui/styled_button/styled_button.h"
 #include "ui/styled_line_edit/styled_line_edit.h"
 #include "ui/shortcuts.h"
+#include "spell/spell_checker.h"
 #include "ui/theme.h"
 #include "ui/theme_manager.h"
 #include "app_credentials.h"
@@ -51,6 +52,8 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QGroupBox>
+#include <QGridLayout>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -537,6 +540,38 @@ void SettingsDialog::buildPanel() {
         tr("Send with %1").arg(Ui::Shortcuts::nativeKeys(QStringLiteral("Ctrl+Enter"))), appearPage
     );
     alay->addWidget(_ctrlEnterSends);
+
+    // Spell checking: off by default. Its languages are listed only while it
+    // is on — listing them is the first thing that asks the OS about spelling.
+    _spellCheck = new QCheckBox(tr("Check spelling"), appearPage);
+    alay->addWidget(_spellCheck);
+    _spellSection  = new QWidget(appearPage);
+    auto *spellLay = new QVBoxLayout(_spellSection);
+    // Indented under the checkbox it belongs to.
+    spellLay->setContentsMargins(sp.xxl, 0, 0, 0);
+    spellLay->setSpacing(sp.md);
+    auto *spellDesc = new QLabel(
+        tr("A word is underlined when none of the checked languages knows it."), _spellSection
+    );
+    spellDesc->setObjectName("spellDesc");
+    spellDesc->setWordWrap(true);
+    spellLay->addWidget(spellDesc);
+    _spellLangGrid = new QGridLayout;
+    _spellLangGrid->setHorizontalSpacing(sp.xl);
+    _spellLangGrid->setVerticalSpacing(sp.md);
+    spellLay->addLayout(_spellLangGrid);
+    _spellHint = new QLabel(_spellSection);
+    _spellHint->setObjectName("spellHint");
+    _spellHint->setWordWrap(true);
+    _spellHint->hide();
+    spellLay->addWidget(_spellHint);
+    _spellSection->hide();
+    alay->addWidget(_spellSection);
+    connect(_spellCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (on)
+            refreshSpellLanguages();
+        _spellSection->setVisible(on);
+    });
 
     // ── Conversations ─────────────────────────────────────────────────
     auto *sidebarHeading = new QLabel(tr("Conversations"), appearPage);
@@ -2347,6 +2382,9 @@ void SettingsDialog::applyTheme() {
         );
     }
     Th::setStyleSheetIfChanged(_ctrlEnterSends, checkQss);
+    Th::setStyleSheetIfChanged(_spellCheck, checkQss);
+    for (auto *box : std::as_const(_spellLangBoxes))
+        Th::setStyleSheetIfChanged(box, checkQss);
     Th::setStyleSheetIfChanged(_showAgentsApps, checkQss);
     Th::setStyleSheetIfChanged(_unreadsOnly, checkQss);
     Th::setStyleSheetIfChanged(_showLinkPreviews, checkQss);
@@ -2365,7 +2403,8 @@ void SettingsDialog::applyTheme() {
         );
     }
     Th::setStyleSheetIfChanged(_relevantDays, spinQss);
-    for (const char *name : {"daysDesc", "unreadsDesc", "effectsDesc", "linkPreviewsDesc"}) {
+    for (const char *name :
+         {"daysDesc", "unreadsDesc", "effectsDesc", "linkPreviewsDesc", "spellDesc", "spellHint"}) {
         if (auto *w = _panel->findChild<QLabel *>(QLatin1String(name))) {
             Th::setStyleSheetIfChanged(
                 w,
@@ -2634,6 +2673,17 @@ void SettingsDialog::loadAppearance() {
         QSettings(u"msga"_s, u"msga"_s).value("appearance/unreadsOnly", false).toBool()
     );
     _ctrlEnterSends->setChecked(Ui::Shortcuts::ctrlEnterSends());
+    // Start from what is saved, not from ticks left over from the last open.
+    qDeleteAll(_spellLangBoxes);
+    _spellLangBoxes.clear();
+    const bool spell = Spell::Checker::instance().enabled();
+    {
+        const QSignalBlocker block(_spellCheck);
+        _spellCheck->setChecked(spell);
+    }
+    if (spell)
+        refreshSpellLanguages();
+    _spellSection->setVisible(spell);
     _showLinkPreviews->setChecked(
         QSettings(u"msga"_s, u"msga"_s).value("appearance/showLinkPreviews", true).toBool()
     );
@@ -2664,6 +2714,48 @@ void SettingsDialog::loadAppearance() {
     _customEditor->setTheme(mgr.customTheme());
     _customEditor->setSlackThemeAvailable(_slackTheme.available && _slackTheme.available());
     refreshCustomEditor();
+}
+
+void SettingsDialog::refreshSpellLanguages() {
+    // Keep the ticks made since the dialog opened; the first time, show the
+    // saved choice (or what the checker picks when there is none).
+    QStringList picked;
+    for (const QCheckBox *box : std::as_const(_spellLangBoxes))
+        if (box->isChecked())
+            picked << box->property("code").toString();
+    const bool firstFill = _spellLangBoxes.isEmpty();
+    qDeleteAll(_spellLangBoxes);
+    _spellLangBoxes.clear();
+
+    const QList<Spell::Language> langs = Spell::availableLanguages();
+    if (firstFill) {
+        picked = Spell::Checker::instance().languages();
+        if (picked.isEmpty())
+            picked = Spell::Checker::defaultLanguages(langs);
+    }
+    static constexpr int kColumns = 2;
+    const QString        checkQss = Th::checkBoxQss(Th::c().fonts.md);
+    for (int i = 0; i < langs.size(); ++i) {
+        auto *box = new QCheckBox(langs[i].name, _spellSection);
+        box->setProperty("code", langs[i].code);
+        box->setChecked(picked.contains(langs[i].code));
+        Th::setStyleSheetIfChanged(box, checkQss);
+        _spellLangGrid->addWidget(box, i / kColumns, i % kColumns);
+        _spellLangBoxes << box;
+    }
+    _spellLangGrid->setColumnStretch(kColumns, 1);
+
+    if (langs.isEmpty()) {
+        const QString pkg = Spell::dictionaryPackageHint();
+        _spellHint->setText(
+            pkg.isEmpty()
+                ? tr("No spelling languages are available on this system.")
+                : tr("No spelling dictionaries were found. Install the one for your language "
+                     "(for example the %1 package) and open Settings again.")
+                      .arg(pkg)
+        );
+    }
+    _spellHint->setVisible(langs.isEmpty());
 }
 
 void SettingsDialog::refreshCustomEditor() {
@@ -2745,6 +2837,16 @@ void SettingsDialog::saveAppearance() {
     Ui::Shortcuts::setCtrlEnterSends(ctrlEnter);
     if (sendKeyDidChange)
         emit sendKeyChanged();
+
+    // Applies at once: open composers re-check on Spell::Checker::changed.
+    QStringList spellLangs = Spell::Checker::instance().languages();
+    if (!_spellLangBoxes.isEmpty()) {
+        spellLangs.clear();
+        for (const QCheckBox *box : std::as_const(_spellLangBoxes))
+            if (box->isChecked())
+                spellLangs << box->property("code").toString();
+    }
+    Spell::Checker::instance().configure(_spellCheck->isChecked(), spellLangs);
 
     // Applies + persists + re-emits themeChanged (a no-op when unchanged).
     ThemeManager::instance().setFontSizeId(

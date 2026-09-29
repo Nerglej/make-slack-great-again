@@ -204,6 +204,10 @@ add_executable(msga MACOSX_BUNDLE WIN32
     src/media/audio_recorder.cpp
     src/media/audio_recorder.h
 
+    # Spell checking (the platform backend TU is added below)
+    src/spell/spell_checker.cpp
+    src/spell/spell_words.cpp
+
     # Cache
     src/cache/workspace_cache.cpp
     src/cache/cache_evictor.cpp
@@ -239,6 +243,7 @@ add_executable(msga MACOSX_BUNDLE WIN32
     src/ui/composer/composer_widget.cpp
     src/ui/composer/voice_context.cpp
     src/ui/composer/voice_recording_strip.cpp
+    src/ui/composer/spell_highlighter.cpp
     src/ui/emoji_picker/emoji_picker_popup.cpp
     src/ui/gif_picker/gif_picker_popup.cpp
     src/ui/composer/mention_completer.cpp
@@ -672,6 +677,46 @@ else()
     target_link_libraries(msga_miniaudio PUBLIC m)
     target_sources(msga PRIVATE src/media/audio_engine_linux.cpp src/media/audio_recorder_linux.cpp)
     target_link_libraries(msga PRIVATE msga_miniaudio)
+endif()
+
+# Composer spell checking (src/spell/spell_backend_*): the OS's own checker
+# where there is one — NSSpellChecker (AppKit, linked above) on macOS,
+# ISpellChecker (spellcheck.h, COM via ole32) on Windows. Linux has no system
+# service a static binary can use (Enchant and Sonnet dlopen their providers),
+# so it builds the vendored Hunspell (third_party/hunspell/README: trimmed to
+# ~140 KB of the binary) and reads the distribution's dictionaries at runtime.
+# Only this branch compiles Hunspell; -Os because spell() takes about a
+# microsecond either way. Hidden visibility: the dynamic builds link with
+# -rdynamic (crash reports, below), which would otherwise export — and so
+# keep — all of Hunspell's API, the morphology functions msga never calls
+# included.
+if(APPLE)
+    target_sources(msga PRIVATE src/spell/spell_backend_mac.mm)
+    set_source_files_properties(src/spell/spell_backend_mac.mm
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+elseif(WIN32)
+    target_sources(msga PRIVATE src/spell/spell_backend_win.cpp)
+else()
+    add_library(msga_hunspell STATIC
+        third_party/hunspell/affentry.cxx
+        third_party/hunspell/affixmgr.cxx
+        third_party/hunspell/csutil.cxx
+        third_party/hunspell/filemgr.cxx
+        third_party/hunspell/hashmgr.cxx
+        third_party/hunspell/hunspell.cxx
+        third_party/hunspell/hunzip.cxx
+        third_party/hunspell/phonet.cxx
+        third_party/hunspell/replist.cxx
+        third_party/hunspell/suggestmgr.cxx)
+    set_target_properties(msga_hunspell PROPERTIES AUTOMOC OFF) # no Qt in there
+    target_include_directories(msga_hunspell SYSTEM PUBLIC third_party/hunspell)
+    target_compile_definitions(msga_hunspell
+        PUBLIC HUNSPELL_STATIC
+        PRIVATE HUNSPELL_QT_UNICODE HUNSPELL_NO_XML)
+    target_compile_options(msga_hunspell PRIVATE -w $<$<NOT:$<CONFIG:Debug>>:-Os>
+        -fvisibility=hidden -fvisibility-inlines-hidden ${MSGA_NO_EXCEPTIONS})
+    target_sources(msga PRIVATE src/spell/spell_backend_linux.cpp)
+    target_link_libraries(msga PRIVATE msga_hunspell)
 endif()
 
 # Native macOS window chrome, using the AppKit dependency above.

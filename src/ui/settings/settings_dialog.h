@@ -35,6 +35,7 @@ class CustomThemeEditor;
 struct SidebarThemePrefs;
 class QGroupBox;
 class QVBoxLayout;
+class QGridLayout;
 class QButtonGroup;
 struct LlmProviderConfig;
 
@@ -155,6 +156,9 @@ private:
     void                   loadNotifications();
     void                   saveAppearance();
     void                   loadAppearance();
+    // Rebuild the spelling language boxes from what the machine offers (only
+    // while "Check spelling" is ticked, so nothing asks the OS otherwise).
+    void                   refreshSpellLanguages();
     void                   refreshCacheSize();
     void                   clearCache();
     void                   clearState();
@@ -211,6 +215,11 @@ private:
     QCheckBox                *_showAgentsApps   = nullptr;
     QCheckBox                *_unreadsOnly      = nullptr;
     QCheckBox                *_ctrlEnterSends   = nullptr;
+    QCheckBox                *_spellCheck       = nullptr;
+    QWidget                  *_spellSection  = nullptr; // languages; shown while _spellCheck is on
+    QGridLayout              *_spellLangGrid = nullptr;
+    QLabel                   *_spellHint     = nullptr; // no dictionaries: what to install
+    QList<QCheckBox *>        _spellLangBoxes;          // one per language, code in "code"
     QLabel                   *_notificationTestResult = nullptr;
     QCheckBox                *_showLinkPreviews       = nullptr;
     QCheckBox                *_animateEmoji           = nullptr;

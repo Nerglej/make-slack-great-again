@@ -1,0 +1,76 @@
+--- a/csutil.cxx
++++ b/csutil.cxx
+@@ -91,7 +91,14 @@
+ #ifdef OPENOFFICEORG
+ #include <unicode/uchar.h>
+ #else
+-#ifndef MOZILLA_CLIENT
++#if defined(HUNSPELL_QT_UNICODE) // msga modification
++// msga modification (HUNSPELL_QT_UNICODE): the case and letter lookups are
++// implemented by the host app with Qt's QChar tables, which are already in the
++// binary, in place of the 384 KB utf_tbl of utf_info.hxx (not vendored).
++unsigned short hunspell_qt_toupper(unsigned short c);
++unsigned short hunspell_qt_tolower(unsigned short c);
++int hunspell_qt_isalpha(unsigned short c);
++#elif !defined(MOZILLA_CLIENT)
+ #include "utf_info.hxx"
+ #endif
+ #endif
+@@ -2493,7 +2500,9 @@
+ #ifdef OPENOFFICEORG
+   return static_cast<unsigned short>(u_toupper(c));
+ #else
+-#ifdef MOZILLA_CLIENT
++#if defined(HUNSPELL_QT_UNICODE) // msga modification
++  return hunspell_qt_toupper(c);
++#elif defined(MOZILLA_CLIENT)
+   return ToUpperCase((char16_t)c);
+ #else
+   return utf_tbl[c].cupper;
+@@ -2510,7 +2519,9 @@
+ #ifdef OPENOFFICEORG
+   return static_cast<unsigned short>(u_tolower(c));
+ #else
+-#ifdef MOZILLA_CLIENT
++#if defined(HUNSPELL_QT_UNICODE) // msga modification
++  return hunspell_qt_tolower(c);
++#elif defined(MOZILLA_CLIENT)
+   return ToLowerCase((char16_t)c);
+ #else
+   return utf_tbl[c].clower;
+@@ -2521,6 +2532,8 @@
+ int unicodeisalpha(unsigned short c) {
+ #ifdef OPENOFFICEORG
+   return u_isalpha(c);
++#elif defined(HUNSPELL_QT_UNICODE) // msga modification
++  return hunspell_qt_isalpha(c);
+ #else
+   return utf_tbl[c].cletter;
+ #endif
+--- a/hunspell.cxx
++++ b/hunspell.cxx
+@@ -1059,9 +1059,13 @@
+     return slst;
+ 
+   // process XML input of the simplified API (see manual)
++  // msga modification (HUNSPELL_NO_XML): compiled out, which leaves the whole
++  // morphology/XML API (spellml, analyze, stem, generate) unreachable.
++#ifndef HUNSPELL_NO_XML
+   if (word.compare(0, sizeof(SPELL_XML) - 3, SPELL_XML, sizeof(SPELL_XML) - 3) == 0) {
+     return spellml(word);
+   }
++#endif
+   if (utf8) {
+     if (word.size() >= MAXWORDUTF8LEN)
+       return slst;
+--- a/hunvisapi.h.in
++++ b/hunvisapi.h
+@@ -9,7 +9,7 @@
+ #  else
+ #    define LIBHUNSPELL_DLL_EXPORTED __declspec(dllimport)
+ #  endif
+-#elif defined(BUILDING_LIBHUNSPELL) && @HAVE_VISIBILITY@
++#elif defined(BUILDING_LIBHUNSPELL) && 1
+ #  define LIBHUNSPELL_DLL_EXPORTED __attribute__((__visibility__("default")))
+ #else
+ #  define LIBHUNSPELL_DLL_EXPORTED

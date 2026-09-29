@@ -18,3 +18,12 @@ This project uses the following third-party libraries:
 - stb_vorbis (http://nothings.org/stb_vorbis/) by Sean Barrett, available as
   a choice of the MIT License or Public Domain (Unlicense). Vendored in
   third_party/miniaudio/stb_vorbis.c.
+
+- Hunspell 1.7.2 (https://github.com/hunspell/hunspell) by Németh László and
+  contributors, based on MySpell by Kevin B. Hendricks. Tri-licensed under the
+  Mozilla Public License 1.1, the GNU General Public License version 2 or later
+  and the GNU Lesser General Public License version 2.1 or later; used here
+  under the GPL option. Linux builds only. Vendored in third_party/hunspell as
+  a modified (trimmed) version: the changes are marked in the source and listed
+  in third_party/hunspell/msga.patch and README. MySpell's notice is in
+  third_party/hunspell/license.myspell.

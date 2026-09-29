@@ -65,6 +65,15 @@ else()
     set(_audio_engine ${CMAKE_SOURCE_DIR}/src/media/audio_engine_linux.cpp
         ${CMAKE_SOURCE_DIR}/src/media/audio_recorder_linux.cpp)
 endif()
+# The spell checker's platform backend, the same way.
+if(APPLE)
+    set(_spell_backend ${CMAKE_SOURCE_DIR}/src/spell/spell_backend_mac.mm)
+    set_source_files_properties(${_spell_backend} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+elseif(WIN32)
+    set(_spell_backend ${CMAKE_SOURCE_DIR}/src/spell/spell_backend_win.cpp)
+else()
+    set(_spell_backend ${CMAKE_SOURCE_DIR}/src/spell/spell_backend_linux.cpp)
+endif()
 
 set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/auth/auth_strategy_factory.cpp
@@ -149,6 +158,9 @@ set(MSGA_TEST_SUPPORT_SRCS
 
     ${CMAKE_SOURCE_DIR}/src/session/session.cpp
 
+    ${CMAKE_SOURCE_DIR}/src/spell/spell_checker.cpp
+    ${CMAKE_SOURCE_DIR}/src/spell/spell_words.cpp
+
     ${CMAKE_SOURCE_DIR}/src/text/link_labels.cpp
     ${CMAKE_SOURCE_DIR}/src/text/markdown_compose.cpp
     ${CMAKE_SOURCE_DIR}/src/text/mrkdwn_parser.cpp
@@ -166,6 +178,7 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/ui/composer/edit_mode_banner.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer/formatting_toolbar.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer/mention_completer.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/composer/spell_highlighter.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer/undo_send_pill.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer/voice_context.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/composer/voice_recording_strip.cpp
@@ -237,6 +250,7 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/util/secret_store_qsettings.cpp
     ${CMAKE_SOURCE_DIR}/src/util/time_format.cpp
     ${_audio_engine}
+    ${_spell_backend}
 )
 
 add_library(msga_test_support STATIC ${MSGA_TEST_SUPPORT_SRCS})
@@ -252,11 +266,11 @@ target_link_libraries(msga_test_support PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::WebSockets Qt6::Svg
     Qt6::Concurrent Microsoft.GSL::GSL)
 if(APPLE)
-    target_link_libraries(msga_test_support PRIVATE "-framework AVFoundation")
+    target_link_libraries(msga_test_support PRIVATE "-framework AVFoundation" "-framework AppKit")
 elseif(WIN32)
     target_link_libraries(msga_test_support PRIVATE mfplay ole32 winmm)
 else()
-    target_link_libraries(msga_test_support PRIVATE msga_miniaudio)
+    target_link_libraries(msga_test_support PRIVATE msga_miniaudio msga_hunspell)
 endif()
 
 # No AUTOMOC here: it folds every moc output into ONE mocs_compilation.cpp
@@ -562,6 +576,10 @@ add_msga_widget_test(test_move_to_thread_dialog)
 add_msga_widget_test(test_quick_switcher)
 
 add_msga_widget_test(test_composer)
+
+# Spell checking: tokenizer, checker, the Hunspell backend (system en_US, skipped
+# when absent) and the composer's underlines + context menu.
+add_msga_widget_test(test_spell_check)
 
 add_msga_widget_test(test_conv_list_widget)
 
