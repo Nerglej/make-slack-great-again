@@ -39,6 +39,7 @@ class ForwardDialog;
 class CanvasPage;
 class SavedMessagesPage;
 class TeammatePage;
+class SwipeIndicator;
 class ThreadsPage;
 class ConvTabsWidget;
 class HeaderAvatarWidget;
@@ -189,8 +190,9 @@ private:
 
     // Back/forward chat navigation (mouse side buttons, trackpad swipes, XF86
     // Back/Forward keys, Alt+Left/Right) — works across workspaces.
-    void navigateHistory(bool back);
+    bool navigateHistory(bool back); // false when there was nowhere to go
     bool scrollsHorizontallyAt(const QPoint &globalPos) const;
+    void flashSwipeIndicator(bool back);
     void applyNavLocation(const NavLocation &loc);
 
     // Tray
@@ -412,8 +414,9 @@ private:
     // _currentConvId: it is empty on an overview page too (see content_view.h).
     ContentView                 _contentView = ContentView::None;
     NavHistory                  _navHistory;
-    bool                        _navApplying = false; // a back/forward jump is driving the UI
-    SwipeNavRecognizer          _swipeNav;            // trackpad swipe → back/forward
+    bool                        _navApplying = false;      // a back/forward jump is driving the UI
+    SwipeNavRecognizer          _swipeNav;                 // trackpad swipe → back/forward
+    SwipeIndicator             *_swipeIndicator = nullptr; // arrow flash on a swipe jump
     ConversationId _pendingNavConv; // jump target awaiting the new workspace's conv list
     ConversationId _pendingNotifConv;
     QString        _pendingNotifTeam;

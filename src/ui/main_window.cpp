@@ -61,6 +61,7 @@
 #include "update_bar/update_bar.h"
 #include "styled_button/styled_button.h"
 #include "shortcuts.h"
+#include "swipe_indicator/swipe_indicator.h"
 
 #include "ui/icon_utils.h"
 #include "util/background_tasks.h"
@@ -2684,7 +2685,7 @@ void MainWindow::repositionSearch() {
 
 // ── Back/forward chat navigation ─────────────────────────────────────────────
 
-void MainWindow::navigateHistory(bool back) {
+bool MainWindow::navigateHistory(bool back) {
     const auto valid = [this](const NavLocation &loc) {
         // Workspace must still be logged in; within the active workspace the
         // conversation must still be listed (it may have been left/archived).
@@ -2698,6 +2699,7 @@ void MainWindow::navigateHistory(bool back) {
     const auto target = back ? _navHistory.goBack(valid) : _navHistory.goForward(valid);
     if (target)
         applyNavLocation(*target);
+    return target.has_value();
 }
 
 void MainWindow::applyNavLocation(const NavLocation &loc) {
@@ -4246,6 +4248,18 @@ static Qt::CursorShape cursorForEdges(Qt::Edges edges) {
     return Qt::ArrowCursor;
 }
 
+// Browser-style confirmation that a swipe navigated: an arrow badge over the
+// middle of the chat (or of the whole content side on a page without one).
+void MainWindow::flashSwipeIndicator(bool back) {
+    if (!_swipeIndicator)
+        _swipeIndicator = new SwipeIndicator(this);
+    QWidget    *over = _msgArea && _msgArea->isVisible()       ? _msgArea
+                       : _rightArea && _rightArea->isVisible() ? _rightArea
+                                                               : nullptr;
+    const QRect area = over ? QRect(over->mapTo(this, QPoint(0, 0)), over->size()) : rect();
+    _swipeIndicator->flash(back, area);
+}
+
 // A horizontal wheel over content that can scroll sideways belongs to that
 // content, not to swipe navigation.
 bool MainWindow::scrollsHorizontallyAt(const QPoint &globalPos) const {
@@ -4363,7 +4377,8 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *e) {
             break;
         case SwipeNavRecognizer::Action::Back:
         case SwipeNavRecognizer::Action::Forward:
-            navigateHistory(act == SwipeNavRecognizer::Action::Back);
+            if (navigateHistory(act == SwipeNavRecognizer::Action::Back))
+                flashSwipeIndicator(act == SwipeNavRecognizer::Action::Back);
             [[fallthrough]];
         case SwipeNavRecognizer::Action::Swallow:
             return true;

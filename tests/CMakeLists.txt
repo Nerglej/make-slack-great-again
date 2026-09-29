@@ -210,6 +210,7 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/ui/quick_switcher/workspace_tab_strip.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/reminder_dialog/reminder_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/search/search_widget.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/swipe_indicator/swipe_indicator.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/session_import_dialog/session_import_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/shortcuts.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/styled_button/styled_button.cpp
@@ -529,6 +530,8 @@ add_msga_widget_test(test_app_dialog)
 add_msga_widget_test(test_summary_dialog)
 
 add_msga_widget_test(test_typing_indicator)
+
+add_msga_widget_test(test_swipe_indicator)
 
 add_msga_widget_test(test_search_widget)
 

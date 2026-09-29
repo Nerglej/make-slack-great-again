@@ -227,6 +227,7 @@ add_executable(msga MACOSX_BUNDLE WIN32
     src/ui/main_window.cpp
     src/ui/title_bar/title_bar.cpp
     src/ui/loading_indicator/loading_indicator.cpp
+    src/ui/swipe_indicator/swipe_indicator.cpp
     src/ui/message_list/message_list.cpp
     src/ui/message_list/message_list_paint.cpp
     src/ui/message_list/message_render.cpp
