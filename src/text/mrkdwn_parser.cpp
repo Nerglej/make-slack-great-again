@@ -96,6 +96,13 @@ static int findUnderscoreClose(const QString &src, int start, int width) {
     return -1;
 }
 
+// "js", "c++", "objective-c": one word of identifier characters, as
+// markdown_compose's isLanguageHint.
+static bool isLanguageHint(const QString &info) {
+    static const QRegularExpression re(QStringLiteral("^[A-Za-z][A-Za-z0-9_+#.-]{0,29}$"));
+    return re.match(info).hasMatch();
+}
+
 // Try to consume a fenced code block starting at pos (pos points just after the opening ```).
 // Returns the closing position after the closing ```, or -1.
 static int findCodeFenceClose(const QString &src, int pos) {
@@ -384,9 +391,10 @@ static TextWithEntities parseImpl(const QString &mrkdwn, int depth, bool inQuote
         // ── Code fence ``` ──
         if (c == '`' && i + 2 < n && mrkdwn[i + 1] == '`' && mrkdwn[i + 2] == '`') {
             int contentStart = i + 3;
-            // Skip optional language hint on same line
+            // Skip a language hint ("```js\n") on the fence line; any other
+            // text there ("```Can you…\n") is the first code line.
             int lineEnd      = mrkdwn.indexOf('\n', contentStart);
-            if (lineEnd != -1 && lineEnd < n)
+            if (lineEnd != -1 && isLanguageHint(mrkdwn.mid(contentStart, lineEnd - contentStart)))
                 contentStart = lineEnd + 1;
             int closePos = findCodeFenceClose(mrkdwn, contentStart);
             if (closePos != -1) {

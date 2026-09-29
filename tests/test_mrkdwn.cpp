@@ -80,6 +80,22 @@ TEST_CASE("code fence with language hint skips first line", "[mrkdwn]") {
     CHECK(r.entities[0].length == 11);
 }
 
+TEST_CASE("code fence keeps prose on the opening line", "[mrkdwn]") {
+    auto r = MrkdwnParser::parse("a ```Can you swipe?\nI feel it``` b");
+    CHECK(r.text == "a Can you swipe?\nI feel it b");
+    REQUIRE(r.entities.size() == 1);
+    CHECK(r.entities[0].type == EntityType::Pre);
+    CHECK(r.entities[0].offset == 2);
+    CHECK(r.entities[0].length == 24);
+}
+
+TEST_CASE("code fence closed on the opening line", "[mrkdwn]") {
+    auto r = MrkdwnParser::parse("```x```\nnext");
+    CHECK(r.text == "x\nnext");
+    REQUIRE(r.entities.size() == 1);
+    CHECK(r.entities[0].length == 1);
+}
+
 TEST_CASE("user mention no label", "[mrkdwn]") {
     checkOne(
         MrkdwnParser::parse("<@U123ABC>"), "@U123ABC", EntityType::UserMention, 0, 8, "U123ABC"
