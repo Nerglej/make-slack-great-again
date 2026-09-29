@@ -32,7 +32,7 @@ static constexpr QSize kBtnIconSize{12, 12};
 
 TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
 #ifdef Q_OS_MACOS
-    setFixedHeight(52);
+    setFixedHeight(38); // NSWindowToolbarStyleUnifiedCompact
 #else
     setFixedHeight(22);
 #endif

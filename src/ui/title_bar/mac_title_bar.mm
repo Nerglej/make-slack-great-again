@@ -23,7 +23,8 @@ void configureMacTitleBar(QWidget *widget) {
     window.titleVisibility            = NSWindowTitleHidden;
     window.titlebarAppearsTransparent = YES;
     // An empty native toolbar gives the traffic lights the standard, centered
-    // placement of a unified macOS header. AppKit owns the buttons and behavior.
+    // placement of a compact unified macOS header (38 pt, like Finder). AppKit
+    // owns the buttons and behavior.
     if (!window.toolbar) {
         NSToolbar *toolbar              = [[NSToolbar alloc] initWithIdentifier:@"msga.titlebar"];
         toolbar.allowsUserCustomization = NO;
@@ -31,7 +32,7 @@ void configureMacTitleBar(QWidget *widget) {
         [toolbar release];
     }
     if (@available(macOS 11.0, *)) {
-        window.toolbarStyle           = NSWindowToolbarStyleUnified;
+        window.toolbarStyle           = NSWindowToolbarStyleUnifiedCompact;
         window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
     }
     const bool dark = Th::c().surface.content.lightnessF() < 0.5;
