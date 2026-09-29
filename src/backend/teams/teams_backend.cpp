@@ -213,6 +213,7 @@ Capabilities Backend::capabilities() const {
     c.threads       = true;
     c.newThreads    = true;
     c.fileUpload    = true;
+    c.openDm        = true; // a new one-on-one chat
     // typing / livePresence / huddles / canvases / slashCommands stay false:
     // Graph offers no live typing, canvas, huddle, or slash-command analog for a
     // delegated client. livePresence may flip true once the websocket presence

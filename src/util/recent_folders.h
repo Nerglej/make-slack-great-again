@@ -58,4 +58,13 @@ void               save(QSettings &s, const QString &key, const std::vector<Entr
 // load + bumped(now) + save.
 void               bump(QSettings &s, const QString &key, const QString &path);
 
+// Where a new session with teammate `role` (AgentRole::id) starts: the folder
+// last picked for it (teammateFolderKey), else the last one any session
+// started in ("claudeCode/lastDir"), else home.
+QString teammateFolderKey(const QString &role);
+QString teammateFolder(QSettings &s, const QString &role);
+// A session just started in `dir`: the last folder for all of them, and first
+// among the recent ones (kClaudeCodeKey).
+void    noteSessionStarted(QSettings &s, const QString &dir);
+
 } // namespace RecentFolders

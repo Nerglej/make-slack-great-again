@@ -384,6 +384,7 @@ Capabilities PublicBackend::capabilities() const {
     c.gifAttachments   = true;
     c.moveToThread     = true; // sendMessage confirms from the chat.postMessage response
     c.fileUpload       = true;
+    c.openDm           = true; // conversations.open
     c.scheduledSend    = true; // chat.scheduleMessage
     // A message permalink is teamUrl (auth.test's `url`) + /archives/<conv>/p<ts>,
     // the exact string chat.getPermalink would return — no API call needed.

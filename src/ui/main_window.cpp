@@ -3756,63 +3756,97 @@ void MainWindow::forwardMessage(
 ) {
     if (!_session)
         return;
-    // A backend that allows it (Claude Code) forwards into any live workspace,
-    // listed in switcher order; everyone else stays within its own.
+    // A message forwards into any live workspace, listed in switcher order.
     std::vector<ForwardDialog::Workspace> workspaces;
-    const auto                            sourceKey = WorkspaceKey::fromString(_session->teamId());
-    const auto *desc = sourceKey ? backends::find(sourceKey->service) : nullptr;
-    if (desc && desc->forwardAnywhere) {
-        for (const auto &key : TokenStore::workspaceKeys()) {
-            const auto it = _sessions.find(key.toString());
-            if (it == _sessions.end() || !it->second.session)
-                continue;
-            QString name = recordForHandle(it->first).displayName;
-            if (name.isEmpty())
-                name = backends::displayName(key.service);
-            workspaces.push_back({it->second.session.get(), name});
-        }
+    for (const auto &key : TokenStore::workspaceKeys()) {
+        const auto it = _sessions.find(key.toString());
+        if (it == _sessions.end() || !it->second.session)
+            continue;
+        QString name = recordForHandle(it->first).displayName;
+        if (name.isEmpty())
+            name = backends::displayName(key.service);
+        workspaces.push_back({it->second.session.get(), name});
     }
+    // Its rawText means the same anywhere (Claude Code): no need to rebuild it
+    // for another workspace.
+    const auto  sourceKey   = WorkspaceKey::fromString(_session->teamId());
+    const auto *desc        = sourceKey ? backends::find(sourceKey->service) : nullptr;
+    const bool  portableRaw = desc && desc->portableRawText;
     auto *dlg = new ForwardDialog(msg, _session, std::move(workspaces), std::move(onlyFile), this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     _forwardDialog = dlg;
     connect(
-        dlg, &AppDialog::accepted, this, [this, dlg, msg, sourceConv, source = _session->teamId()] {
-            const ConversationId target = dlg->targetConv();
+        dlg,
+        &AppDialog::accepted,
+        this,
+        [this, dlg, msg, sourceConv, portableRaw, source = _session->teamId()] {
+            const ChatTarget target = dlg->target();
             // Still live: dropSession closes the dialog before freeing its sessions.
-            Session             *ts     = dlg->targetSession();
-            if (target.value.isEmpty() || !ts)
+            Session         *ts     = dlg->targetSession();
+            if (target.isEmpty() || !ts)
                 return;
             // Email (Model-D): forwarding to a channel labels the original
             // message rather than re-posting its text (imap-backend-plan §3) —
             // only possible within the message's own workspace.
-            const Conversation *tc = ts->findConversation(target);
+            const Conversation *tc = target.kind == ChatTarget::Kind::Conversation
+                                         ? ts->findConversation(target.conv)
+                                         : nullptr;
             const bool          isChannel =
                 tc && (tc->kind == ConvKind::PublicChannel || tc->kind == ConvKind::PrivateChannel);
             // A file shared on its own isn't the message: it is re-posted, not labeled.
             if (!dlg->fileOnly() && isChannel && ts->teamId() == source &&
                 ts->channelsAreLabels()) {
-                ts->labelMessage(sourceConv, msg.ts, target, [this](bool ok, QString) {
+                ts->labelMessage(sourceConv, msg.ts, target.conv, [this](bool ok, QString) {
                     if (!ok)
                         showNetworkError(tr("Couldn't apply the label."));
                 });
                 return;
             }
-            const QString     comment = dlg->comment();
-            const QString     fwd     = dlg->fileOnly()         ? QString()
-                                        : msg.rawText.isEmpty() ? msg.text.text
-                                                                : msg.rawText;
-            const QString     full    = comment.isEmpty() ? fwd
-                                        : fwd.isEmpty()   ? comment
-                                                          : (comment + u"\n"_s + fwd);
-            std::vector<File> files   = dlg->files();
+            // Also the session its mentions and links resolve in, and the one its
+            // files are downloaded through.
+            const auto    srcIt = _sessions.find(source);
+            Session      *src   = srcIt != _sessions.end() ? srcIt->second.session.get() : nullptr;
+            // Into another workspace the source's own ids and markup would
+            // break (or ping people there), so it goes as portable markdown.
+            const bool    verbatim = ts->teamId() == source || portableRaw;
+            const QString comment  = dlg->comment();
+            const QString fwd     = dlg->fileOnly() ? QString() : forwardedText(msg, src, verbatim);
+            const QString full    = comment.isEmpty() ? fwd
+                                    : fwd.isEmpty()   ? comment
+                                                      : (comment + u"\n"_s + fwd);
+            // Into the conversation the pick stands for — a DM or a teammate's
+            // session may start first — once the files (if any) are here. The
+            // target session is looked up again: it may be gone by then.
+            auto          deliver = [this, target, targetKey = ts->teamId()](
+                                        const QString &text, const QStringList &paths
+                                    ) {
+                const auto it = _sessions.find(targetKey);
+                Session   *ts = it != _sessions.end() ? it->second.session.get() : nullptr;
+                if (!ts || (text.isEmpty() && paths.isEmpty()))
+                    return;
+                openForwardTarget(
+                    ts,
+                    target,
+                    [this, targetKey, text, paths](ConversationId conv) {
+                        const auto it = _sessions.find(targetKey);
+                        Session   *ts = it != _sessions.end() ? it->second.session.get() : nullptr;
+                        if (!ts)
+                            return;
+                        if (!paths.isEmpty())
+                            ts->uploadFiles(conv, paths, text);
+                        else
+                            ts->sendMessage(conv, text);
+                    },
+                    [this](const QString &err) { showNetworkError(err); }
+                );
+            };
+            std::vector<File> files = dlg->files();
             if (files.empty()) {
-                ts->sendMessage(target, full);
+                deliver(full, {});
                 return;
             }
             // The files go along as uploads of their own bytes, fetched through
             // the workspace they live in; one that can't take uploads gets links.
-            const auto srcIt = _sessions.find(source);
-            Session   *src   = srcIt != _sessions.end() ? srcIt->second.session.get() : nullptr;
             if (!ts->capabilities().fileUpload)
                 src = nullptr;
             const int task = BackgroundTasks::instance().begin(
@@ -3822,14 +3856,8 @@ void MainWindow::forwardMessage(
             fetchForwardedFiles(
                 src,
                 files,
-                [this, task, target, full, targetKey = ts->teamId()](
-                    QStringList paths, QStringList links, QString err
-                ) {
+                [this, task, full, deliver](QStringList paths, QStringList links, QString err) {
                     BackgroundTasks::instance().end(task);
-                    const auto it = _sessions.find(targetKey);
-                    Session   *ts = it != _sessions.end() ? it->second.session.get() : nullptr;
-                    if (!ts)
-                        return;
                     if (!err.isEmpty()) {
                         qWarning() << "forward: file download failed:" << err;
                         showNetworkError(tr("Couldn't forward the file."));
@@ -3839,10 +3867,7 @@ void MainWindow::forwardMessage(
                     if (!links.isEmpty())
                         text += (text.isEmpty() ? QString() : QStringLiteral("\n")) +
                                 links.join(QLatin1Char('\n'));
-                    if (!paths.isEmpty())
-                        ts->uploadFiles(target, paths, text);
-                    else if (!text.isEmpty())
-                        ts->sendMessage(target, text);
+                    deliver(text, paths);
                 }
             );
         }

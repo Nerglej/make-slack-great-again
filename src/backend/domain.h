@@ -218,6 +218,9 @@ struct Capabilities {
                                 // starts a new one in a chosen folder (startAgentSession) instead
                                 // of browsing people, and threads are subagent runs (a reply is
                                 // relayed to the subagent by the session) and /btw branches.
+    bool openDm        = false; // openDm(): a 1:1 chat with any listed person starts on demand,
+                                // not only with those who already have one (Slack:
+                                // conversations.open, Teams: a new one-on-one chat).
     bool removePreview = false; // deleteAttachment(): strip a link preview from an OWN message
                                 // server-side, for everyone — the official client's "Remove
                                 // preview" (Slack: the internal chat.deleteAttachment, served to

@@ -4,6 +4,7 @@
 #include "session/session.h"
 #include "text/link_labels.h"
 #include "text/mrkdwn_parser.h"
+#include "text/portable_markdown.h"
 #include "ui/icon_utils.h"
 #include "ui/paint_utils.h"
 #include "ui/theme.h"
@@ -454,6 +455,39 @@ static QString messageLinkChipHtml(const SlackLinks::MessageRef &ref, const Sess
            messageLinkLabel(ref, session).toHtmlEscaped() + u"</a>"_s;
 }
 
+QString entityDisplayText(const TextEntity &e, const QString &span, const Session *session) {
+    switch (e.type) {
+    case EntityType::UserMention: {
+        // Prefer the live cache; fall back to the parser's baked text (the
+        // "<@U7|alice>" label, or "@U7" for a bare mention) when uncached.
+        const User *u = session ? session->findUser(UserId{e.data}) : nullptr;
+        return u ? (u"@"_s + u->displayLabel()) : span;
+    }
+    case EntityType::ChannelMention:
+        return resolveChannelImpl(e.data, span, session);
+    case EntityType::UsergroupMention: {
+        const Usergroup *g = session ? session->findUsergroup(e.data) : nullptr;
+        return g ? g->mentionLabel() : span;
+    }
+    case EntityType::Emoji: {
+        const auto er = resolveEmojiRich(e.data, session);
+        return er.unicode.isEmpty() ? (u":"_s + e.data + u":"_s) : er.unicode;
+    }
+    case EntityType::MessageLink:
+        // The chip's own words — a bare permalink URL says nothing about what
+        // was linked.
+        return messageLinkLabel(SlackLinks::refFromToken(e.data), session);
+    default:
+        return {};
+    }
+}
+
+QString portableMarkdown(const TextWithEntities &twe, const Session *session) {
+    return PortableMarkdown::fromText(twe, [&](const TextEntity &e) {
+        return entityDisplayText(e, twe.text.mid(e.offset, e.length), session);
+    });
+}
+
 QString notificationText(const TextWithEntities &twe, const Session *session) {
     // Walk the leaf entities that change the displayed text — mentions, channel
     // links and emoji — and substitute their resolved form into the parsed plain
@@ -467,48 +501,9 @@ QString notificationText(const TextWithEntities &twe, const Session *session) {
     };
     std::vector<Repl> repls;
     for (const auto &e : twe.entities) {
-        switch (e.type) {
-        case EntityType::UserMention: {
-            // Prefer the live cache; fall back to the parser's baked text (the
-            // "<@U7|alice>" label, or "@U7" for a bare mention) when uncached.
-            const User *u = session ? session->findUser(UserId{e.data}) : nullptr;
-            repls.push_back(
-                {e.offset,
-                 e.length,
-                 u ? (u"@"_s + u->displayLabel()) : twe.text.mid(e.offset, e.length)}
-            );
-            break;
-        }
-        case EntityType::ChannelMention:
-            repls.push_back(
-                {e.offset,
-                 e.length,
-                 resolveChannelImpl(e.data, twe.text.mid(e.offset, e.length), session)}
-            );
-            break;
-        case EntityType::UsergroupMention: {
-            const Usergroup *g = session ? session->findUsergroup(e.data) : nullptr;
-            repls.push_back(
-                {e.offset, e.length, g ? g->mentionLabel() : twe.text.mid(e.offset, e.length)}
-            );
-            break;
-        }
-        case EntityType::Emoji: {
-            const auto    er    = resolveEmojiRich(e.data, session);
-            const QString glyph = er.unicode.isEmpty() ? (u":"_s + e.data + u":"_s) : er.unicode;
-            repls.push_back({e.offset, e.length, glyph});
-            break;
-        }
-        case EntityType::MessageLink:
-            // The chip's own words — a toast showing a bare permalink URL says
-            // nothing about what was linked.
-            repls.push_back(
-                {e.offset, e.length, messageLinkLabel(SlackLinks::refFromToken(e.data), session)}
-            );
-            break;
-        default:
-            break;
-        }
+        QString text = entityDisplayText(e, twe.text.mid(e.offset, e.length), session);
+        if (!text.isNull())
+            repls.push_back({e.offset, e.length, std::move(text)});
     }
     if (repls.empty())
         return twe.text;

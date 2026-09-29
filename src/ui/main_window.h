@@ -397,7 +397,7 @@ private:
     WelcomeWidget          *_welcomeTips     = nullptr;
     ThreadPanel            *_threadPanel     = nullptr;
     // The open "Forward message" dialog; dropSession closes it if it holds the
-    // session going away (a Claude Code forward lists every workspace).
+    // session going away (a forward lists every workspace).
     QPointer<ForwardDialog> _forwardDialog;
     ConvTabsWidget         *_convTabs     = nullptr;
     HuddleBanner           *_huddleBanner = nullptr;

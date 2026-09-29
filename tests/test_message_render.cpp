@@ -1363,6 +1363,26 @@ TEST_CASE("notificationText leaves unknown custom emoji as a code", "[render][no
     CHECK(out.contains(":no-lunch:"));
 }
 
+// ── portableMarkdown (cross-workspace forward body) ───────────────────────────
+
+TEST_CASE("portableMarkdown resolves leaves against the source session", "[render][portable]") {
+    auto         *session = renderSession({{"partyparrot", "https://emoji.example/pp.gif"}});
+    const QString out     = MsgRender::portableMarkdown(
+        MrkdwnParser::parse(
+            "*hey* <@U7> <!subteam^S0ABC> in <#C1>: :rocket: :partyparrot: <!here> "
+            "<https://t.slack.com/archives/C1/p1700000000000100>"
+        ),
+        session
+    );
+    CHECK(
+        out == QString::fromUtf8(
+                   "**hey** @Alice @eng-oncall in #general: 🚀 :partyparrot: @here "
+                   "[#general](https://t.slack.com/archives/C1/p1700000000000100)"
+               )
+    );
+    delete session;
+}
+
 // ── notificationPreview (whole-message toast body) ────────────────────────────
 
 TEST_CASE("notificationPreview prefers the message text", "[render][notif]") {

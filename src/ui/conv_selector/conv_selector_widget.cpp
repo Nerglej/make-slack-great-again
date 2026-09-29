@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026  Vladimir Osipov
 #include "conv_selector_widget.h"
+#include "backend/backend.h"
 #include "session/session.h"
 #include "ui/conv_list/named_conversation.h"
 #include "ui/popup_placement.h"
@@ -19,7 +20,9 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QStringList>
+#include <QSet>
 #include <QVBoxLayout>
+#include <algorithm>
 
 using namespace Qt::StringLiterals;
 
@@ -219,7 +222,7 @@ void ConvSelectorWidget::rebuildList(const QString &filter) {
     if (!_dropList)
         return;
     _dropList->clear();
-    _listIds.clear();
+    _listTargets.clear();
     if (!_session)
         return;
 
@@ -234,6 +237,13 @@ void ConvSelectorWidget::rebuildList(const QString &filter) {
         scope = Scope::People;
         query = query.mid(1);
     }
+    const auto matches = [&query](const QString &s) {
+        return query.isEmpty() || s.contains(query, Qt::CaseInsensitive);
+    };
+    auto add = [this](const QString &label, ChatTarget target) {
+        _dropList->addItem(label);
+        _listTargets.push_back(std::move(target));
+    };
 
     // Lowercased username → user, for resolving group-DM members the API names
     // only by username (built once; the user list is stable during this call).
@@ -241,7 +251,11 @@ void ConvSelectorWidget::rebuildList(const QString &filter) {
     for (const auto &u : _session->currentUsers())
         userByName.insert(u.name.toLower(), &u);
 
+    // People a DM is already listed with: that row stands for them.
+    QSet<QString> withDm;
     for (const auto &conv : _session->currentConversations()) {
+        if (conv.kind == ConvKind::Im && conv.dmUser)
+            withDm.insert(conv.dmUser->value);
         const bool isChannel =
             conv.kind == ConvKind::PublicChannel || conv.kind == ConvKind::PrivateChannel;
         const bool isDm = conv.kind == ConvKind::Im || conv.kind == ConvKind::Mpim;
@@ -285,11 +299,53 @@ void ConvSelectorWidget::rebuildList(const QString &filter) {
             label = u"#"_s + conv.name;
         }
         // Match the bare name (without the leading '#') so "#gen" finds "#general".
-        const QString hay = label.startsWith('#') ? label.mid(1) : label;
-        if (!query.isEmpty() && !hay.contains(query, Qt::CaseInsensitive))
+        if (!matches(label.startsWith('#') ? label.mid(1) : label))
             continue;
-        _dropList->addItem(label);
-        _listIds.push_back(conv.id);
+        add(label, ChatTarget::conversation(conv.id));
+    }
+    if (scope == Scope::Channels) {
+        positionDropdown();
+        return;
+    }
+
+    // An agent workspace's teammates: writing to one starts a session with it.
+    if (_session->capabilities().agentSessions)
+        for (const AgentRole &role : _session->backend()->agentRoles())
+            if (!role.id.isEmpty() && matches(role.name))
+                add(role.name, ChatTarget::teammate(role.id));
+
+    // Everyone else a DM can start with, by name — the same people Browse
+    // offers (no Connect "strangers": conversations.open rejects them), minus
+    // bots and ourselves. Bounded: a big roster matches thousands on one letter.
+    if (_session->capabilities().openDm) {
+        struct Person {
+            const User *user;
+            QString     name;
+            bool        prefix;
+        };
+        std::vector<Person> people;
+        const UserId        me = _session->meUserId();
+        for (const auto &u : _session->currentUsers()) {
+            if (u.isDeactivated || u.isStranger || u.isBot || u.id.value.isEmpty() || u.id == me ||
+                withDm.contains(u.id.value))
+                continue;
+            const QString name = u.displayName.isEmpty() ? u.name : u.displayName;
+            if (name.isEmpty() || !(matches(name) || matches(u.name)))
+                continue;
+            const bool prefix = query.isEmpty() || name.startsWith(query, Qt::CaseInsensitive) ||
+                                u.name.startsWith(query, Qt::CaseInsensitive);
+            people.push_back({&u, name, prefix});
+        }
+        // Names that start with the query first, then alphabetically.
+        const auto before = [](const Person &a, const Person &b) {
+            if (a.prefix != b.prefix)
+                return a.prefix;
+            return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+        };
+        const auto shown = std::min<std::size_t>(people.size(), kMaxPeopleRows);
+        std::partial_sort(people.begin(), people.begin() + shown, people.end(), before);
+        for (std::size_t i = 0; i < shown; ++i)
+            add(people[i].name, ChatTarget::person(people[i].user->id));
     }
     positionDropdown();
 }
@@ -298,27 +354,27 @@ void ConvSelectorWidget::setSession(Session *session) {
     if (session == _session)
         return;
     _session = session;
-    if (!_selectedId.value.isEmpty())
+    if (!_selected.isEmpty())
         clearSelection();
     else
         rebuildList(_searchEdit->text());
 }
 
 void ConvSelectorWidget::selectRow(int row) {
-    if (row < 0 || row >= (int)_listIds.size())
+    if (row < 0 || row >= (int)_listTargets.size())
         return;
-    _selectedId   = _listIds[row];
+    _selected     = _listTargets[row];
     _selectedName = _dropList->item(row)->text();
     closeDropdown();
     showChip();
-    emit convSelected(_selectedId, _selectedName);
+    emit targetSelected(_selected, _selectedName);
 }
 
 void ConvSelectorWidget::clearSelection() {
-    _selectedId   = {};
+    _selected     = {};
     _selectedName = {};
     showSearch();
-    emit convSelected({}, {});
+    emit targetSelected({}, {});
 }
 
 void ConvSelectorWidget::showChip() {

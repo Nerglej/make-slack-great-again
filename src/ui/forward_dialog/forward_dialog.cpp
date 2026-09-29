@@ -9,6 +9,8 @@
 #include "ui/styled_button/styled_button.h"
 #include "ui/theme.h"
 #include "session/session.h"
+#include "backend/backend.h"
+#include "util/recent_folders.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -22,6 +24,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTextBrowser>
 #include <QUrl>
@@ -228,12 +231,13 @@ ForwardDialog::ForwardDialog(
     // [Copy Link]  →stretch→  [Cancel] [Forward];  Cancel → reject() wired by base.
     addButtonRow(_fwdBtn, _cancelBtn, _copyLinkBtn);
 
+    // Any pick can take the message: a chat not started yet starts on the way.
     connect(
         _selector,
-        &ConvSelectorWidget::convSelected,
+        &ConvSelectorWidget::targetSelected,
         this,
-        [this](const ConversationId &id, const QString &) {
-            _fwdBtn->setEnabled(!id.value.isEmpty());
+        [this](const ChatTarget &target, const QString &) {
+            _fwdBtn->setEnabled(!target.isEmpty());
         }
     );
 
@@ -296,7 +300,7 @@ void ForwardDialog::setTargetSession(Session *session) {
         return;
     _target = session;
     // Clears the picked conversation (it belongs to the old workspace), which
-    // disables Forward through convSelected until one is picked here.
+    // disables Forward through targetSelected until one is picked here.
     _selector->setSession(session);
     _composer->setSession(session);
 }
@@ -307,12 +311,18 @@ bool ForwardDialog::usesSession(const Session *session) const {
            });
 }
 
-ConversationId ForwardDialog::targetConv() const {
-    return _selector->selectedConv();
+const ChatTarget &ForwardDialog::target() const {
+    return _selector->selectedTarget();
 }
 
 QString ForwardDialog::comment() const {
     return _composer->currentText().trimmed();
+}
+
+QString forwardedText(const Message &msg, const Session *source, bool verbatim) {
+    if (verbatim)
+        return msg.rawText.isEmpty() ? msg.text.text : msg.rawText;
+    return MsgRender::portableMarkdown(msg.text, source);
 }
 
 void fetchForwardedFiles(
@@ -395,4 +405,61 @@ void fetchForwardedFiles(
         );
     }
     finish();
+}
+
+void openForwardTarget(
+    Session                            *session,
+    const ChatTarget                   &target,
+    std::function<void(ConversationId)> onSuccess,
+    std::function<void(QString)>        onError
+) {
+    if (!session || target.isEmpty()) {
+        onError(ForwardDialog::tr("Couldn't open the chat."));
+        return;
+    }
+    switch (target.kind) {
+    case ChatTarget::Kind::None:
+        break;
+    case ChatTarget::Kind::Conversation:
+        onSuccess(target.conv);
+        return;
+    case ChatTarget::Kind::Person: {
+        // Without Capabilities::openDm the backend's openDm never answers.
+        const bool known =
+            std::ranges::any_of(session->currentConversations(), [&](const Conversation &c) {
+                return c.kind == ConvKind::Im && c.dmUser == target.user;
+            });
+        if (!known && !session->capabilities().openDm)
+            break;
+        session->openDm(target.user, std::move(onSuccess), [onError](const QString &err) {
+            qWarning() << "forward: couldn't open the DM:" << err;
+            onError(ForwardDialog::tr("Couldn't start the chat."));
+        });
+        return;
+    }
+    case ChatTarget::Kind::Teammate: {
+        if (!session->capabilities().agentSessions)
+            break;
+        QSettings     s(u"msga"_s, u"msga"_s);
+        const QString dir = RecentFolders::teammateFolder(s, target.role);
+        if (const QString blocker = session->backend()->agentSessionBlocker(dir);
+            !blocker.isEmpty()) {
+            onError(blocker);
+            return;
+        }
+        session->startAgentSession(
+            dir,
+            false,
+            target.role,
+            [dir, onSuccess = std::move(onSuccess)](ConversationId id) {
+                QSettings s(u"msga"_s, u"msga"_s);
+                RecentFolders::noteSessionStarted(s, dir);
+                onSuccess(std::move(id));
+            },
+            std::move(onError)
+        );
+        return;
+    }
+    }
+    onError(ForwardDialog::tr("Couldn't open the chat."));
 }

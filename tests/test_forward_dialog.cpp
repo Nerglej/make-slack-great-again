@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextBrowser>
@@ -31,6 +32,9 @@ MSGA_TEST_MAIN(argc, argv) {
     QApplication app(argc, argv);
     app.setApplicationName("msga-test-forward-dialog");
     app.setOrganizationName("msga-test");
+    // Teammate folders live in QSettings("msga", "msga"): keep them off the real one.
+    QTemporaryDir settingsDir;
+    QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, settingsDir.path());
     return msga_test::runCatch(argc, argv);
 }
 
@@ -165,18 +169,342 @@ TEST_CASE("forward picks conversations from the chosen workspace", "[forward_dia
 
     // Pick a conversation, then switch workspace: the pick goes with it.
     emit convSearch(dialog)->returnPressed();
-    CHECK(dialog.targetConv() == ConversationId{"C_agents"});
+    CHECK(dialog.target() == ChatTarget::conversation(ConversationId{"C_agents"}));
     CHECK(forwardButton(dialog)->isEnabled());
 
     picker->setCurrentIndex(0);
     CHECK(dialog.targetSession() == team.get());
-    CHECK(dialog.targetConv().value.isEmpty());
+    CHECK(dialog.target().isEmpty());
     CHECK_FALSE(forwardButton(dialog)->isEnabled());
     CHECK(offeredConversations(dialog, "e") == QStringList{"#general"});
 
     emit convSearch(dialog)->returnPressed();
-    CHECK(dialog.targetConv() == ConversationId{"C_general"});
+    CHECK(dialog.target() == ChatTarget::conversation(ConversationId{"C_general"}));
     CHECK(forwardButton(dialog)->isEnabled());
+}
+
+TEST_CASE(
+    "a chat message offers every workspace and goes portable", "[forward_dialog][workspaces]"
+) {
+    // A Slack-shaped source among three workspaces, listed in the middle.
+    auto    other = sessionWithChannel("T_FWD_OTHER", "random");
+    auto    slack = sessionWithChannel("T_FWD_SLACK", "general");
+    auto    mail  = sessionWithChannel("T_FWD_MAIL", "inbox");
+    Message message;
+    message.rawText = "*ship* it <!here>, see <#C_general> &amp; <https://a.example|the notes>";
+    message.text    = MrkdwnParser::parse(message.rawText);
+
+    ForwardDialog dialog(
+        message, slack.get(), {{other.get(), "Other"}, {slack.get(), "Slack"}, {mail.get(), "Mail"}}
+    );
+    auto *picker = dialog.findChild<Dropdown *>();
+    REQUIRE(picker);
+    CHECK(picker->currentText() == "Slack");
+    CHECK(dialog.targetSession() == slack.get());
+    for (auto *s : {other.get(), slack.get(), mail.get()})
+        CHECK(dialog.usesSession(s));
+
+    picker->setCurrentIndex(0);
+    CHECK(picker->currentText() == "Other");
+    CHECK(dialog.targetSession() == other.get());
+    picker->setCurrentIndex(2);
+    CHECK(picker->currentText() == "Mail");
+    CHECK(dialog.targetSession() == mail.get());
+    CHECK(offeredConversations(dialog, "i") == QStringList{"#inbox"});
+
+    // Its own workspace gets the mrkdwn as is; another one the words it reads as.
+    CHECK(forwardedText(message, slack.get(), /*verbatim=*/true) == message.rawText);
+    CHECK(
+        forwardedText(message, slack.get(), /*verbatim=*/false) ==
+        "**ship** it @here, see #general & [the notes](https://a.example)"
+    );
+}
+
+TEST_CASE("a portable rawText forwards verbatim", "[forward_dialog][workspaces]") {
+    // Claude Code: plain markdown, nothing workspace-local — sent bit for bit.
+    Message message;
+    message.rawText = "**Done.** Changed `a.cpp`:\n- one\n- two\n\n```cpp\nint x;\n```";
+    message.text    = MrkdwnParser::parse(message.rawText);
+    CHECK(forwardedText(message, nullptr, /*verbatim=*/true) == message.rawText);
+    // No rawText (email): the plain text.
+    Message mail;
+    mail.text.text = "Hi,\nsee below";
+    CHECK(forwardedText(mail, nullptr, /*verbatim=*/true) == mail.text.text);
+    CHECK(forwardedText(mail, nullptr, /*verbatim=*/false) == mail.text.text);
+}
+
+// ── Chats that start on the way ─────────────────────────────────────────────
+
+namespace {
+
+User person(const QString &id, const QString &name, const QString &display) {
+    User u;
+    u.id          = UserId{id};
+    u.name        = name;
+    u.displayName = display;
+    return u;
+}
+
+// A workspace that opens DMs and starts sessions on request, and says so.
+struct ChatBackend : msga_test::StubBackendBase {
+    QStringList dmsOpened;
+    QStringList sessionsStarted; // "role in dir"
+    QString     blocker;
+    QString     openError;
+
+    void openDm(
+        UserId user, std::function<void(ConversationId)> ok, std::function<void(QString)> err
+    ) override {
+        dmsOpened << user.value;
+        if (!openError.isEmpty())
+            err(openError);
+        else
+            ok(ConversationId{"D_" + user.value});
+    }
+    void startAgentSession(
+        const QString &dir,
+        bool,
+        const QString                      &role,
+        std::function<void(ConversationId)> ok,
+        std::function<void(QString)>
+    ) override {
+        sessionsStarted << role + " in " + dir;
+        ok(ConversationId{"S_" + role});
+    }
+    QString                agentSessionBlocker(const QString &) override { return blocker; }
+    std::vector<AgentRole> agentRoles() override {
+        AgentRole engineer;
+        engineer.id   = "engineer";
+        engineer.name = "Engineer";
+        engineer.user = UserId{"R_engineer"};
+        AgentRole designer;
+        designer.id   = "designer";
+        designer.name = "Designer";
+        designer.user = UserId{"R_designer"};
+        return {engineer, designer};
+    }
+};
+
+// A Slack-shaped team: #general, a DM with Alice, and a roster of whom only
+// Bob (and Alice, through her DM) can be written to.
+std::unique_ptr<Session> peopleSession(const QString &teamId, ChatBackend **out, bool openDm) {
+    wipeTeamCache(teamId);
+    auto *stub        = new ChatBackend;
+    stub->caps.openDm = openDm;
+    stub->_meId       = UserId{"U_me"};
+    Conversation general;
+    general.id   = ConversationId{"C_general"};
+    general.name = "general";
+    general.kind = ConvKind::PublicChannel;
+    Conversation alice;
+    alice.id     = ConversationId{"D_alice"};
+    alice.name   = "U_alice";
+    alice.kind   = ConvKind::Im;
+    alice.dmUser = UserId{"U_alice"};
+    stub->_convs = std::vector<Conversation>{general, alice};
+
+    User stranger       = person("U_carol", "carol", "Carol");
+    stranger.isStranger = true;
+    User gone           = person("U_dave", "dave", "Dave");
+    gone.isDeactivated  = true;
+    User bot            = person("U_bot", "buildbot", "Buildbot");
+    bot.isBot           = true;
+    stub->_users        = std::vector<User>{
+        person("U_me", "me", "Me Myself"),
+        person("U_alice", "alice", "Alice"),
+        person("U_bob", "bobby", "Bob"),
+        stranger,
+        gone,
+        bot,
+    };
+    auto session = std::make_unique<Session>(std::unique_ptr<Backend>(stub), teamId);
+    session->start();
+    if (out)
+        *out = stub;
+    return session;
+}
+
+std::unique_ptr<Session> agentSession(const QString &teamId, ChatBackend **out) {
+    wipeTeamCache(teamId);
+    auto *stub               = new ChatBackend;
+    stub->caps.agentSessions = true;
+    Conversation run;
+    run.id       = ConversationId{"S_old"};
+    run.name     = "Fix the build";
+    run.kind     = ConvKind::Im;
+    run.dmUser   = UserId{"U_run"};
+    stub->_convs = std::vector<Conversation>{run};
+    // The teammates are listed with the users too; they are offered as teammates.
+    stub->_users = std::vector<User>{
+        person("U_run", "run", "Fix the build"),
+        person("R_engineer", "engineer", "Engineer"),
+    };
+    auto session = std::make_unique<Session>(std::unique_ptr<Backend>(stub), teamId);
+    session->start();
+    if (out)
+        *out = stub;
+    return session;
+}
+
+} // namespace
+
+TEST_CASE("forward offers people with no DM yet", "[forward_dialog][targets]") {
+    auto          team = peopleSession("T_FWD_PEOPLE", nullptr, /*openDm=*/true);
+    Message       message;
+    ForwardDialog dialog(message, team.get());
+
+    // Conversations first, then everyone else one can write to: no strangers,
+    // no deactivated people, no bots, not ourselves, no second row for Alice.
+    CHECK(offeredConversations(dialog, "@") == QStringList{"Alice", "Bob"});
+    CHECK(offeredConversations(dialog, "") == QStringList{"#general", "Alice", "Bob"});
+    CHECK(offeredConversations(dialog, "#") == QStringList{"#general"});
+    CHECK(offeredConversations(dialog, "b") == QStringList{"Bob"});
+    // Found by username too, listed by name.
+    CHECK(offeredConversations(dialog, "@bobby") == QStringList{"Bob"});
+
+    emit convSearch(dialog)->returnPressed();
+    CHECK(dialog.target() == ChatTarget::person(UserId{"U_bob"}));
+    REQUIRE(forwardButton(dialog));
+    CHECK(forwardButton(dialog)->isEnabled());
+}
+
+TEST_CASE("forward offers no new DMs where none can start", "[forward_dialog][targets]") {
+    // Email, Claude Code: a DM exists or it doesn't.
+    auto          mail = peopleSession("T_FWD_NODM", nullptr, /*openDm=*/false);
+    Message       message;
+    ForwardDialog dialog(message, mail.get());
+    CHECK(offeredConversations(dialog, "@") == QStringList{"Alice"});
+    CHECK(offeredConversations(dialog, "b").isEmpty());
+}
+
+TEST_CASE("a people list stays bounded", "[forward_dialog][targets]") {
+    wipeTeamCache("T_FWD_ROSTER");
+    auto *stub        = new ChatBackend;
+    stub->caps.openDm = true;
+    std::vector<User> roster;
+    for (int i = 0; i < 500; ++i)
+        roster.push_back(person(
+            QString("U%1").arg(i),
+            QString("user%1").arg(i),
+            QString("User %1").arg(i, 3, 10, QChar('0'))
+        ));
+    stub->_users = roster;
+    Session session(std::unique_ptr<Backend>(stub), "T_FWD_ROSTER");
+    session.start();
+    Message           message;
+    ForwardDialog     dialog(message, &session);
+    const QStringList offered = offeredConversations(dialog, "user");
+    CHECK(offered.size() == ConvSelectorWidget::kMaxPeopleRows);
+    CHECK(offered.front() == "User 000");
+}
+
+TEST_CASE("forward offers an agent workspace's teammates", "[forward_dialog][targets]") {
+    auto          agents = agentSession("T_FWD_AGENTS", nullptr);
+    auto          team   = peopleSession("T_FWD_HUMANS", nullptr, /*openDm=*/true);
+    Message       message;
+    ForwardDialog dialog(message, team.get(), {{team.get(), "Team"}, {agents.get(), "Agents"}});
+    auto         *picker = dialog.findChild<Dropdown *>();
+    REQUIRE(picker);
+
+    // Pick a person, then switch workspace: the pick goes with it.
+    offeredConversations(dialog, "bob");
+    emit convSearch(dialog)->returnPressed();
+    CHECK(dialog.target() == ChatTarget::person(UserId{"U_bob"}));
+    picker->setCurrentIndex(1);
+    CHECK(dialog.target().isEmpty());
+    CHECK_FALSE(forwardButton(dialog)->isEnabled());
+
+    // Sessions first, then the teammates (not their user rows).
+    CHECK(
+        offeredConversations(dialog, "@") == QStringList{"Fix the build", "Engineer", "Designer"}
+    );
+    CHECK(offeredConversations(dialog, "") == QStringList{"Fix the build", "Engineer", "Designer"});
+    CHECK(offeredConversations(dialog, "#").isEmpty());
+    CHECK(offeredConversations(dialog, "eng") == QStringList{"Engineer"});
+    emit convSearch(dialog)->returnPressed();
+    CHECK(dialog.target() == ChatTarget::teammate("engineer"));
+    CHECK(forwardButton(dialog)->isEnabled());
+}
+
+TEST_CASE("a forward target opens the chat it stands for", "[forward_dialog][targets]") {
+    ChatBackend *stub = nullptr;
+    auto         team = peopleSession("T_FWD_OPEN", &stub, /*openDm=*/true);
+    QStringList  opened, errors;
+    const auto   open = [&](Session *s, const ChatTarget &t) {
+        openForwardTarget(
+            s, t, [&](ConversationId id) { opened << id.value; }, [&](QString e) { errors << e; }
+        );
+    };
+
+    SECTION("a conversation is already there") {
+        open(team.get(), ChatTarget::conversation(ConversationId{"C_general"}));
+        CHECK(opened == QStringList{"C_general"});
+        CHECK(stub->dmsOpened.isEmpty());
+    }
+    SECTION("a person gets a DM") {
+        open(team.get(), ChatTarget::person(UserId{"U_bob"}));
+        CHECK(opened == QStringList{"D_U_bob"});
+        CHECK(stub->dmsOpened == QStringList{"U_bob"});
+        CHECK(errors.isEmpty());
+    }
+    SECTION("a DM that won't open says so") {
+        stub->openError = "user_not_found";
+        open(team.get(), ChatTarget::person(UserId{"U_bob"}));
+        CHECK(opened.isEmpty());
+        CHECK(errors.size() == 1);
+    }
+    SECTION("nothing opens where no DM can start") {
+        ChatBackend *mailStub = nullptr;
+        auto         mail     = peopleSession("T_FWD_OPEN_MAIL", &mailStub, /*openDm=*/false);
+        open(mail.get(), ChatTarget::person(UserId{"U_bob"}));
+        CHECK(opened.isEmpty());
+        CHECK(errors.size() == 1);
+        CHECK(mailStub->dmsOpened.isEmpty());
+        // An existing one still does.
+        open(mail.get(), ChatTarget::person(UserId{"U_alice"}));
+        CHECK(opened == QStringList{"D_alice"});
+    }
+}
+
+TEST_CASE("a teammate target starts a session in its folder", "[forward_dialog][targets]") {
+    ChatBackend  *stub   = nullptr;
+    auto          agents = agentSession("T_FWD_START", &stub);
+    QTemporaryDir any, own;
+    {
+        QSettings s("msga", "msga");
+        s.clear();
+        s.setValue("claudeCode/lastDir", any.path());
+        s.setValue("claudeCode/lastDir/engineer", own.path());
+    }
+    QStringList opened, errors;
+    const auto  open = [&](const ChatTarget &t) {
+        openForwardTarget(
+            agents.get(),
+            t,
+            [&](ConversationId id) { opened << id.value; },
+            [&](QString e) { errors << e; }
+        );
+    };
+
+    SECTION("its own folder, else the last one") {
+        open(ChatTarget::teammate("designer"));
+        open(ChatTarget::teammate("engineer"));
+        CHECK(opened == QStringList{"S_designer", "S_engineer"});
+        CHECK(
+            stub->sessionsStarted ==
+            QStringList{"designer in " + any.path(), "engineer in " + own.path()}
+        );
+        // The folder a session last started in is the next default for all.
+        open(ChatTarget::teammate("designer"));
+        CHECK(stub->sessionsStarted.last() == "designer in " + own.path());
+    }
+    SECTION("a folder no session can start in") {
+        stub->blocker = "Not a folder Claude Code can work in.";
+        open(ChatTarget::teammate("engineer"));
+        CHECK(opened.isEmpty());
+        CHECK(errors == QStringList{stub->blocker});
+        CHECK(stub->sessionsStarted.isEmpty());
+    }
 }
 
 // ── Files ───────────────────────────────────────────────────────────────────

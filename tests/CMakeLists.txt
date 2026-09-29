@@ -164,6 +164,7 @@ set(MSGA_TEST_SUPPORT_SRCS
     ${CMAKE_SOURCE_DIR}/src/text/link_labels.cpp
     ${CMAKE_SOURCE_DIR}/src/text/markdown_compose.cpp
     ${CMAKE_SOURCE_DIR}/src/text/mrkdwn_parser.cpp
+    ${CMAKE_SOURCE_DIR}/src/text/portable_markdown.cpp
 
     ${CMAKE_SOURCE_DIR}/src/ui/app_dialog/app_dialog.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/browse_channels_dialog/browse_channels_dialog.cpp
@@ -386,6 +387,9 @@ add_msga_test(test_markdown_compose)
 
 # Shortened link labels ("host/…/…") — detection, display expansion, copy text.
 add_msga_test(test_link_labels)
+
+# Parsed text → workspace-portable composer markdown (cross-workspace forwards).
+add_msga_test(test_portable_markdown)
 
 # Slack deep-link parsing (header-only).
 add_msga_test(test_slack_links)

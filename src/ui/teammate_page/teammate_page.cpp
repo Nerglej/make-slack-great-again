@@ -39,10 +39,6 @@ QString homeRelative(const QString &path) {
     return QDir::toNativeSeparators(path);
 }
 
-QString folderKey(const QString &role) {
-    return QStringLiteral("claudeCode/lastDir/") + role;
-}
-
 } // namespace
 
 TeammatePage::TeammatePage(ImageCache *imgCache, QWidget *parent)
@@ -159,9 +155,8 @@ void TeammatePage::open(const AgentRole &mate) {
     _description->setText(mate.description);
     _description->setVisible(!mate.description.isEmpty());
     updateAvatar();
-    QSettings     s(u"msga"_s, u"msga"_s);
-    const QString any = s.value("claudeCode/lastDir", QDir::homePath()).toString();
-    setFolder(s.value(folderKey(mate.id), any).toString());
+    QSettings s(u"msga"_s, u"msga"_s);
+    setFolder(RecentFolders::teammateFolder(s, mate.id));
     rebuild();
 }
 
@@ -312,7 +307,7 @@ void TeammatePage::pickFolder(const QString &dir) {
     if (_mate.id.isEmpty())
         return;
     QSettings s(u"msga"_s, u"msga"_s);
-    s.setValue(folderKey(_mate.id), dir);
+    s.setValue(RecentFolders::teammateFolderKey(_mate.id), dir);
     RecentFolders::bump(s, RecentFolders::kClaudeCodeKey, dir);
     setFolder(dir);
 }

@@ -94,4 +94,18 @@ void bump(QSettings &s, const QString &key, const QString &path) {
     save(s, key, bumped(load(s, key), path, QDateTime::currentSecsSinceEpoch()));
 }
 
+QString teammateFolderKey(const QString &role) {
+    return QStringLiteral("claudeCode/lastDir/") + role;
+}
+
+QString teammateFolder(QSettings &s, const QString &role) {
+    const QString any = s.value(QStringLiteral("claudeCode/lastDir"), QDir::homePath()).toString();
+    return s.value(teammateFolderKey(role), any).toString();
+}
+
+void noteSessionStarted(QSettings &s, const QString &dir) {
+    s.setValue(QStringLiteral("claudeCode/lastDir"), dir);
+    bump(s, QString::fromLatin1(kClaudeCodeKey), dir);
+}
+
 } // namespace RecentFolders

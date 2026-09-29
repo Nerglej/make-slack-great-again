@@ -123,6 +123,17 @@ QString messageLinkLabel(const SlackLinks::MessageRef &ref, const Session *sessi
 bool hasMessageLink(const TextWithEntities &twe);
 bool hasMessageLink(const Message &msg);
 
+// The words a leaf entity reads as, resolved against `session`: "@Name" for a
+// user mention, the usergroup's label, "#channel", a built-in emoji's glyph (a
+// custom one stays ":name:") and a message link's chip label. `span` is the
+// entity's parsed text, the fallback when the cache doesn't know the id. Null
+// for every other entity type (their text is the span itself).
+QString entityDisplayText(const TextEntity &e, const QString &span, const Session *session);
+
+// The text as composer markdown that reads the same in another workspace:
+// PortableMarkdown::fromText with the leaf entities resolved as above.
+QString portableMarkdown(const TextWithEntities &twe, const Session *session);
+
 // Plain-text rendering for OS notifications / previews: resolves user and
 // channel mentions to their display names and built-in emoji codes to their
 // Unicode glyph (custom emoji, which can't render in a text-only notification,
