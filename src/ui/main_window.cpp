@@ -3814,9 +3814,10 @@ void MainWindow::forwardMessage(
             const QString full    = comment.isEmpty() ? fwd
                                     : fwd.isEmpty()   ? comment
                                                       : (comment + u"\n"_s + fwd);
-            // Into the conversation the pick stands for — a DM or a teammate's
-            // session may start first — once the files (if any) are here. The
-            // target session is looked up again: it may be gone by then.
+            // Into the conversation the pick stands for — a DM may start first —
+            // once the files (if any) are here; a teammate's page opens with it
+            // all in the composer instead, left to send. The target session is
+            // looked up again: it may be gone by then.
             auto          deliver = [this, target, targetKey = ts->teamId()](
                                         const QString &text, const QStringList &paths
                                     ) {
@@ -3824,6 +3825,10 @@ void MainWindow::forwardMessage(
                 Session   *ts = it != _sessions.end() ? it->second.session.get() : nullptr;
                 if (!ts || (text.isEmpty() && paths.isEmpty()))
                     return;
+                if (target.kind == ChatTarget::Kind::Teammate) {
+                    prefillTeammate(targetKey, target.role, text, paths);
+                    return;
+                }
                 openForwardTarget(
                     ts,
                     target,
@@ -4108,6 +4113,28 @@ void MainWindow::applyTeammateComposer() {
     _composer->setPlaceholderText(
         blocker.isEmpty() ? tr("Message %1").arg(_teammatePage->teammate().name) : blocker
     );
+}
+
+void MainWindow::prefillTeammate(
+    QString teamId, const QString &role, const QString &text, const QStringList &filePaths
+) {
+    if (!_sessions.count(teamId))
+        return; // logged out meanwhile
+    switchToWorkspace(teamId);
+    if (_activeTeamId != teamId)
+        return;
+    openTeammateView(role);
+    if (!teammateViewOpen() || _teammatePage->teammate().id != role)
+        return; // off the team meanwhile
+    ComposerDraft draft = _composer->takeDraft();
+    draft.text          = draft.text.isEmpty() ? text
+                          : text.isEmpty()     ? draft.text
+                                               : (draft.text + u"\n"_s + text);
+    for (const QString &path : filePaths)
+        if (!draft.files.contains(path))
+            draft.files << path;
+    _composer->restoreDraft(draft);
+    focusComposerIfActive();
 }
 
 void MainWindow::startSessionWithTeammate(const QString &text, const QStringList &filePaths) {

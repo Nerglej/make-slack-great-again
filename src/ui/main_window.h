@@ -142,6 +142,12 @@ private:
     void     removeTeammate(const QString &id);
     // The text (and any attached files) is the new session's first message.
     void     startSessionWithTeammate(const QString &text, const QStringList &filePaths = {});
+    // A forward to a teammate: its page in `teamId`, the composer holding the
+    // text and files (after any draft already there) — not sent, so the folder
+    // can still change and more be written first.
+    void     prefillTeammate(
+        QString teamId, const QString &role, const QString &text, const QStringList &filePaths
+    );
     // Where the teammate page's unsent text is kept among the drafts.
     static ConversationId teammateDraftConv(const QString &role);
     // Slack connect entry: opens the session-import dialog (the default), with a
