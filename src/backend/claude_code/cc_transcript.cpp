@@ -307,6 +307,16 @@ void TranscriptParser::handleLine(const QByteArray &line) {
             _roleName = mark.name;
             return;
         }
+        // The subagent types offered: the whole list first, then what changed.
+        if (a.value(QLatin1String("type")).toString() == QLatin1String("agent_listing_delta")) {
+            if (a.value(QLatin1String("isInitial")).toBool())
+                _agentTypes.clear();
+            for (const QJsonValue &v : a.value(QLatin1String("addedTypes")).toArray())
+                _agentTypes.insert(v.toString());
+            for (const QJsonValue &v : a.value(QLatin1String("removedTypes")).toArray())
+                _agentTypes.remove(v.toString());
+            return;
+        }
         if (a.value(QLatin1String("type")).toString() == QLatin1String("queued_command"))
             noteTaskNotification(a.value(QLatin1String("prompt")).toString(), micros);
         if (a.value(QLatin1String("type")).toString() == QLatin1String("queued_command") &&

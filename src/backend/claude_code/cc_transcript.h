@@ -111,13 +111,17 @@ public:
 
     // As of the newest record that says: the Claude Code version that wrote
     // it, the model that answered, the permission mode of the last prompt.
-    const QString &version() const { return _version; }
-    const QString &model() const { return _model; }
-    const QString &permissionMode() const { return _permissionMode; }
+    const QString       &version() const { return _version; }
+    const QString       &model() const { return _model; }
+    const QString       &permissionMode() const { return _permissionMode; }
     // The team role the session was started with (cc_roles), read from the
     // system prompt Claude Code recorded; "" = none of ours (a Generalist).
-    const QString &role() const { return _role; }
-    const QString &roleName() const { return _roleName; } // as the prompt names it
+    const QString       &role() const { return _role; }
+    const QString       &roleName() const { return _roleName; } // as the prompt names it
+    // The subagent types the session offers, as Claude Code last listed them
+    // ("agent_listing_delta" records): a session started without --agents has
+    // none of the team's (see teammateNote).
+    const QSet<QString> &agentTypes() const { return _agentTypes; }
 
 private:
     void handleLine(const QByteArray &line);
@@ -154,6 +158,7 @@ private:
     QString       _permissionMode;
     QString       _role;
     QString       _roleName;
+    QSet<QString> _agentTypes;
     QString       _lineUuid;  // the record being read
     QSet<QString> _seenUuids; // every record read, so a copy's repeats are skipped
 };

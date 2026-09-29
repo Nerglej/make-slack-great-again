@@ -154,6 +154,27 @@ QString oneLine(const QString &s) {
     return s.simplified();
 }
 
+// Whether `prompt` names `role` as a word, in any case, maybe plural: its
+// name, English name or id ("a marketer", "Data analysts", "data-analyst").
+bool namedIn(const QString &prompt, const Role &role) {
+    static const QRegularExpression kSeparators(QStringLiteral("[\\s-]+"));
+    QStringList                     alternatives;
+    for (const QString &n : {role.name, role.promptName, role.id}) {
+        QStringList words = n.split(kSeparators, Qt::SkipEmptyParts);
+        for (QString &w : words)
+            w = QRegularExpression::escape(w);
+        if (!words.isEmpty())
+            alternatives << words.join(QStringLiteral("[\\s-]+"));
+    }
+    if (alternatives.isEmpty())
+        return false;
+    const QRegularExpression re(
+        QStringLiteral("(?<![\\w@/:.-])(?:%1)(?:e?s)?(?![\\w-])").arg(alternatives.join(u'|')),
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::UseUnicodePropertiesOption
+    );
+    return re.match(prompt).hasMatch();
+}
+
 } // namespace
 
 QString roleHeader(const QString &name, const QString &id) {
@@ -194,8 +215,11 @@ QString subagentsJson(const std::vector<Role> &roles) {
                : QString::fromUtf8(QJsonDocument(agents).toJson(QJsonDocument::Compact));
 }
 
-QString
-teammateNote(const QString &prompt, const std::function<const Role *(const QString &)> &find) {
+QString teammateNote(
+    const QString                                      &prompt,
+    const std::function<const Role *(const QString &)> &find,
+    const std::vector<Role>                            &byName
+) {
     static const QRegularExpression kMention(
         QStringLiteral("(?<![\\w@/:.-])@claude:role:([a-z0-9-]+)(?![\\w-])")
     );
@@ -225,6 +249,21 @@ teammateNote(const QString &prompt, const std::function<const Role *(const QStri
                           "prompt with its role, verbatim:\n"
                       )
                           .arg(id, name);
+        body += append + QLatin1Char('\n');
+    }
+    for (const Role &r : byName) {
+        if (seen.contains(r.id) || !namedIn(prompt, r))
+            continue;
+        const QString append = appendedPrompt(r);
+        if (append.isEmpty())
+            continue;
+        seen << r.id;
+        body += QStringLiteral(
+                    "\n%2 is the teammate @claude:role:%1. If you spawn it, use the Agent "
+                    "tool with subagent_type \"claude\" and begin the prompt with its "
+                    "role, verbatim:\n"
+        )
+                    .arg(r.id, r.promptName.isEmpty() ? r.name : r.promptName);
         body += append + QLatin1Char('\n');
     }
     if (body.isEmpty())

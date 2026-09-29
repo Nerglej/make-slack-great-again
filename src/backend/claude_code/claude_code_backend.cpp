@@ -2463,10 +2463,20 @@ void Backend::send(
     for (const auto &m : shownMessages(*target))
         micros = std::max(micros, m.date + 1);
     // How to spawn the teammates it mentions, which the session may not know
-    // as subagent types; the chat shows the message without it.
+    // as subagent types; the chat shows the message without it. Those it
+    // doesn't offer (a session started without --agents: in a terminal, or
+    // before the team were types) count when merely named, too. A session
+    // yet to start gets the team's types with it.
+    std::vector<Role> unoffered;
+    if (!target->info.sessionId.isEmpty())
+        for (const Role &r : _team.listed())
+            if (!target->parser.agentTypes().contains(r.id))
+                unoffered.push_back(r);
     if (const QString note =
             relayRoot ? QString()
-                      : teammateNote(text, [this](const QString &id) { return _team.find(id); });
+                      : teammateNote(
+                            text, [this](const QString &id) { return _team.find(id); }, unoffered
+                        );
         !note.isEmpty()) {
         if (shown.isEmpty())
             shown = text;

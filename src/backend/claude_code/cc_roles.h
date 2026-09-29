@@ -68,8 +68,14 @@ QString subagentsJson(const std::vector<Role> &roles);
 // resume, have no such subagent types, and Claude then spawns a plain
 // "claude" subagent with a self-written "Role: engineer" line. "" when
 // `prompt` mentions none that adds a prompt. `find` looks a role up by id.
-QString
-teammateNote(const QString &prompt, const std::function<const Role *(const QString &)> &find);
+// `byName` are teammates the session has no subagent types for: those are
+// noted when merely named, too ("spawn a marketer"), since nothing else tells
+// Claude they exist — a stray "our marketer said" only costs a note it ignores.
+QString teammateNote(
+    const QString                                      &prompt,
+    const std::function<const Role *(const QString &)> &find,
+    const std::vector<Role>                            &byName = {}
+);
 // `prompt` without the note, as the transcript has it back.
 QString withoutTeammateNote(const QString &prompt);
 // The teammate a subagent was spawned as, from its Agent call's prompt: our

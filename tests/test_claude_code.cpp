@@ -413,6 +413,74 @@ TEST_CASE("a prompt mentioning teammates says how to spawn them", "[claude][role
     CHECK(roleInAgentPrompt("Fix the role: engineer bug").isEmpty());
 }
 
+TEST_CASE("teammates a session has no types for count when merely named", "[claude][roles]") {
+    const auto find = [](const QString &id) -> const Role * {
+        for (const Role &r : builtInRoles())
+            if (r.id == id)
+                return &r;
+        return nullptr;
+    };
+    const std::vector<Role> &team = builtInRoles();
+
+    // "Spawn a marketer agent" in a session started without --agents: Claude
+    // would otherwise spawn a general-purpose one and write its own role.
+    const QString typed = "Spawn a marketer agent to do the investigation.";
+    const QString note  = teammateNote(typed, find, team);
+    CHECK(note.count("# Your role: Marketer (msga: marketer)") == 1);
+    CHECK(note.contains("subagent_type \"claude\""));
+    CHECK(!note.contains("msga: engineer"));
+    CHECK(withoutTeammateNote(typed + note) == typed);
+    CHECK(roleInAgentPrompt(appendedPrompt(*find("marketer")) + "\n\nFind links.") == "marketer");
+
+    // Any case, plural, the id; a mention and the name make one entry.
+    CHECK(teammateNote("ask two Engineers", find, team).contains("msga: engineer"));
+    CHECK(teammateNote("the RESEARCHER", find, team).contains("msga: researcher"));
+    CHECK(
+        teammateNote("@claude:role:designer — the designer", find, team)
+            .count("# Your role: Designer") == 1
+    );
+    // Not inside other words, paths or mentions of something else; the
+    // Generalist adds nothing; a type the session offers isn't in `byName`.
+    CHECK(teammateNote("engineering the design", find, team).isEmpty());
+    CHECK(teammateNote("see src/engineer/ and @claude:engineer", find, team).isEmpty());
+    CHECK(teammateNote("the generalist", find, team).isEmpty());
+    CHECK(teammateNote("spawn a marketer", find).isEmpty());
+
+    // An added teammate with a two-word name.
+    Role analyst;
+    analyst.id     = "data-analyst";
+    analyst.name   = "Data analyst";
+    analyst.prompt = "Dig.";
+    CHECK(teammateNote("ask the data analysts", find, {analyst}).contains("msga: data-analyst"));
+    CHECK(teammateNote("the Data-Analyst", find, {analyst}).contains("msga: data-analyst"));
+    CHECK(teammateNote("the data", find, {analyst}).isEmpty());
+}
+
+TEST_CASE("the subagent types a session offers are read", "[claude][transcript]") {
+    const auto listing = [](const QStringList &added, const QStringList &removed, bool initial) {
+        return line(
+            {{"type", "attachment"},
+             {"timestamp", "2026-09-25T10:00:02.000Z"},
+             {"attachment",
+              QJsonObject{
+                  {"type", "agent_listing_delta"},
+                  {"addedTypes", QJsonArray::fromStringList(added)},
+                  {"removedTypes", QJsonArray::fromStringList(removed)},
+                  {"isInitial", initial},
+              }}}
+        );
+    };
+    TranscriptParser p;
+    CHECK(p.agentTypes().isEmpty());
+    p.feed(listing({"claude", "Explore", "marketer"}, {}, true));
+    CHECK(p.agentTypes() == QSet<QString>{"claude", "Explore", "marketer"});
+    p.feed(listing({"engineer"}, {"marketer"}, false));
+    CHECK(p.agentTypes() == QSet<QString>{"claude", "Explore", "engineer"});
+    p.feed(listing({"claude"}, {}, true));
+    CHECK(p.agentTypes() == QSet<QString>{"claude"});
+    CHECK(p.items().empty());
+}
+
 TEST_CASE("a background task's stop notifications are noted", "[claude][transcript]") {
     TranscriptParser p;
     // Queued, delivered mid-turn, delivered as a turn of its own: the latest counts.
