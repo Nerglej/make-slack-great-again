@@ -89,17 +89,17 @@
         <translation>Digs into questions and reports findings with sources.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/cc_roles.cpp" line="486"/>
+        <location filename="../src/backend/claude_code/cc_roles.cpp" line="525"/>
         <source>A teammate needs a name.</source>
         <translation>A teammate needs a name.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/cc_roles.cpp" line="499"/>
+        <location filename="../src/backend/claude_code/cc_roles.cpp" line="538"/>
         <source>That teammate is gone.</source>
         <translation>That teammate is gone.</translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="979"/>
+        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="989"/>
         <source>%n tool call(s)</source>
         <translation>
             <numerusform>%n tool call</numerusform>
@@ -107,7 +107,7 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="983"/>
+        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="993"/>
         <source>… %n earlier</source>
         <translation>
             <numerusform>… %n earlier</numerusform>
@@ -115,7 +115,7 @@
         </translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="1008"/>
+        <location filename="../src/backend/claude_code/cc_transcript.cpp" line="1018"/>
         <source>Subagent: %1</source>
         <translation>Subagent: %1</translation>
     </message>
@@ -140,247 +140,247 @@
         <translation>You</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="562"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="567"/>
         <source>This session is running in a terminal — reply there. Once it ends, you can continue it here.</source>
         <translation>This session is running in a terminal — reply there. Once it ends, you can continue it here.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="567"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="572"/>
         <source>Another program is driving this session. Once it ends, you can continue it here.</source>
         <translation>Another program is driving this session. Once it ends, you can continue it here.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="588"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="593"/>
         <source>Waiting for you</source>
         <translation>Waiting for you</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="590"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="595"/>
         <source>Not logged in</source>
         <translation>Not logged in</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="592"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="597"/>
         <source>Working</source>
         <translation>Working</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="594"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="599"/>
         <source>Running a background command</source>
         <translation>Running a background command</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="715"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="720"/>
         <source> · no permission checks</source>
         <translation> · no permission checks</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="906"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="911"/>
         <source>Waiting for you in the terminal.</source>
         <translation>Waiting for you in the terminal.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="907"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="912"/>
         <source>Waiting for your approval: %1</source>
         <translation>Waiting for your approval: %1</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="937"/>
-        <source>Run “claude attach %1” in a terminal to answer it.</source>
-        <translation>Run “claude attach %1” in a terminal to answer it.</translation>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="941"/>
+        <source>Its options couldn't be read yet; trying again.</source>
+        <translation>Its options couldn't be read yet; trying again.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1362"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1365"/>
         <source>Claude Code's session didn't take the message: %1</source>
         <translation>Claude Code's session didn't take the message: %1</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1476"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1487"/>
         <source>Claude isn't waiting for that approval any more.</source>
         <translation>Claude isn't waiting for that approval any more.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1485"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1496"/>
         <source>The answer is on its way.</source>
         <translation>The answer is on its way.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1864"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="1876"/>
         <source>Claude Code didn't pick up the message.</source>
         <translation>Claude Code didn't pick up the message.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2288"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2300"/>
         <source>Ask a side question in a thread; the session itself isn't touched</source>
         <translation>Ask a side question in a thread; the session itself isn't touched</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2291"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2303"/>
         <source>&lt;question&gt;</source>
         <translation>&lt;question&gt;</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2298"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2310"/>
         <source>Show the session's Claude Code version, model, account and folder</source>
         <translation>Show the session's Claude Code version, model, account and folder</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2309"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2321"/>
         <source>Start a new session in the same folder; this one stays as it is</source>
         <translation>Start a new session in the same folder; this one stays as it is</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2353"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2365"/>
         <source>Version</source>
         <translation>Version</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2354"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2366"/>
         <source>Session name</source>
         <translation>Session name</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2356"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2368"/>
         <source>Teammate</source>
         <translation>Teammate</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2358"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2370"/>
         <source>%1 (no longer on the team)</source>
         <translation>%1 (no longer on the team)</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2361"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2373"/>
         <source>Session ID</source>
         <translation>Session ID</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2364"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2376"/>
         <source>Background</source>
         <translation>Background</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2366"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2378"/>
         <source>Ended</source>
         <translation>Ended</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2368"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2380"/>
         <source>Interactive, in a terminal</source>
         <translation>Interactive, in a terminal</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2370"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2382"/>
         <source>Driven by another program</source>
         <translation>Driven by another program</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2371"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2383"/>
         <source>Session kind</source>
         <translation>Session kind</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2373"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2385"/>
         <source>Peer address</source>
         <translation>Peer address</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2375"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2387"/>
         <source>Folder</source>
         <translation>Folder</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2377"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2389"/>
         <source>Login method</source>
         <translation>Login method</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2379"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2391"/>
         <source>%1 account</source>
         <translation>%1 account</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2380"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2392"/>
         <source>Organization</source>
         <translation>Organization</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2382"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2394"/>
         <source>Email</source>
         <translation>Email</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2384"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2396"/>
         <source>Model</source>
         <translation>Model</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2385"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2397"/>
         <source>Permission mode</source>
         <translation>Permission mode</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2416"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2428"/>
         <source>This session no longer exists.</source>
         <translation>This session no longer exists.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2424"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2436"/>
         <source>This subagent can't be written to until it has started.</source>
         <translation>This subagent can't be written to until it has started.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2438"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2450"/>
         <source>Type your question after /btw.</source>
         <translation>Type your question after /btw.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2440"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2452"/>
         <source>Send the session its first message before asking on the side.</source>
         <translation>Send the session its first message before asking on the side.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2496"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2518"/>
         <source>The session was removed from msga.</source>
         <translation>The session was removed from msga.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2519"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2541"/>
         <source>The session was removed from msga.</source>
         <translation>The session was removed from msga.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2762"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2784"/>
         <source>Couldn't copy the picture.</source>
         <translation>Couldn't copy the picture.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2824"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="2846"/>
         <source>The session was removed from msga.</source>
         <translation>The session was removed from msga.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3022"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3044"/>
         <source>Couldn't delete the session's worktree: %1</source>
         <translation>Couldn't delete the session's worktree: %1</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3108"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3130"/>
         <source>%1 isn't a folder.</source>
         <translation>%1 isn't a folder.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3112"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3134"/>
         <source>Claude Code doesn't trust %1 yet. Run `claude` in that folder once and accept its trust prompt, then start the session again.</source>
         <translation>Claude Code doesn't trust %1 yet. Run `claude` in that folder once and accept its trust prompt, then start the session again.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3212"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3234"/>
         <source>Couldn't read %1.</source>
         <translation>Couldn't read %1.</translation>
     </message>
     <message>
-        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3232"/>
+        <location filename="../src/backend/claude_code/claude_code_backend.cpp" line="3254"/>
         <source>The file isn't there anymore.</source>
         <translation>The file isn't there anymore.</translation>
     </message>

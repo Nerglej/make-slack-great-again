@@ -922,6 +922,22 @@ TEST_CASE("roster files parse into sessions", "[claude][roster]") {
     REQUIRE(approval);
     CHECK(statusNeedsUser(approval->status));
     CHECK_FALSE(statusIsBusy(approval->status));
+    CHECK(approval->awaitsApproval);
+    // A question that happens to begin with "approve" is still a question
+    // (seen in 2.1.284): answered by message, not in the terminal.
+    const auto question = parseBackgroundJob(
+        R"({"state":"blocked","tempo":"blocked","sessionId":"S5",)"
+        R"("needs":"approve the data-origin wording before filing the issue"})"
+    );
+    REQUIRE(question);
+    CHECK(statusNeedsUser(question->status));
+    CHECK_FALSE(question->awaitsApproval);
+    const auto mcp = parseBackgroundJob(
+        R"({"state":"blocked","sessionId":"S6","needs":)"
+        R"("approve 1 new project MCP server (x) — attach to respond"})"
+    );
+    REQUIRE(mcp);
+    CHECK(mcp->awaitsApproval);
 
     // A done job whose worker is still alive (idle) counts as running — resuming
     // it would only start a copy — and a busy worker makes it busy.

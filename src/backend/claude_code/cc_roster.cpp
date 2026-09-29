@@ -111,13 +111,21 @@ std::optional<SessionInfo> parseBackgroundJob(const QByteArray &json) {
     s.sessionId = o.value(QLatin1String("sessionId")).toString();
     if (s.sessionId.isEmpty())
         return std::nullopt;
-    s.kind   = SessionInfo::Kind::Background;
-    s.name   = o.value(QLatin1String("name")).toString();
-    s.cwd    = o.value(QLatin1String("cwd")).toString();
-    s.status = o.value(QLatin1String("state")).toString();
-    s.needs  = o.value(QLatin1String("needs")).toString();
+    s.kind           = SessionInfo::Kind::Background;
+    s.name           = o.value(QLatin1String("name")).toString();
+    s.cwd            = o.value(QLatin1String("cwd")).toString();
+    s.status         = o.value(QLatin1String("state")).toString();
+    s.needs          = o.value(QLatin1String("needs")).toString();
     // Waiting for an approval reads "working" + a needs line, not "blocked"
-    // (verified 2026-09-25): it is waiting for the user all the same.
+    // (verified 2026-09-25): it is waiting for the user all the same. A
+    // question reads "blocked" + the question, which can begin with "approve"
+    // too ("approve the data-origin wording before filing the issue", 2.1.284),
+    // so only the state tells them apart. The one blocked dialog is the
+    // project-MCP-servers one ("approve 2 new project MCP servers (…) —
+    // attach to respond").
+    s.awaitsApproval = s.needs.startsWith(QLatin1String("approve ")) &&
+                       (s.status != QLatin1String("blocked") ||
+                        s.needs.endsWith(QLatin1String("attach to respond")));
     if (!s.needs.isEmpty())
         s.status = QStringLiteral("blocked");
     // Claude Code predicts the reply when a turn ends on a question (a bg

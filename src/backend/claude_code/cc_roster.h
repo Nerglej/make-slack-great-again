@@ -46,6 +46,9 @@ struct SessionInfo {
     QString entrypoint;        // interactive: "cli" = a terminal; "sdk-cli" = driven by a program
     qint64  statusSinceMs = 0; // when `status` last changed (epoch ms), 0 = unknown
     QString needs;             // background: what it waits on the user for
+    // Background: `needs` is a permission prompt in the worker's terminal
+    // ("approve Bash: …"), not a question a message answers.
+    bool    awaitsApproval = false;
     // Background, blocked on a question: the reply Claude Code predicts
     // (state.json "suggestedReply"), "" when there is none to offer.
     QString suggestedReply;

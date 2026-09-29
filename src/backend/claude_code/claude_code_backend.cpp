@@ -90,11 +90,13 @@ QString knownSessionsPath() {
            QStringLiteral("/claude-code/known-sessions.json");
 }
 
-// A background session stopped on a permission prompt: it reads "approve Bash: …"
-// (verified 2026-09-25). Only `claude attach` can answer that one; a plain
-// question ("blocked" with the question as needs) is answered by message.
+// A background session stopped on a permission prompt: it reads "working" +
+// "approve Bash: …" (verified 2026-09-25, see parseBackgroundJob). Only its
+// terminal can answer that one (msga does, see readApproval); a plain question
+// ("blocked" with the question as needs) is answered by message. A worker that
+// has exited took its prompt with it: a message resumes the session.
 bool awaitsApproval(const SessionInfo &s) {
-    return s.kind == SessionInfo::Kind::Background && s.needs.startsWith(QLatin1String("approve "));
+    return s.kind == SessionInfo::Kind::Background && s.awaitsApproval && s.running;
 }
 
 // A background session whose turn failed for want of a login reads "blocked" +
@@ -142,8 +144,9 @@ bool questionIsFor(const QString &needs, const PermissionQuestion &q) {
 
 namespace {
 
-constexpr int kApprovalReads   = 3;     // tries at reading a question's options
-constexpr int kApprovalRetryMs = 4'000; // between them
+constexpr int kApprovalReads       = 3;      // quick tries at reading a question's options
+constexpr int kApprovalRetryMs     = 4'000;  // between them
+constexpr int kApprovalSlowRetryMs = 30'000; // and after them, for as long as it waits
 
 // A transcript's size, or -1 when there is none (yet).
 qint64 sizeOf(const QString &path) {
@@ -241,10 +244,12 @@ struct Backend::Tracked {
     QString                                   approvalNeeds;
     std::vector<PermissionQuestion::Option>   approvalOptions;
     int                                       approvalReads = 0;
-    QPointer<AttachAnswer>                    answering; // reading or answering it
+    qint64                 approvalReadAfterMs              = 0; // next try, after a failed one
+    bool                   approvalAnswered                 = false;
+    QPointer<AttachAnswer> answering; // reading or answering it
     // A session branched off another (a /btw, or `--fork-session` anywhere):
     // shown as a thread in its parent rather than in the list (detectForks).
-    QString forkOf;   // the parent's conversation id; "" = a session of its own
+    QString                forkOf; // the parent's conversation id; "" = a session of its own
     int  forkAt = -1; // parser.items() index of the thread's first prompt (its root); -1 = none yet
     Ts   forkRoot;    // that prompt's ts: the root message in the parent
     bool standalone        = false; // "Open as session": listed as a session of its own after all
@@ -910,7 +915,7 @@ std::vector<Message> Backend::visibleMessages(Tracked &t) {
         m.text    = {text, {}};
         if (!terminalWaits) {
             // Its options, once read off the screen (readApproval), as buttons;
-            // until then — or if they can't be — the way to answer it by hand.
+            // until then a note that msga is still at it — never a terminal.
             const bool read = t.approvalNeeds == t.info.needs && !t.approvalOptions.empty();
             if (read) {
                 Block section;
@@ -932,12 +937,10 @@ std::vector<Message> Backend::visibleMessages(Tracked &t) {
                 }
                 m.blocks = {std::move(section), std::move(actions)};
                 m.botId  = assistant.value;
-            } else if (!t.answering) {
-                const QString hint =
-                    QCoreApplication::translate(
-                        "claude_code", "Run “claude attach %1” in a terminal to answer it."
-                    )
-                        .arg(t.info.sessionId.left(8));
+            } else if (!t.answering && t.approvalReads >= kApprovalReads && !t.approvalAnswered) {
+                const QString hint = QCoreApplication::translate(
+                    "claude_code", "Its options couldn't be read yet; trying again."
+                );
                 m.rawText += QLatin1Char('\n') + hint;
                 m.text = {m.rawText, {}};
             }
@@ -1405,20 +1408,26 @@ void Backend::typeLive(Tracked &t) {
 }
 
 void Backend::readApproval(Tracked &t) {
-    if (!awaitsApproval(t.info) || !t.info.running) {
-        t.approvalNeeds.clear();
+    const auto reset = [&t] {
         t.approvalOptions.clear();
-        t.approvalReads = 0;
+        t.approvalReads       = 0;
+        t.approvalReadAfterMs = 0;
+        t.approvalAnswered    = false;
+    };
+    if (!awaitsApproval(t.info)) {
+        t.approvalNeeds.clear();
+        reset();
         return;
     }
     if (t.answering)
         return;
     if (t.approvalNeeds != t.info.needs) {
         t.approvalNeeds = t.info.needs;
-        t.approvalOptions.clear();
-        t.approvalReads = 0;
+        reset();
     }
-    if (!t.approvalOptions.empty() || t.approvalReads >= kApprovalReads)
+    // Never "answer it in a terminal": a read that fails is tried again, a few
+    // times quickly, then slowly for as long as the question waits.
+    if (!t.approvalOptions.empty() || t.approvalAnswered || nowMs() < t.approvalReadAfterMs)
         return;
     ++t.approvalReads;
     const QString convId = t.convId;
@@ -1448,10 +1457,12 @@ void Backend::readApproval(Tracked &t) {
                     qPrintable(convId),
                     qPrintable(detail)
                 );
-                if (t->approvalReads < kApprovalReads)
-                    QTimer::singleShot(kApprovalRetryMs, _ctx, [this] { scheduleRefresh(); });
+                const int wait =
+                    t->approvalReads < kApprovalReads ? kApprovalRetryMs : kApprovalSlowRetryMs;
+                t->approvalReadAfterMs = nowMs() + wait;
+                QTimer::singleShot(wait, _ctx, [this] { scheduleRefresh(); });
             }
-            diffAndAnnounce(*t); // the buttons, or the hint
+            diffAndAnnounce(*t); // the buttons, or the note
         },
         _ctx
     );
@@ -1504,7 +1515,7 @@ void Backend::pressBotButton(
                     // Answered: no buttons for it any more, whatever the job's
                     // state still says until Claude Code rewrites it.
                     t->approvalOptions.clear();
-                    t->approvalReads = kApprovalReads;
+                    t->approvalAnswered = true;
                     diffAndAnnounce(*t);
                 }
                 scheduleRefresh();
@@ -1785,6 +1796,7 @@ void Backend::refresh() {
         t.info.running = false;
         t.info.status.clear();
         t.info.needs.clear();
+        t.info.awaitsApproval = false;
         t.info.suggestedReply.clear();
         if (t.info.sessionId.isEmpty() || t.sending)
             continue; // a "+" session not started yet, or one being started right now
