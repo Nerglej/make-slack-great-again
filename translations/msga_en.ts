@@ -2337,12 +2337,12 @@ Create a free one — it takes a minute — then paste it below. You can change 
         <translation>Couldn't apply the label.</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="3853"/>
+        <location filename="../src/ui/main_window.cpp" line="3858"/>
         <source>Forwarding %1</source>
         <translation>Forwarding %1</translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/ui/main_window.cpp" line="3854"/>
+        <location filename="../src/ui/main_window.cpp" line="3859"/>
         <source>Forwarding %Ln files</source>
         <translation>
             <numerusform>Forwarding %Ln files</numerusform>
@@ -2350,57 +2350,57 @@ Create a free one — it takes a minute — then paste it below. You can change 
         </translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="3863"/>
+        <location filename="../src/ui/main_window.cpp" line="3868"/>
         <source>Couldn't forward the file.</source>
         <translation>Couldn't forward the file.</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4109"/>
+        <location filename="../src/ui/main_window.cpp" line="4114"/>
         <source>Message %1</source>
         <translation>Message %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4493"/>
+        <location filename="../src/ui/main_window.cpp" line="4520"/>
         <source>View members</source>
         <translation>View members</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4515"/>
+        <location filename="../src/ui/main_window.cpp" line="4542"/>
         <source>Opens the huddle in Slack for web</source>
         <translation>Opens the huddle in Slack for web</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4525"/>
+        <location filename="../src/ui/main_window.cpp" line="4552"/>
         <source>Unstar conversation</source>
         <translation>Unstar conversation</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4525"/>
+        <location filename="../src/ui/main_window.cpp" line="4552"/>
         <source>Star conversation</source>
         <translation>Star conversation</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4536"/>
+        <location filename="../src/ui/main_window.cpp" line="4563"/>
         <source>Search messages</source>
         <translation>Search messages</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4923"/>
+        <location filename="../src/ui/main_window.cpp" line="4950"/>
         <source>Message</source>
         <translation>Message</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4923"/>
+        <location filename="../src/ui/main_window.cpp" line="4950"/>
         <source>Message %1</source>
         <translation>Message %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="5066"/>
+        <location filename="../src/ui/main_window.cpp" line="5093"/>
         <source>%1k</source>
         <translation>%1k</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="5187"/>
+        <location filename="../src/ui/main_window.cpp" line="5214"/>
         <source>Couldn't load the members (%1).</source>
         <translation>Couldn't load the members (%1).</translation>
     </message>

@@ -1132,7 +1132,7 @@ Create a free one — it takes a minute — then paste it below. You can change 
         <location filename="../src/ui/main_window.cpp" line="2237"/>
         <location filename="../src/ui/main_window.cpp" line="2303"/>
         <location filename="../src/ui/main_window.cpp" line="2565"/>
-        <location filename="../src/ui/main_window.cpp" line="4923"/>
+        <location filename="../src/ui/main_window.cpp" line="4950"/>
         <source>Message</source>
         <translation>メッセージ</translation>
     </message>
@@ -1140,8 +1140,8 @@ Create a free one — it takes a minute — then paste it below. You can change 
         <location filename="../src/ui/main_window.cpp" line="2237"/>
         <location filename="../src/ui/main_window.cpp" line="2303"/>
         <location filename="../src/ui/main_window.cpp" line="2565"/>
-        <location filename="../src/ui/main_window.cpp" line="4109"/>
-        <location filename="../src/ui/main_window.cpp" line="4923"/>
+        <location filename="../src/ui/main_window.cpp" line="4114"/>
+        <location filename="../src/ui/main_window.cpp" line="4950"/>
         <source>Message %1</source>
         <translation>%1へのメッセージ</translation>
     </message>
@@ -1294,54 +1294,54 @@ Create a free one — it takes a minute — then paste it below. You can change 
         <translation>通知の状態: %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="3853"/>
+        <location filename="../src/ui/main_window.cpp" line="3858"/>
         <source>Forwarding %1</source>
         <translation>%1 を転送中</translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/ui/main_window.cpp" line="3854"/>
+        <location filename="../src/ui/main_window.cpp" line="3859"/>
         <source>Forwarding %Ln files</source>
         <translation>
             <numerusform>%Ln 個のファイルを転送中</numerusform>
         </translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="3863"/>
+        <location filename="../src/ui/main_window.cpp" line="3868"/>
         <source>Couldn&apos;t forward the file.</source>
         <translation>ファイルを転送できませんでした。</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4493"/>
+        <location filename="../src/ui/main_window.cpp" line="4520"/>
         <source>View members</source>
         <translation>メンバーを表示</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4515"/>
+        <location filename="../src/ui/main_window.cpp" line="4542"/>
         <source>Opens the huddle in Slack for web</source>
         <translation>Slack（ブラウザ版）でハドルを開きます</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4525"/>
+        <location filename="../src/ui/main_window.cpp" line="4552"/>
         <source>Unstar conversation</source>
         <translation>会話のスターを外す</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4525"/>
+        <location filename="../src/ui/main_window.cpp" line="4552"/>
         <source>Star conversation</source>
         <translation>会話にスターを付ける</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="4536"/>
+        <location filename="../src/ui/main_window.cpp" line="4563"/>
         <source>Search messages</source>
         <translation>メッセージを検索</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="5066"/>
+        <location filename="../src/ui/main_window.cpp" line="5093"/>
         <source>%1k</source>
         <translation>%1k</translation>
     </message>
     <message>
-        <location filename="../src/ui/main_window.cpp" line="5187"/>
+        <location filename="../src/ui/main_window.cpp" line="5214"/>
         <source>Couldn&apos;t load the members (%1).</source>
         <translation>メンバーを読み込めませんでした（%1）。</translation>
     </message>
