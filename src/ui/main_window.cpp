@@ -80,6 +80,10 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
+#include <QScrollBar>
+#include <QWheelEvent>
+#include <QAbstractScrollArea>
 #include <QResizeEvent>
 #include <QLabel>
 #include <QLocale>
@@ -331,9 +335,10 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
 
     Ui::Shortcuts::install(Ui::Shortcut::OpenSettings, this, [this] { _settingsDialog->open(); });
 
-    // Back/forward chat navigation: mouse side buttons are handled in
-    // eventFilter; these cover the keyboard equivalents (the registry binds both
-    // the dedicated XF86 keys and the conventional Alt+arrows to each action).
+    // Back/forward chat navigation: mouse side buttons and trackpad swipes are
+    // handled in eventFilter; these cover the keyboard equivalents (the registry
+    // binds both the dedicated XF86 keys and the conventional Alt+arrows to each
+    // action).
     Ui::Shortcuts::install(Ui::Shortcut::NavBack, this, [this] { navigateHistory(true); });
     Ui::Shortcuts::install(Ui::Shortcut::NavForward, this, [this] { navigateHistory(false); });
 
@@ -4241,6 +4246,22 @@ static Qt::CursorShape cursorForEdges(Qt::Edges edges) {
     return Qt::ArrowCursor;
 }
 
+// A horizontal wheel over content that can scroll sideways belongs to that
+// content, not to swipe navigation.
+bool MainWindow::scrollsHorizontallyAt(const QPoint &globalPos) const {
+    for (QWidget *w = childAt(mapFromGlobal(globalPos)); w && w != this; w = w->parentWidget()) {
+        if (auto *sa = qobject_cast<QAbstractScrollArea *>(w)) {
+            const QScrollBar *sb = sa->horizontalScrollBar();
+            if (sb && sb->minimum() < sb->maximum())
+                return true;
+        } else if (auto *sl = qobject_cast<QAbstractSlider *>(w)) {
+            if (sl->orientation() == Qt::Horizontal)
+                return true;
+        }
+    }
+    return false;
+}
+
 bool MainWindow::eventFilter(QObject *obj, QEvent *e) {
     // Keep the window backdrop's mirrored light region aligned with the content
     // panel when it moves/resizes independently of the window (conv-panel drag,
@@ -4296,6 +4317,56 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *e) {
                 navigateHistory(me->button() == Qt::BackButton);
                 return true;
             }
+        }
+    }
+    // Trackpad swipes navigate too (see SwipeNavRecognizer). Watched on the
+    // window itself: it gets each wheel/gesture event once, before the widget
+    // under the pointer, and before Qt re-sends an ignored wheel to parents.
+    if (obj == windowHandle()) {
+        auto act = SwipeNavRecognizer::Action::Pass;
+        if (e->type() == QEvent::Wheel) {
+            auto      *we = static_cast<QWheelEvent *>(e);
+            const bool px = !we->pixelDelta().isNull();
+            act           = _swipeNav.wheel(
+                {we->phase(),
+                 px ? QPointF(we->pixelDelta()) : QPointF(we->angleDelta()),
+                 px,
+                 qint64(we->timestamp()),
+                 we->modifiers() != Qt::NoModifier ||
+                     scrollsHorizontallyAt(we->globalPosition().toPoint())}
+            );
+        } else if (e->type() == QEvent::NativeGesture) {
+            auto *ge = static_cast<QNativeGestureEvent *>(e);
+            switch (ge->gestureType()) {
+            case Qt::SwipeNativeGesture:
+                act = SwipeNavRecognizer::nativeSwipe(ge->value());
+                break;
+            case Qt::BeginNativeGesture:
+                _swipeNav.gestureBegin(ge->fingerCount());
+                break;
+            case Qt::PanNativeGesture:
+                act = _swipeNav.gesturePan(ge->delta());
+                break;
+            case Qt::ZoomNativeGesture:
+            case Qt::RotateNativeGesture:
+                _swipeNav.gesturePinch();
+                break;
+            case Qt::EndNativeGesture:
+                _swipeNav.gestureEnd();
+                break;
+            default:
+                break;
+            }
+        }
+        switch (act) {
+        case SwipeNavRecognizer::Action::Pass:
+            break;
+        case SwipeNavRecognizer::Action::Back:
+        case SwipeNavRecognizer::Action::Forward:
+            navigateHistory(act == SwipeNavRecognizer::Action::Back);
+            [[fallthrough]];
+        case SwipeNavRecognizer::Action::Swallow:
+            return true;
         }
     }
     if (windowFlags().testFlag(Qt::FramelessWindowHint) && !isMaximized() && !isFullScreen()) {

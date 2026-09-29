@@ -7,6 +7,7 @@
 #include "ui/composer/composer_draft.h"
 #include "ui/content_view.h"
 #include "ui/nav_history.h"
+#include "ui/swipe_nav.h"
 #include "rpl/lifetime.h"
 
 #include <QWidget>
@@ -186,9 +187,10 @@ private:
     // Search overlay
     void repositionSearch();
 
-    // Back/forward chat navigation (mouse side buttons, XF86 Back/Forward
-    // keys, Alt+Left/Right) — works across workspaces.
+    // Back/forward chat navigation (mouse side buttons, trackpad swipes, XF86
+    // Back/Forward keys, Alt+Left/Right) — works across workspaces.
     void navigateHistory(bool back);
+    bool scrollsHorizontallyAt(const QPoint &globalPos) const;
     void applyNavLocation(const NavLocation &loc);
 
     // Tray
@@ -411,6 +413,7 @@ private:
     ContentView                 _contentView = ContentView::None;
     NavHistory                  _navHistory;
     bool                        _navApplying = false; // a back/forward jump is driving the UI
+    SwipeNavRecognizer          _swipeNav;            // trackpad swipe → back/forward
     ConversationId _pendingNavConv; // jump target awaiting the new workspace's conv list
     ConversationId _pendingNotifConv;
     QString        _pendingNotifTeam;

@@ -363,6 +363,9 @@ add_msga_test(test_recent_folders)
 
 add_msga_test(test_nav_history)
 
+# Trackpad swipe → back/forward recognizer (MainWindow::eventFilter).
+add_msga_test(test_swipe_nav)
+
 add_msga_test(test_content_view)
 
 add_msga_test(test_background_tasks)
