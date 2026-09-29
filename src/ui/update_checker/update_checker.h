@@ -2,6 +2,7 @@
 // Copyright (C) 2026  Vladimir Osipov
 #pragma once
 
+#include <QCryptographicHash>
 #include <QObject>
 #include <QString>
 
@@ -53,4 +54,6 @@ private:
     bool                   _checking = false;
     bool                   _ready    = false;
     QString                _downloadedPath;
+    QByteArray             _expectedSha256; // lowercase hex from the manifest; empty = unchecked
+    QCryptographicHash     _hash{QCryptographicHash::Sha256};
 };

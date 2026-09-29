@@ -21,6 +21,8 @@ msga is primarily a Slack client — that's its main focus and the most complete
 [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white)](https://msga.app/download/msga-macos-arm64.dmg)
 [![Windows](https://img.shields.io/badge/Windows-x86__64-0078D4?logo=windows&logoColor=white)](https://msga.app/download/msga-windows-x86_64.exe)
 
+On macOS you can also install with Homebrew: `brew install --cask punarinta/msga/msga`. msga isn't notarized by Apple, so on first launch open System Settings → Privacy & Security and click "Open Anyway".
+
 ## Connecting to Slack
 
 Grab a [prebuilt build](#download) and you can connect Slack straight away — there are two ways to sign in:

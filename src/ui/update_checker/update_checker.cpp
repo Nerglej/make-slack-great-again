@@ -15,6 +15,7 @@
 #include <QCoreApplication>
 #include <QSettings>
 #include <QDateTime>
+#include <QCryptographicHash>
 
 #if defined(Q_OS_LINUX)
 #include <cerrno>
@@ -125,6 +126,8 @@ void UpdateChecker::onManifestDone(QNetworkReply *reply, bool silent) {
         emit upToDate();
         return;
     }
+    // Older manifests carry no hash; those downloads go unchecked.
+    _expectedSha256 = obj[u"sha256"_s].toString().toLower().toLatin1();
     emit updateAvailable(remote);
     startDownload(remote);
 }
@@ -140,13 +143,16 @@ void UpdateChecker::startDownload(int newVersion) {
         return;
     }
 
+    _hash.reset();
     auto *reply = _nam->get(QNetworkRequest(QUrl(binaryUrl())));
     connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 recv, qint64 total) {
         if (total > 0)
             emit downloadProgress(int(recv * 100 / total));
     });
-    connect(reply, &QNetworkReply::readyRead, file, [reply, file] {
-        file->write(reply->readAll());
+    connect(reply, &QNetworkReply::readyRead, file, [this, reply, file] {
+        const QByteArray chunk = reply->readAll();
+        _hash.addData(chunk);
+        file->write(chunk);
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, file, newVersion] {
         file->flush();
@@ -163,6 +169,11 @@ void UpdateChecker::onDownloadDone(QNetworkReply *reply, int newVersion) {
     if (reply->error() != QNetworkReply::NoError) {
         QFile::remove(tmp);
         emit checkFailed(tr("Download failed: %1").arg(reply->errorString()));
+        return;
+    }
+    if (!_expectedSha256.isEmpty() && _hash.result().toHex() != _expectedSha256) {
+        QFile::remove(tmp);
+        emit checkFailed(tr("Downloaded update is corrupt (checksum mismatch)."));
         return;
     }
 

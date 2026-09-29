@@ -5489,37 +5489,42 @@ nginx</translation>
 <context>
     <name>UpdateChecker</name>
     <message>
-        <location filename="../src/ui/update_checker/update_checker.cpp" line="95"/>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="96"/>
         <source>Automatic updates are not supported on this platform.</source>
         <translation>Automatic updates are not supported on this platform.</translation>
     </message>
     <message>
-        <location filename="../src/ui/update_checker/update_checker.cpp" line="117"/>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="118"/>
         <source>Could not parse version manifest.</source>
         <translation>Could not parse version manifest.</translation>
     </message>
     <message>
-        <location filename="../src/ui/update_checker/update_checker.cpp" line="138"/>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="141"/>
         <source>Cannot write update to %1</source>
         <translation>Cannot write update to %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/update_checker/update_checker.cpp" line="165"/>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="171"/>
         <source>Download failed: %1</source>
         <translation>Download failed: %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/update_checker/update_checker.cpp" line="182"/>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="176"/>
+        <source>Downloaded update is corrupt (checksum mismatch).</source>
+        <translation>Downloaded update is corrupt (checksum mismatch).</translation>
+    </message>
+    <message>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="193"/>
         <source>Could not replace binary: %1</source>
         <translation>Could not replace binary: %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/update_checker/update_checker.cpp" line="198"/>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="209"/>
         <source>Could not move current binary — check file permissions on %1</source>
         <translation>Could not move current binary — check file permissions on %1</translation>
     </message>
     <message>
-        <location filename="../src/ui/update_checker/update_checker.cpp" line="204"/>
+        <location filename="../src/ui/update_checker/update_checker.cpp" line="215"/>
         <source>Could not place new binary at %1</source>
         <translation>Could not place new binary at %1</translation>
     </message>
