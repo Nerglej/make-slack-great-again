@@ -73,7 +73,9 @@
 #include <cstdio>
 #include <cctype>
 #include <limits>
+#if !defined(HUNSPELL_NO_IOSTREAM) // msga modification
 #include <sstream>
+#endif
 #if __cplusplus >= 202002L
 #include <bit>
 #endif

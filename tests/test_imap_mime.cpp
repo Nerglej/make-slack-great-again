@@ -6,6 +6,7 @@
 #include "backend/imap/mime_parser.h"
 
 using namespace imap;
+using namespace Qt::StringLiterals;
 
 namespace {
 // Build a raw message with CRLF line endings (as IMAP delivers).
@@ -200,3 +201,73 @@ TEST_CASE("parse: malformed (no body separator) does not crash", "[imap][mime]")
     CHECK(m.subject == "orphan headers only");
     CHECK(m.textPlain.isEmpty());
 }
+
+// ── Legacy charsets ──────────────────────────────────────────────────────────
+// decodeText covers them through QStringDecoder when Qt has ICU and through
+// iconv(3) when it doesn't (the static Linux release), so check both routes.
+
+namespace {
+struct LegacySample {
+    const char *charset;
+    QByteArray  bytes;
+    QString     text;
+};
+
+const LegacySample kLegacySamples[] = {
+    {"windows-1252", QByteArray("caf\xe9 \x80 \x93quoted\x94"), u"café € “quoted”"_s},
+    {"ISO-8859-2", QByteArray("\xb3\xf3\xbf\xea\xa3\xd3\xaf\xca"), u"łóżęŁÓŻĘ"_s},
+    {"KOI8-R", QByteArray("\xf0\xd2\xc9\xd7\xc5\xd4"), u"Привет"_s},
+    {"Shift_JIS", QByteArray("\x82\xb1\x82\xf1\x82\xc9\x82\xbf\x82\xcd"), u"こんにちは"_s},
+    {"ISO-2022-JP", QByteArray("\x1b$B$3$s$K$A$O\x1b(B!"), u"こんにちは!"_s},
+    {"EUC-KR", QByteArray("\xbe\xc8\xb3\xe7"), u"안녕"_s},
+    {"GB2312", QByteArray("\xc4\xe3\xba\xc3"), u"你好"_s},
+    {"Big5", QByteArray("\xa7\x41\xa6\x6e"), u"你好"_s},
+};
+} // namespace
+
+TEST_CASE("decodeText: legacy mail charsets", "[imap][mime]") {
+    for (const auto &s : kLegacySamples) {
+        INFO(s.charset);
+        CHECK(Mime::decodeText(s.bytes, QString::fromLatin1(s.charset)) == s.text);
+    }
+}
+
+TEST_CASE("decodeText: RFC 2047 word in a legacy charset", "[imap][mime]") {
+    CHECK(
+        Mime::decodeEncodedWords("=?ISO-2022-JP?B?GyRCJDMkcyRLJEEkTxsoQg==?=") == u"こんにちは"_s
+    );
+}
+
+#ifdef MSGA_HAVE_ICONV
+TEST_CASE("decodeWithIconv: legacy charsets and Outlook's labels", "[imap][mime]") {
+    for (const auto &s : kLegacySamples) {
+        INFO(s.charset);
+        QString out;
+        REQUIRE(Mime::decodeWithIconv(s.bytes, QString::fromLatin1(s.charset), &out));
+        CHECK(out == s.text);
+    }
+    QString out;
+    // Outlook's label for Korean mail, written in CP949.
+    REQUIRE(Mime::decodeWithIconv(QByteArray("\xbe\xc8\xb3\xe7"), u"ks_c_5601-1987"_s, &out));
+    CHECK(out == u"안녕"_s);
+}
+
+TEST_CASE("decodeWithIconv: bad bytes become U+FFFD, unknown charset fails", "[imap][mime]") {
+    QString out;
+    // 0xFF is never a Shift_JIS byte; 0x82 at the end is a cut-off lead byte.
+    REQUIRE(
+        Mime::decodeWithIconv(
+            QByteArray(
+                "a\xff"
+                "b"
+            ),
+            u"Shift_JIS"_s,
+            &out
+        )
+    );
+    CHECK(out == u"a\uFFFDb"_s);
+    REQUIRE(Mime::decodeWithIconv(QByteArray("ab\x82"), u"Shift_JIS"_s, &out));
+    CHECK(out == u"ab\uFFFD"_s);
+    CHECK_FALSE(Mime::decodeWithIconv("abc", u"x-no-such-charset"_s, &out));
+}
+#endif

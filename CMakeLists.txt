@@ -426,6 +426,20 @@ target_link_libraries(msga PRIVATE
     Microsoft.GSL::GSL
 )
 
+# Legacy mail charsets (windows-1252, ISO-2022-JP, Shift_JIS, KOI8-R, ...):
+# QStringDecoder only has them when Qt is built with ICU, and the static Linux
+# release builds Qt without it (scripts/qt-features.sh). Mime::decodeText then
+# falls back to iconv(3): part of the C library on Linux, libiconv on macOS.
+if(NOT WIN32)
+    find_package(Iconv)
+endif()
+if(Iconv_FOUND)
+    set(MSGA_ICONV_DEFINES MSGA_HAVE_ICONV)
+    set(MSGA_ICONV_LIBS Iconv::Iconv)
+    target_compile_definitions(msga PRIVATE ${MSGA_ICONV_DEFINES})
+    target_link_libraries(msga PRIVATE ${MSGA_ICONV_LIBS})
+endif()
+
 # macOS app-bundle metadata. CMake's default Info.plist gives the bundle no
 # identifier and — critically — no CFBundleURLTypes, so macOS would not know
 # msga.app handles the msga:// scheme that the OAuth redirect comes back on
@@ -714,11 +728,18 @@ else()
     target_include_directories(msga_hunspell SYSTEM PUBLIC third_party/hunspell)
     target_compile_definitions(msga_hunspell
         PUBLIC HUNSPELL_STATIC
-        PRIVATE HUNSPELL_QT_UNICODE HUNSPELL_NO_XML)
+        PRIVATE HUNSPELL_QT_UNICODE HUNSPELL_NO_XML HUNSPELL_NO_IOSTREAM)
     target_compile_options(msga_hunspell PRIVATE -w $<$<NOT:$<CONFIG:Debug>>:-Os>
         -fvisibility=hidden -fvisibility-inlines-hidden ${MSGA_NO_EXCEPTIONS})
     target_sources(msga PRIVATE src/spell/spell_backend_linux.cpp)
     target_link_libraries(msga PRIVATE msga_hunspell)
+endif()
+
+# Linux: msga's own std::terminate handler in place of libstdc++'s verbose one,
+# which links the C++ demangler (62 KB) into the static release binary just to
+# print a type name (src/app/terminate_handler.cpp).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(msga PRIVATE src/app/terminate_handler.cpp)
 endif()
 
 # Native macOS window chrome, using the AppKit dependency above.
@@ -829,12 +850,21 @@ endif()
 if(Qt6LinguistTools_FOUND)
     qt_add_translations(msga
         TS_FILES translations/msga_en.ts translations/msga_ja.ts
-        RESOURCE_PREFIX "/translations"
+        QM_FILES_OUTPUT_VARIABLE MSGA_QM_FILES
         # Leave out translations identical to the source text: tr() falls back
         # to the source string anyway. msga_en.ts repeats every string for
         # its handful of plural forms, so this takes msga_en.qm from ~110 KB
         # to ~2.4 KB.
         LRELEASE_OPTIONS -removeidentical
+    )
+    # Embedded by hand (not RESOURCE_PREFIX) so the .qm files get the same rcc
+    # options as resources.qrc: at rcc's default 70% threshold the 100 KB
+    # msga_ja.qm, which zlib shrinks by about half, went in uncompressed.
+    qt_add_resources(msga "msga_translations"
+        PREFIX "/translations"
+        BASE "${CMAKE_CURRENT_BINARY_DIR}"
+        OPTIONS ${MSGA_RCC_OPTIONS}
+        FILES ${MSGA_QM_FILES}
     )
 endif()
 

@@ -75,11 +75,17 @@
 #include "hunzip.hxx"
 #include <cstdio>
 #include <string>
+#if !defined(HUNSPELL_NO_IOSTREAM) // msga modification
 #include <fstream>
+#endif
 
 class FileMgr {
  protected:
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+  FILE* fin;
+#else
   std::ifstream fin;
+#endif
   Hunzip* hin;
   char in[BUFSIZE + 50];  // input buffer
   int fail(const char* err, const char* par);

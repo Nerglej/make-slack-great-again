@@ -5,6 +5,11 @@
 #include <QRegularExpression>
 #include <QStringDecoder>
 
+#ifdef MSGA_HAVE_ICONV
+#include <cerrno>
+#include <iconv.h>
+#endif
+
 using namespace Qt::StringLiterals;
 
 namespace imap {
@@ -288,8 +293,73 @@ QByteArray Mime::decodeQuotedPrintable(const QByteArray &in) {
     return out;
 }
 
+#ifdef MSGA_HAVE_ICONV
+namespace {
+
+// Mail labels that iconv implementations don't know under that name, mapped to
+// the charset senders actually mean. Outlook labels Korean ks_c_5601-1987 but
+// writes Microsoft's CP949, and "GB2312" mail is routinely GBK.
+QByteArray iconvCharsetName(const QString &charset) {
+    const QString c = charset.trimmed().toLower();
+    if (c == u"ks_c_5601-1987"_s || c == u"ks_c_5601"_s || c == u"korean"_s)
+        return "CP949";
+    if (c == u"gb2312"_s || c == u"x-gbk"_s || c == u"cp936"_s)
+        return "GBK";
+    if (c == u"x-sjis"_s || c == u"sjis"_s || c == u"ms_kanji"_s)
+        return "SHIFT_JIS";
+    if (c == u"iso-8859-8-i"_s || c == u"iso-8859-8-e"_s)
+        return "ISO-8859-8";
+    return c.toLatin1();
+}
+
+} // namespace
+
+bool Mime::decodeWithIconv(const QByteArray &bytes, const QString &charset, QString *out) {
+    iconv_t cd = iconv_open("UTF-8", iconvCharsetName(charset).constData());
+    if (cd == reinterpret_cast<iconv_t>(-1))
+        return false;
+    QByteArray utf8;
+    utf8.reserve(bytes.size() * 2);
+    char   buf[4096];
+    // iconv() takes `char **` on Linux and macOS; the input is never written.
+    char  *in     = const_cast<char *>(bytes.constData());
+    size_t inLeft = size_t(bytes.size());
+    while (inLeft > 0) {
+        char        *o       = buf;
+        size_t       outLeft = sizeof buf;
+        const size_t r       = iconv(cd, &in, &inLeft, &o, &outLeft);
+        utf8.append(buf, o - buf);
+        if (r != size_t(-1) || errno == E2BIG)
+            continue;
+        if (errno == EINVAL) // truncated sequence at the end
+            inLeft = 0;
+        else { // EILSEQ: skip the offending byte
+            ++in;
+            --inLeft;
+        }
+        utf8.append("\xEF\xBF\xBD");                   // U+FFFD
+        iconv(cd, nullptr, nullptr, nullptr, nullptr); // reset shift state
+    }
+    // Flush a stateful encoding (ISO-2022-JP) back to its initial state.
+    char  *o       = buf;
+    size_t outLeft = sizeof buf;
+    iconv(cd, nullptr, nullptr, &o, &outLeft);
+    utf8.append(buf, o - buf);
+    iconv_close(cd);
+    *out = QString::fromUtf8(utf8);
+    return true;
+}
+#endif
+
 QString Mime::decodeText(const QByteArray &bytes, const QString &charset) {
     QStringDecoder dec(charset.isEmpty() ? "UTF-8" : charset.toUtf8().constData());
+#ifdef MSGA_HAVE_ICONV
+    if (!dec.isValid()) {
+        QString s;
+        if (decodeWithIconv(bytes, charset, &s))
+            return s;
+    }
+#endif
     if (!dec.isValid())
         dec = QStringDecoder("UTF-8");
     QString s = dec.decode(bytes);

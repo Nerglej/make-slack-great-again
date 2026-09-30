@@ -74,7 +74,9 @@
 #include <cstring>
 #include <cstdio>
 #include <cctype>
+#if !defined(HUNSPELL_NO_IOSTREAM) // msga modification
 #include <sstream>
+#endif
 #if __cplusplus >= 202002L
 #include <bit>
 #endif
@@ -111,6 +113,11 @@ int hunspell_qt_isalpha(unsigned short c);
 using namespace mozilla;
 #endif
 
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+FILE* myfopen(const char* path, const char* mode) {
+  return fopen(path, mode);
+}
+#else
 void myopen(std::ifstream& stream, const char* path, std::ios_base::openmode mode)
 {
 #if defined(_WIN32) && defined(_MSC_VER)
@@ -130,6 +137,7 @@ void myopen(std::ifstream& stream, const char* path, std::ios_base::openmode mod
 #endif
   stream.open(path, mode);
 }
+#endif
 
 std::string& u16_u8(std::string& dest, const std::vector<w_char>& src) {
   dest.clear();
@@ -319,6 +327,17 @@ std::vector<std::string> line_tok(const std::string& text, char breakchar) {
     return ret;
   }
 
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+  size_t start = 0;
+  while (start < text.size()) {
+    size_t end = text.find(breakchar, start);
+    if (end == std::string::npos)
+      end = text.size();
+    if (end > start)
+      ret.push_back(text.substr(start, end - start));
+    start = end + 1;
+  }
+#else
   std::stringstream ss(text);
   std::string tok;
   while(std::getline(ss, tok, breakchar)) {
@@ -326,6 +345,7 @@ std::vector<std::string> line_tok(const std::string& text, char breakchar) {
       ret.push_back(tok);
     }
   }
+#endif
 
   return ret;
 }

@@ -42,6 +42,15 @@
 #include "hunzip.hxx"
 #include "csutil.hxx"
 
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+// msga modification (HUNSPELL_NO_IOSTREAM): the .hz reader on a C stream. Each
+// HUNZIP_READ() below is a fread() that must fill the whole buffer, like
+// istream::read(); getbuf() is the one place that accepts a short read.
+#define HUNZIP_READ(buf, n) (fread((buf), 1, size_t(n), fin) == size_t(n))
+#else
+#define HUNZIP_READ(buf, n) (fin.read((buf), (n)))
+#endif
+
 #define CODELEN 65536
 #define BASEBITREC 5000
 
@@ -73,12 +82,18 @@ int Hunzip::getcode(const char* key) {
   if (filename.empty())
     return -1;
 
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+  fin = myfopen(filename.c_str(), "rb");
+  if (!fin)
+    return -1;
+#else
   myopen(fin, filename.c_str(), std::ios_base::in | std::ios_base::binary);
   if (!fin.is_open())
     return -1;
+#endif
 
   // read magic number
-  if (!fin.read(in, 3) ||
+  if (!HUNZIP_READ(in, 3) ||
       !(strncmp(MAGIC, in, MAGICLEN) == 0 ||
         strncmp(MAGIC_ENCRYPT, in, MAGICLEN) == 0)) {
     return fail(MSG_FORMAT, filename);
@@ -89,7 +104,7 @@ int Hunzip::getcode(const char* key) {
     unsigned char cs;
     if (!key)
       return fail(MSG_KEY, filename);
-    if (!fin.read(reinterpret_cast<char*>(c), 1))
+    if (!HUNZIP_READ(reinterpret_cast<char*>(c), 1))
       return fail(MSG_FORMAT, filename);
     for (cs = 0; *enc; enc++)
       cs ^= *enc;
@@ -100,7 +115,7 @@ int Hunzip::getcode(const char* key) {
     key = NULL;
 
   // read record count
-  if (!fin.read(reinterpret_cast<char*>(c), 2))
+  if (!HUNZIP_READ(reinterpret_cast<char*>(c), 2))
     return fail(MSG_FORMAT, filename);
 
   if (key) {
@@ -118,7 +133,7 @@ int Hunzip::getcode(const char* key) {
   // read codes
   for (i = 0; i < n; i++) {
     unsigned char l;
-    if (!fin.read(reinterpret_cast<char*>(c), 2))
+    if (!HUNZIP_READ(reinterpret_cast<char*>(c), 2))
       return fail(MSG_FORMAT, filename);
     if (key) {
       if (*(++enc) == '\0')
@@ -128,14 +143,14 @@ int Hunzip::getcode(const char* key) {
         enc = key;
       c[1] ^= *enc;
     }
-    if (!fin.read(reinterpret_cast<char*>(&l), 1))
+    if (!HUNZIP_READ(reinterpret_cast<char*>(&l), 1))
       return fail(MSG_FORMAT, filename);
     if (key) {
       if (*(++enc) == '\0')
         enc = key;
       l ^= *enc;
     }
-    if (!fin.read(in, (l >> 3) + 1))
+    if (!HUNZIP_READ(in, (l >> 3) + 1))
       return fail(MSG_FORMAT, filename);
     if (key)
       for (j = 0; j <= (l >> 3); j++) {
@@ -167,6 +182,10 @@ int Hunzip::getcode(const char* key) {
 }
 
 Hunzip::~Hunzip() {
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+  if (fin)
+    fclose(fin);
+#endif
 }
 
 int Hunzip::getbuf() {
@@ -174,8 +193,12 @@ int Hunzip::getbuf() {
   int o = 0;
   do {
     if (inc == 0) {
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+      inbits = int(fread(in, 1, BUFSIZE, fin) << 3);
+#else
       fin.read(in, BUFSIZE);
       inbits = int(fin.gcount() << 3);
+#endif
     }
     for (; inc < inbits; inc++) {
       int b = (in[inc >> 3] & (1 << (7 - (inc & 7)))) ? 1 : 0;
@@ -183,7 +206,12 @@ int Hunzip::getbuf() {
       p = dec[p].v[b];
       if (p == 0) {
         if (oldp == lastbit) {
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+          fclose(fin);
+          fin = NULL;
+#else
           fin.close();
+#endif
           // add last odd byte
           if (dec[lastbit].c[0])
             out[o++] = dec[lastbit].c[1];
@@ -240,7 +268,7 @@ bool Hunzip::getline(std::string& dest) {
     }
     if (++outc == bufsiz) {
       outc = 0;
-      bufsiz = fin.is_open() ? getbuf() : -1;
+      bufsiz = is_open() ? getbuf() : -1; // msga modification: was fin.is_open()
     }
   }
   if (right)

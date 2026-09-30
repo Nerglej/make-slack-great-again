@@ -80,6 +80,55 @@ int FileMgr::fail(const char* err, const char* par) {
   return -1;
 }
 
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+// msga modification (HUNSPELL_NO_IOSTREAM): std::getline() over a C stream.
+// Like std::getline it strips only the '\n', and a last line without one still
+// counts.
+static bool read_line(FILE* f, std::string& dest) {
+  dest.clear();
+  char buf[4096];
+  bool any = false;
+  while (fgets(buf, sizeof buf, f)) {
+    any = true;
+    size_t n = strlen(buf);
+    if (n && buf[n - 1] == '\n') {
+      dest.append(buf, n - 1);
+      return true;
+    }
+    dest.append(buf, n);
+  }
+  return any;
+}
+
+FileMgr::FileMgr(const char* file, const char* key) : fin(NULL), hin(NULL), linenum(0) {
+  in[0] = '\0';
+
+  if (!file || !strlen(file))
+    return;
+  fin = myfopen(file, "r");
+  if (!fin) {
+    // check hzipped file
+    std::string st(file);
+    st.append(HZIP_EXTENSION);
+    hin = new Hunzip(st.c_str(), key);
+  }
+  if (!fin && !hin->is_open())
+    fail(MSG_OPEN, file);
+}
+
+FileMgr::~FileMgr() {
+  if (fin)
+    fclose(fin);
+  delete hin;
+}
+
+bool FileMgr::getline(std::string& dest) {
+  bool ret = false;
+  ++linenum;
+  if (fin) {
+    ret = read_line(fin, dest);
+  } else if (hin && hin->is_open()) {
+#else
 FileMgr::FileMgr(const char* file, const char* key) : hin(NULL), linenum(0) {
   in[0] = '\0';
 
@@ -106,6 +155,7 @@ bool FileMgr::getline(std::string& dest) {
   if (fin.is_open()) {
     ret = static_cast<bool>(std::getline(fin, dest));
   } else if (hin && hin->is_open()) {
+#endif
     ret = hin->getline(dest);
   }
   if (!ret) {

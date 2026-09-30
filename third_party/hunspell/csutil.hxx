@@ -75,7 +75,11 @@
 
 // First some base level utility routines
 
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+#include <cstdio>
+#else
 #include <fstream>
+#endif
 #include <string>
 #include <vector>
 #include <cassert>
@@ -127,9 +131,16 @@
 #define FORBIDDENWORD 65510
 #define ONLYUPCASEFLAG 65511
 
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+// msga modification (HUNSPELL_NO_IOSTREAM): the dictionary files are read with
+// C stdio instead of std::ifstream. iostreams were the only reason the static
+// Linux binary carried libstdc++'s locale and stream machinery (~350 KB).
+LIBHUNSPELL_DLL_EXPORTED FILE* myfopen(const char* path, const char* mode);
+#else
 // fix long pathname problem of WIN32 by using w_char std::fstream::open override
 LIBHUNSPELL_DLL_EXPORTED void myopen(std::ifstream& stream, const char* path,
                                      std::ios_base::openmode mode);
+#endif
 
 // convert UTF-16 characters to UTF-8
 LIBHUNSPELL_DLL_EXPORTED std::string& u16_u8(std::string& dest,

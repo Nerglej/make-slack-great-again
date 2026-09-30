@@ -74,6 +74,13 @@ QString decodeEncodedWords(const QByteArray &headerValue);
 // Decode bytes labelled with `charset` to a QString (UTF-8 fallback).
 QString decodeText(const QByteArray &bytes, const QString &charset);
 
+#ifdef MSGA_HAVE_ICONV
+// decodeText's path for charsets QStringDecoder lacks (all non-Unicode ones when
+// Qt has no ICU, as in the static Linux release): iconv(3), with bytes that don't
+// decode turned into U+FFFD. False when iconv doesn't know the charset.
+bool decodeWithIconv(const QByteArray &bytes, const QString &charset, QString *out);
+#endif
+
 QByteArray decodeQuotedPrintable(const QByteArray &in); // body QP (soft breaks)
 QByteArray decodeBase64(const QByteArray &in);          // whitespace-tolerant
 

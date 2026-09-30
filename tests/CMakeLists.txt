@@ -262,11 +262,13 @@ target_include_directories(msga_test_support SYSTEM PRIVATE ${TEST_SYSTEM_INCLUD
 # Not on msga_tests: Catch2 aborts a failed REQUIRE by throwing, and the
 # CHECK_NOTHROW/REQUIRE machinery needs exceptions in the test TUs themselves.
 target_compile_options(msga_test_support PRIVATE ${MSGA_NO_EXCEPTIONS})
+# iconv fallback for legacy mail charsets (root CMakeLists.txt).
+target_compile_definitions(msga_test_support PRIVATE ${MSGA_ICONV_DEFINES})
 # PRIVATE on a static library = link-only for the tests: they get these on their
 # link line but keep their own compile flags (QT_*_LIB defines, include dirs).
 target_link_libraries(msga_test_support PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::WebSockets Qt6::Svg
-    Qt6::Concurrent Microsoft.GSL::GSL)
+    Qt6::Concurrent Microsoft.GSL::GSL ${MSGA_ICONV_LIBS})
 if(APPLE)
     target_link_libraries(msga_test_support PRIVATE "-framework AVFoundation" "-framework AppKit")
 elseif(WIN32)
@@ -331,6 +333,8 @@ target_link_libraries(msga_tests PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::WebSockets Qt6::Svg
     Qt6::Concurrent Qt6::Test
     Microsoft.GSL::GSL)
+# Mime::decodeWithIconv is declared only with the iconv fallback built in.
+target_compile_definitions(msga_tests PRIVATE ${MSGA_ICONV_DEFINES})
 # Its own precompiled header, not the app's src/pch.h: see test_pch.h.
 target_precompile_headers(msga_tests PRIVATE test_pch.h)
 

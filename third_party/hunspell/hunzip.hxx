@@ -44,7 +44,11 @@
 #include "hunvisapi.h"
 
 #include <cstdio>
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+#include <string> // came in through <fstream>
+#else
 #include <fstream>
+#endif
 #include <vector>
 
 #define BUFSIZE 65536
@@ -63,7 +67,11 @@ struct bit {
 class LIBHUNSPELL_DLL_EXPORTED Hunzip {
  protected:
   std::string filename;
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+  FILE* fin = NULL;
+#else
   std::ifstream fin;
+#endif
   int bufsiz, lastbit, inc, inbits, outc;
   std::vector<bit> dec;     // code table
   char in[BUFSIZE];         // input buffer
@@ -78,7 +86,11 @@ class LIBHUNSPELL_DLL_EXPORTED Hunzip {
   Hunzip(const Hunzip&) = delete;
   Hunzip& operator=(const Hunzip&) = delete;
   ~Hunzip();
+#if defined(HUNSPELL_NO_IOSTREAM) // msga modification
+  bool is_open() { return fin != NULL; }
+#else
   bool is_open() { return fin.is_open(); }
+#endif
   bool getline(std::string& dest);
 };
 

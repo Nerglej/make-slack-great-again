@@ -38,6 +38,13 @@ What was changed (msga.patch)
    HunspellImpl::suggest(), the only caller of spellml(). With it the whole
    morphology/XML API (spellml, analyze, stem, generate) is unreachable, and the
    linker's section GC / LTO drops it (~90 KB).
+3. HUNSPELL_NO_IOSTREAM (csutil, filemgr, hunzip, hashmgr): the .dic/.aff (and
+   .hz) files are read with C stdio (fopen/fgets/fread) instead of std::ifstream,
+   and line_tok() splits by hand instead of through std::stringstream. Hunspell
+   was the only iostream user in msga, and iostreams pulled libstdc++'s whole
+   locale and stream machinery (~350 KB) into the static release binary.
+   read_line() keeps std::getline's rules (strip the '\n' only, a last line
+   without one still counts).
 
 Together with -Os and hidden visibility the library comes to about 140 KB of the
 static release binary (release-linux-static.sh; stock 1.7.2 at -O2 added about
@@ -50,8 +57,9 @@ Redoing it for a new Hunspell release
   1. Unpack the release; copy the files listed above from src/hunspell/ here,
      hunvisapi.h.in as hunvisapi.h.
   2. patch -p1 < msga.patch   (run inside this directory; fix up by hand if the
-     context moved: the hooks sit in the unicodeto*/unicodeisalpha functions and
-     around the SPELL_XML check in HunspellImpl::suggest).
+     context moved: the hooks sit in the unicodeto*/unicodeisalpha functions,
+     around the SPELL_XML check in HunspellImpl::suggest, and at every stream use
+     in csutil/filemgr/hunzip/hashmgr).
   3. Build and run tests/test_spell_check (it checks against the system en_US
      dictionary and two 8-bit test dictionaries), and compare spell/suggest
      output with a stock build on a word list if the diff touched more than the
