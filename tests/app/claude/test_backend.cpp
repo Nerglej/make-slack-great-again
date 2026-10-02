@@ -664,6 +664,21 @@ struct Rig {
 
 // ── Rendering: transcript items → messages ──────────────────────────────────
 
+TEST("render: a lone tilde is literal, a double one strikes") {
+    const mrkdwn::Rich approx =
+        mrkdwn::parse(renderMarkdown("It covers ~4 MB on Linux, ~3 MB on Windows and ~2 MB."));
+    CHECK_STR(approx.text, "It covers ~4 MB on Linux, ~3 MB on Windows and ~2 MB.");
+    for (const auto &e : approx.entities)
+        CHECK(e.kind != mrkdwn::Kind::Strike);
+
+    const mrkdwn::Rich struck = mrkdwn::parse(renderMarkdown("was ~~4 MB~~ now ~3 MB"));
+    CHECK_STR(struck.text, "was 4 MB now ~3 MB");
+    bool strike = false;
+    for (const auto &e : struck.entities)
+        strike = strike || (e.kind == mrkdwn::Kind::Strike && e.start == 4 && e.length == 4);
+    CHECK(strike);
+}
+
 TEST("render: headings bold, angle brackets kept, tables fenced") {
     const mrkdwn::Rich heading = mrkdwn::parse(renderMarkdown("## Result\nuse a < b && c > d"));
     CHECK(str::startsWith(heading.text, "Result\n"));

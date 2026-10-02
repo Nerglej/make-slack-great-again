@@ -429,7 +429,19 @@ std::string renderMarkdown(std::string_view markdown) {
     replaceAll(text, "&", "&amp;");
     replaceAll(text, "<", "&lt;");
     replaceAll(text, ">", "&gt;");
-    return mrkdwn::convertOutgoing(linkBareUrls(text));
+    // Markdown strikes only with "~~": a lone '~' is "approximately" ("~4 MB
+    // on Linux, ~3 MB"), which mrkdwn would pair into a strike.
+    std::string marked;
+    marked.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        const bool lone = text[i] == '~' && (i == 0 || text[i - 1] != '~') &&
+                          (i + 1 == text.size() || text[i + 1] != '~');
+        if (lone)
+            marked += "&#126;";
+        else
+            marked += text[i];
+    }
+    return mrkdwn::convertOutgoing(linkBareUrls(marked));
 }
 
 std::vector<model::Block> markdownBlocks(std::string_view markdown) {
