@@ -60,6 +60,9 @@
 #include <string_view>
 
 #if defined(MSGA_DEMO) && defined(__linux__)
+#include <cerrno>
+#include <csignal>
+#include <dirent.h>
 #include <ftw.h>
 #include <unistd.h>
 #endif
@@ -80,23 +83,45 @@ namespace {
 
 #ifdef MSGA_DEMO
 // msga's demo::isolateState: a demo run keeps nothing of the user's — its
-// HOME and XDG dirs point at a wiped <tmp>/msga-demo-state, so the settings,
-// workspaces, caches and the old app's credential store it reads and writes
-// are throwaway ones. Before the platform starts: it reads them on first use.
+// HOME and XDG dirs point at a fresh <tmp>/msga-demo-state-<pid>, so the
+// settings, workspaces, caches and the old app's credential store it reads and
+// writes are throwaway ones. Before the platform starts: it reads them on first
+// use. Per process so that demo runs can overlap (scripts/demo-video.sh in
+// parallel); the dirs of earlier runs that are gone are removed here.
+#ifdef __linux__
+bool wipeDir(const std::string &dir) {
+    return nftw(
+               dir.c_str(),
+               [](const char *path, const struct stat *, int, struct FTW *) {
+                   return ::remove(path);
+               },
+               16,
+               FTW_DEPTH | FTW_PHYS
+           ) == 0;
+}
+#endif
+
 bool isolateDemoState(std::string *error) {
 #if !defined(__linux__)
     *error = "demo mode redirects HOME/XDG_* and is Linux-only for now";
     return false;
 #else
-    const char       *tmp   = std::getenv("TMPDIR");
-    const std::string state = file::join(tmp && *tmp ? tmp : "/tmp", "msga-demo-state");
-    if (file::exists(state) &&
-        nftw(
-            state.c_str(),
-            [](const char *path, const struct stat *, int, struct FTW *) { return ::remove(path); },
-            16,
-            FTW_DEPTH | FTW_PHYS
-        ) != 0) {
+    const char                *tmpEnv = std::getenv("TMPDIR");
+    const std::string          tmp    = tmpEnv && *tmpEnv ? tmpEnv : "/tmp";
+    constexpr std::string_view prefix = "msga-demo-state-";
+    if (DIR *d = opendir(tmp.c_str())) {
+        while (const dirent *e = readdir(d)) {
+            const std::string_view name = e->d_name;
+            if (!str::startsWith(name, prefix))
+                continue;
+            const int pid = std::atoi(std::string(name.substr(prefix.size())).c_str());
+            if (pid > 0 && kill(pid, 0) != 0 && errno == ESRCH)
+                wipeDir(file::join(tmp, name));
+        }
+        closedir(d);
+    }
+    const std::string state = file::join(tmp, str::concat({prefix, std::to_string(getpid())}));
+    if (file::exists(state) && !wipeDir(state)) {
         *error = "cannot wipe " + state;
         return false;
     }
@@ -111,6 +136,14 @@ bool isolateDemoState(std::string *error) {
     setenv("XDG_CACHE_HOME", file::join(state, "cache").c_str(), 1);
     setenv("XDG_STATE_HOME", file::join(state, "state").c_str(), 1);
     return true;
+#endif
+}
+
+std::string demoInstanceKey() {
+#ifdef __linux__
+    return str::concat({identity::instanceKey(), "-demo-", std::to_string(getpid())});
+#else
+    return str::concat({identity::instanceKey(), "-demo"});
 #endif
 }
 #endif
@@ -185,10 +218,16 @@ int main(int argc, char **argv) {
     if (demo.empty() && identity::handOffToOldApp(urls.empty() ? std::string() : urls.front()))
         return 0;
     std::vector<std::string> args(argv + 1, argv + argc);
-    // A demo run has its own channel (msga's followed the redirected HOME):
-    // it neither hands off to the user's msga nor takes its launches.
-    const std::string instance = demo.empty() ? std::string(identity::instanceKey())
-                                              : str::concat({identity::instanceKey(), "-demo"});
+    // A demo run has its own channel, one per process: it neither hands off to
+    // the user's msga nor takes its launches, and overlapping demo runs (the
+    // socket is in $XDG_RUNTIME_DIR, which isolateDemoState leaves alone so
+    // that audio still plays) don't hand off to each other.
+#ifdef MSGA_DEMO
+    const std::string instance =
+        demo.empty() ? std::string(identity::instanceKey()) : demoInstanceKey();
+#else
+    const std::string instance(identity::instanceKey());
+#endif
     if (!pa.claimSingleInstance(instance, args))
         return 0;
     // A crash now prints a stack trace (stderr + crash.log, the old app's
