@@ -1,0 +1,604 @@
+#include "screens/shell/header.h"
+
+#include "base/i18n.h"
+#include "base/str.h"
+#include "base/utf8.h"
+#include "gfx/icons_generated.h"
+#include "screens/shell/nav_chrome.h"
+
+#include <algorithm>
+#include <cmath>
+
+using namespace ui;
+using gfx::Icon;
+using i18n::tr;
+using model::ConvKind;
+using model::ConvRef;
+using model::kNoConv;
+
+namespace shell {
+
+// ── Header parts ────────────────────────────────────────────────────────────
+
+// The star: outlined, or Slack's solid star in icon.starred. 28 px, 15 px icon.
+class StarButton final : public GlyphButton {
+public:
+    StarButton() : GlyphButton(Icon::Star, 28, 15, C::FormIcon) {}
+    void setStarred(bool on) {
+        _on = on;
+        setIcon(on ? Icon::StarSolid : Icon::Star);
+        setTint(on ? C::IconStarred : C::FormIcon);
+        setTooltip(on ? tr("Unstar conversation") : tr("Star conversation"));
+    }
+    bool starred() const { return _on; }
+
+private:
+    bool _on = false;
+};
+
+// A DM's peer: a 28 px avatar (radius 4) centred in 36, its dot on white; a
+// group DM: up to three 24 px avatars overlapping 16 px apart, each on a 2 px
+// ring of the surface, then the member count.
+class HeaderAvatar final : public Clickable {
+public:
+    HeaderAvatar() {
+        setLook({C::None, C::None, C::None, C::None, 0});
+        style().size(36, 36).noShrink().dir = Dir::None;
+    }
+    void clear() {
+        clearChildren();
+        _single = nullptr;
+        _count  = nullptr;
+        _group  = 0;
+        style().size(36, 36);
+    }
+    Avatar *peer() const { return _single; } // the DM's, else null
+    Avatar *single() {
+        clear();
+        _single = add<Avatar>();
+        _single->setRadius(4);
+        _single->setPlaceholder(C::PresenceAway);
+        _single->setHitTransparent(true);
+        return _single;
+    }
+    // `names`: the members' (their initials while the pictures load).
+    void group(
+        const std::vector<std::shared_ptr<const gfx::Bitmap>> &pics,
+        const std::vector<std::string_view>                   &names,
+        uint32_t                                               count
+    ) {
+        clear();
+        _group = int(std::min<size_t>(3, pics.size()));
+        for (int i = 0; i < _group; ++i) {
+            auto *a = add<Avatar>();
+            a->setRadius(4);
+            a->setPlaceholder(C::PresenceAway);
+            a->setBitmap(pics[size_t(i)]);
+            a->setInitial(names[size_t(i)]);
+            a->setHitTransparent(true);
+        }
+        float w = kRing * 2 + kStack + float(std::max(0, _group - 1)) * kStep;
+        if (count > 0) {
+            _count = add<Label>(str::number(int64_t(count)), Font::BodyBold, C::TextMuted);
+            w += 6 + std::ceil(_count->measure(kInf, kInf).w);
+        }
+        style().size(w, 36);
+    }
+    bool isGroup() const { return _group > 0; }
+    void layout() override {
+        if (_single) {
+            _single->setFrame({4, 4, 28, 28});
+            return;
+        }
+        const float y = (height() - kStack) / 2;
+        for (int i = 0; i < _group; ++i)
+            child(size_t(i))->setFrame({kRing + float(i) * kStep, y, kStack, kStack});
+        if (_count) {
+            const SizeF s = _count->measure(kInf, kInf);
+            const float x = kRing * 2 + kStack + float(_group - 1) * kStep + 6;
+            _count->setFrame({x, std::round((height() - s.h) / 2), s.w, s.h});
+        }
+    }
+    void paint(gfx::Painter &p) override {
+        const float y = (height() - kStack) / 2;
+        for (int i = 0; i < _group; ++i) // each chip on a ring of the surface
+            p.fillRoundRect(
+                {float(i) * kStep, y - kRing, kStack + 2 * kRing, kStack + 2 * kRing},
+                4 + kRing,
+                color(C::Surface)
+            );
+    }
+
+private:
+    static constexpr float kStack = 24, kStep = 16, kRing = 2;
+    Avatar                *_single = nullptr;
+    Label                 *_count  = nullptr;
+    int                    _group  = 0;
+};
+
+// The members button: people icon + count, secondary text, 28 px tall.
+class MembersButton final : public Clickable {
+public:
+    MembersButton() {
+        setLook({C::None, C::None, C::None, C::None, 0});
+        setTooltip(tr("View members"));
+        setRole(Role::Button);
+        style().row().height(28).padding(4, 0).spacing(4).items(Align::Center).noShrink();
+        add<IconView>(Icon::Users, 16, C::FormIcon);
+        count = add<Label>("", Font::Caption, C::TextMuted);
+    }
+    Label *count;
+};
+
+// ── Members popup ───────────────────────────────────────────────────────────
+
+namespace {
+
+class MembersPopup final : public Popup {
+public:
+    MembersPopup(screens::Context &ctx, Avatars &avatars, uint32_t expected)
+        : _ctx(ctx), _avatars(avatars) {
+        style().width(340).padding(8, 12, 8, 8).spacing(8);
+        _title = add<Label>(tr("Members"), Font::SmallBold, C::TextMuted);
+        _title->style().margins(4, 0, 4, 0);
+        auto *box = add<View>();
+        box->style().row().height(kFormNormalH).padding(12, 0).spacing(8).items(Align::Center);
+        box->setBackground(C::FormBg, 6);
+        box->setBorder(C::FieldBorder);
+        box->add<IconView>(Icon::Search, 16, C::FormTextFaint);
+        _search = box->add<TextEdit>();
+        _search->style().flex(1);
+        _search->setMaxLines(1);
+        _search->setFont(Font::Field);
+        _search->setPlaceholder(tr("Find members"));
+        _search->onChange = [this] { filter(); };
+        _search->onKey    = [this](const Event &e) { return key(e); };
+        _list             = add<ScrollView>();
+        _message = add<Label>(tr("Loading members\xE2\x80\xA6"), Font::Control, C::TextMuted);
+        _message->setAlign(text::LayoutOptions::Align::Center);
+        fitRows(expected);
+        _list->setVisible(false);
+    }
+    void setMembers(std::vector<model::UserRef> ids) {
+        const auto &st = _ctx.store();
+        std::erase_if(ids, [&](model::UserRef u) { return u >= st.userCount(); });
+        std::sort(ids.begin(), ids.end(), [&](model::UserRef a, model::UserRef b) {
+            return utf8::foldCase(st.user(a).label()) < utf8::foldCase(st.user(b).label());
+        });
+        _ids = std::move(ids);
+        // The expected count may be missing or stale: the list itself sizes
+        // the popup (the overlay re-places it under its anchor).
+        fitRows(_ids.size());
+        _title->setText(i18n::trn("%n member", "%n members", int64_t(_ids.size())));
+        _loaded = true;
+        filter();
+    }
+    // msga's showError: the list failed to load.
+    void showError(const std::string &err) {
+        _list->setVisible(false);
+        _message->setVisible(true);
+        _message->setText(i18n::arg(tr("Couldn't load the members (%1)."), err));
+    }
+    ui::TextEdit &search() { return *_search; }
+    size_t        shown() const { return _rows.size(); }
+
+private:
+    static constexpr float kRowH = 60;
+    // msga: whole rows, at most six; the message takes the list's place.
+    void                   fitRows(size_t n) {
+        const float h = float(std::clamp<size_t>(n, 1, 6)) * kRowH;
+        if (_list->currentStyle().h == h)
+            return;
+        _list->style().height(h);
+        _message->style().height(h);
+    }
+    void filter() {
+        if (!_loaded)
+            return;
+        const std::string q(str::trim(_search->text()));
+        auto             *c = _list->content();
+        c->clearChildren();
+        _rows.clear();
+        const auto &st = _ctx.store();
+        for (model::UserRef u : _ids) {
+            const model::User &user = st.user(u);
+            std::string        key  = str::concat({user.label(), " ", user.name, " ", user.title});
+            if (!q.empty() && !utf8::containsFolded(key, q))
+                continue;
+            auto *row = c->add<Clickable>();
+            row->setLook(
+                {C::None, C::FormHighlight, C::FormHighlightStrong, C::FormHighlightStrong, 0}
+            );
+            row->style().row().height(kRowH).padding(8, 0).spacing(12).items(Align::Center);
+            auto *av = row->add<Avatar>();
+            av->style().size(36, 36).noShrink();
+            av->setCircle(true);
+            av->setPlaceholder(C::PresenceAway);
+            av->setBitmap(_avatars.get(user.avatar, 72));
+            auto *txt = row->add<View>();
+            txt->style().flex(1).spacing(1);
+            const std::string label(user.label());
+            txt->add<Label>(
+                   u == st.me ? i18n::arg(tr("%1 (you)"), label) : label, Font::BodyBold, C::Text
+            )
+                ->setMaxLines(1);
+            std::string sub;
+            if (!user.name.empty() && user.name != label)
+                sub = "@" + user.name;
+            if (!user.title.empty())
+                sub += (sub.empty() ? "" : " \xC2\xB7 ") + user.title;
+            if (!sub.empty())
+                txt->add<Label>(sub, Font::YouLabel, C::TextMuted)->setMaxLines(1);
+            row->onClick = [this, u] { activate(u); };
+            _rows.push_back({row, u});
+        }
+        // Typing picks the first match for Enter.
+        _sel = q.empty() || _rows.empty() ? -1 : 0;
+        for (size_t i = 0; i < _rows.size(); ++i)
+            _rows[i].row->setChecked(int(i) == _sel);
+        const bool none = _rows.empty();
+        _list->setVisible(!none);
+        _message->setVisible(none);
+        if (none)
+            _message->setText(
+                q.empty() ? std::string(tr("No members to show."))
+                          : i18n::arg(tr("No one here matches \xE2\x80\x9C%1\xE2\x80\x9D."), q)
+            );
+    }
+    bool key(const Event &e) {
+        if (e.type != EventType::KeyDown)
+            return false;
+        if (e.key == plat::Key::Down || e.key == plat::Key::Up) {
+            if (_rows.empty())
+                return true;
+            const int n = int(_rows.size());
+            _sel        = std::clamp(_sel + (e.key == plat::Key::Down ? 1 : -1), 0, n - 1);
+            for (int i = 0; i < n; ++i)
+                _rows[size_t(i)].row->setChecked(i == _sel);
+            _list->ensureVisible(_rows[size_t(_sel)].row, 0);
+            return true;
+        }
+        if ((e.key == plat::Key::Enter || e.key == plat::Key::KpEnter) && _sel >= 0) {
+            activate(_rows[size_t(_sel)].user);
+            return true;
+        }
+        return false;
+    }
+    void activate(model::UserRef u) {
+        close();
+        if (_ctx.messageUser) // msga's openDmWith: the DM, or a teammate's page
+            _ctx.messageUser(u);
+    }
+    struct Row {
+        Clickable     *row;
+        model::UserRef user;
+    };
+    screens::Context           &_ctx;
+    Avatars                    &_avatars;
+    Label                      *_title = nullptr, *_message = nullptr;
+    TextEdit                   *_search = nullptr;
+    ScrollView                 *_list   = nullptr;
+    std::vector<model::UserRef> _ids;
+    std::vector<Row>            _rows;
+    int                         _sel    = -1;
+    bool                        _loaded = false;
+};
+
+} // namespace
+
+// ── ConvHeader ──────────────────────────────────────────────────────────────
+
+// msga's huddleJoinUrl: a web hand-off, as huddles can't start over the API.
+// A channel's /huddle/ link starts (or joins) its huddle; for a DM that shape
+// server-errors, so a DM opens the conversation and the huddle starts there.
+// A live room's own huddle_link comes first.
+std::string huddleJoinUrl(const model::Store &st, ConvRef conv) {
+    const auto &c = st.conversation(conv);
+    if (!c.huddleLink.empty())
+        return c.huddleLink;
+    return str::concat(
+        {"https://app.slack.com/", c.isDirect() ? "client/" : "huddle/", st.workspaceId, "/", c.id}
+    );
+}
+
+ConvHeader::ConvHeader(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(avatars) {
+#ifdef __APPLE__
+    // msga's macOS unified header (main_window's headerGrid), which Shell
+    // puts in the title bar: the name centred in the window between a blank
+    // column and the actions, both 200 px wide (room for the members button
+    // beside the three icons), over the title bar's bottom rule.
+    constexpr float kActionsW = 200;
+    style().row().margins(0, 0, 0, 1);
+    setBackground(C::Surface);
+    add<View>()->style().width(kActionsW).noShrink();
+    View *heading = add<View>();
+    heading->style().row().flex(1).items(Align::Center);
+    heading->add<View>()->style().flex(1);
+    View *actions = add<View>();
+    actions->style().row().width(kActionsW).padding(0, 0, 8, 0).spacing(2).noShrink();
+    actions->style().items(Align::Center);
+    actions->add<View>()->style().flex(1);
+#else
+    style().row().height(48).padding(16, 0, 8, 0).spacing(8).items(Align::Center).noShrink();
+    View *heading = this, *actions = this;
+#endif
+    _avatar = heading->add<HeaderAvatar>();
+    _avatar->setVisible(false);
+    _avatar->onClick = [this] {
+        if (_avatar->isGroup() && _ctx.backend.capabilities().memberList)
+            openMembers(_avatar->windowRect());
+    };
+#ifdef __APPLE__
+    _avatar->style().margins(0, 0, 8, 0);
+    _title = heading->add<Label>("", Font::UnifiedTitle);
+    _title->setMaxLines(1);
+    _title->setAlign(text::LayoutOptions::Align::Center);
+    // Not a control: a press on the name drags the window (Shell::hitTest).
+    _title->setHitTransparent(true);
+    heading->add<View>()->style().flex(1);
+#else
+    _title = heading->add<Label>("", Font::HeaderTitle);
+    _title->setMaxLines(1);
+    _title->style().flex(1).shrink = 1;
+#endif
+    auto *members = actions->add<MembersButton>();
+    members->style().margins(0, 0, 2, 0);
+    members->onClick = [this, members] { openMembers(members->windowRect()); };
+    _members         = members;
+    _count           = members->count;
+    auto *huddle     = actions->add<GlyphButton>(
+        Icon::Headphones, 28, 16, C::FormIcon, tr("Opens the huddle in Slack for web")
+    );
+    huddle->style().margins(0, 0, 2, 0);
+    huddle->onClick = [this] {
+        if (_conv != kNoConv && _ctx.openUrl)
+            _ctx.openUrl(huddleJoinUrl(_ctx.store, _conv));
+    };
+    _huddle = huddle;
+    _star   = actions->add<StarButton>();
+    _star->style().margins(0, 0, 2, 0);
+    _star->onClick = [this] {
+        if (_conv != kNoConv)
+            _ctx.backend.setStarred(_conv, !_ctx.store().conversation(_conv).starred);
+    };
+    auto *search =
+        actions->add<GlyphButton>(Icon::Search, 32, 16, C::FormIcon, tr("Search messages"));
+    search->onClick = [this] {
+        if (onSearch)
+            onSearch();
+    };
+    _search = search;
+}
+
+Clickable *ConvHeader::avatar() const {
+    return _avatar;
+}
+
+Clickable *ConvHeader::star() const {
+    return _star;
+}
+
+bool ConvHeader::starred() const {
+    return _star->starred();
+}
+
+int ConvHeader::avatarPresence() const {
+    const Avatar *a = _avatar->peer();
+    return a ? int(a->presence()) : -1;
+}
+
+void ConvHeader::show(ConvRef conv) {
+    _conv = conv;
+    refresh();
+}
+
+void ConvHeader::refresh() {
+    if (_conv == kNoConv || _conv >= _ctx.store().conversationCount())
+        return;
+    const auto &st   = _ctx.store();
+    const auto &c    = st.conversation(_conv);
+    const auto  caps = _ctx.backend.capabilities();
+    _title->setText(str::concat({c.isDirect() ? "" : "#", st.displayName(_conv)}));
+    _star->setVisible(true);
+    _star->setStarred(c.starred);
+    _huddle->setVisible(caps.huddles);
+    // Channels: the members button with conversations.list's count (a large
+    // one shortened to "12k" so it fits).
+    const bool channel = caps.memberList && !c.isDirect();
+    _members->setVisible(channel);
+    const uint32_t n = channel ? c.memberCount : 0;
+    _count->setText(
+        n == 0      ? std::string()
+        : n < 10000 ? str::number(int64_t(n))
+                    : str::concat({str::number(int64_t(n / 1000)), "k"})
+    );
+    _count->setVisible(n > 0);
+    // A DM: the peer's avatar and presence; a group DM: its stacked members.
+    _avatar->setVisible(c.isDirect());
+    if (c.kind == ConvKind::Dm) {
+        const auto &u = st.user(c.dmUser);
+        Avatar     *a = _avatar->single();
+        a->setBitmap(_avatars.get(u.avatar, 56));
+        a->setInitial(u.label());
+        using P            = Avatar::Presence;
+        // msga: phantom (yellow) for me while no official client is
+        // connected, and for any peer that can't be reached (an agent
+        // session that is gone).
+        const bool self    = c.dmUser == st.me;
+        const auto sp      = _ctx.backend.selfPresence();
+        const bool phantom = (self && sp.phantomAway()) || u.unavailable;
+        a->setPresence(
+            !caps.presence || u.bot ? P::None
+            : u.dnd                 ? P::Dnd
+            : u.active              ? P::Active
+            : phantom               ? P::Phantom
+                                    : P::Away,
+            C::BadgeText // msga rings the header dot in white
+        );
+        // msga's selfPresenceTooltip: nothing until my presence is known.
+        _avatar->setTooltip(
+            !self ? std::string()
+            : sp.phantomAway()
+                ? tr("You appear away to others \xE2\x80\x94 no official Slack client is connected")
+            : sp.active ? tr("Active")
+            : sp.loaded ? tr("Away")
+                        : std::string()
+        );
+        _avatar->setCursor(plat::Cursor::Arrow);
+    } else if (c.kind == ConvKind::Group) {
+        // conversations.list leaves a renamed group DM's members out: ask once
+        // (the backend files them into the conversation, which repaints this).
+        if (caps.memberList && c.members.empty() && _membersAsked.insert(c.id).second)
+            _ctx.backend.loadMembers(_conv, [](std::vector<model::UserRef>, std::string) {});
+        std::vector<std::shared_ptr<const gfx::Bitmap>> pics;
+        std::vector<std::string_view>                   names;
+        for (model::UserRef u : c.members)
+            if (u != st.me) {
+                pics.push_back(_avatars.get(st.user(u).avatar, 48));
+                names.push_back(st.user(u).label());
+            }
+        _avatar->group(pics, names, uint32_t(c.members.size()));
+        _avatar->setTooltip({});
+        _avatar->setCursor(caps.memberList ? plat::Cursor::Hand : plat::Cursor::Arrow);
+    } else {
+        _avatar->clear();
+    }
+    invalidateLayout();
+}
+
+void ConvHeader::openMembers(RectF anchor) {
+    Window *w = window();
+    if (!w || _conv == kNoConv)
+        return;
+    const auto &c = _ctx.store().conversation(_conv);
+    auto        p = std::make_unique<MembersPopup>(
+        _ctx, _avatars, c.kind == ConvKind::Group ? uint32_t(c.members.size()) : c.memberCount
+    );
+    auto *raw = p.get();
+    p->setAnchor(anchor, Popup::Place::Below);
+    w->showPopup(std::move(p));
+    raw->search().focus();
+    // The popup may be gone before the list comes: its onClosed holds the
+    // token, so the token dies with it.
+    auto token    = std::make_shared<int>(0);
+    raw->onClosed = [token] {};
+    _ctx.backend.loadMembers(
+        _conv,
+        [raw, weak = std::weak_ptr<int>(token)](std::vector<model::UserRef> ids, std::string err) {
+            if (weak.expired())
+                return;
+            if (ids.empty() && !err.empty())
+                raw->showError(err);
+            else
+                raw->setMembers(std::move(ids));
+        }
+    );
+}
+
+// ── ConvTabs ────────────────────────────────────────────────────────────────
+
+namespace {
+
+class Tab final : public Clickable {
+public:
+    Tab(Icon icon, std::string text) : icon(icon) {
+        setRole(Role::Tab);
+        setLook({C::None, C::FormHighlight, C::FormHighlight, C::None, 6});
+        style().row().height(31).margins(0, 4, 0, 0).padding(10 + 15 + 6, 0, 10, 0);
+        style().items(Align::Center).noShrink();
+        label = add<Label>(std::move(text), Font::Control, C::TextMuted);
+        label->setMaxLines(1);
+        label->setHitTransparent(true);
+    }
+    void setText(std::string t) {
+        label->setText(std::move(t));
+        fit();
+    }
+    // Sized with the bold face, so a tab never shifts when it activates; the
+    // title elides past 240 px.
+    void fit() {
+        Label       probe(label->text(), Font::TabBold);
+        const float w = std::min(240.f, std::ceil(probe.measure(kInf, kInf).w));
+        label->style().width(w);
+        style().width(10 + 15 + 6 + w + 10);
+    }
+    void setActive(bool on) {
+        active = on;
+        label->setFont(on ? Font::TabBold : Font::Control);
+        label->setColor(on ? C::Text : C::TextMuted);
+        setLook(
+            {C::None, on ? C::None : C::FormHighlight, on ? C::None : C::FormHighlight, C::None, 6}
+        );
+        update();
+    }
+    void paint(gfx::Painter &p) override {
+        Clickable::paint(p);
+        gfx::drawIcon(
+            p,
+            icon,
+            {10, snapPx((height() - 15) / 2), 15, 15},
+            color(active ? C::Text : C::TextMuted)
+        );
+    }
+    Icon   icon;
+    Label *label;
+    bool   active = false;
+};
+
+} // namespace
+
+ConvTabs::ConvTabs() {
+    setRole(Role::Group);
+    style().row().height(38).padding(16, 0, 0, 0).spacing(4).noShrink();
+    style().items(Align::Start);
+    _tabs[0] = add<Tab>(Icon::MessageCircle, tr("Messages"));
+    _tabs[1] = add<Tab>(Icon::StickyNotePlus, tr("Add canvas"));
+    for (int i = 0; i < 2; ++i) {
+        static_cast<Tab *>(_tabs[i])->fit();
+        _tabs[i]->onClick = [this, i] {
+            if (i == _active)
+                return;
+            setActive(i);
+            if (onSelect)
+                onSelect(i);
+        };
+    }
+    setActive(0);
+}
+
+void ConvTabs::setCanvas(bool visible, bool hasCanvas, std::string title) {
+    auto *t = static_cast<Tab *>(_tabs[1]);
+    t->setVisible(visible);
+    t->icon = hasCanvas ? Icon::Canvas : Icon::StickyNotePlus;
+    t->setText(
+        hasCanvas ? (title.empty() ? std::string(tr("Untitled")) : std::move(title))
+                  : std::string(tr("Add canvas"))
+    );
+    if (!visible && _active == 1)
+        setActive(0); // can't stay on a hidden tab
+}
+
+void ConvTabs::setActive(int tab) {
+    _active = tab;
+    for (int i = 0; i < 2; ++i)
+        static_cast<Tab *>(_tabs[i])->setActive(i == tab);
+    update();
+}
+
+std::string ConvTabs::tabText(int i) const {
+    return static_cast<Tab *>(_tabs[i])->label->text();
+}
+
+void ConvTabs::paint(gfx::Painter &p) {
+    p.fillRect(bounds(), color(C::Surface));
+    p.fillRect({0, height() - 1, width(), 1}, color(C::Border));
+}
+
+void ConvTabs::paintOver(gfx::Painter &p) {
+    // The active tab's underline sits on the divider.
+    const View *t = _tabs[_active];
+    if (t->visible())
+        p.fillRect({t->frame().x, height() - 2, t->width(), 2}, color(C::Text));
+}
+
+} // namespace shell

@@ -1,985 +1,626 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026  Vladimir Osipov
-#include "theme.h"
-#include "theme_manager.h"
-
-#include <QApplication>
-#include <QEvent>
-#include <QFont>
-#include <QPoint>
-#include <QPointer>
-#include <QWidget>
+#include "ui/theme.h"
+#include "ui/view.h"
 
 #include <algorithm>
+#include <cmath>
+#include <iterator>
 
-using namespace Qt::StringLiterals;
+namespace ui {
+namespace {
 
-namespace Th {
+// Straight ARGB. Tables are indexed by C; keep the order in sync with theme.h
+// (the static_asserts below catch a missing row).
+constexpr Color kLight[] = {
+    0x00000000, // None
+    0xffffffff, // WindowBg
+    0xffffffff, // Surface
+    0xfff8f8f8, // SurfaceHover
+    0xff3f0e40, // Rail
+    0xff5a2b5c, // Sidebar
+    0xfff2ebf2, // SidebarText
+    0xffc9b6c9, // SidebarTextMuted
+    0x1affffff, // SidebarHover
+    0xffece6ed, // SidebarSelected
+    0xff1d1c1d, // SidebarSelectedText
+    0x64ffffff, // SidebarScrollbar
+    0xff1d1c1d, // Text
+    0xff616061, // TextMuted
+    0xff868686, // TextFaint
+    0xff1264a3, // Link
+    0xff611f69, // Accent
+    0xff4a154b, // AccentHover
+    0xffffffff, // AccentText
+    0xffe2e2e2, // Border
+    0xffbcbcbc, // BorderStrong
+    0x0f000000, // Hover
+    0x1f000000, // Pressed
+    0xffb4d5fe, // Selection
+    0xff1d1c1d, // Caret
+    0xff1264a3, // FocusRing
+    0xffcd2553, // Badge
+    0xffffffff, // BadgeText
+    0xffffffff, // PopupBg
+    0xffdddddd, // PopupBorder
+    0x38000000, // Shadow
+    0xff1d1c1d, // TooltipBg
+    0xffffffff, // TooltipText
+    0x40000000, // Scrollbar
+    0x70000000, // ScrollbarHover
+    0xffffffff, // InputBg
+    0xffc8c8c8, // InputBorder
+    0xff868686, // InputBorderFocus
+    0xff868686, // Placeholder
+    0xfff6f6f6, // CodeBg
+    0xffc01343, // CodeText
+    0x261d9bd1, // MentionBg
+    0xff1264a3, // MentionText
+    0xfffff5d1, // MentionSelfBg
+    0xffe01e5a, // Danger
+    0xff2bac76, // Online
+    0xffffffff, // FormBg
+    0xfff4f4f4, // FormSunken
+    0xfff0f0f0, // FormHighlight
+    0xffe8e8e8, // FormHighlightStrong
+    0xffe8e8e8, // FormDivider
+    0xffd1d1d1, // FormDividerStrong
+    0xff1d1c1d, // FormText
+    0xff616061, // FormTextMuted
+    0xff888888, // FormTextFaint
+    0xff1264a3, // FormLink
+    0xffc0392b, // FormError
+    0xff7a5800, // FormWarning
+    0xffdddddd, // FieldBorder
+    0xff999999, // FieldBorderFocus
+    0xffffffff, // FieldWell
+    0xffe01e5a, // DangerFill
+    0xffc0184f, // DangerFillHover
+    0xfffff8ee, // BannerBg
+    0xffe8a917, // BannerBorder
+    0xff7a5800, // BannerText
+    0xfffffde7, // UpdateBannerBg
+    0xfff9a825, // UpdateBannerBorder
+    0xff1d1c1d, // UpdateBannerText
+    0xff3f0e40, // TitleBar (from the palette)
+    0xffcfc3cf, // TitleBarControl (from the palette)
+    0xffc6920a, // IconStarred
+    0xff888888, // ComposerIcon
+    0xff505050, // ComposerIconActive
+    0xffcccccc, // DropArrow
+    0xff1d9bd1, // BadgeActivity
+    0xff8b8b8b, // PresenceAway
+    0xffe8a33d, // PresencePhantom
+    0xfff0dfa0, // BannerAccent
+    0xfff8f8f8, // ChipBg
+    0xffe0e0e0, // ChipBorder
+    0xd2ffffff, // OverlayBg
+    0xff1d1c1d, // OverlayText
+    0xff350d36, // AccentPressed (palette)
+    0xfff4e5f5, // AccentSubtle (palette)
+    0xff888888, // FormIcon
+    0xff454245, // FormIconStrong
+    0xffcfc3cf, // OnDarkDim
+    0x0a000000, // RowHover
+    0xfffafafa, // FileChipBg
+    0xffdddddd, // FileChipBorder
+    0xff666666, // FileNameDim
+    0xff1164a3, // ReplyLink
+    0xffdddddd, // TableBorder
+    0x0b000000, // TableHeaderBg
+    0x14000000, // TableRowRule
+    0xee0c0c0e, // ViewerBackdrop
+    0x3cffeb3b, // PinnedBg
+    0x1a1d9bd1, // ReminderBg
+    0xffffffff, // MenuBg
+    0xff1d1c1d, // MenuText
+    0xffe01e5a, // MenuDanger
+    0x0c000000, // MenuHover
+    0x12000000, // MenuSeparator
+    0xfff0f0f0, // DividerSubtle
+};
 
-const Theme &current() {
-    return ThemeManager::instance().theme();
-}
+constexpr Color kDark[] = {
+    0x00000000, // None
+    0xff222222, // WindowBg
+    0xff222222, // Surface
+    0xff2c2c2c, // SurfaceHover
+    0xff121016, // Rail
+    0xff19171d, // Sidebar
+    0xffd1d2d3, // SidebarText
+    0xff9a9b9e, // SidebarTextMuted
+    0x14ffffff, // SidebarHover
+    0xff1164a3, // SidebarSelected
+    0xffffffff, // SidebarSelectedText
+    0x64ffffff, // SidebarScrollbar
+    0xffe6e6e6, // Text
+    0xffa8a8a8, // TextMuted
+    0xff7b7b7b, // TextFaint
+    0xff53b4e5, // Link
+    0xff1164a3, // Accent
+    0xff0b4c8c, // AccentHover
+    0xffffffff, // AccentText
+    0xff333333, // Border
+    0xff4d4d4d, // BorderStrong
+    0x14ffffff, // Hover
+    0x24ffffff, // Pressed
+    0xff264f78, // Selection
+    0xffe6e6e6, // Caret
+    0xff1d9bd1, // FocusRing
+    0xffcd2553, // Badge
+    0xffffffff, // BadgeText
+    0xff262626, // PopupBg
+    0xff4d4d4d, // PopupBorder
+    0x80000000, // Shadow
+    0xff0a0a0a, // TooltipBg
+    0xffffffff, // TooltipText
+    0x40ffffff, // Scrollbar
+    0x70ffffff, // ScrollbarHover
+    0xff2a2a2a, // InputBg
+    0xff3a3a3a, // InputBorder
+    0xff6e6e6e, // InputBorderFocus
+    0xff7b7b7b, // Placeholder
+    0xff2c2d30, // CodeBg
+    0xffe8912d, // CodeText
+    0x331d9bd1, // MentionBg
+    0xff1d9bd1, // MentionText
+    0x2afac83c, // MentionSelfBg
+    0xffe01e5a, // Danger
+    0xff2bac76, // Online
+    0xff2a2a2a, // FormBg
+    0xff1a1a1a, // FormSunken
+    0xff2e2e2e, // FormHighlight
+    0xff383838, // FormHighlightStrong
+    0xff333333, // FormDivider
+    0xff4d4d4d, // FormDividerStrong
+    0xffe6e6e6, // FormText
+    0xffa8a8a8, // FormTextMuted
+    0xff7b7b7b, // FormTextFaint
+    0xff53b4e5, // FormLink
+    0xffe57373, // FormError
+    0xffd9a741, // FormWarning
+    0xff3a3a3a, // FieldBorder
+    0xff6e6e6e, // FieldBorderFocus
+    0xff222222, // FieldWell
+    0xffe01e5a, // DangerFill
+    0xfff02e6a, // DangerFillHover
+    0xff332b18, // BannerBg
+    0xffc99a2c, // BannerBorder
+    0xffe3c36b, // BannerText
+    0xff33301c, // UpdateBannerBg
+    0xfff9a825, // UpdateBannerBorder (the light one: dark never set its own)
+    0xffe6e6e6, // UpdateBannerText
+    0xff1a1d21, // TitleBar (from the palette)
+    0xffcfc3cf, // TitleBarControl (from the palette)
+    0xffe0b341, // IconStarred
+    0xff9c9c9c, // ComposerIcon
+    0xffe6e6e6, // ComposerIconActive
+    0xff4d4d4d, // DropArrow
+    0xff1d9bd1, // BadgeActivity
+    0xff8b8b8b, // PresenceAway
+    0xffe8a33d, // PresencePhantom
+    0xff4a3e1e, // BannerAccent
+    0xff282828, // ChipBg
+    0xff3e3e3e, // ChipBorder
+    0xd2222222, // OverlayBg
+    0xffe6e6e6, // OverlayText
+    0xff4a4a4a, // AccentPressed (palette)
+    0xff333333, // AccentSubtle (palette)
+    0xff9c9c9c, // FormIcon
+    0xffc9c9c9, // FormIconStrong
+    0xffc9c9c9, // OnDarkDim
+    0x0cffffff, // RowHover
+    0xff202020, // FileChipBg
+    0xff3a3a3a, // FileChipBorder
+    0xffa6a6a6, // FileNameDim
+    0xff1164a3, // ReplyLink
+    0xff3e3e3e, // TableBorder
+    0x0cffffff, // TableHeaderBg
+    0x12ffffff, // TableRowRule
+    0xee0c0c0e, // ViewerBackdrop
+    0x1cffeb3b, // PinnedBg
+    0x181d9bd1, // ReminderBg
+    0xff262626, // MenuBg
+    0xffe6e6e6, // MenuText
+    0xfff06a85, // MenuDanger
+    0x0c000000, // MenuHover
+    0x12000000, // MenuSeparator
+    0xff2a2a2a, // DividerSubtle
+};
+static_assert(sizeof(kLight) / sizeof(Color) == size_t(C::Count), "kLight out of sync with C");
+static_assert(sizeof(kDark) / sizeof(Color) == size_t(C::Count), "kDark out of sync with C");
 
-QString qss(const QColor &c) {
-    if (c.alpha() == 255)
-        return c.name(); // "#RRGGBB"
-    return u"rgba(%1,%2,%3,%4)"_s.arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.alpha());
-}
+constexpr float kMetrics[] = {4, 6, 8, 4, 8, 12, 16, 24, 28, 6};
+static_assert(sizeof(kMetrics) / sizeof(float) == size_t(M::Count), "kMetrics out of sync");
+
+struct FontRole {
+    float        size;
+    text::Weight weight;
+    bool         mono;
+};
+constexpr FontRole kFonts[] = {
+    {12, text::Weight::Regular, false},     // Small
+    {12, text::Weight::Bold, false},        // SmallBold
+    {15, text::Weight::Regular, false},     // Body
+    {15, text::Weight::Bold, false},        // BodyBold
+    {18, text::Weight::Bold, false},        // Title
+    {13, text::Weight::Regular, true},      // Mono
+    {11, text::Weight::Regular, false},     // Caption
+    {13, text::Weight::Regular, false},     // Control
+    {13, text::Weight::Semibold, false},    // ControlBold
+    {14, text::Weight::Semibold, false},    // Heading
+    {15, text::Weight::Semibold, false},    // DialogTitle
+    {14, text::Weight::Regular, false},     // Field
+    {15, text::Weight::Semibold, false},    // BodySemibold
+    {12.3f, text::Weight::Semibold, false}, // Section
+    {12.3f, text::Weight::Bold, false},     // SectionBold
+    {11.7f, text::Weight::Bold, false},     // CountBadge
+    {13.2f, text::Weight::Regular, false},  // YouLabel
+    {10.1f, text::Weight::Bold, false},     // TileBold
+    {18, text::Weight::Semibold, false},    // HeaderTitle
+    {16, text::Weight::Semibold, false},    // UnifiedTitle
+    {13, text::Weight::Bold, false},        // TabBold
+    {10, text::Weight::Regular, false},     // Tiny
+    {11, text::Weight::Semibold, false},    // PlateName
+    {12, text::Weight::Semibold, false},    // SmallSemibold
+    {28, text::Weight::Bold, false},        // CanvasTitle
+};
+static_assert(sizeof(kFonts) / sizeof(FontRole) == size_t(Font::Count), "kFonts out of sync");
+
+constexpr uint32_t kSentinelMask = 0xff00ff00u, kSentinel = 0x0000a500u;
+
+} // namespace
+
+// ── Palettes ────────────────────────────────────────────────────────────────
+// The Qt app's chrome presets (src/ui/theme.cpp: kAubergineChrome, …) and its
+// derivation rules, evaluated here so a pick recolours the rail, sidebar,
+// selection and accent over either content mode.
 
 namespace {
 
-// Scale each RGB channel of `c` by `f`, clamped — a perceptually fine way to
-// lighten/darken the dark sidebar tones for the gradient endpoints.
-QColor scaleRgb(const QColor &c, double f) {
-    return QColor(
-        std::clamp(static_cast<int>(c.red() * f), 0, 255),
-        std::clamp(static_cast<int>(c.green() * f), 0, 255),
-        std::clamp(static_cast<int>(c.blue() * f), 0, 255),
-        c.alpha()
+struct Spec {
+    Color rail, pill, pillInk, bubble, dim; // dim 0 = derived from the rail
+    Color accent, accentHover;
+    Color accentDark, accentHoverDark; // 0 = the light accent lifted for dark content
+    Color pressed, subtle, pressedDark, subtleDark;
+};
+
+constexpr Spec kSpecs[] = {
+    {0xff3f0e40,
+     0xffe1dbe1,
+     0xff350d36,
+     0xff4a154b,
+     0xffcfc3cf,
+     0xff4a154b,
+     0xff611f69,
+     0,
+     0,
+     0xff350d36,
+     0xfff4e5f5},
+    {0xff131313,
+     0xff545454,
+     0xffdedede,
+     0xff333333,
+     0xffc9c9c9,
+     0xff5a5a5a,
+     0xff6a6a6a,
+     0xff5a5a5a,
+     0xff6a6a6a,
+     0xff4a4a4a,
+     0xffededed,
+     0xff4a4a4a,
+     0xff333333},
+    {0xff0e2a40,
+     0xffdbe0e5,
+     0xff0b2335,
+     0xff15405e,
+     0xffc3ccd4,
+     0xff1264a3,
+     0xff1b7cc4,
+     0,
+     0,
+     0xff0b4f82,
+     0xffe5f0f8},
+    {0xff0e3d2e,
+     0xffdbe5e0,
+     0xff0a3124,
+     0xff15543e,
+     0xffc3d4cc,
+     0xff007a5a,
+     0xff148567,
+     0,
+     0,
+     0xff055c42,
+     0xffe5f4ee},
+};
+constexpr Color kDarkInk = 0xff1d1c1d, kWhite = 0xffffffff;
+
+Palette       g_palette[2] = {Palette::Purple, Palette::Charcoal};
+CustomPalette g_custom;
+PaletteColors g_cache[2];
+bool          g_cached[2] = {false, false};
+
+float chan(Color c, int shift) {
+    return float((c >> shift) & 0xff) / 255.f;
+}
+
+Color pack(float r, float g, float b) {
+    auto q = [](float v) { return uint32_t(std::clamp(v, 0.f, 1.f) * 255.f + 0.5f); };
+    return 0xff000000u | q(r) << 16 | q(g) << 8 | q(b);
+}
+
+float lightness(Color c) {
+    const float r = chan(c, 16), g = chan(c, 8), b = chan(c, 0);
+    return (std::max({r, g, b}) + std::min({r, g, b})) / 2;
+}
+
+// Same hue and saturation (HSL), lightness pinned to l.
+Color withLightness(Color c, float l) {
+    const float r = chan(c, 16), g = chan(c, 8), b = chan(c, 0);
+    const float mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
+    const float l0 = (mx + mn) / 2;
+    const float s  = d == 0 ? 0 : d / (1 - std::fabs(2 * l0 - 1));
+    float       h  = 0;
+    if (d > 0)
+        h = mx == r ? std::fmod((g - b) / d + 6, 6.f) : mx == g ? (b - r) / d + 2 : (r - g) / d + 4;
+    l             = std::clamp(l, 0.f, 1.f);
+    const float C = (1 - std::fabs(2 * l - 1)) * s, X = C * (1 - std::fabs(std::fmod(h, 2.f) - 1));
+    const float m                   = l - C / 2;
+    static const uint8_t kSeg[6][3] = {
+        {0, 1, 2}, {1, 0, 2}, {2, 0, 1}, {2, 1, 0}, {1, 2, 0}, {0, 2, 1}
+    }; // which of C, X, 0 goes to r, g, b
+    const float v[3] = {C, X, 0};
+    const auto &k    = kSeg[std::min(5, int(h))];
+    return pack(v[k[0]] + m, v[k[1]] + m, v[k[2]] + m);
+}
+
+Color mix(Color base, Color ink, float a) {
+    return pack(
+        chan(base, 16) * (1 - a) + chan(ink, 16) * a,
+        chan(base, 8) * (1 - a) + chan(ink, 8) * a,
+        chan(base, 0) * (1 - a) + chan(ink, 0) * a
     );
 }
 
-// Composite opaque white at alpha `a` (0..1) over `base` — Slack's "translucent
-// plate over the backdrop" trick, evaluated once at theme-build time.
-QColor overlayWhite(const QColor &base, double a) {
-    return QColor(
-        std::clamp(static_cast<int>(base.red() * (1 - a) + 255 * a), 0, 255),
-        std::clamp(static_cast<int>(base.green() * (1 - a) + 255 * a), 0, 255),
-        std::clamp(static_cast<int>(base.blue() * (1 - a) + 255 * a), 0, 255),
-        base.alpha()
-    );
+Color scaled(Color c, float f) {
+    return pack(chan(c, 16) * f, chan(c, 8) * f, chan(c, 0) * f);
 }
 
-// Subtle vertical sidebar gradient, matching the official Slack reference
-// (~12% lighter at the top, ~10% darker at the bottom). Derived from the solid
-// nav.bg / nav.primary tones so every theme gets a consistent gradient for free.
-constexpr double kGradTopFactor    = 1.12;
-constexpr double kGradBottomFactor = 0.90;
-
-// Composite `ink` at alpha `a` (0..1) over `base` — the generic form of
-// overlayWhite, for dark ink over a light rail.
-QColor overlay(const QColor &base, const QColor &ink, double a) {
-    return QColor(
-        std::clamp(static_cast<int>(base.red() * (1 - a) + ink.red() * a), 0, 255),
-        std::clamp(static_cast<int>(base.green() * (1 - a) + ink.green() * a), 0, 255),
-        std::clamp(static_cast<int>(base.blue() * (1 - a) + ink.blue() * a), 0, 255),
-        base.alpha()
-    );
+// A brand accent tuned for white content, lifted to stay visible as a filled
+// control on dark surfaces (the Qt app's liftForDark).
+void liftForDark(Color def, Color *accent, Color *hover, Color *pressed, Color *subtle) {
+    const float l = std::max(lightness(def), 0.36f);
+    *accent       = withLightness(def, l);
+    *hover        = withLightness(def, l + 0.07f);
+    *pressed      = withLightness(def, l - 0.06f);
+    *subtle       = withLightness(def, 0.21f);
 }
 
-// Same hue and saturation, lightness pinned to `l` (0..1).
-QColor withLightness(const QColor &c, double l) {
-    const double h = std::max<double>(0.0, c.hslHueF()); // -1 (achromatic) → any hue, s is 0
-    return QColor::fromHslF(h, c.hslSaturationF(), std::clamp(l, 0.0, 1.0), c.alphaF());
-}
-
-// The near-black ink used on light rails (a light chrome over either content
-// mode); same tone as the light-content primary text.
-const QColor kDarkInk("#1D1C1D");
-
-// Brand accents are tuned for white content and mostly too dark to read as a
-// filled control on the dark surfaces (aubergine #4A154B sits a hair above the
-// #2A2A2A raised surface). Lift the whole set to a floor lightness, keeping
-// hue and saturation, and derive the hover/pressed steps around it.
-constexpr double kDarkAccentFloor = 0.36;
-
-AccentSet liftForDark(const AccentSet &a) {
-    const double l = std::max<double>(a.def.lightnessF(), kDarkAccentFloor);
-    AccentSet    d;
-    d.def      = withLightness(a.def, l);
-    d.hover    = withLightness(a.def, l + 0.07);
-    d.pressed  = withLightness(a.def, l - 0.06);
-    d.dark     = withLightness(a.def, l - 0.10);
-    d.subtleBg = withLightness(a.def, 0.21);
-    return d;
-}
-
-// ── Content mode ─────────────────────────────────────────────────────────────
-// The content-side half of a dark theme: surfaces, text, message, composer,
-// banners, dividers, icons, menus, tooltip. Chrome (nav/accent/titleBar) is
-// untouched — applyChrome() runs after this and owns it.
-//
-// Palette is pure neutral graphite (R=G=B on every grey, no blue cast),
-// modelled on the sBlack dark Slack theme: #222222 content and bright
-// near-white primary text; alpha overlays *lighten* instead of darken.
-void applyDarkContent(Theme &t) {
-    t.surface.content         = QColor("#222222");
-    t.surface.raised          = QColor("#2A2A2A");
-    t.surface.sunken          = QColor("#1A1A1A");
-    t.surface.highlight       = QColor("#2E2E2E");
-    t.surface.highlightStrong = QColor("#383838");
-
-    t.text.primary      = QColor("#E6E6E6");
-    t.text.documentBody = QColor("#D6D6D6");
-    t.text.secondary    = QColor("#A8A8A8");
-    t.text.tertiary     = QColor("#7B7B7B");
-    t.text.onDarkDim    = QColor("#C9C9C9"); // dark chips (tooltips, viewer) go neutral
-    t.text.link         = QColor("#53B4E5");
-    t.text.danger       = QColor("#E57373");
-    t.text.warning      = QColor("#D9A741");
-
-    t.message.hover                  = QColor(255, 255, 255, 12); // lighten, don't darken
-    t.message.mentionBg              = QColor(29, 155, 209, 46);
-    t.message.mentionSelfBg          = QColor(250, 200, 60, 42);
-    t.message.mentionText            = QColor("#53B4E5");
-    t.message.codeBlockBg            = QColor("#262626");
-    t.message.codeBlockBorder        = QColor("#3E3E3E");
-    t.message.codeText               = QColor("#BDBDBD");
-    t.message.quoteBorder            = QColor("#4D4D4D");
-    t.message.attachmentBg           = QColor("#202020");
-    t.message.attachmentBorder       = QColor("#3A3A3A");
-    t.message.attachmentDismiss      = QColor("#9C9C9C");
-    t.message.attachmentBar          = QColor("#4D4D4D");
-    t.message.namedBarGood           = QColor("#2EB886");
-    t.message.namedBarWarning        = QColor("#DAA038");
-    t.message.namedBarDanger         = QColor("#A30200");
-    t.message.botButtonBg            = QColor("#222222");
-    t.message.botButtonHoverBg       = QColor("#2E2E2E");
-    t.message.botButtonBorder        = QColor("#5E5E5E");
-    t.message.botButtonFill          = QColor("#148567");
-    t.message.botButtonFillHover     = QColor("#1A9A78");
-    t.message.pinnedBg               = QColor(0xFF, 0xEB, 0x3B, 28);
-    t.message.reminderBg             = QColor(0x1D, 0x9B, 0xD1, 24);
-    t.message.reminderText           = QColor("#53B4E5");
-    t.message.fileChipBg             = QColor("#202020");
-    t.message.fileChipBorder         = QColor("#3A3A3A");
-    t.message.fileNameDim            = QColor("#A6A6A6");
-    t.message.imagePlaceholderBg     = QColor("#262626");
-    t.message.imagePlaceholderBorder = QColor("#3E3E3E");
-    t.message.replyBarHover          = QColor("#282828");
-    t.message.replyBarHoverBorder    = QColor("#3E3E3E");
-    t.message.replyLink              = QColor("#53B4E5");
-    t.message.appBadgeBg             = QColor(255, 255, 255, 30);
-    t.message.appBadgeText           = QColor("#A8A8A8");
-    t.message.extBadgeBg             = QColor(230, 201, 138, 30);
-    t.message.extBadgeText           = QColor("#D9B45C");
-    t.message.canvasTile             = QColor("#1D9BD1");
-    t.message.tableBorder            = QColor("#3E3E3E");
-    t.message.tableHeaderBg = QColor(255, 255, 255, 12); // translucent: row hover shows through
-    t.message.tableRowRule  = QColor(255, 255, 255, 18);
-
-    t.composer.bg                    = QColor("#222222");
-    t.composer.border                = QColor("#3A3A3A");
-    t.composer.borderFocus           = QColor("#6E6E6E");
-    t.composer.toolbarBg             = QColor("#1B1B1B");
-    t.composer.toolbarBorder         = QColor("#383838");
-    t.composer.toolbarIcon           = QColor("#9C9C9C");
-    t.composer.toolbarIconActive     = QColor("#E6E6E6");
-    t.composer.attachmentChipBg      = QColor("#282828");
-    t.composer.attachmentChipBorder  = QColor("#3E3E3E");
-    t.composer.attachmentOverlayBg   = QColor(34, 34, 34, 210);
-    t.composer.attachmentOverlayText = QColor("#E6E6E6");
-    t.composer.dropArrow             = QColor("#4D4D4D");
-
-    t.editBanner.bg     = QColor("#332B18");
-    t.editBanner.border = QColor("#C99A2C");
-    t.editBanner.accent = QColor("#4A3E1E");
-    t.editBanner.text   = QColor("#E3C36B");
-
-    t.updateBanner.bg     = QColor("#33301C");
-    t.updateBanner.accent = QColor("#453E20");
-    t.updateBanner.text   = QColor("#E6E6E6");
-
-    t.danger.hover = QColor("#F02E6A"); // lighten on press-hover, not darken
-    t.danger.icon  = QColor("#E57373");
-    t.danger.text  = QColor("#E57373");
-
-    t.divider.def    = QColor("#333333");
-    t.divider.strong = QColor("#4D4D4D");
-    t.divider.subtle = QColor("#2A2A2A");
-
-    t.icon.def     = QColor("#9C9C9C");
-    t.icon.strong  = QColor("#C9C9C9");
-    t.icon.danger  = QColor("#E57373");
-    t.icon.warning = QColor("#D9A741");
-    t.icon.starred = QColor("#E0B341");
-    t.icon.dim     = QColor("#4D4D4D");
-
-    t.contextMenu.bg          = QColor("#262626");
-    t.contextMenu.border      = QColor("#4D4D4D");
-    t.contextMenu.itemHover   = QColor("#333333");
-    t.contextMenu.itemText    = QColor("#E6E6E6");
-    t.contextMenu.itemTextDim = QColor("#9C9C9C");
-    t.contextMenu.dangerText  = QColor("#F06A85");
-
-    // Tooltips stay a dark chip, but darker than the dark surfaces they float
-    // over so they still read as a separate layer.
-    t.tooltip.bg = QColor("#0A0A0A");
-}
-
-// ── Chrome ───────────────────────────────────────────────────────────────────
-// Slack lightens the conversation list relative to the workspace rail by laying a
-// translucent white plate over the same backdrop. We bake that in: the chats-bar
-// surface (nav.primary) and its hover are derived from the rail tone (nav.bg) plus
-// a white overlay, so the list reads *lighter* than the rail on every theme.
-// Then both columns get the shared vertical gradient.
-//
-// Dark content needs a much thinner plate: even 12% white over a near-black rail
-// lands around #404346 — *lighter* than the dark content surface, flipping the
-// sidebar/content depth. With dark content the whole sidebar must stay darker
-// than the content area, so the plate only nudges the list above the rail.
-//
-// A light rail (Slack's "Hoth", Catppuccin Latte) flips every ink drawn over
-// the chrome to dark: item text, scroll thumbs, EXT/APP badge tint, title-bar
-// controls. Anything the spec pins explicitly is honoured as-is — an imported
-// Slack theme names its hover/text colours and must not have them derived away.
-void applyChrome(Theme &t, const ChromeSpec &c) {
-    const bool   darkContent = isDarkTheme(t);
-    const bool   lightRail   = c.rail.lightnessF() > 0.5;
-    const double plate       = darkContent ? 0.03 : 0.12;
-    const double hoverPlate  = darkContent ? 0.10 : 0.24;
-
-    t.nav.bg               = c.rail;
-    t.nav.primary          = overlayWhite(c.rail, plate); // chats surface = rail + plate
-    t.nav.workspaceBubble  = c.workspaceBubble;
-    t.nav.itemSelected     = c.pill;
-    t.nav.itemSelectedText = c.pillInk;
-    t.nav.itemHover        = c.itemHover.isValid()
-                                 ? c.itemHover
-                                 : overlayWhite(c.rail, hoverPlate); // lighter than the surface
-    t.nav.itemText = c.itemText.isValid() ? c.itemText : lightRail ? kDarkInk : QColor("#FFFFFF");
-    t.nav.itemTextDim = c.itemTextDim.isValid() ? c.itemTextDim
-                        : lightRail             ? overlay(c.rail, kDarkInk, 0.65)
-                                                : overlayWhite(c.rail, 0.78);
-    if (lightRail) {
-        t.nav.scrollThumb      = QColor(0, 0, 0, 100);
-        t.nav.scrollThumbHover = QColor(0, 0, 0, 160);
-        t.nav.extBadgeBg       = QColor(198, 146, 10, 38);
-        t.nav.extBadgeText     = QColor("#8A6508");
-    } else {
-        t.nav.scrollThumb      = QColor(255, 255, 255, 100);
-        t.nav.scrollThumbHover = QColor(255, 255, 255, 160);
-        t.nav.extBadgeBg       = QColor(230, 201, 138, 38);
-        t.nav.extBadgeText     = QColor("#E6C98A");
-    }
-
-    if (c.gradient) {
-        t.nav.bgGradTop         = scaleRgb(t.nav.bg, kGradTopFactor);
-        t.nav.bgGradBottom      = scaleRgb(t.nav.bg, kGradBottomFactor);
-        t.nav.primaryGradTop    = scaleRgb(t.nav.primary, kGradTopFactor);
-        t.nav.primaryGradBottom = scaleRgb(t.nav.primary, kGradBottomFactor);
-    } else {
-        t.nav.bgGradTop = t.nav.bgGradBottom = t.nav.bg;
-        t.nav.primaryGradTop = t.nav.primaryGradBottom = t.nav.primary;
-    }
-
-    const AccentSet accent = !darkContent                 ? c.accent
-                             : c.accentDark.def.isValid() ? c.accentDark
-                                                          : liftForDark(c.accent);
-    t.accent.def           = accent.def;
-    t.accent.hover         = accent.hover;
-    t.accent.pressed       = accent.pressed;
-    t.accent.dark          = accent.dark;
-    t.accent.subtleBg      = accent.subtleBg;
-    // The accent tint on icons must stay visible over dark surfaces.
-    t.icon.accent =
-        !darkContent ? accent.def
-        : c.iconAccentDark.isValid()
-            ? c.iconAccentDark
-            : withLightness(c.accent.def, std::max<double>(c.accent.def.lightnessF(), 0.58));
-
-    t.titleBar.bg             = c.titleBarBg.isValid() ? c.titleBarBg : c.rail;
-    t.titleBar.controlDefault = c.titleBarControl.isValid() ? c.titleBarControl : t.nav.itemTextDim;
-    t.titleBar.controlHover   = c.titleBarControl.isValid() ? c.titleBarControl : t.nav.itemText;
-
-    if (c.presenceOnline.isValid())
-        t.presence.online = c.presenceOnline;
-    if (c.badgeMention.isValid())
-        t.badge.mention = c.badgeMention;
+Spec customSpec(const CustomPalette &t, bool dark) {
+    Spec        s{};
+    const float shift = float(std::clamp(t.brightness, 0, 10) - 6) * 0.04f;
+    const float pl    = lightness(t.primary);
+    s.rail            = !t.sidebarInverted && !dark ? withLightness(t.primary, 0.93f + shift)
+                        : shift == 0                ? t.primary
+                                                    : withLightness(t.primary, pl + shift);
+    s.bubble          = lightness(s.rail) > 0.5f ? scaled(s.rail, 0.9f) : scaled(s.rail, 1.25f);
+    const float l     = lightness(t.highlight1);
+    s.pill            = t.highlight1;
+    s.pillInk         = t.itemSelText ? t.itemSelText : l > 0.5f ? kDarkInk : kWhite;
+    s.accent          = t.highlight1;
+    s.accentHover     = withLightness(t.highlight1, l + 0.06f);
+    s.pressed         = withLightness(t.highlight1, l - 0.06f);
+    s.subtle          = withLightness(t.highlight1, 0.95f);
+    if (l > 0.7f)
+        liftForDark(
+            withLightness(t.highlight1, 0.45f),
+            &s.accentDark,
+            &s.accentHoverDark,
+            &s.pressedDark,
+            &s.subtleDark
+        );
+    return s;
 }
 
 } // namespace
 
-// ── Base theme: light content under aubergine chrome ─────────────────────────
-// Every theme is built from this literal: buildTheme() copies it, optionally
-// darkens the content side, then lays the preset's chrome over it — so a token
-// not touched by either step inherits a deliberate value (badges, presence
-// dots, loader and the type scales are shared by construction).
-
-const Theme kAubergineBase = {
-    .nav =
-        {
-            .bg      = QColor("#3F0E40"),
-            .primary = QColor("#350D36"), // overwritten: derived from the rail by applyChrome
-            .workspaceBubble  = QColor("#4A154B"),
-            .itemSelected     = QColor("#E1DBE1"), // near-white selection pill
-            .itemSelectedText = QColor("#350D36"), // pill ink (overwritten by applyChrome)
-            .itemText         = QColor("#FFFFFF"),
-            .itemTextDim      = QColor("#CFC3CF"),
-            .scrollThumb      = QColor(255, 255, 255, 100),
-            .scrollThumbHover = QColor(255, 255, 255, 160),
-            .extBadgeBg       = QColor(230, 201, 138, 38),
-            .extBadgeText     = QColor("#E6C98A"),
-        },
-    .surface =
-        {
-            .content         = QColor("#FFFFFF"),
-            .raised          = QColor("#FFFFFF"),
-            .sunken          = QColor("#F4F4F4"),
-            .overlay         = QColor(0, 0, 0, 70),
-            .viewerBackdrop  = QColor(12, 12, 14, 238),
-            .viewerBtnHover  = QColor(255, 255, 255, 38),
-            .highlight       = QColor("#F0F0F0"),
-            .highlightStrong = QColor("#E8E8E8"),
-        },
-    .text =
-        {
-            .primary      = QColor("#1D1C1D"),
-            .documentBody = QColor("#333333"),
-            .secondary    = QColor("#616061"),
-            .tertiary     = QColor("#888888"),
-            .onDark       = QColor("#FFFFFF"),
-            .onDarkDim    = QColor("#CFC3CF"),
-            .link         = QColor("#1264A3"),
-            .danger       = QColor("#C0392B"),
-            .warning      = QColor("#7A5800"),
-        },
-    .accent =
-        {
-            .def      = QColor("#4A154B"),
-            .hover    = QColor("#611F69"),
-            .pressed  = QColor("#350D36"),
-            .dark     = QColor("#350D36"),
-            .text     = QColor("#FFFFFF"),
-            .subtleBg = QColor("#F4E5F5"),
-        },
-    .badge =
-        {
-            .unread   = QColor("#E01E5A"),
-            .mention  = QColor("#CD2553"),
-            .activity = QColor("#1D9BD1"),
-        },
-    .presence =
-        {
-            .online  = QColor("#2BAC76"),
-            .away    = QColor("#8B8B8B"),
-            .phantom = QColor("#E8A33D"),
-        },
-    .message =
-        {
-            .hover                  = QColor(0, 0, 0, 10),
-            .mentionBg              = QColor("#E5F6FD"),
-            .mentionSelfBg          = QColor("#FFF5D1"),
-            .mentionText            = QColor("#1264A3"),
-            .codeBlockBg            = QColor("#F4F4F4"),
-            .codeBlockBorder        = QColor("#CCCCCC"),
-            .codeText               = QColor("#555555"),
-            .quoteBorder            = QColor("#CCCCCC"),
-            .attachmentBg           = QColor("#FAFAFA"),
-            .attachmentBorder       = QColor("#DDDDDD"),
-            .attachmentDismiss      = QColor("#888888"),
-            .attachmentBar          = QColor("#DDDDDD"),
-            // Slack's named attachment colors (its web client's values).
-            .namedBarGood           = QColor("#2EB886"),
-            .namedBarWarning        = QColor("#DAA038"),
-            .namedBarDanger         = QColor("#A30200"),
-            .botButtonBg            = QColor("#FFFFFF"),
-            .botButtonHoverBg       = QColor("#F8F8F8"),
-            .botButtonBorder        = QColor(29, 28, 29, 77), // rgba(29,28,29,.3)
-            .botButtonFill          = QColor("#007A5A"),
-            .botButtonFillHover     = QColor("#148567"),
-            .pinnedBg               = QColor(0xFF, 0xEB, 0x3B, 60),
-            .reminderBg             = QColor(0x1D, 0x9B, 0xD1, 26),
-            .reminderText           = QColor("#1264A3"),
-            .fileChipBg             = QColor("#FAFAFA"),
-            .fileChipBorder         = QColor("#DDDDDD"),
-            .fileNameDim            = QColor("#666666"),
-            .imagePlaceholderBg     = QColor("#F5F5F5"),
-            .imagePlaceholderBorder = QColor("#CCCCCC"),
-            .replyBarHover          = QColor("#F8F8F8"),
-            .replyBarHoverBorder    = QColor("#D1D5DB"),
-            .replyLink              = QColor("#1164A3"),
-            .appBadgeBg             = QColor(29, 28, 29, 33),
-            .appBadgeText           = QColor("#616061"),
-            .extBadgeBg             = QColor(198, 146, 10, 38),
-            .extBadgeText           = QColor("#8A6508"),
-            .canvasTile             = QColor("#1D9BD1"),
-            .tableBorder            = QColor("#DDDDDD"),
-            .tableHeaderBg          = QColor(0, 0, 0, 11), // translucent: row hover shows through
-            .tableRowRule           = QColor(0, 0, 0, 20),
-            .avatarHslSaturation    = 130,
-            .avatarHslLightness     = 100,
-        },
-    .composer =
-        {
-            .bg                    = QColor("#FFFFFF"),
-            .border                = QColor("#DDDDDD"),
-            .borderFocus           = QColor("#999999"),
-            .toolbarBg             = QColor("#F5F5F5"),
-            .toolbarBorder         = QColor("#DDDDDD"),
-            .toolbarIcon           = QColor("#888888"),
-            .toolbarIconActive     = QColor("#505050"),
-            .attachmentChipBg      = QColor("#F8F8F8"),
-            .attachmentChipBorder  = QColor("#E0E0E0"),
-            .attachmentOverlayBg   = QColor(255, 255, 255, 210),
-            .attachmentOverlayText = QColor("#1D1C1D"),
-            .dropArrow             = QColor("#CCCCCC"),
-            .dropArrowActive       = QColor("#FFFFFF"),
-        },
-    .editBanner =
-        {
-            .bg     = QColor("#FFF8EE"),
-            .border = QColor("#E8A917"),
-            .accent = QColor("#F0DFA0"),
-            .text   = QColor("#7A5800"),
-        },
-    .updateBanner =
-        {
-            .bg     = QColor("#FFFDE7"),
-            .border = QColor("#F9A825"),
-            .accent = QColor("#FFF9C4"),
-            .text   = QColor("#1D1C1D"),
-        },
-    .danger =
-        {
-            .def   = QColor("#E01E5A"),
-            .hover = QColor("#C0184F"),
-            .icon  = QColor("#C0392B"),
-            .text  = QColor("#C0392B"),
-        },
-    .divider =
-        {
-            .def    = QColor("#E8E8E8"),
-            .strong = QColor("#D1D1D1"),
-            .subtle = QColor("#F0F0F0"),
-        },
-    .icon =
-        {
-            .def     = QColor("#888888"),
-            .strong  = QColor("#454245"),
-            .accent  = QColor("#4A154B"),
-            .danger  = QColor("#C0392B"),
-            .onDark  = QColor("#FFFFFF"),
-            .warning = QColor("#7A5800"),
-            .starred = QColor("#C6920A"),
-            .dim     = QColor("#CCCCCC"),
-        },
-    .titleBar =
-        {
-            .bg             = QColor("#3F0E40"),
-            .controlDefault = QColor("#CFC3CF"),
-            .controlHover   = QColor("#FFFFFF"),
-            .controlClose   = QColor("#C0392B"),
-        },
-    .loader =
-        {
-            .a = QColor(0xED, 0xAE, 0x2F),
-            .b = QColor(0x2F, 0xB2, 0x7C),
-            .c = QColor(0x38, 0xBC, 0xED),
-            .d = QColor(0xDC, 0x1A, 0x59),
-        },
-    .contextMenu =
-        {
-            .bg          = QColor("#FFFFFF"),
-            .border      = QColor("#D1D1D1"),
-            .itemHover   = QColor("#F0F0F0"),
-            .itemText    = QColor("#1D1C1D"),
-            .itemTextDim = QColor("#888888"),
-            .dangerText  = QColor("#E01E5A"),
-        },
-    .tooltip =
-        {
-            .bg = QColor("#1D1C1D"),
-        },
-    .fonts =
-        {
-            .xs      = 10,
-            .sm      = 11,
-            .caption = 12,
-            .md      = 13,
-            .base    = 14,
-            .lg      = 15,
-            .xl      = 16,
-            .xxl     = 18,
-            .xxxl    = 24,
-        },
-    .fontScales =
-        {
-            .messageBold  = 1.15,
-            .messageSmall = 0.88,
-            .timestamp    = 0.85,
-            .secondary    = 0.82,
-            .badge        = 0.78,
-            .micro        = 0.75,
-        },
-    .spacing =
-        {
-            .xs  = 2,
-            .sm  = 4,
-            .md  = 8,
-            .lg  = 12,
-            .xl  = 16,
-            .xxl = 24,
-        },
-    .workspaceHslSaturation = 65,
-    .workspaceHslLightness  = 42,
-};
-
-Theme buildTheme(const ChromeSpec &chrome, bool darkContent) {
-    Theme t = kAubergineBase;
-    if (darkContent)
-        applyDarkContent(t);
-    applyChrome(t, chrome);
-    return t;
-}
-
-// ── Chrome presets ───────────────────────────────────────────────────────────
-// A preset is a sidebar palette that works over either content mode, like
-// Slack's own themes. The four hand-tuned specs below are all that differs
-// between the built-in themes; content light/dark is decided by the colour mode.
-
-namespace {
-
-// Aubergine: Slack's classic purple sidebar.
-const ChromeSpec kAubergineChrome = {
-    .rail            = QColor("#3F0E40"),
-    .pill            = QColor("#E1DBE1"), // near-white selection pill
-    .pillInk         = QColor("#350D36"),
-    .workspaceBubble = QColor("#4A154B"),
-    .itemTextDim     = QColor("#CFC3CF"),
-    .accent          = {
-        .def      = QColor("#4A154B"),
-        .hover    = QColor("#611F69"),
-        .pressed  = QColor("#350D36"),
-        .dark     = QColor("#350D36"),
-        .subtleBg = QColor("#F4E5F5"),
-    },
-};
-
-// Graphite: a neutral near-black rail (sBlack-style), mid-grey selection pill
-// carrying light ink. Over dark content this is the classic full dark mode; the
-// chats-list plate lands just above the rail but still *below* the content
-// surface (see applyChrome's dark-content path): sidebar darker than content,
-// rail darkest, like Slack's dark mode. The accent stays graphite-neutral but
-// sits mid-grey so a filled CTA is clearly visible on either content mode.
-const ChromeSpec kGraphiteChrome = {
-    .rail            = QColor("#131313"),
-    .pill            = QColor("#545454"),
-    .pillInk         = QColor("#DEDEDE"),
-    .workspaceBubble = QColor("#333333"),
-    .itemTextDim     = QColor("#C9C9C9"),
-    .accent =
-        {
-            .def      = QColor("#5A5A5A"),
-            .hover    = QColor("#6A6A6A"),
-            .pressed  = QColor("#4A4A4A"),
-            .dark     = QColor("#3E3E3E"),
-            .subtleBg = QColor("#EDEDED"),
-        },
-    .accentDark =
-        {
-            .def      = QColor("#5A5A5A"),
-            .hover    = QColor("#6A6A6A"),
-            .pressed  = QColor("#4A4A4A"),
-            .dark     = QColor("#3E3E3E"),
-            .subtleBg = QColor("#333333"),
-        },
-    .iconAccentDark = QColor("#A8A8A8"), // a grey accent tint must stay visible on dark
-};
-
-// Ocean: blue chrome.
-const ChromeSpec kOceanChrome = {
-    .rail            = QColor("#0E2A40"),
-    .pill            = QColor("#DBE0E5"),
-    .pillInk         = QColor("#0B2335"),
-    .workspaceBubble = QColor("#15405E"),
-    .itemTextDim     = QColor("#C3CCD4"),
-    .accent          = {
-        .def      = QColor("#1264A3"),
-        .hover    = QColor("#1B7CC4"),
-        .pressed  = QColor("#0B4F82"),
-        .dark     = QColor("#0B4F82"),
-        .subtleBg = QColor("#E5F0F8"),
-    },
-};
-
-// Forest: green chrome, Slack brand green accent.
-const ChromeSpec kForestChrome = {
-    .rail            = QColor("#0E3D2E"),
-    .pill            = QColor("#DBE5E0"),
-    .pillInk         = QColor("#0A3124"),
-    .workspaceBubble = QColor("#15543E"),
-    .itemTextDim     = QColor("#C3D4CC"),
-    .accent          = {
-        .def      = QColor("#007A5A"),
-        .hover    = QColor("#148567"),
-        .pressed  = QColor("#055C42"),
-        .dark     = QColor("#055C42"),
-        .subtleBg = QColor("#E5F4EE"),
-    },
-};
-
-struct Preset {
-    QString id;
-    Theme   light;
-    Theme   dark;
-};
-
-// Built on first use (function-local static) so ThemeManager — itself created
-// lazily from widget code — never races a global's construction.
-const std::vector<Preset> &presets() {
-    static const std::vector<Preset> kPresets = [] {
-        std::vector<Preset> v;
-        const auto          add = [&v](const char *id, const ChromeSpec &c) {
-            v.push_back({QLatin1String(id), buildTheme(c, false), buildTheme(c, true)});
-        };
-        add("purple", kAubergineChrome);
-        add("charcoal", kGraphiteChrome);
-        add("blue", kOceanChrome);
-        add("green", kForestChrome);
-        return v;
-    }();
-    return kPresets;
-}
-
-} // namespace
-
-// ── Custom themes ────────────────────────────────────────────────────────────
-
-const std::vector<Swatch> &swatches() {
-    // Our table. Names Slack uses (aubergine, jade, hoth, …) carry our
-    // approximation of its swatch; the rest are the built-in preset tones and
-    // the brand colours, so every preset is reproducible from the editor.
-    static const std::vector<Swatch> kSwatches = {
-        {QStringLiteral("aubergine"), QColor("#3F0E40")},
-        {QStringLiteral("graphite"), QColor("#1F1F1F")},
-        {QStringLiteral("ocean"), QColor("#0E2A40")},
-        {QStringLiteral("forest"), QColor("#0E3D2E")},
-        {QStringLiteral("nocturne"), QColor("#1A1D21")},
-        {QStringLiteral("ochin"), QColor("#303E4D")},
-        {QStringLiteral("blueberry"), QColor("#3B4CCA")},
-        {QStringLiteral("lagoon"), QColor("#1264A3")},
-        {QStringLiteral("jade"), QColor("#2BAC76")},
-        {QStringLiteral("banana"), QColor("#ECB22E")},
-        {QStringLiteral("clementine"), QColor("#E8912D")},
-        {QStringLiteral("cherry"), QColor("#CD2553")},
-        {QStringLiteral("hoth"), QColor("#F5F0EB")},
-    };
-    return kSwatches;
-}
-
-const Swatch *swatchByName(const QString &name) {
-    const QString key = name.trimmed().toLower();
-    for (const auto &s : swatches())
-        if (s.name == key)
-            return &s;
-    return nullptr;
-}
-
-QString swatchNameFor(const QColor &c) {
-    for (const auto &s : swatches())
-        if (s.color.rgb() == c.rgb())
-            return s.name;
-    return {};
-}
-
-CustomTheme defaultCustomTheme() {
-    // Slack's classic look as a starting point: aubergine rail and accent,
-    // jade presence, cherry badge (the same tones the purple preset uses).
-    CustomTheme t;
-    const auto  slot = [](const char *name) {
-        const Swatch *s = swatchByName(QLatin1String(name));
-        return CustomTheme::Slot{s->color, s->name};
-    };
-    t.primary    = slot("aubergine");
-    t.highlight1 = slot("aubergine");
-    t.highlight2 = slot("jade");
-    t.important  = slot("cherry");
-    return t;
-}
-
-ChromeSpec chromeFromCustom(const CustomTheme &t, bool darkContent) {
-    ChromeSpec   c;
-    // Brightness is Slack's "how dark the sidebar is": neutral leaves the
-    // primary as designed, each step shifts the rail's lightness by 4 %.
-    const double shift =
-        (std::clamp(t.brightness, CustomTheme::kBrightnessMin, CustomTheme::kBrightnessMax) -
-         CustomTheme::kBrightnessNeutral) *
-        0.04;
-    // "Darker sidebar" off = the rail follows the content: a pale tint of the
-    // primary over light content (Slack's non-inverted look), the primary
-    // itself over dark content where a pale rail would break the depth order.
-    const QColor primary  = t.primary.color;
-    const bool   paleRail = !t.sidebarInverted && !darkContent;
-    c.rail = paleRail       ? withLightness(primary, 0.93 + shift)
-             : shift == 0.0 ? primary // exact: the HSL round trip may move a channel by one
-                            : withLightness(primary, primary.lightnessF() + shift);
-    const bool lightRail = c.rail.lightnessF() > 0.5;
-    c.workspaceBubble    = lightRail ? scaleRgb(c.rail, 0.90) : scaleRgb(c.rail, 1.25);
-
-    // Highlight 1: the selection pill carries ink of the opposite polarity, and
-    // doubles as the accent (hover/pressed stepped around it).
-    const QColor h1 = t.highlight1.color;
-    c.pill          = h1;
-    c.pillInk       = t.pins.itemSelText.isValid() ? t.pins.itemSelText
-                      : h1.lightnessF() > 0.5      ? kDarkInk
-                                                   : QColor("#FFFFFF");
-    const double l  = h1.lightnessF();
-    c.accent        = {
-        .def      = h1,
-        .hover    = withLightness(h1, l + 0.06),
-        .pressed  = withLightness(h1, l - 0.06),
-        .dark     = withLightness(h1, l - 0.10),
-        .subtleBg = withLightness(h1, 0.95),
-    };
-    // A pale highlight can't be lifted into a readable filled control over
-    // dark content — drop it to the dark-mode floor instead of lifting it.
-    if (l > 0.7)
-        c.accentDark = liftForDark({withLightness(h1, 0.45), {}, {}, {}, {}});
-    c.iconAccentDark = withLightness(h1, std::max<double>(l, 0.62));
-
-    c.presenceOnline = t.highlight2.color;
-    c.badgeMention   = t.important.color;
-    c.gradient       = t.gradient;
-
-    // Pins from a legacy string. Dim text derives from the pinned ink rather
-    // than from white/kDarkInk, so a pinned off-white keeps its cast.
-    c.itemHover = t.pins.itemHover;
-    c.itemText  = t.pins.itemText;
-    if (t.pins.itemText.isValid())
-        c.itemTextDim = overlay(c.rail, t.pins.itemText, 0.72);
-    c.titleBarBg      = t.pins.titleBarBg;
-    c.titleBarControl = t.pins.titleBarText;
+PaletteColors paletteColors(Palette p, bool dark) {
+    const bool    custom = p == Palette::Custom || size_t(p) >= std::size(kSpecs);
+    const Spec    s      = custom ? customSpec(g_custom, dark) : kSpecs[size_t(p)];
+    const bool    light  = lightness(s.rail) > 0.5f; // a pale rail takes dark ink
+    PaletteColors c;
+    c.rail    = s.rail;
+    c.sidebar = mix(s.rail, kWhite, dark ? 0.03f : 0.12f);
+    c.hover   = mix(s.rail, kWhite, dark ? 0.10f : 0.24f);
+    c.bubble  = s.bubble;
+    c.pill    = s.pill;
+    c.pillInk = s.pillInk;
+    c.text    = light ? kDarkInk : kWhite;
+    c.textDim = s.dim ? s.dim : light ? mix(s.rail, kDarkInk, 0.65f) : mix(s.rail, kWhite, 0.78f);
+    c.scrollThumb = light ? 0x64000000 : 0x64ffffff; // ink at alpha 100
+    if (!dark) {
+        c.accent        = s.accent;
+        c.accentHover   = s.accentHover;
+        c.accentPressed = s.pressed;
+        c.accentSubtle  = s.subtle;
+    } else if (s.accentDark) {
+        c.accent        = s.accentDark;
+        c.accentHover   = s.accentHoverDark;
+        c.accentPressed = s.pressedDark;
+        c.accentSubtle  = s.subtleDark;
+    } else {
+        liftForDark(s.accent, &c.accent, &c.accentHover, &c.accentPressed, &c.accentSubtle);
+    }
+    c.online = custom ? g_custom.highlight2 : kLight[size_t(C::Online)];
+    c.badge  = custom ? g_custom.important : kLight[size_t(C::Badge)];
+    // A custom theme's pins (msga's chromeFromCustom): dim text derives from
+    // the pinned ink, so a pinned off-white keeps its cast.
+    if (custom && g_custom.itemHover)
+        c.hover = g_custom.itemHover;
+    if (custom && g_custom.itemText) {
+        c.text    = g_custom.itemText;
+        c.textDim = mix(s.rail, g_custom.itemText, 0.72f);
+    }
+    c.titleBar        = custom && g_custom.titleBarBg ? g_custom.titleBarBg : c.rail;
+    c.titleBarControl = custom && g_custom.titleBarText ? g_custom.titleBarText : c.textDim;
     return c;
 }
 
-const std::vector<ThemeInfo> &availableThemes() {
-    static const std::vector<ThemeInfo> kThemes = [] {
-        std::vector<ThemeInfo> v;
-        for (const auto &p : presets())
-            v.push_back({p.id, &p.light, &p.dark});
-        return v;
-    }();
-    return kThemes;
+void setPalette(bool dark, Palette p) {
+    g_palette[dark] = p < Palette::Count ? p : Palette::Purple;
+    g_cached[dark]  = false;
 }
 
-const Theme *themeById(const QString &id, bool dark) {
-    for (const auto &info : availableThemes())
-        if (info.id == id)
-            return info.variant(dark);
-    return nullptr;
+Palette palette(bool dark) {
+    return g_palette[dark];
 }
 
-const Theme &defaultTheme() {
-    return *themeById(QStringLiteral("purple"), false);
+void setCustomPalette(const CustomPalette &c) {
+    g_custom    = c;
+    g_cached[0] = g_cached[1] = false;
 }
 
-const Theme &defaultDarkTheme() {
-    return *themeById(QStringLiteral("charcoal"), true);
+const CustomPalette &customPalette() {
+    return g_custom;
 }
 
-bool isDarkTheme(const Theme &t) {
-    return t.surface.content.lightnessF() < 0.5;
+std::string hexColor(Color c) {
+    static const char kHex[] = "0123456789abcdef";
+    std::string       s      = "#";
+    for (int shift = 20; shift >= 0; shift -= 4)
+        s += kHex[(c >> shift) & 0xf];
+    return s;
 }
 
-QLinearGradient navGradient(const QWidget *widget, const QColor &top, const QColor &bottom) {
-    const QWidget  *win  = widget->window();
-    const int       yTop = widget->mapTo(win, QPoint(0, 0)).y();
-    const int       h    = std::max(1, win->height());
-    // Local coordinates: the gradient runs from the window's top edge to its
-    // bottom, regardless of where this widget sits — so sibling sidebar widgets
-    // line up seamlessly and the fill stays put as list rows scroll.
-    QLinearGradient g(0, -yTop, 0, h - yTop);
-    g.setColorAt(0.0, top);
-    g.setColorAt(1.0, bottom);
-    return g;
-}
-
-bool setStyleSheetIfChanged(QWidget *w, const QString &qss) {
-    if (!w)
+bool parseHexColor(std::string_view s, Color *out) {
+    if (!s.empty() && s[0] == '#')
+        s.remove_prefix(1);
+    if (s.size() != 6 && s.size() != 3)
         return false;
-    // Re-setting a sheet also re-resolves the fonts of the widget's subtree, and
-    // a font-size change relies on that: a sheet without a font size in it (the
-    // composer's editor) is byte-identical across the change, yet its widgets
-    // must pick up the new app font. So "unchanged" also means "set under the
-    // same application font".
-    static constexpr char kFontProp[] = "_msga_qss_app_font";
-    const QFont           appFont     = QApplication::font();
-    if (w->styleSheet() == qss && w->property(kFontProp).value<QFont>() == appFont)
-        return false;
-    w->setProperty(kFontProp, appFont);
-    w->setStyleSheet(qss);
+    uint32_t v = 0;
+    for (char ch : s) {
+        const int d = ch >= '0' && ch <= '9'   ? ch - '0'
+                      : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
+                      : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
+                                               : -1;
+        if (d < 0)
+            return false;
+        v = v << 4 | uint32_t(d);
+        if (s.size() == 3)
+            v = v << 4 | uint32_t(d);
+    }
+    *out = 0xff000000u | v;
     return true;
 }
 
-QString globalQss() {
-    return u"QToolTip {"
-           "  border: none;"
-           "  border-radius: 6px;"
-           "  padding: 5px 10px;"
-           "  font-weight: bold;"
-           "  font-size: %1px;"
-           "}"_s.arg(c().fonts.caption);
-}
-
-namespace {
-
-QString toolTipColorQss() {
-    const auto &th = c();
-    return u"QToolTip { background-color: %1; color: %2; }"_s.arg(
-        qss(th.tooltip.bg), qss(th.text.onDark)
-    );
-}
-
-// Qt's tooltip is a private QTipLabel (a QLabel), created per tip and reused
-// while one is visible. Its colors are set as a stylesheet on the label itself
-// rather than in globalQss(), so a theme switch restyles one label instead of
-// re-polishing every widget in the app. QTipLabel::placeTip() resets the
-// label's sheet to "/* */" on every show AND on every reuse (to pick up the
-// tooltip owner's stylesheet ancestry), which arrives here as a StyleChange —
-// so re-assert on that as well as on Show. The shape/padding/font stay in the
-// app sheet: they must be in effect when the label computes its margin and
-// size, before either event.
-class ToolTipStyler : public QObject {
-public:
-    using QObject::QObject;
-
-    static void restyle(QWidget *label) { setStyleSheetIfChanged(label, toolTipColorQss()); }
-
-    void restyleVisible() {
-        if (_label && _label->isVisible())
-            restyle(_label);
-    }
-
-protected:
-    bool eventFilter(QObject *obj, QEvent *event) override {
-        const auto t = event->type();
-        if ((t == QEvent::Show || t == QEvent::StyleChange) && obj->isWidgetType() &&
-            obj->inherits("QTipLabel")) {
-            _label = static_cast<QWidget *>(obj);
-            restyle(_label);
+Color colorIn(C c, bool dark) {
+    const size_t i = size_t(c) < size_t(C::Count) ? size_t(c) : 0;
+    switch (c) {
+    case C::Rail:
+    case C::Sidebar:
+    case C::SidebarText:
+    case C::SidebarTextMuted:
+    case C::SidebarHover:
+    case C::SidebarSelected:
+    case C::SidebarSelectedText:
+    case C::SidebarScrollbar:
+    case C::Accent:
+    case C::AccentHover:
+    case C::AccentPressed:
+    case C::AccentSubtle:
+    case C::Online:
+    case C::Badge:
+    case C::TitleBar:
+    case C::TitleBarControl: {
+        if (!g_cached[dark]) {
+            g_cache[dark]  = paletteColors(g_palette[dark], dark);
+            g_cached[dark] = true;
         }
-        return false;
+        const PaletteColors &p = g_cache[dark];
+        switch (c) {
+        case C::Rail:
+            return p.rail;
+        case C::Sidebar:
+            return p.sidebar;
+        case C::SidebarText:
+            return p.text;
+        case C::SidebarTextMuted:
+            return p.textDim;
+        case C::SidebarHover:
+            return p.hover;
+        case C::SidebarSelected:
+            return p.pill;
+        case C::SidebarSelectedText:
+            return p.pillInk;
+        case C::SidebarScrollbar:
+            return p.scrollThumb;
+        case C::Accent:
+            return p.accent;
+        case C::AccentHover:
+            return p.accentHover;
+        case C::AccentPressed:
+            return p.accentPressed;
+        case C::AccentSubtle:
+            return p.accentSubtle;
+        case C::Online:
+            return p.online;
+        case C::TitleBar:
+            return p.titleBar;
+        case C::TitleBarControl:
+            return p.titleBarControl;
+        default:
+            return p.badge;
+        }
     }
-
-private:
-    QPointer<QWidget> _label;
-};
-
-} // namespace
-
-void installToolTipStyler() {
-    static QPointer<ToolTipStyler> styler; // owned by qApp
-    if (!qApp)
-        return;
-    if (!styler) {
-        styler = new ToolTipStyler(qApp);
-        qApp->installEventFilter(styler);
+    default:
+        return (dark ? kDark : kLight)[i];
     }
-    styler->restyleVisible();
 }
 
-QString scrollBarQss(int width, int radius) {
-    return scrollBarQss(ScrollBarStyle{.width = width, .radius = radius});
+Color color(C c) {
+    return colorIn(c, app() && app()->dark());
 }
 
-QString scrollBarQss(const ScrollBarStyle &s) {
-    const auto   &th     = c();
-    const QString margin = s.margin ? u"%1px"_s.arg(s.margin) : QStringLiteral("0");
-    const QString scope  = s.scope.isEmpty() ? QString() : s.scope + QLatin1Char(' ');
-    const auto    hover  = [&](const char *dir) {
-        return s.hoverTint ? scope + u"QScrollBar::handle:%1:hover { background: %2; }"_s.arg(
-                                         QLatin1String(dir), qss(th.text.secondary)
-                                     )
-                           : QString();
-    };
-    // %8 (the scope) is substituted last, after the hover rules went into %6/%7.
-    return u"%8QScrollBar:vertical { background: transparent; width: %1px; margin: %4; }"
-           "%8QScrollBar::handle:vertical { background: %3; border-radius: %2px;"
-           " min-height: %5px; }"
-           "%6"
-           "%8QScrollBar::add-line:vertical, %8QScrollBar::sub-line:vertical { height: 0; }"
-           "%8QScrollBar::add-page:vertical, %8QScrollBar::sub-page:vertical {"
-           " background: transparent; }"
-           "%8QScrollBar:horizontal { background: transparent; height: %1px; margin: %4; }"
-           "%8QScrollBar::handle:horizontal { background: %3; border-radius: %2px;"
-           " min-width: %5px; }"
-           "%7"
-           "%8QScrollBar::add-line:horizontal, %8QScrollBar::sub-line:horizontal { width: 0; }"
-           "%8QScrollBar::add-page:horizontal, %8QScrollBar::sub-page:horizontal {"
-           " background: transparent; }"_s.arg(s.width)
-               .arg(s.radius)
-               .arg(qss(th.divider.strong), margin)
-               .arg(s.minHandle)
-               .arg(hover("vertical"), hover("horizontal"))
-               .arg(scope);
+Color systemHighlight() {
+    const Color a = app() ? Color(app()->settings().accentColor) : 0;
+    return a ? a : 0xff308cc6;
 }
 
-QString popupScrollBarQss() {
-    return scrollBarQss(
-        ScrollBarStyle{.width = 8, .radius = 3, .margin = 2, .minHandle = 24, .hoverTint = false}
-    );
+float metric(M m) {
+    return kMetrics[size_t(m)];
 }
 
-static QString fontRule(int fontPx) {
-    return fontPx > 0 ? u"font-size: %1px;"_s.arg(fontPx) : QString();
+text::Style font(Font f, C c) {
+    const FontRole &r = kFonts[size_t(f)];
+    text::Style     s;
+    const double    ts = app() ? app()->settings().textScale : 1.0;
+    const double    us = app() ? app()->userTextScale() : 1.0;
+    s.size             = float(r.size * (ts > 0 ? ts : 1.0) * us);
+    s.weight           = r.weight;
+    s.mono             = r.mono;
+    s.color            = color(c);
+    return s;
 }
 
-QString radioQss(int fontPx) {
-    const auto &th = c();
-    // 16px well + 1px border; checked = accent ring + accent dot with a
-    // well-colored gap (radial gradient keeps the indicator size constant).
-    return u"QRadioButton { color: %1; %2 background: transparent; }"
-           "QRadioButton::indicator { width: 16px; height: 16px; border-radius: 9px;"
-           "  border: 1px solid %3; background: %4; }"
-           "QRadioButton::indicator:hover { border-color: %5; }"
-           "QRadioButton::indicator:checked { border-color: %6;"
-           "  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,"
-           "  stop:0 %6, stop:0.45 %6, stop:0.55 %4, stop:1 %4); }"_s
-               .arg(qss(th.text.primary), fontRule(fontPx), qss(th.divider.strong))
-               .arg(qss(th.surface.content), qss(th.text.tertiary), qss(th.accent.def));
+text::Style pxFont(float px, text::Weight w, Color c) {
+    text::Style s = font(Font::Body);
+    s.size        = s.size * px / 15.f; // Body is the Qt app's font (15 px here)
+    s.weight      = w;
+    s.color       = c;
+    return s;
 }
 
-QString checkBoxQss(int fontPx, const QColor &textColor) {
-    const auto &th = c();
-    return u"QCheckBox { color: %1; %2 background: transparent; }"
-           "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;"
-           "  border: 1px solid %3; background: %4; }"
-           "QCheckBox::indicator:hover { border-color: %5; }"
-           "QCheckBox::indicator:checked { border-color: %6; background: %6;"
-           "  image: url(:/ui/check-on-accent.svg); }"_s
-               .arg(
-                   qss(textColor.isValid() ? textColor : th.text.primary),
-                   fontRule(fontPx),
-                   qss(th.divider.strong)
-               )
-               .arg(qss(th.surface.content), qss(th.text.tertiary), qss(th.accent.def));
+Color themed(C c) {
+    return kSentinel | uint32_t(c);
 }
 
-QString spinBoxQss(int fontPx) {
-    const auto &th = c();
-    return QString(
-               u"QSpinBox { %1 color: %2; background: %3;"
-               "  border: 1px solid %4; border-radius: 4px; padding: 3px 6px;"
-               "  selection-background-color: %5; selection-color: %6; }"
-               "QSpinBox:focus { border-color: %7; }"
-               // Explicit colours above override the disabled palette, so a
-               // greyed-out spinbox needs its own rule to look greyed out.
-               "QSpinBox:disabled { color: %9; }"
-               "QSpinBox::up-button, QSpinBox::down-button {"
-               "  width: 16px; border: none; background: transparent; }"
-               "QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: %8; }"
-               "QSpinBox::up-arrow { image: url(:/ui/spin-up.svg); width: 10px; height: 10px; }"
-               "QSpinBox::down-arrow { image: url(:/ui/spin-down.svg); width: 10px;"
-               "  height: 10px; }"_s
-    )
-        .arg(fontRule(fontPx), qss(th.text.primary), qss(th.surface.content))
-        .arg(qss(th.divider.strong), qss(th.accent.def), qss(th.accent.text))
-        .arg(qss(th.text.link), qss(th.surface.highlight), qss(th.text.tertiary));
+Color resolve(Color c) {
+    return (c & kSentinelMask) == kSentinel ? color(C(c & 0xff)) : c;
 }
 
-QString stockDialogQss() {
-    const auto &th = c();
-    // One flat rule is enough: with a stylesheet background on every widget the
-    // style renders the dialog flat anyway, so pinning color/selection to the
-    // same theme tokens guarantees contrast on every app-theme × OS-theme
-    // combination. Scrollbars get our usual look instead of the stock boxes.
-    return u"QWidget { color: %1; background: %2;"
-           "  selection-background-color: %3; selection-color: %4; }"
-           "QWidget:disabled { color: %5; }"_s
-               .arg(qss(th.text.primary), qss(th.surface.content), qss(th.accent.def))
-               .arg(qss(th.accent.text), qss(th.text.tertiary)) +
-           scrollBarQss();
+void resolveSpans(text::AttributedText &t) {
+    for (auto &s : t.spans) {
+        s.style.color      = resolve(s.style.color);
+        s.style.background = resolve(s.style.background);
+    }
 }
 
-} // namespace Th
+} // namespace ui

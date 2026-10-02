@@ -1,0 +1,161 @@
+// What backend.cpp, backend_send.cpp and backend_manage.cpp share: a tracked
+// session, the constants, small helpers. Private to the Claude Code backend.
+#pragma once
+
+#include "app/claude/attach.h"
+#include "app/claude/backend.h"
+#include "app/claude/vt.h"
+#include "app/claude/worktrees.h"
+
+#include <cstdint>
+#include <deque>
+#include <optional>
+#include <string>
+
+namespace claude {
+
+// Who Claude's messages (and "is thinking…") come from: the session's
+// teammate — one user per role (roles.h), shared by all its sessions. Each
+// session's own user ("claude:<conv>") only names the DM and carries its dot.
+// The generalist keeps the id the one generic "Agent" had.
+inline constexpr char kMeId[]            = "me";
+inline constexpr char kAgentUser[]       = "claude:agent";
+inline constexpr char kRoleUserPrefix[]  = "claude:role:";
+inline constexpr char kAssistantPrefix[] = "claude:";
+inline constexpr char kGeneralist[]      = "generalist";
+inline constexpr char kNewPrefix[]       = "new-"; // conversation id of a "+" session
+
+// A turn msga sent that shows no sign of life (no prompt in the transcript, no
+// busy worker) is given up on after this long.
+inline constexpr int64_t kLaunchTimeoutMs = 60'000;
+// How long a login `claude auth status` confirmed is taken as still there
+// before a send checks again. One found missing is checked again every time.
+inline constexpr int64_t kLoginFreshMs    = 5 * 60'000;
+// After our prompt landed: a session that went quiet without writing the
+// turn's end (interrupted, crashed) stops counting as busy after this long.
+inline constexpr int64_t kQuietTurnMs     = 15'000;
+// Typing a message into a live worker found its terminal UI busy with
+// something else (a permission question, a panel): tried again this much later.
+inline constexpr int64_t kTypeRetryMs     = 5'000;
+
+inline constexpr int kApprovalReads       = 3;      // quick tries at reading a question's options
+inline constexpr int kApprovalRetryMs     = 4'000;  // between them
+inline constexpr int kApprovalSlowRetryMs = 30'000; // and after them, for as long as it waits
+
+int64_t     nowMs();
+// A file's size, or -1 when there is none (yet).
+int64_t     sizeOf(const std::string &path);
+// Modification time in epoch ms (0 when missing).
+int64_t     mtimeMs(const std::string &path);
+// Birth time (or, where the OS has none, modification time) in epoch ms.
+int64_t     bornMs(const std::string &path);
+std::string loginName();
+// A background session stopped on a permission prompt: it reads "working" +
+// "approve Bash: …" (verified 2026-09-25). Only its terminal can answer that
+// one (msga does, see readApproval); a plain question ("blocked" with the
+// question as needs) is answered by message. A worker that has exited took
+// its prompt with it: a message resumes the session.
+bool        awaitsApproval(const SessionInfo &s);
+// A background session whose turn failed for want of a login reads "blocked"
+// + "login required — run /login" (verified 2.1.283): not a question for the user.
+bool        needsLogin(const SessionInfo &s);
+// What a message looks like, for telling a changed one from the same.
+uint64_t    fingerprint(const model::Message &m);
+// How many items two transcripts start with in common (a fork's copy).
+size_t      sharedStart(const std::vector<TranscriptItem> &a, const std::vector<TranscriptItem> &b);
+std::string knownSessionsPath();
+std::string profilePath();
+
+struct Backend::Tracked {
+    std::string        convId;
+    SessionInfo        info; // latest roster data; sessionId empty until a "+" session started
+    bool               listed = false; // in the latest roster scan
+    std::string        transcriptPath;
+    TranscriptParser   parser;
+    int64_t            offset               = 0;
+    model::Ts          lastRead             = 0;
+    bool               skipPermissionChecks = false; // a "+" session not started yet
+    std::string        localName; // the user's own name for it ("Rename session…")
+    // The teammate msga started it with (roles.h); the transcript's own record
+    // of it wins once there is one (roleOf).
+    std::string        role;
+    // msga's own marks on it (Claude Code has no such thing).
+    bool               starred = false, muted = false;
+    model::NotifyLevel notify = model::NotifyLevel::Default;
+    model::ConvRef     ref    = model::kNoConv; // its conversation in the Store
+
+    model::UserRef renderedAuthor = model::kNoUser; // who `rendered` has Claude's messages from
+    // Rendered messages, parallel to parser.items(): re-rendered only when the
+    // item changed, so a growing transcript doesn't re-parse all its markdown.
+    std::vector<std::pair<TranscriptItem, model::Message>> rendered;
+    // What was last taken as shown (all of it, whether the Store has its
+    // history or not): by ts, whose and what kind — new ones are news (its
+    // own prompt landing), and the unread counts are made of them.
+    using Seen = Backend::Seen;
+    std::map<model::Ts, Seen> announced;
+    bool                      announcedInit     = false;
+    bool                      announcedAsThread = false; // how `announced` was taken
+    bool                      lastBusy          = false;
+    int64_t     busySinceMs = 0;     // epoch ms the turn under way began (pumpTyping); 0 = not busy
+    bool        wasLive     = false; // listed or sending at the previous refresh
+    // What the list shows of it (syncMeta): only pushed when it changed.
+    std::string shownSig;
+    std::string userSig;
+
+    // Sending: messages wait here while Claude is on a turn, and go out one
+    // per turn. Each is shown as a message of msga's own from the moment it's
+    // sent until its prompt is in the transcript — it can wait for as long as
+    // Claude's turn takes.
+    struct Outgoing {
+        std::string text; // what Claude is sent
+        model::Ts   ts         = 0;
+        // A reply in a subagent's thread: the text is its relay to the
+        // subagent (subagentReplyPrompt); the copy shows the reply, in the thread.
+        model::Ts   threadRoot = 0;
+        std::string shown;
+    };
+    std::deque<Outgoing>       outbox;
+    std::optional<Outgoing>    flying; // taken from the outbox, prompt not landed yet
+    // The turn msga started: from launching it until its end is in the transcript.
+    bool                       sending         = false;
+    bool                       launching       = false; // the launcher hasn't reported back yet
+    bool                       stopRequested   = false; // "Stop" while launching: once it has
+    bool                       stopping        = false; // `claude stop` under way
+    int64_t                    sendStartedMs   = 0;
+    bool                       promptLanded    = false;
+    int64_t                    promptLandedMs  = 0;
+    // The message on its way was typed into the live worker (typeLive):
+    // Claude Code holds it now, and a turn under way takes it at its next
+    // step — however long that is — so it isn't given up on while it works.
+    bool                       handedOver      = false;
+    int64_t                    typeLiveAfterMs = 0; // not typed live before this (kTypeRetryMs)
+    Done                       inFlight;            // a /btw's done(), until its root lands
+    // typeLive's, while it runs. Weak: an AttachInput holds itself until
+    // `attach` has exited (a moment after its done ran), and its done can
+    // run from inside the call that starts it (nothing to type, no terminal)
+    // or from cancel() — set only when it's still under way after the call,
+    // dropped by its done, so a live handle means "typing now".
+    std::weak_ptr<AttachInput> typing;
+    // The permission question it waits on (awaitsApproval), as read off its
+    // screen: the `needs` it was read for, and the options it offers.
+    std::string                approvalNeeds;
+    std::vector<PermissionQuestion::Option> approvalOptions;
+    int                                     approvalReads       = 0;
+    int64_t                                 approvalReadAfterMs = 0; // next try, after a failed one
+    bool                                    approvalAnswered    = false;
+    std::weak_ptr<AttachAnswer>             answering; // reading or answering it (as `typing`)
+    // A session branched off another (a /btw, or `--fork-session` anywhere):
+    // shown as a thread in its parent rather than in the list (detectForks).
+    std::string forkOf;          // the parent's conversation id; "" = a session of its own
+    int         forkAt     = -1; // parser.items() index of the thread's first prompt; -1 = none yet
+    model::Ts   forkRoot   = 0;  // that prompt's ts: the root message in the parent
+    bool        standalone = false;   // "Open as session": listed as a session of its own
+    bool        awaitingRoot = false; // msga launched it: its first prompt settles the send
+};
+
+struct Backend::Cleanup {
+    int                      pending = 1; // the remover's own hold
+    std::vector<WorktreeRef> refs;
+};
+
+} // namespace claude

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run clang-format -i on all C++ source files (or a specific list passed as args).
 # Usage:
-#   scripts/format.sh          # format entire src/ tree
+#   scripts/format.sh          # format the entire src/ and tests/ trees
 #   scripts/format.sh f1 f2    # format specific files
 set -euo pipefail
 
@@ -25,8 +25,8 @@ fi
 if [[ $# -gt 0 ]]; then
     files=("$@")
 else
-    mapfile -t files < <(find "$ROOT/src" "$ROOT/tests" \
-        -name '*.cpp' -o -name '*.h' | sort)
+    mapfile -t files < <(find "$ROOT/src" "$ROOT/tests" -path "$ROOT/src/third_party" -prune -o \
+        \( -name '*.cpp' -o -name '*.h' \) ! -name 'icons_generated.*' ! -name 'languages_generated.cpp' -print | sort)
 fi
 
 if [[ ${#files[@]} -eq 0 ]]; then

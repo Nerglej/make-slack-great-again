@@ -1,0 +1,2302 @@
+#include "app/screens/messages/message_list.h"
+
+#include "app/identity.h"
+#include "app/model/jobs.h"
+#include "app/screens/common/downloads.h"
+#include "app/screens/common/file_dialogs.h"
+#include "app/screens/common/loading_indicator.h"
+#include "app/screens/common/remote_images.h"
+
+#include "app/screens/messages/emoji_picker.h"
+#include "app/screens/messages/message_dialogs.h"
+#include "app/screens/messages/image_cache.h"
+#include "app/screens/messages/rich.h"
+#include "app/screens/messages/rows.h"
+#include "app/screens/messages/summary.h"
+#include "base/file.h"
+#include "base/i18n.h"
+#include "base/log.h"
+#include "base/time.h"
+#include "gfx/icons_generated.h"
+#include "ui/controls.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <utility>
+
+namespace screens {
+
+using i18n::arg;
+using i18n::tr;
+using ui::C;
+using ui::Font;
+using Kind = MessageList::ItemKind;
+
+namespace {
+
+constexpr float   kTypingH     = 22;
+constexpr int64_t kGroupMicros = 300LL * 1000000; // Qt: collapse if within 5 minutes
+constexpr int     kEdgeDelayMs = 60;
+
+bool isSystem(const model::Message &m) {
+    const std::string &s = m.subtype();
+    return s.size() > 5 && (s.compare(s.size() - 5, 5, "_join") == 0 ||
+                            s.compare(s.size() - 6, 6, "_leave") == 0 || s == "channel_topic" ||
+                            s == "channel_purpose" || s == "channel_name" || s == "pinned_item");
+}
+
+const std::string &botName(const model::Message &m) {
+    static const std::string none;
+    return m.extra ? m.extra->botName : none;
+}
+
+// A run of messages by one author within five minutes shows the avatar and
+// name once. Thread roots and system lines always stand alone.
+bool groupable(const model::Message &prev, const model::Message &cur) {
+    if (isSystem(prev) || isSystem(cur) || prev.user != cur.user || botName(prev) != botName(cur))
+        return false;
+    if (prev.isHuddle() || cur.isHuddle()) // each huddle its own row (its tile and name)
+        return false;
+    if (prev.replyCount > 0 || cur.replyCount > 0)
+        return false;
+    return cur.ts - prev.ts < kGroupMicros;
+}
+
+uint64_t keyOf(const MessageList::Item &it) {
+    switch (it.kind) {
+    case Kind::Day:
+        return (1ull << 63) | uint64_t(it.day & 0xffffffff);
+    case Kind::Divider:
+        return 1ull << 62;
+    default:
+        return uint64_t(it.ts);
+    }
+}
+
+// The hover toolbar card.
+// msga's floating action card (Paint::toolbarCard): four stacked shadow
+// halos biased a pixel down, surface.raised, a divider.def hairline, radius 8;
+// 28-px buttons, 8/6 padding, 4 apart. The message toolbar and the file bar.
+class ToolbarCard final : public ui::View {
+public:
+    ToolbarCard() {
+        setPaintOutset(6);
+        style().row().padding(8, 6).spacing(4).items(ui::Align::Center);
+    }
+    void paint(gfx::Painter &p) override {
+        const ui::RectF b = bounds();
+        for (int i = 4; i >= 1; --i) {
+            const float k = float(i);
+            p.fillRoundRect(
+                {b.x - k, b.y - k, b.w + 2 * k, b.h + 2 * k + 1},
+                8 + k,
+                gfx::Color(uint32_t(5 + (4 - i) * 3) << 24)
+            );
+        }
+        p.fillRoundRect(b, 8, ui::color(C::FormBg));
+        p.strokeRoundRect(b, 8, 1, ui::color(C::FormDivider));
+        View::paint(p);
+    }
+    bool onEvent(ui::Event &e) override { return e.type == ui::EventType::PointerDown; }
+};
+
+// Click anywhere or Escape to close.
+class ImageViewer final : public ui::Popup {
+public:
+    ImageViewer(Context &ctx, const std::string &path, int w, int h, ui::SizeF win) {
+        setCard(false);
+        setAnchor({0, 0, 0, 0}, Place::Over);
+        style().size(win.w - 16, win.h - 16).stack().items(ui::Align::Center);
+        setCursor(plat::Cursor::Hand);
+        if (w <= 0 || h <= 0)
+            ctx.images.naturalSize(path, &w, &h);
+        const float maxW = (win.w - 16) * 0.9f, maxH = (win.h - 16) * 0.85f;
+        const float s   = w > 0 && h > 0 ? std::min({1.f, maxW / float(w), maxH / float(h)}) : 1;
+        auto       *img = add<CachedImage>(ctx.images, path, ImageCache::Shape::Rounded, 6);
+        img->style().size(
+            std::floor(float(w > 0 ? w : 400) * s), std::floor(float(h > 0 ? h : 300) * s)
+        );
+        const std::string_view ext =
+            path.size() > 4 ? std::string_view(path).substr(path.size() - 4) : std::string_view();
+        img->setAnimated(ext == ".gif");
+        img->setPlaceholder(C::None);
+        // msga's ImageViewerOverlay: text.onDarkDim, centred, until it loads.
+        img->setLoadingText(tr("Loading image\xE2\x80\xA6"), C::OnDarkDim);
+        auto *name = add<ui::Label>(
+            std::string(path.substr(path.find_last_of('/') + 1)), Font::SmallBold, C::TooltipText
+        );
+        name->style().alignSelf(ui::Align::End).margins(0, 0, 16, 14);
+    }
+    void paint(gfx::Painter &p) override {
+        p.fillRoundRect(bounds(), 8, gfx::rgba(0x000000, 0xd8));
+    }
+    bool onEvent(ui::Event &e) override {
+        if (e.type == ui::EventType::PointerDown) {
+            close();
+            return true;
+        }
+        return Popup::onEvent(e);
+    }
+};
+
+// msga's ImageViewerOverlay: the near-opaque viewer backdrop over the whole
+// window, a 56-px bar with the file's name (1.05×, onDark) and round 36-px
+// icon buttons, the picture centred below it, scaled to fit, never up.
+class FileViewer final : public ui::Popup {
+public:
+    FileViewer(Context &ctx, MessageList *list, Ts ts, const model::File &f)
+        : _ctx(ctx), _list(list), _ts(ts), _file(f) {
+        setCard(false);
+        setAnchor({0, 0, 0, 0}, Place::Fill);
+        style().dir = ui::Dir::None;
+        _bar        = add<ui::View>();
+        _bar->style()
+            .row()
+            .padding(24, 0, 24 - 8, 0)
+            .spacing(ui::metric(ui::M::SpaceXS))
+            .items(ui::Align::Center);
+        auto *name = ui::styledLabel(
+            _bar,
+            f.name,
+            ui::pxFont(15 * 1.05f, text::Weight::Regular, ui::color(C::TooltipText)),
+            1
+        );
+        name->style().flex(1);
+        const model::Message *m       = list ? list->message(ts) : nullptr;
+        // A pending message has no actions yet (the file bar's rule).
+        const bool            actions = list && m && !m->pending;
+        auto                  button  = [&](gfx::Icon icon, const char *tip, bool on) {
+            auto *b = _bar->add<ViewerButton>(icon, tr(tip));
+            b->setVisible(on);
+            return b;
+        };
+        button(gfx::Icon::Download, N_("Download"), actions)->onClick = [this] {
+            _list->downloadFile(_ts, _file.path);
+        };
+        button(gfx::Icon::Share2, N_("Forward"), actions && bool(ctx.forwardMessage))->onClick =
+            [this] {
+                close(); // the forward dialog replaces the viewer
+                if (_ctx.forwardMessage)
+                    _ctx.forwardMessage(_list->conversation(), _ts, _file.path);
+            };
+        button(
+            gfx::Icon::ExternalLink,
+            N_("Open in browser"),
+            actions && !(f.permalink.empty() && f.path.empty())
+        )
+            ->onClick = [this] {
+            const std::string &url = _file.permalink.empty() ? _file.path : _file.permalink;
+            if (_ctx.openUrl)
+                _ctx.openUrl(url.find("://") == std::string::npos ? file::toFileUrl(url) : url);
+        };
+        auto *more    = button(gfx::Icon::MoreHorizontal, N_("More actions"), actions);
+        more->onClick = [this, more] {
+            const ui::RectF r = more->windowRect();
+            _list->openFileMenu(_ts, _file.path, {r.x, r.y + r.h + 2});
+        };
+        button(gfx::Icon::X, N_("Close"), true)->onClick = [this] { close(); };
+        // The thumbnail at once, the original over it once it is in (an
+        // image's; a PDF shows its rendered page only).
+        const std::string &shown                         = f.isImage() ? f.path : f.thumb;
+        _thumb = add<CachedImage>(ctx.images, shown, ImageCache::Shape::Square);
+        _thumb->setPlaceholder(C::None);
+        _thumb->setLoadingText(tr("Loading image\xE2\x80\xA6"), C::OnDarkDim);
+        _thumb->setAnimated(file::extension(shown.substr(0, shown.find('?'))) == "gif");
+        if (f.isImage() && f.source() != f.path) {
+            _full = add<CachedImage>(ctx.images, f.source(), ImageCache::Shape::Square);
+            _full->setPlaceholder(C::None);
+        }
+        setFocusable(true);
+    }
+    void layout() override {
+        const float w = width();
+        _bar->setFrame({0, 0, w, kBarH});
+        const ui::RectF r = imageRect();
+        _thumb->setFrame(r);
+        if (_full)
+            _full->setFrame(r);
+    }
+    void paint(gfx::Painter &p) override { p.fillRect(bounds(), ui::color(C::ViewerBackdrop)); }
+    bool onEvent(ui::Event &e) override {
+        if (e.type == ui::EventType::PointerDown) {
+            // The backdrop closes it; the picture and the bar don't.
+            if (e.button == plat::Button::Left && e.pos.y > kBarH && !imageRect().contains(e.pos))
+                close();
+            return true;
+        }
+        return Popup::onEvent(e); // Escape
+    }
+
+private:
+    static constexpr float kBarH = 56, kMargin = 24;
+    // A round button on the dark bar: 20-px onDark icon, a white wash on hover.
+    class ViewerButton final : public ui::Clickable {
+    public:
+        ViewerButton(gfx::Icon icon, std::string tip) : _icon(icon) {
+            style().size(36, 36).noShrink();
+            setTooltip(std::move(tip));
+            setFocusable(false);
+            setCursor(plat::Cursor::Hand);
+        }
+        void paint(gfx::Painter &p) override {
+            if (hovered())
+                p.fillRoundRect(bounds(), 18, 0x26ffffffU);
+            gfx::drawIcon(p, _icon, {8, 8, 20, 20}, ui::color(C::TooltipText));
+        }
+
+    private:
+        gfx::Icon _icon;
+    };
+    ui::RectF imageRect() const {
+        const ui::RectF avail{
+            kMargin, kBarH + kMargin / 2, width() - 2 * kMargin, height() - kBarH - kMargin * 1.5f
+        };
+        if (avail.w <= 0 || avail.h <= 0)
+            return {};
+        float w = float(_file.width), h = float(_file.height);
+        if (w <= 0 || h <= 0) {
+            int nw = 0, nh = 0;
+            _ctx.images.naturalSize(_thumb->path(), &nw, &nh);
+            w = nw > 0 ? float(nw) : 400, h = nh > 0 ? float(nh) : 300;
+        }
+        const float s = std::min({1.f, avail.w / w, avail.h / h});
+        w             = std::floor(w * s);
+        h             = std::floor(h * s);
+        return {
+            avail.x + std::floor((avail.w - w) / 2), avail.y + std::floor((avail.h - h) / 2), w, h
+        };
+    }
+
+    Context     &_ctx;
+    MessageList *_list;
+    Ts           _ts;
+    model::File  _file;
+    ui::View    *_bar   = nullptr;
+    CachedImage *_thumb = nullptr, *_full = nullptr;
+};
+
+// The label under (or, between two, nearest to) a window y, and the base
+// offset of its text; null when y is above the first or below the last.
+RichLabel *labelAt(const MessageRow &row, float wy, uint32_t *base) {
+    const std::vector<RichLabel *> &labels = row.selectionLabels();
+    if (labels.empty())
+        return nullptr;
+    const ui::RectF first = labels.front()->windowRect(), last = labels.back()->windowRect();
+    if (wy < first.y || wy > last.y + last.h)
+        return nullptr;
+    uint32_t   b    = 0;
+    RichLabel *best = nullptr;
+    float      dist = 1e9f;
+    for (RichLabel *l : labels) {
+        const ui::RectF r = l->windowRect();
+        const float     d = wy < r.y ? r.y - wy : wy > r.y + r.h ? wy - (r.y + r.h) : 0;
+        if (d < dist) {
+            dist  = d;
+            best  = l;
+            *base = b;
+        }
+        b += uint32_t(l->text().size()) + 1;
+    }
+    return best;
+}
+
+} // namespace
+
+// ── Adapter ─────────────────────────────────────────────────────────────────
+
+class MessageList::Adapter final : public ui::VirtualList::Adapter {
+public:
+    explicit Adapter(MessageList &l) : _l(l) {}
+    int count() const override { return int(_l._items.size()); }
+    int kind(int i) const override {
+        const Item &it = _l._items[size_t(i)];
+        switch (it.kind) {
+        case Kind::Day:
+            return kRowDay;
+        case Kind::Divider:
+            return kRowDivider;
+        case Kind::System:
+            return kRowSystem;
+        default:
+            return it.grouped ? kRowGrouped : kRowFull;
+        }
+    }
+    std::unique_ptr<ui::View> create(int k) override {
+        if (k == kRowDay)
+            return std::make_unique<DayRow>();
+        if (k == kRowDivider)
+            return std::make_unique<DividerRow>();
+        return std::make_unique<MessageRow>(_l, k);
+    }
+    void bind(ui::View &row, int i) override {
+        const Item &it = _l._items[size_t(i)];
+        if (it.kind == Kind::Day)
+            static_cast<DayRow &>(row).setText(_l.itemLabel(size_t(i)));
+        else if (it.kind == Kind::Divider)
+            static_cast<DividerRow &>(row).setText(_l.itemLabel(size_t(i)));
+        else
+            static_cast<MessageRow &>(row).bind(it);
+    }
+    float estimateHeight(int i) const override {
+        const Item &it = _l._items[size_t(i)];
+        switch (it.kind) {
+        case Kind::Day:
+            return 32;
+        case Kind::Divider:
+            return 36;
+        case Kind::System:
+            return 32;
+        default:
+            break;
+        }
+        float                 h = it.grouped ? 27 : 58;
+        const model::Message *m = _l.message(it.ts);
+        if (m) {
+            for (const model::File &f : m->files())
+                h += f.isImage() ? 260 : 66;
+            h += float(m->attachments().size()) * 90;
+            if (!m->reactions.empty())
+                h += 30;
+            if (m->replyCount)
+                h += 36;
+        }
+        return h;
+    }
+
+private:
+    MessageList &_l;
+};
+
+// ── Empty-list states ───────────────────────────────────────────────────────
+
+// msga's empty-viewport paint (message_list_paint.cpp doPaint): while loading,
+// the ring centred in the list and, after 1 / 5 / 15 s, a hint whose top is
+// 26 + 24 px under the centre (the app font at 1.15x, text.secondary,
+// wrapped, centred between 32-px margins); loaded and empty, "No messages
+// yet" centred at 1.5x. Over the (empty) list, transparent to the pointer.
+class MessageList::ListState final : public ui::View {
+public:
+    ListState() : _ring([this] { refresh(); }) {
+        setHitTransparent(true);
+        style().dir = ui::Dir::None;
+        _hint       = add<ui::Label>();
+        _hint->setAlign(text::LayoutOptions::Align::Center);
+        _empty = ui::styledLabel(this, tr("No messages yet"), font(1.5f), 1);
+        _empty->setAlign(text::LayoutOptions::Align::Center);
+        _hint->setVisible(false);
+        _empty->setVisible(false);
+        setVisible(false);
+    }
+    void set(State s) {
+        if (s == _s)
+            return;
+        const bool was = _s == State::Loading;
+        _s             = s;
+        if (s == State::Loading && !was) {
+            _since = ui::app()->nowMs();
+            _ring.start();
+        } else if (s != State::Loading) {
+            _ring.stop();
+        }
+        _empty->setVisible(s == State::Empty);
+        setVisible(s != State::None);
+        refresh();
+    }
+    State       state() const { return _s; }
+    std::string text() const {
+        return _s == State::Empty     ? std::string(tr("No messages yet"))
+               : _s == State::Loading ? _hintText
+                                      : std::string();
+    }
+    void layout() override {
+        const float w = width(), h = height();
+        // Qt::AlignTop: the text starts there (a Label centres in its frame).
+        const float hw = std::max(0.f, w - 64);
+        _hint->setFrame(
+            {32,
+             std::floor(h / 2) + 26 + 24,
+             hw,
+             std::min(80.f, std::ceil(_hint->measure(hw, 80).h))}
+        );
+        const float eh = std::ceil(_empty->measure(w, h).h);
+        _empty->setFrame({0, std::floor((h - eh) / 2), w, eh});
+    }
+    void paint(gfx::Painter &p) override {
+        View::paint(p);
+        if (_s == State::Loading)
+            _ring.paint(p, bounds());
+    }
+
+private:
+    static text::Style font(float k) {
+        return ui::pxFont(15 * k, text::Weight::Regular, ui::themed(C::TextMuted));
+    }
+    // Every ring step: the hint for how long it has been.
+    void refresh() {
+        const char *hint = nullptr;
+        if (_s == State::Loading) {
+            const double ms = ui::app()->nowMs() - _since;
+            if (ms >= 15000)
+                hint =
+                    tr("Oh my gosh, I really apologize, but your company is a reaaaly active "
+                       "Slack user. Still loading...");
+            else if (ms >= 5000)
+                hint = tr("Oh, you must have a lot of co-workers and messages! Still loading...");
+            else if (ms >= 1000)
+                hint = tr("Loading your stuff...");
+        }
+        const std::string next = hint ? hint : "";
+        if (next != _hintText) {
+            _hintText = next;
+            text::AttributedText t;
+            t.append(_hintText, font(1.15f));
+            _hint->setRichText(std::move(t));
+            _hint->setVisible(!_hintText.empty());
+            layout(); // its height follows the text
+        }
+        update();
+    }
+
+    LoadingIndicator _ring;
+    ui::Label       *_hint = nullptr, *_empty = nullptr;
+    std::string      _hintText;
+    double           _since = 0;
+    State            _s     = State::None;
+};
+
+// A toolbar button: a 16-px icon in icon.strong, the message.hover wash
+// (radius 5, inset 1) under the pointer, its tooltip at once (msga shows
+// toolbar tips on mouse move, without the usual delay).
+class ActionButton final : public ui::Clickable {
+public:
+    ActionButton(gfx::Icon icon, std::string tip) : _icon(icon) {
+        style().size(28, 28).noShrink();
+        setTooltip(std::move(tip));
+        setFocusable(false);
+    }
+    void setIcon(gfx::Icon i) {
+        _icon = i;
+        update();
+    }
+    bool tooltipImmediate() const override { return true; }
+    void paint(gfx::Painter &p) override {
+        if (hovered())
+            p.fillRoundRect({1, 1, 26, 26}, 5, ui::color(C::RowHover));
+        gfx::drawIcon(p, _icon, {6, 6, 16, 16}, ui::color(C::FormIconStrong));
+    }
+
+private:
+    gfx::Icon _icon;
+};
+
+// ── MessageList ─────────────────────────────────────────────────────────────
+
+MessageList::MessageList(Context &ctx)
+    : _ctx(ctx), _adapter(std::make_unique<Adapter>(*this)), _alive(std::make_shared<char>(0)) {
+    _threadsInline = ctx.threadsInline;
+    setRole(ui::Role::List);
+    setBackground(C::Surface);
+    setLayoutBoundary(true);
+    style().dir = ui::Dir::None;
+    _list       = add<ui::VirtualList>(_adapter.get());
+    // msga's list takes focus on click (Qt::ClickFocus), so PageUp/PageDown
+    // and the arrows scroll it from then on.
+    _list->setClickFocus(true);
+    _list->setStickToBottom(true);
+    _list->setBottomAligned(true);
+    _list->setOverscan(200);
+    _list->setBackground(C::Surface); // opaque: scrolling blits instead of repainting
+    _state          = add<ListState>();
+    _list->onScroll = [this] {
+        hideToolbar();
+        _fileView = nullptr;
+        _fileBar->setVisible(false);
+        scheduleEdgeCheck();
+    };
+    _typing = add<ui::Label>("", Font::Small, C::TextMuted);
+    _typing->setMaxLines(1);
+    // msga's hover toolbar: Add reaction, Forward message, Save for later,
+    // More actions (message_list_paint.cpp toolbarButtons).
+    _toolbar          = add<ToolbarCard>();
+    _tbEmoji          = _toolbar->add<ActionButton>(gfx::Icon::Smile, tr("Add reaction"));
+    _tbEmoji->onClick = [this] {
+        if (_toolbarRow) {
+            const ui::RectF r = _tbEmoji->windowRect();
+            openReactionPicker(_toolbarRow->ts(), {r.x, r.y + r.h, 0, 0});
+        }
+    };
+    _tbForward          = _toolbar->add<ActionButton>(gfx::Icon::Forward, tr("Forward message"));
+    _tbForward->onClick = [this] {
+        if (_toolbarRow && _ctx.forwardMessage)
+            _ctx.forwardMessage(_conv, _toolbarRow->ts(), {});
+    };
+    _tbSave          = _toolbar->add<ActionButton>(gfx::Icon::Bookmark, tr("Save for later"));
+    _tbSave->onClick = [this] {
+        if (_toolbarRow)
+            toggleSaved(_toolbarRow->ts());
+    };
+    _tbMore          = _toolbar->add<ActionButton>(gfx::Icon::MoreHorizontal, tr("More actions"));
+    _tbMore->onClick = [this] {
+        if (_toolbarRow) {
+            const ui::RectF r = _tbMore->windowRect();
+            openMenu(_toolbarRow->ts(), {r.x, r.y + r.h});
+        }
+    };
+    _toolbar->setVisible(false);
+    // msga's file action bar: Download, Share, More actions.
+    _fileBar          = add<ToolbarCard>();
+    auto *download    = _fileBar->add<ActionButton>(gfx::Icon::Download, tr("Download"));
+    download->onClick = [this] { downloadFile(_fileTs, _filePath); };
+    auto *share       = _fileBar->add<ActionButton>(gfx::Icon::Share2, tr("Share"));
+    share->onClick    = [this] {
+        if (_ctx.forwardMessage && _fileTs)
+            _ctx.forwardMessage(_conv, _fileTs, _filePath);
+    };
+    auto *fileMore    = _fileBar->add<ActionButton>(gfx::Icon::MoreHorizontal, tr("More actions"));
+    fileMore->onClick = [this, fileMore] {
+        const ui::RectF r = fileMore->windowRect();
+        openFileMenu(_fileTs, _filePath, {r.x, r.y + r.h});
+    };
+    _fileBar->setVisible(false);
+}
+
+void MessageList::toggleSaved(Ts ts) {
+    // msga's Save button: a toggle. Saved (a bookmark or a reminder) →
+    // removeMessageReminder drops the whole saved item; else a bookmark.
+    const model::Message *m = message(ts);
+    if (!m || isSystem(*m))
+        return;
+    if (_ctx.store().reminderAt(_conv, ts))
+        _ctx.backend.setReminder(_conv, ts, 0);
+    else
+        _ctx.backend.setSaved(_conv, ts, !m->saved);
+    placeToolbar();
+}
+
+void MessageList::downloadFile(Ts ts, const std::string &path) {
+    // msga's downloadFileToUser: "Save file" at $HOME/<name>, then the
+    // original (source(): for audio, path is Slack's transcode) to it, the
+    // footer's cog running from the choice until the bytes are on disk.
+    const model::Message *m = message(ts);
+    if (!m || m->pending)
+        return;
+    const model::File *f = nullptr;
+    for (const model::File &x : m->files())
+        if (x.path == path)
+            f = &x;
+    if (!f)
+        return;
+    const std::string name   = f->name.empty() ? std::string(tr("file")) : f->name;
+    const std::string source = f->source();
+    const char       *home   = std::getenv("HOME");
+    Context          &ctx    = _ctx; // outlives the list; the download may outlive it
+    screens::saveFile(
+        _ctx,
+        name,
+        [&ctx, name, source](std::string to) {
+            if (to.empty())
+                return;
+            const int job = model::jobs().begin(arg(tr("Downloading %1"), name));
+            fetchFile(
+                ctx.app.platform(),
+                ctx.backend,
+                source,
+                std::move(to),
+                [job](bool ok, const std::string &err) {
+                    if (!ok)
+                        LOG_WARN("messages", "File download failed: %s", err.c_str());
+                    model::jobs().end(job);
+                }
+            );
+        },
+        home ? std::string(home) : std::string()
+    );
+}
+
+void MessageList::fileHovered(ui::View *v, Ts ts, const std::string &path, bool on) {
+    if (on) {
+        const model::Message *m = message(ts);
+        if (!m || m->pending)
+            return;
+        _fileView = v;
+        _fileTs   = ts;
+        _filePath = path;
+        placeFileBar();
+        return;
+    }
+    std::weak_ptr<char> alive = _alive;
+    _ctx.app.platform().post([this, alive, v] {
+        if (alive.expired() || _fileView != v)
+            return;
+        if (!v->hovered() && !_fileBar->hovered()) {
+            _fileView = nullptr;
+            _fileBar->setVisible(false);
+        }
+    });
+}
+
+void MessageList::placeFileBar() {
+    if (!_fileView || !_fileView->window()) {
+        _fileBar->setVisible(false);
+        return;
+    }
+    // cardTop = file top − 20 (straddling it); right edge on the file's
+    // last pixel column (QRect::right()).
+    const ui::SizeF  sz = _fileBar->measure(ui::kInf, ui::kInf);
+    const ui::RectF  r  = _fileView->windowRect();
+    const ui::PointF o  = mapFromWindow({r.x, r.y});
+    _fileBar->setFrame({std::floor(o.x + r.w - 1 - sz.w), std::floor(o.y - 20), sz.w, sz.h});
+    _fileBar->setVisible(true);
+}
+
+MessageList::~MessageList() {
+    if (_observer)
+        _ctx.store.unobserve(_observer);
+    _ctx.app.cancelTimer(_edgeTimer);
+    _ctx.app.cancelTimer(_flashTimer);
+    _toolbarRow = nullptr;
+    clearChildren(); // rows reach back into this object while being destroyed
+}
+
+const model::Message *MessageList::message(Ts ts) const {
+    return _conv == model::kNoConv ? nullptr : _ctx.store().findMessage(_conv, ts);
+}
+
+void MessageList::subscribe() {
+    if (_observer)
+        _ctx.store.unobserve(_observer);
+    _observer = 0;
+    if (_conv != model::kNoConv)
+        _observer = _ctx.store.observe(_conv, [this](const model::Change &ch) { onChange(ch); });
+}
+
+void MessageList::clear() {
+    saveAnchor();
+    clearSelection();
+    if (_observer)
+        _ctx.store.unobserve(_observer);
+    _observer = 0;
+    _conv     = model::kNoConv;
+    _root     = 0;
+    _jumpTs   = 0;
+    hideToolbar();
+    _items.clear();
+    _list->reset();
+    updateTyping();
+    updateState();
+}
+
+void MessageList::showConversation(ConvRef conv) {
+    hideToolbar();
+    saveAnchor(); // where the one we leave was left
+    _selAnchor = _selFocus = {};
+    _selDragging           = false;
+    if (conv != _conv)
+        _inlineThreads.clear();
+    _conv         = conv;
+    _root         = 0;
+    _markedTs     = 0;
+    _jumpTs       = 0;
+    _loadingOlder = false;
+    // Where to land: where it was left, else its first unread (msga's
+    // openConversation: switching away and back never jumps the view).
+    _openPending  = conv != model::kNoConv;
+    _openAnchor   = {};
+    _openLastRead = 0;
+    if (_openPending) {
+        const std::string &id = _ctx.store().conversation(conv).id;
+        for (const SavedAnchor &a : _anchors)
+            if (a.conv == id)
+                _openAnchor = a;
+        if (_openAnchor.conv.empty())
+            _openLastRead = _ctx.store().conversation(conv).lastRead;
+    }
+    _list->setBottomAligned(true);
+    rebuild(false);
+    _list->reset();
+    applyOpenTarget();
+    subscribe();
+    updateTyping();
+    scheduleEdgeCheck();
+}
+
+void MessageList::showThread(ConvRef conv, Ts root) {
+    hideToolbar();
+    saveAnchor();
+    _selAnchor = _selFocus = {};
+    _selDragging           = false;
+    _openPending           = false;
+    _conv                  = conv;
+    _root                  = root;
+    _jumpTs                = 0;
+    _loadingThread         = false;
+    // A thread reads from its root down; a short one sits at the top.
+    _list->setBottomAligned(false);
+    rebuild(false);
+    _list->reset();
+    subscribe();
+    updateTyping();
+    if (conv != model::kNoConv && !_ctx.store().replies(conv, root)) {
+        // msga shows the ring, not the root, until the thread's page is in.
+        _loadingThread = true;
+        rebuild(false);
+        _list->reset();
+        std::weak_ptr<char> alive = _alive;
+        _ctx.backend.loadThread(conv, root, [this, alive, conv, root](bool, const std::string &) {
+            if (alive.expired() || !_loadingThread || conv != _conv || root != _root)
+                return;
+            _loadingThread = false;
+            rebuild(false);
+            _list->reset();
+        });
+    }
+    updateState();
+}
+
+namespace {
+const model::Message &deref(const model::Message &m) {
+    return m;
+}
+const model::Message &deref(const model::Message *m) {
+    return *m;
+}
+} // namespace
+
+void MessageList::rebuild(bool notify) {
+    std::vector<Item> items;
+    if (_conv != model::kNoConv) {
+        const model::Conversation &c      = _ctx.store().conversation(_conv);
+        auto                       addRun = [&](const auto &msgs, bool days) {
+            const model::Message *prev    = nullptr;
+            int64_t               prevDay = INT64_MIN;
+            for (const auto &e : msgs) {
+                const model::Message &m   = deref(e);
+                const int64_t         day = base::localDay(model::tsSecs(m.ts));
+                if (days && day != prevDay) {
+                    items.push_back({m.ts, day, Kind::Day, false});
+                    prev = nullptr;
+                }
+                prevDay        = day;
+                const bool sys = isSystem(m);
+                items.push_back(
+                    {m.ts, day, sys ? Kind::System : Kind::Message, prev && groupable(*prev, m)}
+                );
+                prev = &m;
+            }
+        };
+        if (_root == 0) {
+            addRun(c.messages, true);
+        } else if (_loadingThread) {
+            // Nothing until the replies are in (the loading state).
+        } else if (const model::Message *root = _ctx.store().findMessage(_conv, _root)) {
+            // msga's thread view: the root and its replies as one run with day
+            // dividers ("Yesterday" above the root), no reply-count row.
+            std::vector<const model::Message *> run{root};
+            if (const auto *replies = _ctx.store().replies(_conv, _root))
+                for (const model::Message &m : *replies)
+                    run.push_back(&m);
+            addRun(run, true);
+        }
+    }
+    if (!notify) {
+        _items = std::move(items);
+        updateState();
+        return;
+    }
+    // Diff by identity (message ts, day number): the common prefix and suffix
+    // stay, the middle is removed/inserted — which is exactly what keeps the
+    // VirtualList anchored for appends, prepends and single inserts.
+    const std::vector<Item> &old = _items;
+    size_t                   p   = 0;
+    while (p < old.size() && p < items.size() && keyOf(old[p]) == keyOf(items[p]))
+        ++p;
+    size_t s = 0;
+    while (s < old.size() - p && s < items.size() - p &&
+           keyOf(old[old.size() - 1 - s]) == keyOf(items[items.size() - 1 - s]))
+        ++s;
+    const size_t     removed = old.size() - p - s, inserted = items.size() - p - s;
+    std::vector<int> changed;
+    auto             differs = [](const Item &a, const Item &b) {
+        return a.kind != b.kind || a.grouped != b.grouped;
+    };
+    for (size_t i = 0; i < p; ++i)
+        if (differs(old[i], items[i]))
+            changed.push_back(int(i));
+    for (size_t j = 0; j < s; ++j)
+        if (differs(old[old.size() - 1 - j], items[items.size() - 1 - j]))
+            changed.push_back(int(items.size() - 1 - j));
+    _items = std::move(items);
+    if (removed)
+        _list->itemsRemoved(int(p), int(removed));
+    if (inserted)
+        _list->itemsInserted(int(p), int(inserted));
+    for (int i : changed)
+        _list->itemsChanged(i, 1);
+    updateState();
+}
+
+void MessageList::updateState() {
+    State s = State::None;
+    if (_items.empty()) {
+        bool loading = _waiting;
+        if (_conv != model::kNoConv) {
+            const model::Conversation &c = _ctx.store().conversation(_conv);
+            // Never loaded: no messages yet, but more before them.
+            loading = loading || (_root ? _loadingThread : c.messages.empty() && c.hasMoreBefore);
+            s       = loading ? State::Loading : State::Empty;
+        } else if (loading) {
+            s = State::Loading;
+        }
+    }
+    _state->set(s);
+}
+
+void MessageList::setWaiting(bool on) {
+    if (on == _waiting)
+        return;
+    _waiting = on;
+    updateState();
+}
+
+MessageList::State MessageList::state() const {
+    return _state->state();
+}
+
+std::string MessageList::stateText() const {
+    return _state->text();
+}
+
+int MessageList::itemIndex(Ts ts) const {
+    for (size_t i = _items.size(); i-- > 0;)
+        if (_items[i].ts == ts &&
+            (_items[i].kind == Kind::Message || _items[i].kind == Kind::System))
+            return int(i);
+    return -1;
+}
+
+void MessageList::onChange(const model::Change &ch) {
+    using CK = model::ChangeKind;
+    switch (ch.kind) {
+    case CK::Typing:
+        updateTyping();
+        return;
+    case CK::Meta:
+    case CK::Roster:
+        return;
+    case CK::Users:
+        rebuild(true);
+        if (!_items.empty())
+            _list->itemsChanged(0, int(_items.size())); // names and avatars
+        return;
+    default:
+        break;
+    }
+    const bool mine = _root == 0 ? ch.thread == 0
+                                 : ch.thread == _root || (ch.thread == 0 && ch.ts == _root) ||
+                                       ch.kind == CK::Reset;
+    // An inline thread's replies live in its root's row.
+    if (!mine && _root == 0 && ch.thread && has(_inlineThreads, ch.thread)) {
+        rowChanged(ch.thread);
+        return;
+    }
+    if (!mine)
+        return;
+    if (ch.kind == CK::Reset) {
+        hideToolbar();
+        rebuild(false);
+        _list->reset();
+    } else {
+        rebuild(true);
+        if (ch.kind == CK::Update)
+            if (const int i = itemIndex(ch.ts); i >= 0)
+                _list->itemsChanged(i, 1);
+    }
+    applyOpenTarget();
+    applyJump();
+    scheduleEdgeCheck();
+}
+
+std::string MessageList::itemLabel(size_t i) const {
+    if (i >= _items.size())
+        return {};
+    const Item &it = _items[i];
+    if (it.kind == Kind::Day)
+        return base::dayLabel(model::tsSecs(it.ts), base::nowSecs());
+    if (it.kind == Kind::Divider) {
+        const model::Message              *root = message(_root);
+        const std::vector<model::Message> *r    = _ctx.store().replies(_conv, _root);
+        const size_t                       n    = r ? r->size() : root ? root->replyCount : 0;
+        return n == 1 ? std::string(tr("1 reply")) : arg(tr("%1 replies"), std::to_string(n));
+    }
+    return {};
+}
+
+void MessageList::updateTyping() {
+    std::vector<std::string_view> names;
+    if (_conv != model::kNoConv)
+        for (const model::Typing &t : _ctx.store().typing(_conv))
+            if (t.user != _ctx.store().me && t.thread == _root)
+                names.push_back(_ctx.store().user(t.user).label());
+    std::string s;
+    if (names.size() == 1)
+        s = arg(tr("%1 is typing…"), names[0]);
+    else if (names.size() == 2)
+        s = arg(tr("%1 are typing…"), arg(tr("%1 and %2"), names[0], names[1]));
+    else if (names.size() > 2)
+        s = tr("Several people are typing…");
+    _typing->setText(std::move(s));
+}
+
+void MessageList::setTypingRow(bool on) {
+    _typingH = on ? kTypingH : 0;
+    _typing->setVisible(on);
+    invalidateLayout();
+}
+
+const std::string &MessageList::typingText() const {
+    return _typing->text();
+}
+
+// ── Edges: mark read, load older ────────────────────────────────────────────
+
+void MessageList::setReading(bool on) {
+    if (on == _reading)
+        return;
+    _reading = on;
+    if (on && _conv != model::kNoConv)
+        scheduleEdgeCheck();
+}
+
+void MessageList::scheduleEdgeCheck() {
+    if (_edgeTimer)
+        return;
+    // After the next frame's layout, when the visible range is known.
+    _edgeTimer = _ctx.app.addTimer(kEdgeDelayMs, false, [this] {
+        _edgeTimer = 0;
+        checkEdges();
+    });
+}
+
+void MessageList::checkEdges() {
+    if (_conv == model::kNoConv)
+        return;
+    if (_root != 0) {
+        // msga: an open thread reads itself — on load and on each new reply
+        // (markThreadRead: its cursor, the Threads entry).
+        const auto *replies = _ctx.store().replies(_conv, _root);
+        if (!_loadingThread && replies && !replies->empty() && !replies->back().pending &&
+            replies->back().ts != _markedTs) {
+            _markedTs = replies->back().ts;
+            _ctx.backend.markThreadRead(_conv, _root, _markedTs);
+        }
+        return;
+    }
+    // Land first: the bottom showing before then must not mark it read.
+    if (_openPending && applyOpenTarget()) {
+        scheduleEdgeCheck(); // once the list is where it landed
+        return;
+    }
+    const model::Conversation &c = _ctx.store().conversation(_conv);
+    if (_reading && !_openPending && !c.messages.empty() &&
+        _list->lastVisible() >= int(_items.size()) - 1) {
+        const Ts newest = c.messages.back().ts;
+        if (newest > c.lastRead && newest != _markedTs && !c.messages.back().pending) {
+            _markedTs = newest;
+            _ctx.backend.markRead(_conv, newest);
+        } else if (newest <= c.lastRead)
+            _markedTs = newest; // seen read: a later "mark unread" must stick
+    }
+    const int first = _list->firstVisible();
+    if (c.hasMoreBefore && !_loadingOlder && (c.messages.empty() || (first >= 0 && first <= 3))) {
+        _loadingOlder              = true;
+        const Ts            before = c.messages.empty() ? 0 : c.messages.front().ts;
+        const ConvRef       conv   = _conv;
+        std::weak_ptr<char> alive  = _alive;
+        _ctx.backend.loadHistory(conv, before, [this, alive, conv](bool, const std::string &) {
+            if (alive.expired())
+                return;
+            _loadingOlder = false;
+            if (conv == _conv) {
+                // The page is in: a jump target it didn't bring won't come.
+                if (!applyJump())
+                    _jumpTs = 0;
+                updateState(); // an empty first page changes no messages
+                scheduleEdgeCheck();
+            }
+        });
+    }
+}
+
+// ── Layout, toolbar ─────────────────────────────────────────────────────────
+
+void MessageList::layout() {
+    const float w = width(), h = height();
+    _list->setFrame({0, 0, w, std::max(0.f, h - _typingH)});
+    _state->setFrame(_list->frame());
+    _typing->setFrame({16, std::max(0.f, h - _typingH), std::max(0.f, w - 32), _typingH});
+    placeToolbar();
+    applyOpenTarget(); // the first layout knows the height a third of which it needs
+}
+
+void MessageList::placeToolbar() {
+    if (!_toolbarRow || !_toolbarRow->visible() || !_toolbarRow->window()) {
+        _toolbar->setVisible(false);
+        return;
+    }
+    const model::Message *m = message(_toolbarRow->ts());
+    // msga: no toolbar on pending sends and system rows.
+    if (!m || m->pending || isSystem(*m)) {
+        _toolbar->setVisible(false);
+        return;
+    }
+    const bool agent = _ctx.backend.isAgentSession(_conv);
+    // Emoji: caps.reactions, except on my own messages in an agent session;
+    // Save: caps.messageReminders (not agent sessions).
+    _tbEmoji->setVisible(!(agent && m->user == _ctx.store().me));
+    _tbSave->setVisible(!agent && _ctx.backend.capabilities().messageReminders);
+    const bool saved = m->saved || _ctx.store().reminderAt(_conv, m->ts) != 0;
+    _tbSave->setIcon(saved ? gfx::Icon::BookmarkFilled : gfx::Icon::Bookmark);
+    _tbSave->setTooltip(saved ? tr("Remove from saved") : tr("Save for later"));
+    const ui::SizeF  sz = _toolbar->measure(ui::kInf, ui::kInf);
+    const ui::RectF  rr = _toolbarRow->windowRect();
+    const ui::PointF o  = mapFromWindow({rr.x, rr.y});
+    // cardTop = message top − cardH/2 (straddling the row's top edge),
+    // 12 px from the right; msga clips it at the viewport's top.
+    _toolbar->setFrame({std::floor(width() - 12 - sz.w), std::floor(o.y - sz.h / 2), sz.w, sz.h});
+    _toolbar->setVisible(o.y < height() - _typingH);
+}
+
+void MessageList::hideToolbar() {
+    if (_toolbarRow) {
+        _toolbarRow->update();
+    }
+    _toolbarRow = nullptr;
+    _toolbar->setVisible(false);
+}
+
+void MessageList::rowHovered(MessageRow *row, bool on) {
+    if (on) {
+        if (_toolbarRow == row)
+            return;
+        if (_toolbarRow) {
+            _toolbarRow->update();
+        }
+        _toolbarRow = row;
+        placeToolbar();
+        return;
+    }
+    // Leaving a row for the toolbar keeps it; the hover chain settles after
+    // this event, so decide once it has.
+    std::weak_ptr<char> alive = _alive;
+    _ctx.app.platform().post([this, alive, row] {
+        if (alive.expired() || _toolbarRow != row)
+            return;
+        if (!row->hovered() && !_toolbar->hovered() && !_fileBar->hovered())
+            hideToolbar();
+    });
+}
+
+bool MessageList::onEvent(ui::Event &e) {
+    switch (e.type) {
+    // msga's text selection: a press on message text starts a drag (a
+    // press anywhere else here clears it); two clicks take a word, three a
+    // line; Ctrl/Cmd+C copies it, Escape drops it.
+    case ui::EventType::PointerDown: {
+        if (e.button != plat::Button::Left)
+            return false;
+        const TextPos tp = textPosAt(e.windowPos);
+        if (tp.ts && e.clicks >= 2) {
+            uint32_t    base = 0;
+            const int   i    = itemIndex(tp.ts);
+            auto       *row  = i >= 0 ? static_cast<MessageRow *>(_list->viewFor(i)) : nullptr;
+            RichLabel  *l    = row ? labelAt(*row, e.windowPos.y, &base) : nullptr;
+            const auto *lay  = l ? l->textLayout() : nullptr;
+            if (lay) {
+                const uint32_t at = tp.offset - base;
+                uint32_t       a = 0, b = 0;
+                if (e.clicks == 2) {
+                    a = lay->wordStart(at);
+                    b = lay->wordEnd(at);
+                } else { // the visual line under the pointer
+                    const ui::PointF o = l->textOrigin();
+                    const float      y = l->mapFromWindow(e.windowPos).y - o.y;
+                    a                  = lay->hitTest({-1e6f, y}).offset;
+                    b                  = lay->hitTest({1e6f, y}).offset;
+                }
+                _selDragging = false;
+                select({tp.ts, base + a}, {tp.ts, base + b});
+                return true;
+            }
+        }
+        clearSelection();
+        if (!tp.ts)
+            return false;
+        _selDragging = true;
+        select(tp, tp);
+        return true;
+    }
+    case ui::EventType::PointerMove:
+        if (_selDragging) {
+            const TextPos tp = textPosAt(e.windowPos);
+            if (tp.ts && !(tp == _selFocus))
+                select(_selAnchor, tp);
+            return true;
+        }
+        return false;
+    case ui::EventType::PointerUp:
+    case ui::EventType::PointerCancel:
+        if (!_selDragging)
+            return false;
+        _selDragging = false;
+        if (_selAnchor == _selFocus) // a plain click: no selection
+            clearSelection();
+        return true;
+    case ui::EventType::KeyDown:
+        if (!hasSelection())
+            return false;
+        if (e.key == plat::Key::C && (e.mods & plat::primaryMod()) &&
+            !(e.mods & ~(plat::primaryMod() | plat::ModShift))) {
+            copySelection();
+            return true;
+        }
+        if (e.key == plat::Key::Escape) {
+            clearSelection();
+            return true;
+        }
+        return false;
+    case ui::EventType::PointerLeave:
+        hideToolbar();
+        _fileView = nullptr;
+        _fileBar->setVisible(false);
+        return false;
+    // Files dropped anywhere on the list attach to the composer below it.
+    case ui::EventType::DropEnter:
+    case ui::EventType::DropMove:
+        if (!_ctx.attachFiles || !dragOffersFiles(e.raw))
+            return false;
+        e.dropAction = plat::DropAction::Copy;
+        return true;
+    case ui::EventType::DropLeave:
+        return true;
+    case ui::EventType::Drop: {
+        auto paths = droppedFiles(e.raw);
+        if (paths.empty() || !_ctx.attachFiles)
+            return false;
+        _ctx.attachFiles(std::move(paths), threadMode());
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+// ── Actions ─────────────────────────────────────────────────────────────────
+
+void MessageList::reply(Ts ts) {
+    if (onReply)
+        onReply(_conv, ts);
+    else if (_ctx.openThread)
+        _ctx.openThread(_conv, ts);
+}
+
+void MessageList::openReactionPicker(Ts ts, ui::RectF anchor) {
+    if (!window())
+        return;
+    const ConvRef conv = _conv;
+    Context      &ctx  = _ctx;
+    EmojiPicker::show(*window(), anchor, _ctx, [&ctx, conv, ts](const std::string &name) {
+        ctx.backend.react(conv, ts, name, true);
+    });
+}
+
+namespace {
+
+// msga's PopupTooltip::showToast: the tooltip chip (near-black, medium white
+// text, 10/5 padding, radius 6, the arrow at the point) above a click.
+class ClickToast final : public ui::Popup {
+public:
+    explicit ClickToast(std::string text) : _text(std::move(text)) {
+        setModal(false);
+        setCard(false);
+        setPaintOutset(6);
+    }
+    ui::View *hitTest(ui::PointF) override { return nullptr; }
+    ui::SizeF measureContent(float, float) override {
+        if (!_l) {
+            text::AttributedText t;
+            text::Style          st = ui::font(ui::Font::Body);
+            st.weight               = text::Weight::Medium;
+            st.color                = ui::color(C::TooltipText);
+            t.append(_text, st);
+            _l = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+        }
+        return {std::ceil(_l->width()) + 20, std::ceil(_l->height()) + 10 + 6};
+    }
+    void paint(gfx::Painter &p) override {
+        if (!_l)
+            measureContent(0, 0);
+        const ui::RectF  w     = windowRect();
+        const bool       below = w.y > anchor().y;
+        const ui::RectF  body{0, below ? 6.f : 0.f, width(), height() - 6};
+        const gfx::Color bg = ui::color(C::TooltipBg);
+        p.dropShadow(body, 6, 5, {0, 1}, 0x30000000U);
+        p.fillRoundRect(body, 6, bg);
+        const float cx = std::clamp(anchor().x + anchor().w / 2 - w.x, 7.f, width() - 7);
+        gfx::Path   a;
+        if (below) {
+            a.moveTo(cx - 7, body.y + 3);
+            a.lineTo(cx + 7, body.y + 3);
+            a.lineTo(cx, 0);
+        } else {
+            a.moveTo(cx - 7, body.bottom() - 3);
+            a.lineTo(cx + 7, body.bottom() - 3);
+            a.lineTo(cx, body.bottom() + 6);
+        }
+        a.close();
+        p.fillPath(a, bg);
+        _l->paint(p, snapPx({std::floor((width() - _l->width()) / 2), body.y + 5}));
+    }
+
+private:
+    std::string                   _text;
+    std::unique_ptr<text::Layout> _l;
+};
+
+} // namespace
+
+void showClickToast(Context &ctx, ui::Window &w, const std::string &text, int ms, ui::PointF at) {
+    auto *t = new ClickToast(text);
+    t->setAnchor({at.x, at.y - 2, 1, 4}, ui::Popup::Place::Tip);
+    ui::Popup *raw  = w.showPopup(std::unique_ptr<ui::Popup>(t));
+    auto       gone = std::make_shared<bool>(false);
+    raw->onClosed   = [gone] { *gone = true; };
+    ctx.app.addTimer(ms, false, [raw, gone] {
+        if (!*gone)
+            raw->close();
+    });
+}
+
+void MessageList::showToast(const std::string &text, int ms, ui::PointF at) {
+    if (ui::Window *w = window())
+        showClickToast(_ctx, *w, text, ms, at);
+}
+
+void MessageList::pressButton(Ts ts, const std::string &buttonId, ui::PointF at) {
+    // A link button opens its URL (msga's url: anchors) instead.
+    if (const model::Message *m = message(ts); m && m->extra)
+        for (const model::Button &b : m->extra->buttons)
+            if (b.id == buttonId && !b.url.empty()) {
+                if (_ctx.openUrl)
+                    _ctx.openUrl(b.url);
+                return;
+            }
+    // The agent answers on its own schedule (a new message, this one
+    // changing): the toast only confirms the press was taken.
+    std::weak_ptr<char> alive = _alive;
+    _ctx.backend.pressButton(
+        _conv, ts, buttonId, [this, alive, at](bool ok, const std::string &err) {
+            if (alive.expired())
+                return;
+            if (ok)
+                showToast(tr("Sent to the app"), 1500, at);
+            else if (err == model::Backend::kUnpressableButton)
+                showToast(
+                    tr("Slack doesn't let third-party apps press this kind of bot button"), 2600, at
+                );
+            else
+                showToast(arg(tr("Couldn't press the button: %1"), err), 3000, at);
+        }
+    );
+}
+
+void MessageList::openImage(const std::string &path, int w, int h) {
+    if (window())
+        window()->showPopup(std::make_unique<ImageViewer>(_ctx, path, w, h, window()->size()));
+}
+
+// ── The message menu ────────────────────────────────────────────────────────
+// msga's Qt menus (message_list.cpp): showContextMenu (the hover toolbar's
+// "…", also right click on the row here), showRemindMenu, the link menu
+// (right click on a link) and showFileContextMenu (an image or a file).
+
+namespace {
+
+struct ItemDef {
+    uint8_t     id;
+    gfx::Icon   icon;
+    const char *label;
+    const char *hint; // msga's shortcut (the key chooses it while the menu is open)
+};
+constexpr ItemDef kItemDefs[] = {
+    {MessageList::kReply, gfx::Icon::MessageSquareReply, N_("Reply in thread"), "T"},
+    {MessageList::kOpenThread, gfx::Icon::MessageSquareReply, N_("Open thread"), "T"},
+    {MessageList::kMuteThread, gfx::Icon::BellOff, N_("Mute thread"), nullptr},
+    {MessageList::kUnmuteThread, gfx::Icon::Bell, N_("Unmute thread"), nullptr},
+    {MessageList::kEdit, gfx::Icon::Edit3, N_("Edit message"), "E"},
+    {MessageList::kCopyLink, gfx::Icon::Link, N_("Copy link"), "L"},
+    {MessageList::kCopyLinkInText, gfx::Icon::Link, N_("Copy link from message"), nullptr},
+    {MessageList::kCopyText, gfx::Icon::Copy, N_("Copy message"), "Ctrl+C"},
+    {MessageList::kPin, gfx::Icon::Pin, N_("Pin to channel"), "P"},
+    {MessageList::kUnpin, gfx::Icon::PinOff, N_("Unpin from channel"), "P"},
+    {MessageList::kSave, gfx::Icon::Bookmark, N_("Save for later"), nullptr},
+    {MessageList::kUnsave, gfx::Icon::BookmarkMinus, N_("Remove from saved"), nullptr},
+    {MessageList::kRemind, gfx::Icon::AlarmClock, N_("Remind me"), nullptr},
+    {MessageList::kRemoveReminder, gfx::Icon::AlarmClock, N_("Remove reminder"), nullptr},
+    {MessageList::kForward, gfx::Icon::Share2, N_("Forward message"), nullptr},
+    {MessageList::kMoveToThread, gfx::Icon::CornerDownRight, N_("Move to thread…"), nullptr},
+    {MessageList::kSummarize, gfx::Icon::Sparkles, N_("Summarize down"), nullptr},
+    {MessageList::kDelete, gfx::Icon::Trash2, N_("Delete message…"), "Del"},
+    {MessageList::kOpenLink, gfx::Icon::ExternalLink, N_("Open link"), nullptr},
+    {MessageList::kCopyLinkUrl, gfx::Icon::Link, N_("Copy link"), nullptr},
+    {MessageList::kCopyImageLink, gfx::Icon::Link, N_("Copy link to image"), nullptr},
+    {MessageList::kCopyFileLink, gfx::Icon::Link, N_("Copy link to file"), nullptr},
+    {MessageList::kCopyImage, gfx::Icon::Copy, N_("Copy full image"), nullptr},
+    {MessageList::kPreview, gfx::Icon::Eye, N_("Preview"), nullptr},
+    {MessageList::kDeleteFile, gfx::Icon::Trash2, N_("Delete file…"), nullptr},
+};
+
+// Reminder presets (msga's showRemindMenu), no icons.
+constexpr const char *kRemindLabels[] = {
+    N_("In 20 minutes"), N_("In 1 hour"), N_("In 3 hours"), N_("Tomorrow"), N_("Next week")
+};
+
+ui::MenuItem &addItem(std::vector<ui::MenuItem> &out, int id, bool enabled = true) {
+    ui::MenuItem m;
+    for (const ItemDef &d : kItemDefs)
+        if (d.id == id) {
+            m.label = tr(d.label);
+            m.icon  = uint16_t(d.icon);
+            if (d.hint)
+                m.hint = d.hint;
+            break;
+        }
+    m.id      = id;
+    m.enabled = enabled;
+    m.danger  = id == MessageList::kDelete || id == MessageList::kDeleteFile;
+    out.push_back(std::move(m));
+    return out.back();
+}
+
+void addSeparator(std::vector<ui::MenuItem> &out) {
+    // msga's collapseSeparators(): never leading or doubled.
+    if (!out.empty() && !out.back().separator)
+        out.push_back(ui::MenuItem::separatorItem());
+}
+
+// The first URL the message text links to ("" when none).
+std::string firstLink(std::string_view text) {
+    const mrkdwn::Rich r = mrkdwn::parse(text);
+    for (const mrkdwn::Entity &e : r.entities)
+        if (e.kind == mrkdwn::Kind::Link)
+            return e.data;
+    return {};
+}
+
+std::string imageMime(std::string_view path) {
+    std::string e(file::extension(path));
+    for (char &c : e)
+        c = char(c | 0x20);
+    if (e == "jpg")
+        e = "jpeg";
+    return "image/" + (e.empty() ? std::string("png") : e);
+}
+
+// msga's File::isCsv.
+bool isCsv(const model::File &f) {
+    const size_t n = f.name.size();
+    return f.mime == "text/csv" || (n > 4 && (f.name.compare(n - 4, 4, ".csv") == 0 ||
+                                              f.name.compare(n - 4, 4, ".CSV") == 0));
+}
+
+std::string fileUrl(const std::string &path) {
+    return path.find("://") != std::string::npos ? path : file::toFileUrl(path);
+}
+
+// A tempDownloadPath() copy, and the directory made for it.
+void removeTemp(const std::string &path) {
+    file::remove(path);
+    file::remove(file::dirName(path));
+}
+
+// Due times of the presets, from `now` (local): +20 min, +1 h, +3 h,
+// tomorrow 9:00, next Monday 9:00.
+int64_t remindDue(int preset, int64_t now) {
+    switch (preset) {
+    case 0:
+        return now + 20 * 60;
+    case 1:
+        return now + 3600;
+    case 2:
+        return now + 3 * 3600;
+    default: {
+        const base::CivilTime c  = base::localTime(now);
+        const int             wd = c.weekday == 0 ? 7 : c.weekday; // Mon=1…Sun=7, as Qt's dayOfWeek
+        return base::fromLocal(c.year, c.month, c.day + (preset == 3 ? 1 : 8 - wd), 9, 0);
+    }
+    }
+}
+
+} // namespace
+
+std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
+    std::vector<ui::MenuItem> items;
+    const model::Message     *m = message(ts);
+    if (!m || m->pending)
+        return items;
+    const Store &st        = _ctx.store;
+    const bool   mine      = m->user == st.me && m->user != model::kNoUser;
+    // Agent sessions (Claude Code): no permalinks, pins, reminders, edits or
+    // moves, and a thread only opens where one exists (a subagent run or a
+    // /btw branch) — "Reply in thread" where it takes replies.
+    const bool   agent     = _ctx.backend.isAgentSession(_conv);
+    // msga's canDelete: my own messages, or any as a workspace admin — any
+    // at all in an agent session (deleteAnyMessage) — and only when the
+    // backend can take this one now (not while the session is working).
+    const bool   canDelete = (agent || mine || (st.me != model::kNoUser && st.user(st.me).admin)) &&
+                             _ctx.backend.canDeleteMessage(_conv, ts);
+    if (_root == 0 && !m->isReply()) {
+        if (!agent)
+            addItem(items, kReply);
+        else if (m->replyCount > 0)
+            addItem(items, _ctx.backend.threadAcceptsReplies(_conv, m->ts) ? kReply : kOpenThread);
+    }
+    // Mute the thread this message belongs to (a root with replies, a reply);
+    // the thread panel has its own toggle.
+    if (_root == 0 && (m->replyCount > 0 || m->isReply())) {
+        const Ts root = m->isReply() ? m->threadTs : m->ts;
+        addItem(items, st.threadMuted(_conv, root) ? kUnmuteThread : kMuteThread);
+    }
+    addSeparator(items);
+    if (mine && onEdit && !agent) {
+        addItem(items, kEdit);
+        addSeparator(items);
+    }
+    if (!agent)
+        addItem(items, kCopyLink);
+    if (!firstLink(m->text).empty())
+        addItem(items, kCopyLinkInText);
+    addItem(items, kCopyText);
+    addSeparator(items);
+    if (!agent)
+        addItem(items, m->pinned ? kUnpin : kPin);
+    // Slack's Later list: session-token workspaces only (saved.*).
+    if (!agent && _ctx.backend.capabilities().messageReminders) {
+        const bool reminded = st.reminderAt(_conv, ts) != 0;
+        if (m->saved && !reminded)
+            addItem(items, kUnsave);
+        else if (!m->saved)
+            addItem(items, kSave);
+        addItem(items, reminded ? kRemoveReminder : kRemind).hint = reminded ? "" : "\xE2\x80\xBA";
+    }
+    addSeparator(items);
+    addItem(items, kForward, bool(_ctx.forwardMessage));
+    // "Move to thread…": a top-level message without replies of its own, and
+    // only where the original can be deleted afterwards.
+    if (_root == 0 && canDelete && !agent && !m->isReply() && m->replyCount == 0 && !isSystem(*m))
+        addItem(items, kMoveToThread);
+    // Always offered where AI is wired: without a provider it says so (and
+    // links to Settings → AI assistance), as msga does.
+    addItem(items, kSummarize, _ctx.ai != nullptr);
+    if (canDelete) {
+        addSeparator(items);
+        addItem(items, kDelete);
+    }
+    if (!items.empty() && items.back().separator)
+        items.pop_back();
+    return items;
+}
+
+std::vector<ui::MenuItem> MessageList::fileMenuItems(Ts ts, const std::string &path) const {
+    // msga's showFileContextMenu.
+    std::vector<ui::MenuItem> items;
+    const model::Message     *m = message(ts);
+    const model::File        *f = nullptr;
+    if (m)
+        for (const model::File &x : m->files())
+            if (x.path == path)
+                f = &x;
+    const bool image = !f || f->isImage();
+    if (f && isCsv(*f))
+        addItem(items, kPreview); // msga's table viewer
+    addItem(items, image ? kCopyImageLink : kCopyFileLink);
+    if (image)
+        addItem(items, kCopyImage);
+    const Store &st = _ctx.store;
+    const bool   canDelete =
+        m && (m->user == st.me || (st.me != model::kNoUser && st.user(st.me).admin));
+    if (f && canDelete && !f->id.empty()) {
+        addSeparator(items);
+        addItem(items, kDeleteFile).label = image ? tr("Delete image…") : tr("Delete file…");
+    }
+    return items;
+}
+
+std::vector<ui::MenuItem> MessageList::remindItems() {
+    std::vector<ui::MenuItem> items;
+    items.push_back(ui::MenuItem::headerItem(tr("Remind me about this…")));
+    for (int i = 0; i < 5; ++i) {
+        ui::MenuItem m;
+        m.id    = kRemindPreset + i;
+        m.label = tr(kRemindLabels[i]);
+        items.push_back(std::move(m));
+    }
+    addSeparator(items);
+    ui::MenuItem custom; // msga's ReminderDialog
+    custom.id    = kRemindCustom;
+    custom.label = tr("Custom…");
+    items.push_back(std::move(custom));
+    return items;
+}
+
+std::vector<ui::MenuItem> MessageList::linkMenuItems() {
+    std::vector<ui::MenuItem> items;
+    addItem(items, kOpenLink);
+    addItem(items, kCopyLinkUrl);
+    return items;
+}
+
+std::vector<Ts> MessageList::threadRoots(Ts except) const {
+    // msga's threadRoots(): loaded roots with replies, not pending, newest first.
+    std::vector<Ts> out;
+    if (_conv == model::kNoConv)
+        return out;
+    const auto &msgs = _ctx.store().conversation(_conv).messages;
+    for (auto it = msgs.rbegin(); it != msgs.rend(); ++it)
+        if (it->replyCount > 0 && !it->isReply() && !it->pending && it->ts != except)
+            out.push_back(it->ts);
+    return out;
+}
+
+void MessageList::openMenu(Ts ts, ui::PointF at) {
+    if (!window())
+        return;
+    std::vector<ui::MenuItem> items = menuItems(ts);
+    if (items.empty())
+        return;
+    std::weak_ptr<char> alive = _alive;
+    const ConvRef       conv  = _conv;
+    ui::Menu::popupAt(*window(), at, std::move(items), [this, alive, conv, ts, at](int id) {
+        if (!alive.expired() && conv == _conv)
+            runMenuAction(ts, id, {}, at);
+    });
+}
+
+void MessageList::openFileMenu(Ts ts, const std::string &path, ui::PointF at) {
+    if (!window() || !message(ts) || message(ts)->pending)
+        return;
+    std::weak_ptr<char> alive = _alive;
+    const ConvRef       conv  = _conv;
+    ui::Menu::popupAt(
+        *window(), at, fileMenuItems(ts, path), [this, alive, conv, ts, path](int id) {
+            if (!alive.expired() && conv == _conv)
+                runMenuAction(ts, id, path, {});
+        }
+    );
+}
+
+void showLinkMenu(Context &ctx, ui::Window &w, ui::PointF at, const std::string &url) {
+    ui::Menu::popupAt(w, at, MessageList::linkMenuItems(), [&ctx, url](int id) {
+        if (id == MessageList::kOpenLink && ctx.openUrl)
+            ctx.openUrl(url);
+        else if (id == MessageList::kCopyLinkUrl)
+            ctx.app.platform().setClipboardText(url);
+    });
+}
+
+void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::PointF at) {
+    const model::Message *msg = message(ts);
+    if (!msg)
+        return;
+    std::string   copy; // what the item puts on the clipboard
+    const ConvRef conv = _conv;
+    if (id == kRemindCustom) {
+        if (window())
+            showReminderDialog(_ctx, *window(), conv, ts);
+        return;
+    }
+    if (id >= kRemindPreset && id < kRemindPreset + 5) {
+        _ctx.backend.setReminder(conv, ts, remindDue(id - kRemindPreset, base::nowSecs()));
+        return;
+    }
+    switch (id) {
+    case kReply:
+    case kOpenThread:
+        reply(ts);
+        break;
+    case kMuteThread:
+    case kUnmuteThread:
+        _ctx.store().setThreadMuted(conv, msg->isReply() ? msg->threadTs : ts, id == kMuteThread);
+        break;
+    case kEdit:
+        if (onEdit)
+            onEdit(conv, ts);
+        break;
+    case kCopyLink:
+        copy = _ctx.store().permalink(conv, ts, msg->isReply() ? msg->threadTs : 0);
+        break;
+    case kCopyLinkInText:
+        copy = firstLink(msg->text);
+        break;
+    case kCopyText: // shortened link labels copy as their full URLs
+        copy = plainText(_ctx, msg->text, true);
+        break;
+    case kPin:
+    case kUnpin:
+        _ctx.backend.setPinned(conv, ts, id == kPin);
+        break;
+    case kSave:
+    case kUnsave:
+        _ctx.backend.setSaved(conv, ts, id == kSave);
+        break;
+    case kRemind: {
+        // msga replaces the menu with the presets at the same point.
+        if (!window())
+            break;
+        std::weak_ptr<char> alive = _alive;
+        ui::Menu::popupAt(*window(), at, remindItems(), [this, alive, conv, ts](int preset) {
+            if (!alive.expired() && conv == _conv)
+                runMenuAction(ts, preset, {}, {});
+        });
+        break;
+    }
+    case kRemoveReminder:
+        _ctx.backend.setReminder(conv, ts, 0);
+        break;
+    case kDelete: // msga's DeleteMessageDialog first
+        if (window())
+            showDeleteMessageDialog(_ctx, *window(), conv, ts);
+        break;
+    case kForward:
+        if (_ctx.forwardMessage)
+            _ctx.forwardMessage(conv, ts, {});
+        break;
+    case kMoveToThread:
+        if (window())
+            showMoveToThreadDialog(_ctx, *window(), conv, ts, threadRoots(ts));
+        break;
+    case kSummarize: { // msga's startSummarizeDown
+        // From the chosen message down to the newest loaded one (the pages
+        // below a visible message are always loaded).
+        std::vector<Ts> span;
+        for (int i = itemIndex(ts); i >= 0 && size_t(i) < _items.size(); ++i)
+            if (_items[size_t(i)].kind == Kind::Message)
+                if (const model::Message *m = message(_items[size_t(i)].ts); m && !m->pending)
+                    span.push_back(m->ts);
+        summarizeDown(_ctx, conv, std::move(span), threadMode());
+        break;
+    }
+    case kPreview:
+        for (const model::File &f : msg->files())
+            if (f.path == path) {
+                openCsvPreview(f);
+                break;
+            }
+        break;
+    case kCopyImageLink:
+    case kCopyFileLink: // msga: the file's permalink, else the original (never a thumbnail)
+        copy = fileUrl(path);
+        for (const model::File &f : msg->files())
+            if (f.path == path)
+                copy = f.permalink.empty() ? fileUrl(f.source()) : f.permalink;
+        break;
+    case kDeleteFile:
+        for (const model::File &f : msg->files())
+            if (f.path == path) {
+                _ctx.backend.deleteFile(conv, ts, f.id);
+                break;
+            }
+        break;
+    case kCopyImage:
+        for (const model::File &f : msg->files())
+            if (f.path == path) {
+                copyImage(f);
+                break;
+            }
+        break;
+    default:
+        break;
+    }
+    if (!copy.empty())
+        _ctx.app.platform().setClipboardText(std::move(copy));
+}
+
+// msga's copyFullImageToClipboard: the full image (source(), not the
+// thumbnail the list shows) as its bytes, as they are (a PNG stays a PNG; no
+// re-encode). A local file (a pending upload, the demo) also goes as itself
+// for file managers; a remote one comes from the image disk cache when the
+// viewer already fetched it, else it is downloaded to a temporary file
+// (removed once read). The footer's cog runs from the click until the
+// clipboard is set; the disk reads happen on a worker.
+void MessageList::copyImage(const model::File &f) {
+    const std::string source = f.source();
+    if (source.empty())
+        return;
+    std::string mime = f.mime;
+    if (mime.empty()) // from the name; a URL's query is not part of it
+        mime = imageMime(std::string_view(source).substr(0, source.find('?')));
+    const std::string name = f.name.empty() ? std::string(tr("image")) : f.name;
+    const int         job  = model::jobs().begin(arg(tr("Copying %1"), name));
+    plat::App        &pa   = _ctx.app.platform();
+    // Reads `local` off the UI thread (deleting it when `temp`), then sets the
+    // clipboard and ends the job. Never touches the list: it may be gone.
+    auto              put  = [&pa, job, mime](std::string local, bool temp, bool withUri) {
+        auto bytes = std::make_shared<std::string>();
+        auto ok    = std::make_shared<bool>(false);
+        model::runInBackground(
+            pa,
+            [bytes, ok, local, temp] {
+                *ok = file::readAll(local, bytes.get());
+                if (temp)
+                    removeTemp(local);
+            },
+            [&pa, job, mime, bytes, ok, local, withUri] {
+                if (*ok) {
+                    std::vector<plat::DataItem> items;
+                    items.push_back({mime, std::move(*bytes)});
+                    if (withUri)
+                        items.push_back({"text/uri-list", fileUrl(local)});
+                    pa.setClipboard(std::move(items));
+                } else {
+                    LOG_WARN("messages", "Copy full image failed: unreadable");
+                }
+                model::jobs().end(job);
+            }
+        );
+    };
+    if (!RemoteImages::isRemote(source)) {
+        put(source, false, true);
+        return;
+    }
+    if (_ctx.remote)
+        if (std::string local = _ctx.remote->cachedPath(source); !local.empty()) {
+            put(std::move(local), false, false);
+            return;
+        }
+    std::string temp = tempDownloadPath(pa, name);
+    if (temp.empty()) {
+        LOG_WARN("messages", "Copy full image failed: no temporary directory");
+        model::jobs().end(job);
+        return;
+    }
+    fetchFile(pa, _ctx.backend, source, temp, [put, temp, job](bool ok, const std::string &err) {
+        if (ok) {
+            put(temp, true, false);
+            return;
+        }
+        LOG_WARN("messages", "Copy full image failed: %s", err.c_str());
+        removeTemp(temp);
+        model::jobs().end(job);
+    });
+}
+
+// msga's openCsvPreview: the file fetched to a temporary copy (a local one
+// read in place), read and parsed on a worker, then the table viewer; the
+// footer's cog runs from the click until it opens (or the download fails).
+void MessageList::openCsvPreview(const model::File &f) {
+    const std::string source = f.source();
+    if (source.empty())
+        return;
+    const std::string   name  = f.name.empty() ? std::string(tr("file")) : f.name;
+    const int           job   = model::jobs().begin(arg(tr("Downloading %1"), name));
+    plat::App          &pa    = _ctx.app.platform();
+    std::weak_ptr<char> alive = _alive;
+    auto                parse = [this, alive, &pa, job](std::string local, bool temp) {
+        auto rows = std::make_shared<std::vector<std::vector<std::string>>>();
+        model::runInBackground(
+            pa,
+            [rows, local, temp] {
+                *rows = readCsvFile(local);
+                if (temp)
+                    removeTemp(local);
+            },
+            [this, alive, rows, job] {
+                model::jobs().end(job);
+                if (!alive.expired() && window())
+                    showTableViewer(*window(), std::move(*rows));
+            }
+        );
+    };
+    if (!RemoteImages::isRemote(source)) {
+        parse(source, false);
+        return;
+    }
+    std::string temp = tempDownloadPath(pa, name);
+    if (temp.empty()) {
+        LOG_WARN("messages", "CSV preview download failed: no temporary directory");
+        model::jobs().end(job);
+        return;
+    }
+    fetchFile(pa, _ctx.backend, source, temp, [parse, temp, job](bool ok, const std::string &err) {
+        if (ok) {
+            parse(temp, true);
+            return;
+        }
+        LOG_WARN("messages", "CSV preview download failed: %s", err.c_str());
+        removeTemp(temp);
+        model::jobs().end(job);
+    });
+}
+
+void MessageList::jumpTo(Ts ts) {
+    _jumpTs = ts;
+    if (applyJump() || _conv == model::kNoConv)
+        return;
+    // Not loaded: wait for the first page (checkEdges asks for it), or give
+    // up when messages are there already and it isn't among them. A thread's
+    // replies come in one load (Saved messages jumps to a reply).
+    if (threadMode()) {
+        if (_ctx.store().replies(_conv, _root))
+            _jumpTs = 0;
+        return;
+    }
+    const model::Conversation &c = _ctx.store().conversation(_conv);
+    if (!c.messages.empty() || !c.hasMoreBefore)
+        _jumpTs = 0;
+}
+
+bool MessageList::applyJump() {
+    if (!_jumpTs || itemIndex(_jumpTs) < 0)
+        return false;
+    scrollToMessage(std::exchange(_jumpTs, 0));
+    return true;
+}
+
+void MessageList::scrollToMessage(Ts ts, bool animated, bool flash) {
+    const int i = itemIndex(ts);
+    if (i < 0)
+        return;
+    _list->scrollToItem(i, ui::VirtualList::ItemAlign::Center, animated);
+    if (!flash)
+        return;
+    _flashTs = ts;
+    if (ui::View *v = _list->viewFor(i))
+        v->update();
+    _ctx.app.cancelTimer(_flashTimer);
+    _flashTimer = _ctx.app.addTimer(1600, false, [this] {
+        _flashTimer = 0;
+        const int j = itemIndex(_flashTs);
+        _flashTs    = 0;
+        if (ui::View *v = j >= 0 ? _list->viewFor(j) : nullptr)
+            v->update();
+    });
+}
+
+// ── Selection ───────────────────────────────────────────────────────────────
+// msga's text selection over the message bodies: a drag from one message's
+// text to another's, a double click on a word, a triple click on a line.
+// Positions are (message, offset into its selectableTexts joined by '\n'), so
+// a selection outlives the rows that show it.
+
+MessageList::TextPos MessageList::textPosAt(ui::PointF wp) const {
+    const int first = _list->firstVisible(), last = _list->lastVisible();
+    for (int i = std::max(0, first); first >= 0 && i <= last; ++i) {
+        if (_items[size_t(i)].kind != Kind::Message)
+            continue;
+        auto *row = static_cast<MessageRow *>(_list->viewFor(i));
+        if (!row)
+            continue;
+        const ui::RectF r = row->windowRect();
+        if (wp.y < r.y || wp.y >= r.y + r.h)
+            continue;
+        uint32_t   base = 0;
+        RichLabel *l    = labelAt(*row, wp.y, &base);
+        if (!l)
+            return {};
+        const ui::RectF  lr = l->windowRect();
+        const ui::PointF p  = l->mapFromWindow(
+            {std::max(wp.x, lr.x), std::clamp(wp.y, lr.y, lr.y + std::max(0.f, lr.h - 1))}
+        );
+        return {row->ts(), base + l->offsetAt(p)};
+    }
+    return {};
+}
+
+bool MessageList::hasSelection() const {
+    return _selAnchor.ts && _selFocus.ts && !(_selAnchor == _selFocus);
+}
+
+void MessageList::select(TextPos a, TextPos f) {
+    _selAnchor      = a;
+    _selFocus       = f;
+    const int first = _list->firstVisible(), last = _list->lastVisible();
+    for (int i = std::max(0, first - 4); first >= 0 && i <= last + 4; ++i)
+        if (size_t(i) < _items.size() && _items[size_t(i)].kind == Kind::Message)
+            if (auto *row = static_cast<MessageRow *>(_list->viewFor(i)))
+                applySelection(*row);
+}
+
+void MessageList::clearSelection() {
+    _selDragging = false;
+    if (_selAnchor.ts || _selFocus.ts)
+        select({}, {});
+}
+
+void MessageList::applySelection(MessageRow &row) const {
+    TextPos a = _selAnchor, f = _selFocus;
+    if (a.ts > f.ts || (a.ts == f.ts && a.offset > f.offset))
+        std::swap(a, f);
+    const Ts ts   = row.ts();
+    uint32_t from = 0, to = 0; // in the message's text
+    if (a.ts && f.ts && ts >= a.ts && ts <= f.ts) {
+        from = ts == a.ts ? a.offset : 0;
+        to   = ts == f.ts ? f.offset : UINT32_MAX;
+    }
+    uint32_t base = 0;
+    for (RichLabel *l : row.selectionLabels()) {
+        const uint32_t n  = uint32_t(l->text().size());
+        const uint32_t lo = std::max(from, base), hi = std::min<uint64_t>(to, uint64_t(base) + n);
+        if (hi > lo)
+            l->setSelection(lo - base, hi - base);
+        else
+            l->setSelection(0, 0);
+        base += n + 1;
+    }
+}
+
+std::string MessageList::selectedText() const {
+    if (!hasSelection())
+        return {};
+    TextPos a = _selAnchor, f = _selFocus;
+    if (a.ts > f.ts || (a.ts == f.ts && a.offset > f.offset))
+        std::swap(a, f);
+    std::string out;
+    bool        any = false;
+    for (const Item &it : _items) {
+        if (it.kind != Kind::Message || it.ts < a.ts || it.ts > f.ts)
+            continue;
+        const model::Message *m = message(it.ts);
+        if (!m)
+            continue;
+        // Joined by '\n', as the offsets count.
+        const std::vector<std::string> parts = selectableTexts(const_cast<Context &>(_ctx), *m);
+        std::string                    text;
+        for (size_t k = 0; k < parts.size(); ++k) {
+            if (k)
+                text += '\n';
+            text += parts[k];
+        }
+        const size_t from = it.ts == a.ts ? std::min<size_t>(a.offset, text.size()) : 0;
+        const size_t to   = it.ts == f.ts ? std::min<size_t>(f.offset, text.size()) : text.size();
+        if (to <= from)
+            continue;
+        if (any)
+            out += '\n';
+        out.append(text, from, to - from);
+        any = true;
+    }
+    return out;
+}
+
+void MessageList::copySelection() {
+    if (hasSelection())
+        _ctx.app.platform().setClipboardText(selectedText());
+}
+
+// ── Opening position ────────────────────────────────────────────────────────
+// msga's saveScrollAnchor / applyPendingScroll: a conversation shown before
+// opens where it was left (the bottom, or a message at its offset); a first
+// open lands on the first message after the read cursor, a third down the
+// viewport (the bottom when everything is read).
+
+void MessageList::saveAnchor() {
+    if (_conv == model::kNoConv || _root != 0 || _items.empty())
+        return;
+    const std::string &id = _ctx.store().conversation(_conv).id;
+    SavedAnchor        a;
+    a.conv = id;
+    if (_list->pinned() || _list->atEnd()) {
+        a.atBottom = true; // returning sticks to the bottom (and new messages)
+    } else {
+        const ui::VirtualList::Anchor an = _list->anchor();
+        if (an.index < 0 || size_t(an.index) >= _items.size())
+            return;
+        a.ts     = _items[size_t(an.index)].ts;
+        a.kind   = _items[size_t(an.index)].kind;
+        a.offset = an.offset;
+    }
+    for (SavedAnchor &x : _anchors)
+        if (x.conv == id) {
+            x = std::move(a);
+            return;
+        }
+    _anchors.push_back(std::move(a));
+}
+
+bool MessageList::applyOpenTarget() {
+    if (!_openPending || _root != 0 || _conv == model::kNoConv || _items.empty() ||
+        _list->height() <= 0)
+        return false;
+    _openPending = false;
+    if (!_openAnchor.conv.empty()) {
+        if (!_openAnchor.atBottom)
+            for (size_t i = 0; i < _items.size(); ++i)
+                if (_items[i].ts == _openAnchor.ts && _items[i].kind == _openAnchor.kind) {
+                    _list->scrollToAnchor({int(i), _openAnchor.offset});
+                    return true;
+                }
+        _list->scrollToBottom();
+        return true;
+    }
+    if (_openLastRead)
+        for (size_t i = 0; i < _items.size(); ++i)
+            if ((_items[i].kind == Kind::Message || _items[i].kind == Kind::System) &&
+                _items[i].ts > _openLastRead) {
+                _list->scrollToAnchor({int(i), -std::floor(_list->height() / 3)});
+                return true;
+            }
+    _list->scrollToBottom();
+    return true;
+}
+
+// ── Inline threads, previews, cards ─────────────────────────────────────────
+
+void MessageList::setThreadsInline(bool on) {
+    if (_threadsInline == on)
+        return;
+    _threadsInline = on;
+    _inlineThreads.clear(); // switching modes drops the expansions (an open panel stays)
+    if (!_items.empty())
+        _list->itemsChanged(0, int(_items.size()));
+}
+
+void MessageList::setOpenThreadRoot(Ts root) {
+    if (_openThreadRoot == root)
+        return;
+    const Ts old    = _openThreadRoot;
+    _openThreadRoot = root;
+    rowChanged(old);
+    rowChanged(root);
+}
+
+bool MessageList::threadOpen(Ts root) const {
+    return _threadsInline ? has(_inlineThreads, root)
+                          : _openThreadRoot != 0 && _openThreadRoot == root;
+}
+
+void MessageList::rowChanged(Ts ts) {
+    if (!ts)
+        return;
+    if (const int i = itemIndex(ts); i >= 0)
+        _list->itemsChanged(i, 1);
+}
+
+void MessageList::replyBarClicked(Ts root) {
+    if (_threadsInline) {
+        // The bar toggles the replies under the message.
+        if (has(_inlineThreads, root)) {
+            std::erase(_inlineThreads, root);
+            // Also open in the panel: close that too.
+            if (_openThreadRoot == root && _ctx.closeThread)
+                _ctx.closeThread();
+        } else {
+            _inlineThreads.push_back(root);
+            loadInline(root);
+        }
+        rowChanged(root);
+    } else if (_openThreadRoot == root && _ctx.closeThread) {
+        _ctx.closeThread(); // the open thread's bar closes the panel
+    } else {
+        reply(root);
+    }
+}
+
+void MessageList::loadInline(Ts root) {
+    std::weak_ptr<char> alive = _alive;
+    const ConvRef       conv  = _conv;
+    _ctx.backend.loadThread(conv, root, [this, alive, conv, root](bool, const std::string &) {
+        if (!alive.expired() && conv == _conv && has(_inlineThreads, root))
+            rowChanged(root);
+    });
+}
+
+bool MessageList::has(const std::vector<Key> &v, Key k) {
+    for (const Key &x : v)
+        if (x.ts == k.ts && x.a == k.a && x.b == k.b)
+            return true;
+    return false;
+}
+
+void MessageList::toggle(std::vector<Key> &v, Key k) {
+    for (size_t i = 0; i < v.size(); ++i)
+        if (v[i].ts == k.ts && v[i].a == k.a && v[i].b == k.b) {
+            v.erase(v.begin() + long(i));
+            return;
+        }
+    v.push_back(k);
+}
+
+bool MessageList::attachmentHidden(const model::Message &m, size_t index) const {
+    const model::Attachment &a = m.attachments()[index];
+    return (a.linkPreview && !_ctx.linkPreviews) || has(_dismissed, {m.ts, int(index), -1});
+}
+
+bool MessageList::removesPreviewServerSide(const model::Message &m) const {
+    return !m.pending && _ctx.backend.capabilities().removePreview &&
+           _ctx.store().me != model::kNoUser && m.user == _ctx.store().me;
+}
+
+void MessageList::dismissAttachment(Ts ts, size_t index) {
+    const model::Message *m = message(ts);
+    if (!m || index >= m->attachments().size())
+        return;
+    // Hidden at once either way. An own message's preview is also removed
+    // for everyone; once that succeeded the Store's message lost it (the
+    // rest renumbered), so the index-keyed hides for it are dropped.
+    _dismissed.push_back({ts, int(index), -1});
+    rowChanged(ts);
+    if (!removesPreviewServerSide(*m))
+        return;
+    const model::Attachment &a     = m->attachments()[index];
+    const int                id    = a.id > 0 ? a.id : int(index) + 1; // positional
+    std::weak_ptr<char>      alive = _alive;
+    Context                 &ctx   = _ctx;
+    _ctx.backend.deleteAttachment(
+        _conv, ts, id, [this, alive, &ctx, ts](bool ok, const std::string &err) {
+            if (!ok) {
+                if (ctx.backend.onError)
+                    ctx.backend.onError(arg(tr("Couldn't remove the preview (%1)."), err));
+                return;
+            }
+            if (alive.expired())
+                return;
+            std::erase_if(_dismissed, [ts](const Key &k) { return k.ts == ts; });
+            rowChanged(ts);
+        }
+    );
+}
+
+bool MessageList::imageCollapsed(Ts ts, int attachment, int block) const {
+    return has(_folded, {ts, attachment, block});
+}
+
+void MessageList::toggleImage(Ts ts, int attachment, int block) {
+    toggle(_folded, {ts, attachment, block});
+    rowChanged(ts);
+}
+
+bool MessageList::unfurlExpanded(Ts ts, int attachment) const {
+    return has(_expanded, {ts, attachment, -1});
+}
+
+void MessageList::toggleUnfurl(Ts ts, int attachment) {
+    toggle(_expanded, {ts, attachment, -1});
+    rowChanged(ts);
+}
+
+void MessageList::openFileViewer(Ts ts, const std::string &path) {
+    const model::Message *m = message(ts);
+    if (!m || !window())
+        return;
+    for (const model::File &f : m->files())
+        if (f.path == path) {
+            showFileViewer(_ctx, *window(), this, ts, f);
+            return;
+        }
+}
+
+void MessageList::openCanvas(const model::File &f) {
+    if (_ctx.openCanvas)
+        _ctx.openCanvas(_conv, f);
+    else if (_ctx.openUrl && !f.permalink.empty())
+        _ctx.openUrl(f.permalink);
+}
+
+const std::string *MessageList::canvasPreview(const std::string &id, ui::View *waiter, int *state) {
+    for (CanvasPreview &p : _canvasPreviews)
+        if (p.id == id) {
+            *state = p.state;
+            if (p.state == 0 &&
+                std::find(p.waiters.begin(), p.waiters.end(), waiter) == p.waiters.end())
+                p.waiters.push_back(waiter);
+            return p.state == 1 ? &p.html : nullptr;
+        }
+    _canvasPreviews.push_back({id, {}, 0, {waiter}});
+    *state                    = 0;
+    std::weak_ptr<char> alive = _alive;
+    _ctx.backend.loadCanvasContent(id, [this, alive, id](std::string html, std::string error) {
+        if (alive.expired())
+            return;
+        for (CanvasPreview &p : _canvasPreviews)
+            if (p.id == id) {
+                p.html  = std::move(html);
+                p.state = error.empty() && !p.html.empty() ? 1 : -1;
+                p.waiters.clear();
+            }
+        // The cards re-read it when rebound (a waiter may be recycled).
+        for (size_t i = 0; i < _items.size(); ++i)
+            if (const model::Message *m = message(_items[i].ts))
+                for (const model::File &f : m->files())
+                    if (f.id == id)
+                        _list->itemsChanged(int(i), 1);
+    });
+    return nullptr;
+}
+
+void MessageList::openHtmlFile(const model::File &f) {
+    // msga's openHtmlFile: the page itself in the browser, not Slack's file
+    // page (which only offers a download). url_private needs credentials:
+    // fetched once to the cache, the browser gets the local copy.
+    auto url = [](const std::string &p) {
+        return p.find("://") == std::string::npos ? file::toFileUrl(p) : p;
+    };
+    if (!RemoteImages::isRemote(f.path)) { // a pending upload, a demo file
+        if (_ctx.openUrl)
+            _ctx.openUrl(url(f.path));
+        return;
+    }
+    std::string name(file::baseName(f.name));
+    for (char &c : name)
+        if (std::strchr("\\/:*?\"<>|", c))
+            c = '_';
+    const std::string_view ext = file::extension(name);
+    if (!(ext == "html" || ext == "htm" || ext == "HTML" || ext == "HTM"))
+        name += ".html";
+    const std::string cache = identity::cacheDir(_ctx.app.platform());
+    if (cache.empty())
+        return;
+    const std::string path   = file::join(cache, "files/" + f.id + "-" + name);
+    Context          &ctx    = _ctx; // outlives the list; the download may outlive it
+    auto              have   = std::make_shared<bool>(false);
+    const std::string source = f.path, fallback = f.permalink, title = f.name;
+    model::runInBackground(
+        ctx.app.platform(),
+        [have, path] {
+            *have = file::size(path) > 0;
+            if (!*have)
+                file::makeDirs(file::dirName(path));
+        },
+        [&ctx, have, path, source, fallback, title] {
+            if (*have) {
+                if (ctx.openUrl)
+                    ctx.openUrl(file::toFileUrl(path));
+                return;
+            }
+            const int job = model::jobs().begin(arg(tr("Downloading %1"), title));
+            fetchFile(
+                ctx.app.platform(),
+                ctx.backend,
+                source,
+                path,
+                [&ctx, job, path, fallback](bool ok, const std::string &err) {
+                    model::jobs().end(job);
+                    if (!ok)
+                        LOG_WARN("messages", "HTML file download failed: %s", err.c_str());
+                    else if (ctx.remote) // counts toward the cache limit
+                        ctx.remote->noteWritten(path);
+                    if (ctx.openUrl && (ok || !fallback.empty()))
+                        ctx.openUrl(ok ? file::toFileUrl(path) : fallback);
+                }
+            );
+        }
+    );
+}
+
+ui::Popup *
+showFileViewer(Context &ctx, ui::Window &w, MessageList *list, Ts ts, const model::File &f) {
+    return w.showPopup(std::make_unique<FileViewer>(ctx, list, ts, f));
+}
+
+} // namespace screens

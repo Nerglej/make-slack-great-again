@@ -1,0 +1,408 @@
+// TLS for the POSIX transport: mbedTLS client sessions over our non-blocking
+// sockets, verified against the system's CA bundle.
+//
+// The CA store is kept as DER only. Parsing every root up front (what
+// mbedtls_x509_crt_parse_file does) costs ~2.5× the DER in RAM for ~150
+// certificates of which a session touches one; instead mbedTLS asks us for
+// the issuer of the top certificate it was sent (the trusted-CA callback)
+// and we parse just the candidates whose subject matches, in place.
+#include "base/crypto.h"
+#include "base/str.h"
+#include "net/posix/posix.h"
+
+#include <mbedtls/asn1.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/x509_crt.h>
+#include <psa/crypto.h>
+extern "C" { // psa_util.h lacks its own C++ guard in 3.6
+#include <mbedtls/psa_util.h>
+}
+
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+// MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG: PSA (and through it TLS) draws all its
+// randomness from the kernel — no entropy pool, no DRBG in the binary.
+extern "C" psa_status_t mbedtls_psa_external_get_random(
+    mbedtls_psa_external_random_context_t *, uint8_t *out, size_t size, size_t *outLen
+) {
+    if (!crypto::randomBytes(out, size))
+        return PSA_ERROR_INSUFFICIENT_ENTROPY;
+    *outLen = size;
+    return PSA_SUCCESS;
+}
+
+namespace net::detail {
+
+namespace {
+
+struct CaStore {
+    std::string der; // every certificate, DER, back to back
+    struct Entry {
+        uint32_t off, len, subjectOff, subjectLen;
+    };
+    std::vector<Entry> entries;
+
+    std::string_view cert(const Entry &e) const { return {der.data() + e.off, e.len}; }
+    std::string_view subject(const Entry &e) const {
+        return {der.data() + e.subjectOff, e.subjectLen};
+    }
+    void add(std::string_view cert);
+    void addPem(std::string_view pem);
+};
+
+// The DER of a certificate's subject Name (tag and length included, as
+// mbedTLS's issuer_raw), found by walking the TBSCertificate's fields.
+bool subjectOf(std::string_view cert, size_t *off, size_t *len) {
+    auto          *start = reinterpret_cast<unsigned char *>(const_cast<char *>(cert.data()));
+    unsigned char *p = start, *end = start + cert.size();
+    size_t         n;
+    const int      seq = MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE;
+    if (mbedtls_asn1_get_tag(&p, end, &n, seq) || mbedtls_asn1_get_tag(&p, end, &n, seq))
+        return false;
+    end = p + n; // the TBSCertificate
+    if (p < end && *p == (MBEDTLS_ASN1_CONTEXT_SPECIFIC | MBEDTLS_ASN1_CONSTRUCTED)) {
+        if (mbedtls_asn1_get_tag(&p, end, &n, *p))
+            return false;
+        p += n; // [0] version
+    }
+    if (mbedtls_asn1_get_tag(&p, end, &n, MBEDTLS_ASN1_INTEGER))
+        return false;
+    p += n;                                // serial
+    for (int skip = 0; skip < 3; ++skip) { // signature algorithm, issuer, validity
+        if (mbedtls_asn1_get_tag(&p, end, &n, seq))
+            return false;
+        p += n;
+    }
+    unsigned char *subject = p;
+    if (mbedtls_asn1_get_tag(&p, end, &n, seq))
+        return false;
+    *off = size_t(subject - start);
+    *len = size_t(p + n - subject);
+    return true;
+}
+
+void CaStore::add(std::string_view cert) {
+    size_t so, sl;
+    if (cert.size() > 64 * 1024 || !subjectOf(cert, &so, &sl))
+        return;
+    for (const auto &e : entries) // /etc/ssl/certs holds each root under several names
+        if (e.len == cert.size() && this->cert(e) == cert)
+            return;
+    const auto off = uint32_t(der.size());
+    der.append(cert);
+    entries.push_back({off, uint32_t(cert.size()), uint32_t(off + so), uint32_t(sl)});
+}
+
+void CaStore::addPem(std::string_view pem) {
+    static constexpr std::string_view kBegin = "-----BEGIN CERTIFICATE-----";
+    static constexpr std::string_view kEnd   = "-----END CERTIFICATE-----";
+    std::string                       der;
+    for (size_t at = pem.find(kBegin); at != std::string_view::npos; at = pem.find(kBegin, at)) {
+        at += kBegin.size();
+        const size_t stop = pem.find(kEnd, at);
+        if (stop == std::string_view::npos)
+            break;
+        der.clear();
+        if (crypto::base64Decode(pem.substr(at, stop - at), &der))
+            add(der);
+        at = stop + kEnd.size();
+    }
+}
+
+bool readFile(const char *path, std::string *out) {
+    const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > 16 * 1024 * 1024) {
+        ::close(fd);
+        return false;
+    }
+    out->resize(size_t(st.st_size));
+    size_t got = 0;
+    while (got < out->size()) {
+        const ssize_t r = ::read(fd, &(*out)[got], out->size() - got);
+        if (r < 0 && errno == EINTR)
+            continue;
+        if (r <= 0)
+            break;
+        got += size_t(r);
+    }
+    ::close(fd);
+    out->resize(got);
+    return true;
+}
+
+// $SSL_CERT_FILE, then where the distributions put their bundle, then every
+// *.pem / *.crt of a certificate directory.
+void loadSystemCas(CaStore *store) {
+    std::string text;
+    const char *env = std::getenv("SSL_CERT_FILE");
+    if (env && *env && readFile(env, &text))
+        store->addPem(text);
+    static const char *const kBundles[] = {
+        "/etc/ssl/certs/ca-certificates.crt", // Debian, Ubuntu, Arch, Gentoo, Alpine
+        "/etc/pki/tls/certs/ca-bundle.crt",   // Fedora, RHEL
+        "/etc/ssl/ca-bundle.pem",             // openSUSE
+        "/etc/pki/tls/cacert.pem",            // OpenELEC
+        "/etc/ssl/cert.pem",                  // Alpine, BSDs
+    };
+    for (const char *path : kBundles) {
+        if (!store->entries.empty())
+            return;
+        if (readFile(path, &text))
+            store->addPem(text);
+    }
+    if (!store->entries.empty())
+        return;
+    const char *dirEnv = std::getenv("SSL_CERT_DIR");
+    const char *dir    = dirEnv && *dirEnv ? dirEnv : "/etc/ssl/certs";
+    DIR        *d      = opendir(dir);
+    if (!d)
+        return;
+    while (const dirent *e = readdir(d)) {
+        const std::string_view name = e->d_name;
+        if (!str::endsWith(name, ".pem") && !str::endsWith(name, ".crt"))
+            continue;
+        if (readFile(str::concat({dir, "/", name}).c_str(), &text))
+            store->addPem(text);
+    }
+    closedir(d);
+}
+
+struct Shared {
+    mbedtls_ssl_config conf;
+    CaStore            cas;
+    bool               ok = false;
+};
+
+// mbedTLS asks for the trusted certificates that may have issued `child`.
+int caCallback(void *ctx, const mbedtls_x509_crt *child, mbedtls_x509_crt **out) {
+    const auto            &store = static_cast<Shared *>(ctx)->cas;
+    const std::string_view issuer(
+        reinterpret_cast<const char *>(child->issuer_raw.p), child->issuer_raw.len
+    );
+    mbedtls_x509_crt *chain = nullptr;
+    for (const auto &e : store.entries) {
+        if (store.subject(e) != issuer)
+            continue;
+        if (!chain) {
+            chain = static_cast<mbedtls_x509_crt *>(std::calloc(1, sizeof *chain));
+            if (!chain)
+                break;
+            mbedtls_x509_crt_init(chain);
+        }
+        // No copy: the store lives as long as the process.
+        const std::string_view der = store.cert(e);
+        mbedtls_x509_crt_parse_der_nocopy(
+            chain, reinterpret_cast<const unsigned char *>(der.data()), der.size()
+        );
+    }
+    if (chain && !chain->raw.p) { // nothing parsed
+        mbedtls_x509_crt_free(chain);
+        std::free(chain);
+        chain = nullptr;
+    }
+    *out = chain;
+    return 0;
+}
+
+// Built on the first TLS connection, then shared read-only by every thread
+// (an mbedtls_ssl_config may serve many contexts at once). Never freed:
+// sessions may still be closing while static destructors run.
+Shared *shared() {
+    static Shared *const s = [] {
+        auto *sh = new Shared;
+        mbedtls_ssl_config_init(&sh->conf);
+        if (psa_crypto_init() != PSA_SUCCESS)
+            return sh;
+        loadSystemCas(&sh->cas);
+        if (sh->cas.entries.empty())
+            return sh;
+        if (mbedtls_ssl_config_defaults(
+                &sh->conf,
+                MBEDTLS_SSL_IS_CLIENT,
+                MBEDTLS_SSL_TRANSPORT_STREAM,
+                MBEDTLS_SSL_PRESET_DEFAULT
+            ) != 0)
+            return sh;
+        mbedtls_ssl_conf_authmode(&sh->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        mbedtls_ssl_conf_ca_cb(&sh->conf, caCallback, sh);
+        mbedtls_ssl_conf_rng(&sh->conf, mbedtls_psa_get_random, MBEDTLS_PSA_RANDOM_STATE);
+        sh->ok = true;
+        return sh;
+    }();
+    return s;
+}
+
+std::string hexCode(int code) {
+    static const char hex[] = "0123456789abcdef";
+    unsigned          v     = unsigned(code < 0 ? -code : code);
+    char              buf[8];
+    int               n = 0;
+    do {
+        buf[n++] = hex[v & 15];
+        v >>= 4;
+    } while (v && n < 8);
+    std::string out = code < 0 ? "-0x" : "0x";
+    while (n)
+        out += buf[--n];
+    return out;
+}
+
+} // namespace
+
+struct TlsConn {
+    mbedtls_ssl_context ssl;
+    int                 fd       = -1;
+    int                 sysErr   = 0; // errno of the last failed socket call
+    size_t              inflight = 0; // length of a write that returned WANT_*
+};
+
+namespace {
+
+int bioSend(void *ctx, const unsigned char *buf, size_t len) {
+    auto *c = static_cast<TlsConn *>(ctx);
+    for (;;) {
+#ifdef MSG_NOSIGNAL
+        const ssize_t r = ::send(c->fd, buf, len, MSG_NOSIGNAL);
+#else
+        const ssize_t r = ::send(c->fd, buf, len, 0);
+#endif
+        if (r >= 0)
+            return int(r);
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return MBEDTLS_ERR_SSL_WANT_WRITE;
+        c->sysErr = errno;
+        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    }
+}
+
+int bioRecv(void *ctx, unsigned char *buf, size_t len) {
+    auto *c = static_cast<TlsConn *>(ctx);
+    for (;;) {
+        const ssize_t r = ::recv(c->fd, buf, len, 0);
+        if (r >= 0)
+            return int(r);
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return MBEDTLS_ERR_SSL_WANT_READ;
+        c->sysErr = errno;
+        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+    }
+}
+
+// Our short reasons for mbedTLS codes (MBEDTLS_ERROR_C, its string table, is
+// not built).
+std::string describe(TlsConn *c, int rc) {
+    if (c->sysErr)
+        return str::concat({"connect: ", std::strerror(c->sysErr)});
+    if (rc == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+        const uint32_t flags = mbedtls_ssl_get_verify_result(&c->ssl);
+        if (flags & MBEDTLS_X509_BADCERT_CN_MISMATCH)
+            return "tls: hostname mismatch";
+        if (flags & (MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE))
+            return "tls: certificate expired";
+        if (flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED)
+            return "tls: untrusted certificate";
+        return str::concat({"tls: bad certificate ", hexCode(int(flags))});
+    }
+    if (rc == MBEDTLS_ERR_SSL_CONN_EOF)
+        return "tls: connection closed";
+    if (rc == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE)
+        return str::concat(
+            {"tls: alert from server ", str::number(c->ssl.MBEDTLS_PRIVATE(in_msg)[1])}
+        );
+    if (rc == MBEDTLS_ERR_SSL_HANDSHAKE_FAILURE || rc == MBEDTLS_ERR_SSL_BAD_PROTOCOL_VERSION)
+        return "tls: no common parameters";
+    return str::concat({"tls: ", hexCode(rc)});
+}
+
+long result(TlsConn *c, int rc, short *want, std::string *error) {
+    if (rc == MBEDTLS_ERR_SSL_WANT_READ) {
+        *want = POLLIN;
+        return Stream::Again;
+    }
+    if (rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        *want = POLLOUT;
+        return Stream::Again;
+    }
+    *error = describe(c, rc);
+    return Stream::Fail;
+}
+
+} // namespace
+
+TlsConn *tlsNew(int fd, const std::string &host, std::string *error) {
+    Shared *sh = shared();
+    if (!sh->ok) {
+        *error = sh->cas.entries.empty() ? "tls: no CA certificates" : "tls: setup failed";
+        return nullptr;
+    }
+    auto *c = new TlsConn;
+    c->fd   = fd;
+    mbedtls_ssl_init(&c->ssl);
+    // set_hostname turns on both SNI and the certificate name check.
+    if (mbedtls_ssl_setup(&c->ssl, &sh->conf) != 0 ||
+        mbedtls_ssl_set_hostname(&c->ssl, host.c_str()) != 0) {
+        mbedtls_ssl_free(&c->ssl);
+        delete c;
+        *error = "tls: setup failed";
+        return nullptr;
+    }
+    mbedtls_ssl_set_bio(&c->ssl, c, bioSend, bioRecv, nullptr);
+    return c;
+}
+
+void tlsFree(TlsConn *c) {
+    if (mbedtls_ssl_is_handshake_over(&c->ssl))
+        mbedtls_ssl_close_notify(&c->ssl); // best effort, never waits
+    mbedtls_ssl_free(&c->ssl);
+    delete c;
+}
+
+long tlsHandshake(TlsConn *c, short *want, std::string *error) {
+    const int rc = mbedtls_ssl_handshake(&c->ssl);
+    return rc == 0 ? 0 : result(c, rc, want, error);
+}
+
+long tlsRead(TlsConn *c, char *buf, size_t n, short *want, std::string *error) {
+    const int rc = mbedtls_ssl_read(&c->ssl, reinterpret_cast<unsigned char *>(buf), n);
+    if (rc >= 0)
+        return rc;
+    // Most servers skip close_notify; a bare TCP close is the end too.
+    if (rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY || rc == MBEDTLS_ERR_SSL_CONN_EOF)
+        return 0;
+    return result(c, rc, want, error);
+}
+
+long tlsWrite(TlsConn *c, const char *buf, size_t n, short *want, std::string *error) {
+    // mbedtls_ssl_write must be repeated with the same length after WANT_*.
+    if (c->inflight && c->inflight <= n)
+        n = c->inflight;
+    const int rc = mbedtls_ssl_write(&c->ssl, reinterpret_cast<const unsigned char *>(buf), n);
+    if (rc >= 0) {
+        c->inflight = 0;
+        return rc;
+    }
+    if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE)
+        c->inflight = n;
+    return result(c, rc, want, error);
+}
+
+bool tlsPending(const TlsConn *c) {
+    return mbedtls_ssl_check_pending(&c->ssl) != 0;
+}
+
+} // namespace net::detail

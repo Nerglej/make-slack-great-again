@@ -1,0 +1,1207 @@
+#include "screens/shell/sidebar.h"
+
+#include "screens/common/tag_badge.h"
+
+#include "base/i18n.h"
+#include "base/str.h"
+#include "base/time.h"
+#include "gfx/icons_generated.h"
+#include "screens/shell/context_menus.h"
+#include "screens/shell/header.h"
+#include "screens/shell/nav_chrome.h"
+#include "screens/shell/sidebar_footer.h"
+#include "screens/shell/teammate_page.h"
+
+#include <algorithm>
+#include <cmath>
+
+using namespace ui;
+using gfx::Icon;
+using i18n::tr;
+using model::ConvKind;
+using model::ConvRef;
+using model::kNoConv;
+using model::tsSecs;
+
+namespace shell {
+
+namespace {
+// msga's ConvListWidget metrics: one row height for everything (scaled with
+// the text size), a 6 px inset above the first row, pills inset 8 px from the
+// list's edges; icons at kPadH, labels and conversation content at 32.
+constexpr float   kRowHBase = 30, kTopPad = 6, kPill = 8, kPadH = 12, kContentX = 32;
+constexpr int     kAvatarPx         = 40;         // 20 logical, sharp at 2x
+constexpr int64_t kMaxNotifyAgeSecs = 30 * 86400; // msga's kMaxNotifyAgeDays
+
+float rowH() {
+    return std::round(kRowHBase * (app() ? app()->userTextScale() : 1.f));
+}
+
+// A row's label and icon: the selected pill's ink, bright, or dim.
+C ink(bool selected, bool bright) {
+    return selected ? C::SidebarSelectedText : bright ? C::SidebarText : C::SidebarTextMuted;
+}
+
+// Rows that change colour on hover (msga repaints them bright).
+class HoverRow : public Clickable {
+public:
+    bool onEvent(Event &e) override {
+        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave) {
+            refreshLook();
+            return false;
+        }
+        return Clickable::onEvent(e);
+    }
+    virtual void refreshLook() { update(); }
+};
+
+// "Threads" / "Saved messages": a pill like a conversation row, the icon
+// optically one notch smaller centred in the 14 px slot, the section face.
+class NavRow final : public HoverRow {
+public:
+    NavRow(Icon i, const char *text) : icon(i) {
+        setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
+        setRole(Role::ListItem);
+        style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
+        style().padding(kContentX - kPill, 0, 6, 0);
+        label = add<Label>(text, Font::Section, C::SidebarTextMuted);
+        label->setMaxLines(1);
+    }
+    void refreshLook() override {
+        label->setColor(ink(checked(), hovered() || unread));
+        update();
+    }
+    void paint(gfx::Painter &p) override {
+        HoverRow::paint(p);
+        const float s = 13, y = snapPx((height() - s) / 2);
+        gfx::drawIcon(
+            p, icon, {kPadH - kPill + 0.5f, y, s, s}, color(ink(checked(), hovered() || unread))
+        );
+    }
+    Icon   icon;
+    Label *label  = nullptr;
+    bool   unread = false; // followed threads with unread replies (Store::unreadThreads)
+};
+
+// The "+" on the Direct messages / Sessions / Team header: shown while the
+// header is hovered. `at` is where the press was (msga opens the session
+// menu at the cursor); a right click on it does the same as a left one.
+class HeaderPlus final : public Clickable {
+public:
+    explicit HeaderPlus(const char *tip) {
+        style().size(14, 14).noShrink();
+        setLook({C::None, C::None, C::None, C::None, 0});
+        setTooltip(tip);
+    }
+    bool onEvent(Event &e) override {
+        if (e.type == EventType::PointerDown)
+            at = e.windowPos;
+        if (e.type == EventType::ContextMenu && onRightClick) {
+            at = e.windowPos;
+            onRightClick();
+            return true;
+        }
+        return Clickable::onEvent(e);
+    }
+    void paint(gfx::Painter &p) override {
+        gfx::drawIcon(p, Icon::Plus, bounds(), color(C::SidebarTextMuted));
+    }
+    PointF                at;
+    std::function<void()> onRightClick;
+};
+
+// A count centred in the view by its ink, not by a Label: centring the line
+// box and the advance width puts the digits' ink up to two device pixels off
+// (uneven ascent/descent and side bearings, macOS's system font most), and
+// hinting rounds the digits' height away from the font's cap height. So the
+// rasterised ink box is centred, on whole device pixels, ties going right
+// and down.
+class CentredCount : public View {
+public:
+    explicit CentredCount(Font f) : _font(f) {}
+
+    // "" paints nothing.
+    void setText(std::string text) {
+        if (text == _text)
+            return;
+        _text = std::move(text);
+        _layout.reset();
+        invalidateLayout();
+        update();
+    }
+
+    SizeF measureContent(float, float) override {
+        const text::Layout *l = textLayout();
+        return l ? SizeF{std::ceil(l->width()), 0} : SizeF{0, 0};
+    }
+
+    void paint(gfx::Painter &p) override {
+        View::paint(p);
+        const text::Layout *l = textLayout();
+        if (!l)
+            return;
+        const float       s = p.scale();
+        const gfx::PointF o = p.toPhysical({0, 0});
+        const float       x = std::floor(o.x + (width() - _ink.w) * s / 2 - _ink.x * s + 0.5f);
+        const float       y = std::floor(o.y + (height() - _ink.h) * s / 2 - _ink.y * s + 0.5f);
+        l->paint(p, {(x - o.x) / s, (y - o.y) / s});
+    }
+
+private:
+    const text::Layout *textLayout() {
+        if (_text.empty())
+            return nullptr;
+        const float      scale = window() ? window()->scale() : 1.f;
+        const gfx::Color fg    = color(C::BadgeText);
+        if (!_layout || _scale != scale || _fg != fg) {
+            text::AttributedText t;
+            t.append(_text, font(_font, C::BadgeText));
+            _layout = text::Layout::build(t, {}, scale);
+            _ink    = _layout->inkBounds();
+            _scale  = scale;
+            _fg     = fg;
+        }
+        return _layout.get();
+    }
+
+    Font                          _font;
+    std::string                   _text;
+    std::unique_ptr<text::Layout> _layout;
+    RectF                         _ink;
+    float                         _scale = 0;
+    gfx::Color                    _fg    = 0;
+};
+
+// A red pill with a count (a circle for one digit), or the 8 px blue dot.
+class CountBadge final : public CentredCount {
+public:
+    CountBadge() : CentredCount(Font::CountBadge) {
+        style().noShrink();
+        setVisible(false);
+    }
+    void set(int count, bool dot) {
+        const bool show = count > 0 || dot;
+        setVisible(show);
+        if (!show)
+            return;
+        setText(
+            count <= 0   ? std::string()
+            : count > 99 ? std::string("99+")
+                         : str::number(int64_t(count))
+        );
+        if (count > 0) {
+            style().size(kAuto, 20).padding(5, 0).minW = 20;
+            setBackground(C::Badge, 10);
+        } else {
+            style().size(8, 8).padding(0).minW = 0;
+            setBackground(C::BadgeActivity, 4);
+        }
+    }
+};
+
+// Slack's group DM tile: the number of other people in it.
+class GroupTile final : public CentredCount {
+public:
+    explicit GroupTile(size_t others) : CentredCount(Font::TileBold) {
+        style().size(20, 20).noShrink();
+        setBackground(C::PresenceAway, 5);
+        setText(str::number(int64_t(std::max<size_t>(1, others))));
+    }
+};
+
+bool looksLikeUserId(std::string_view s) {
+    if (s.size() < 9 || (s[0] != 'U' && s[0] != 'W'))
+        return false;
+    for (char ch : s.substr(1))
+        if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')))
+            return false;
+    return true;
+}
+
+// msga's rebuildFilteredConvs liveness filter: a DM outlives its peer (the
+// service never prunes it), so one whose peer was deactivated or never
+// resolves to a name is not listed. A peer not loaded yet is let through.
+bool deadDm(const model::Store &store, const model::Conversation &c) {
+    if (c.kind != ConvKind::Dm || c.dmUser == model::kNoUser)
+        return false;
+    const model::User &u = store.user(c.dmUser);
+    return !u.placeholder &&
+           (u.deleted || u.displayName == "deactivateduser" || looksLikeUserId(u.label()));
+}
+
+} // namespace
+
+// ── Rows ────────────────────────────────────────────────────────────────────
+
+class SectionHeader final : public HoverRow {
+public:
+    SectionHeader(Sidebar &sb, int k, Icon i, std::string text)
+        : sidebar(sb), kind(k), icon(i), title(text) {
+        setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 0}); // full width
+        setRole(Role::Button);
+        style().row().height(rowH()).padding(kContentX, 0, kPadH, 0).items(Align::Center);
+        label = add<Label>(std::move(text), Font::Section, C::SidebarTextMuted);
+        label->setMaxLines(1);
+        // Direct messages: "+" → the browse dialog's People tab; Sessions:
+        // find or create one (a right click too); Team: add a teammate.
+        const bool agents = sb._ctx.backend.capabilities().agentSessions;
+        if (k == 2 || k == 4) {
+            add<View>()->style().flex(1);
+            plus = add<HeaderPlus>(
+                k == 4   ? tr("Add teammate")
+                : agents ? tr("Add sessions")
+                         : tr("Open a direct message")
+            );
+            plus->setVisible(false);
+            plus->onClick = [this, k, agents] {
+                if (k == 4) {
+                    if (sidebar.onAddTeammate)
+                        sidebar.onAddTeammate();
+                } else if (agents) {
+                    if (sidebar.onSessionMenu)
+                        sidebar.onSessionMenu(plus->at);
+                } else if (sidebar.onBrowsePeople) {
+                    sidebar.onBrowsePeople();
+                }
+            };
+            if (k == 2 && agents)
+                plus->onRightClick = [this] {
+                    if (sidebar.onSessionMenu)
+                        sidebar.onSessionMenu(plus->at);
+                };
+        }
+    }
+    void setUnread(bool on) {
+        unread = on;
+        label->setFont(on ? Font::SectionBold : Font::Section);
+        label->setColor(on ? C::SidebarText : C::SidebarTextMuted);
+        update();
+    }
+    // msga rebuilds its rows on a toggle, which forgets the hover until the
+    // pointer moves again: so does this.
+    bool lit() const { return hovered() && !stale; }
+    void activate() override {
+        stale = true;
+        refreshLook();
+        HoverRow::activate();
+    }
+    bool onEvent(Event &e) override {
+        if ((e.type == EventType::PointerMove && stale) || e.type == EventType::PointerLeave) {
+            stale = false;
+            refreshLook();
+        }
+        return HoverRow::onEvent(e);
+    }
+    void refreshLook() override {
+        setLook({C::None, lit() ? C::SidebarHover : C::None, C::SidebarHover, C::None, 0});
+        if (plus)
+            plus->setVisible(lit());
+        update();
+    }
+    void paint(gfx::Painter &p) override {
+        HoverRow::paint(p);
+        // The section's icon; hovered, the chevron previewing the click.
+        const Icon  i = !lit() ? icon : collapsed ? Icon::ChevronRight : Icon::ChevronDown;
+        const float y = snapPx((height() - 14) / 2);
+        gfx::drawIcon(
+            p, i, {kPadH, y, 14, 14}, color(unread ? C::SidebarText : C::SidebarTextMuted)
+        );
+    }
+    Sidebar    &sidebar;
+    int         kind; // 0 starred, 1 channels, 2 direct messages, 3 agents & apps, 4 team
+    Icon        icon;
+    std::string title;
+    Label      *label = nullptr;
+    HeaderPlus *plus  = nullptr;
+    std::vector<ConvRow *> rows;
+    std::vector<View *>    extras; // "N more channels", "Add channels"
+    bool                   collapsed = false, unread = false, stale = false;
+};
+
+namespace {
+
+// "N more channels" and "Add channels": full-width hover, dim → bright.
+class ActionRow final : public HoverRow {
+public:
+    ActionRow(std::string text, bool withPlus) : _plus(withPlus) {
+        setLook({C::None, C::SidebarHover, C::SidebarHover, C::None, 0});
+        setRole(Role::Button);
+        style().row().height(rowH()).items(Align::Center);
+        style().padding(withPlus ? kContentX + 14 + 6 : kContentX, 0, kPadH, 0);
+        label = add<Label>(std::move(text), Font::Body, C::SidebarTextMuted);
+        label->setMaxLines(1);
+    }
+    void refreshLook() override {
+        label->setColor(hovered() ? C::SidebarText : C::SidebarTextMuted);
+        update();
+    }
+    void paint(gfx::Painter &p) override {
+        HoverRow::paint(p);
+        if (_plus)
+            gfx::drawIcon(
+                p,
+                Icon::Plus,
+                {kContentX, snapPx((height() - 14) / 2), 14, 14},
+                color(hovered() ? C::SidebarText : C::SidebarTextMuted)
+            );
+    }
+    Label *label = nullptr;
+
+private:
+    bool _plus;
+};
+
+// msga's sidebar huddle pill: the first participant's avatar, then an
+// accent pill (headphones, the participant count) — a click joins instead
+// of opening the conversation. kHuddlePad / kHuddleIcon / kHuddleGap.
+class HuddlePill final : public Clickable {
+public:
+    HuddlePill() {
+        setLook({C::None, C::None, C::None, C::None, 0});
+        style().row().items(Align::Center).spacing(6).margins(6, 0, 0, 0).noShrink();
+        avatar = add<Avatar>();
+        avatar->style().size(20, 20);
+        avatar->setRadius(5);
+        avatar->setPlaceholder(C::PresenceAway);
+        avatar->setHitTransparent(true);
+        pill = add<View>();
+        pill->style().row().height(18).padding(6, 0, 6, 0).items(Align::Center).noShrink();
+        pill->setBackground(C::Accent, 9);
+        pill->setHitTransparent(true);
+        pill->add<IconView>(Icon::Headphones, 13, C::AccentText)->setHitTransparent(true);
+        count = pill->add<Label>("", Font::CountBadge, C::AccentText);
+        count->style().margins(4, 0, 0, 0);
+        count->setHitTransparent(true);
+    }
+    Avatar *avatar = nullptr;
+    View   *pill   = nullptr;
+    Label  *count  = nullptr;
+};
+
+} // namespace
+
+class ConvRow final : public Clickable {
+public:
+    ConvRow(Sidebar &sb, ConvRef c) : sidebar(sb), conv(c) {
+        setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
+        setRole(Role::ListItem);
+        style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
+        style().padding(kContentX - kPill, 0, 6, 0);
+        const auto &store = sb._ctx.store();
+        const auto &cv    = store.conversation(c);
+        if (cv.kind == ConvKind::Dm) {
+            avatar = add<Avatar>();
+            avatar->style().size(20, 20).margins(0, 0, 8, 0);
+            avatar->setRadius(5);
+            avatar->setPlaceholder(C::PresenceAway);
+            avatar->setBitmap(sb._avatars.get(store.user(cv.dmUser).avatar, kAvatarPx));
+            avatar->setInitial(store.user(cv.dmUser).label()); // while it downloads
+        } else if (cv.kind == ConvKind::Group) {
+            size_t others = 0;
+            for (model::UserRef u : cv.members)
+                others += u != store.me;
+            add<GroupTile>(others)->style().margins(0, 0, 8, 0);
+        } else {
+            glyph = add<IconView>(
+                cv.kind == ConvKind::Private ? Icon::Lock : Icon::Hash, 14, C::SidebarTextMuted
+            );
+            glyph->style().margins(0, 0, 6, 0);
+        }
+        label = add<Label>(store.displayName(c), Font::Body, C::SidebarTextMuted);
+        label->setMaxLines(1);
+        label->style().shrink = 1;
+        if (cv.kind == ConvKind::Dm) {
+            const auto &u = store.user(cv.dmUser);
+            // msga's "EXT" pill after a Slack Connect peer's name.
+            if (u.stranger)
+                screens::addTagBadge(this, true, true)->style().margins(6, 0, 0, 0);
+            if (!u.statusEmoji.empty()) {
+                const model::Store::EmojiGlyph g = store.emojiFor(u.statusEmoji);
+                if (!g.unicode.empty()) {
+                    auto *s = add<Label>(g.unicode, Font::Body);
+                    s->style().margins(4, 0, 0, 0).noShrink();
+                } else if (!g.image.empty()) {
+                    auto *s = add<Image>();
+                    s->style().size(15, 15).margins(4, 0, 0, 0).noShrink();
+                    s->setFit(Image::Fit::Contain);
+                    s->setBitmap(sb._avatars.get(g.image, 30));
+                }
+            }
+            if (cv.dmUser == store.me && store.me != model::kNoUser) {
+                you = add<Label>(tr("you"), Font::YouLabel, C::SidebarTextMuted);
+                you->style().margins(4, 0, 0, 0).noShrink();
+            }
+        }
+        add<View>()->style().flex(1);
+        badge           = add<CountBadge>();
+        huddle          = add<HuddlePill>();
+        huddle->onClick = [this] {
+            if (sidebar._ctx.openUrl)
+                sidebar._ctx.openUrl(huddleJoinUrl(sidebar._ctx.store, conv));
+        };
+        huddle->setVisible(false);
+        onClick = [this] {
+            if (sidebar._ctx.openConversation)
+                sidebar._ctx.openConversation(conv);
+        };
+    }
+
+    bool onEvent(Event &e) override {
+        if (e.type == EventType::ContextMenu && sidebar._menus) {
+            sidebar._menus->showChat(conv, e.windowPos);
+            return true;
+        }
+        // msga selects on press, not on release.
+        if (e.type == EventType::PointerDown && e.button == plat::Button::Left) {
+            activate();
+            return true;
+        }
+        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
+            refresh(); // the presence dot's ring takes the hover colour
+        return Clickable::onEvent(e);
+    }
+
+    // The full name over a truncated one (msga's truncated-name tooltip).
+    std::string tooltip() const override {
+        auto *l = const_cast<Label *>(label);
+        return l->measure(kInf, kInf).w > label->width() + 0.5f ? label->text() : std::string();
+    }
+
+    // Everything that depends on Store state.
+    void refresh() {
+        const auto &store = sidebar._ctx.store();
+        const auto &cv    = store.conversation(conv);
+        const auto  caps  = sidebar._ctx.backend.capabilities();
+        const bool  sel   = sidebar._selected == conv;
+        const bool  quiet = sidebar.muted(cv);
+        const bool  stale = cv.latest && tsSecs(cv.latest) < sidebar._now() - kMaxNotifyAgeSecs;
+        unread            = sidebar.paintsUnread(cv);
+        // DMs count every unread message (an agent session only what needs
+        // me: Session counts those as mentions); channels their mentions.
+        const int red = cv.isDirect() && !caps.agentSessions ? int(cv.unread) : int(cv.mentions);
+        count         = !stale && !quiet && red > 0 ? red : 0;
+        dot = !stale && !quiet && sidebar.level(cv) == model::NotifyLevel::All && !cv.isDirect() &&
+              cv.mentions == 0 && cv.unread > 0;
+        const C text = ink(sel, unread);
+        label->setText(store.displayName(conv));
+        label->setFont(unread ? Font::BodySemibold : Font::Body);
+        label->setColor(text);
+        if (glyph)
+            glyph->setTint(text);
+        if (you)
+            you->setColor(sel ? text : C::SidebarTextMuted);
+        if (avatar) {
+            using P             = Avatar::Presence;
+            const auto &u       = store.user(cv.dmUser);
+            const bool  phantom = cv.dmUser == store.me && store.me != model::kNoUser &&
+                                  sidebar._ctx.backend.selfPresence().phantomAway();
+            // Yellow too for a session that is there but not reachable from
+            // here (User::unavailable), as msga's drawUserAvatar.
+            const P     pr      = u.bot || !caps.presence    ? P::None
+                                  : u.dnd                    ? P::Dnd
+                                  : u.active                 ? P::Active
+                                  : phantom || u.unavailable ? P::Phantom
+                                                             : P::Away;
+            avatar->setPresence(
+                pr,
+                sel         ? C::SidebarSelected
+                : hovered() ? C::SidebarHover
+                            : C::Sidebar,
+                sel
+            );
+        }
+        badge->set(count, count == 0 && dot);
+        // A live huddle: who is in it and how many (no count before anyone joined).
+        const bool live = caps.huddles && cv.huddleActive;
+        huddle->setVisible(live);
+        huddleCount = live ? std::max<int>(1, int(cv.huddleParticipants.size())) : 0;
+        if (live) {
+            const auto &ps = cv.huddleParticipants;
+            huddle->avatar->setVisible(!ps.empty());
+            if (!ps.empty()) {
+                const auto &u = store.user(ps.front());
+                huddle->avatar->setBitmap(sidebar._avatars.get(u.avatar, kAvatarPx));
+                huddle->avatar->setInitial(u.label());
+            }
+            huddle->count->setText(ps.empty() ? std::string() : str::number(int64_t(ps.size())));
+            huddle->count->setVisible(!ps.empty());
+        }
+        setChecked(sel);
+    }
+
+    Sidebar       &sidebar;
+    ConvRef        conv;
+    Avatar        *avatar = nullptr;
+    IconView      *glyph  = nullptr;
+    Label         *label = nullptr, *you = nullptr;
+    CountBadge    *badge   = nullptr;
+    HuddlePill    *huddle  = nullptr;
+    SectionHeader *section = nullptr;
+    bool           unread = false, dot = false;
+    int            count = 0, huddleCount = 0;
+};
+
+// A teammate in the Team section (msga's paintTeammateRow): the pill of a
+// conversation row, its user's avatar and presence, its name — bright while
+// any of its sessions has something unread (the sessions carry the badges).
+class TeammateRow final : public Clickable {
+public:
+    TeammateRow(Sidebar &sb, const model::Backend::AgentRole &mate) : sidebar(sb), role(mate.id) {
+        setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
+        setRole(Role::ListItem);
+        style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
+        style().padding(kContentX - kPill, 0, 6, 0);
+        const auto &store = sb._ctx.store();
+        user              = mate.user;
+        avatar            = add<Avatar>();
+        avatar->style().size(20, 20).margins(0, 0, 8, 0);
+        avatar->setRadius(5);
+        avatar->setPlaceholder(C::PresenceAway);
+        const std::string &pic = user < store.userCount() && !store.user(user).avatar.empty()
+                                     ? store.user(user).avatar
+                                     : mate.avatar;
+        avatar->setBitmap(sb._avatars.get(pic, kAvatarPx));
+        avatar->setInitial(mate.name);
+        label = add<Label>(mate.name, Font::Body, C::SidebarTextMuted);
+        label->setMaxLines(1);
+        label->style().shrink = 1;
+        add<View>()->style().flex(1);
+        onClick = [this] {
+            // Again on a re-click: back to the page from anywhere in it.
+            sidebar.selectTeammate(role);
+            if (sidebar.onTeammate)
+                sidebar.onTeammate(role);
+        };
+    }
+    bool onEvent(Event &e) override {
+        if (e.type == EventType::ContextMenu && sidebar._menus) {
+            sidebar._menus->showTeammate(role, e.windowPos);
+            return true;
+        }
+        if (e.type == EventType::PointerDown && e.button == plat::Button::Left) {
+            activate(); // msga selects on press
+            return true;
+        }
+        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
+            refresh();
+        return Clickable::onEvent(e);
+    }
+    std::string tooltip() const override {
+        auto *l = const_cast<Label *>(label);
+        return l->measure(kInf, kInf).w > label->width() + 0.5f ? label->text() : std::string();
+    }
+    void refresh() {
+        const auto &store = sidebar._ctx.store();
+        const bool  sel   = sidebar._selectedTeammate == role;
+        unread            = false;
+        for (ConvRef c = 0; c < store.conversationCount() && !unread; ++c) {
+            const auto &cv = store.conversation(c);
+            unread         = cv.member && sidebar.paintsUnread(cv) &&
+                             agentSessionRole(sidebar._ctx, c, sidebar._team) == role;
+        }
+        label->setFont(unread ? Font::BodySemibold : Font::Body);
+        label->setColor(
+            sel      ? C::SidebarSelectedText
+            : unread ? C::SidebarText
+                     : C::SidebarTextMuted
+        );
+        using P                    = Avatar::Presence;
+        const model::User *u       = user < store.userCount() ? &store.user(user) : nullptr;
+        const bool         present = sidebar._ctx.backend.capabilities().presence;
+        const P            pr      = !u || u->bot || !present ? P::None
+                                     : u->dnd                 ? P::Dnd
+                                     : u->active              ? P::Active
+                                     : u->unavailable         ? P::Phantom
+                                                              : P::Away;
+        avatar->setPresence(
+            pr,
+            sel         ? C::SidebarSelected
+            : hovered() ? C::SidebarHover
+                        : C::Sidebar,
+            sel
+        );
+        setChecked(sel);
+    }
+
+    Sidebar       &sidebar;
+    std::string    role;
+    model::UserRef user   = model::kNoUser;
+    Avatar        *avatar = nullptr;
+    Label         *label  = nullptr;
+    bool           unread = false;
+};
+
+// ── Sidebar ─────────────────────────────────────────────────────────────────
+
+Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(avatars) {
+    _now    = [this] { return _ctx.backend.nowSecs(); };
+    _scroll = add<ScrollView>();
+    // msga's list is a QAbstractScrollArea: a click focuses it, and then its
+    // keys scroll it (they never change the selection). Tab already stops on
+    // each row here, so the list itself is click-focus only.
+    _scroll->setClickFocus(true);
+    _scroll->setThinThumb(C::SidebarScrollbar);
+    _scroll->style().flex(1);
+    _items = _scroll->content();
+    _items->style().padding(0, kTopPad, 0, 0).spacing(0);
+    _footer = add<SidebarFooter>(*this, ctx, avatars);
+
+    _observer = ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
+        switch (ch.kind) {
+        case model::ChangeKind::Roster:
+        case model::ChangeKind::Users: // names, status emoji, presence
+            rebuild();
+            break;
+        case model::ChangeKind::Append:
+        case model::ChangeKind::Prepend:
+        case model::ChangeKind::Insert:
+            // History that makes a hidden conversation relevant lists it
+            // (msga re-derives its rows whenever conversations change).
+            if (ch.thread == 0 && ch.conv < _ctx.store().conversationCount() && !rowFor(ch.conv) &&
+                _ctx.store().conversation(ch.conv).member && relevant(ch.conv))
+                rebuildSoon();
+            [[fallthrough]];
+        case model::ChangeKind::Update:
+        case model::ChangeKind::Remove:
+            // A saved item added or gone shows or hides "Saved messages".
+            if (_savedRow)
+                refreshSections();
+            break;
+        case model::ChangeKind::Meta: {
+            // A star toggle moves the row between sections, leaving/closing
+            // removes it, reopening a DM adds it, and the unreads-only filter
+            // may list or drop it: rebuild; else restyle.
+            if (ch.conv == model::kNoConv && _threadsRow) { // the Threads entry's unread state
+                auto *r   = static_cast<NavRow *>(_threadsRow);
+                r->unread = _ctx.store().unreadThreads() > 0;
+                r->refreshLook();
+            }
+            if (ch.conv >= _ctx.store().conversationCount())
+                break;
+            const auto &cv = _ctx.store().conversation(ch.conv);
+            ConvRow    *r  = rowFor(ch.conv);
+            if (!r != !cv.member || (r && (r->section->kind == 0) != cv.starred) ||
+                _filters.unreadsOnly)
+                rebuild();
+            else {
+                refresh(ch.conv);
+                refreshSections();
+                refreshTeammates(); // its sessions' unread state
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    });
+    rebuild();
+}
+
+Sidebar::~Sidebar() {
+    _ctx.store.unobserve(_observer);
+    if (_rebuildTimer)
+        _ctx.app.platform().cancelTimer(_rebuildTimer);
+}
+
+void Sidebar::paint(gfx::Painter &p) {
+    paintNavGradient(*this, p, C::Sidebar);
+}
+
+void Sidebar::setFilters(const Filters &f) {
+    if (f == _filters)
+        return;
+    _filters = f;
+    rebuild();
+}
+
+bool Sidebar::muted(const model::Conversation &c) const {
+    return level(c) == model::NotifyLevel::Nothing;
+}
+
+// msga's effectiveNotifLevel: Default follows the global level.
+model::NotifyLevel Sidebar::level(const model::Conversation &c) const {
+    return c.effectiveNotify(_filters.defaultLevel);
+}
+
+// msga's paintsUnread: the one rule for bold rows and the unreads-only filter.
+bool Sidebar::paintsUnread(const model::Conversation &c) const {
+    if (c.unread == 0 || muted(c))
+        return false;
+    return !(
+        level(c) == model::NotifyLevel::Mentions && !_filters.highlightMentionsOnly &&
+        !c.isDirect() && c.mentions == 0
+    );
+}
+
+bool Sidebar::isApp(const model::Conversation &c) const {
+    return c.kind == ConvKind::Dm && c.dmUser != model::kNoUser && _ctx.store().user(c.dmUser).bot;
+}
+
+void Sidebar::setVisited(std::unordered_map<std::string, int64_t> stamps) {
+    _visited = std::move(stamps);
+    rebuild();
+}
+
+void Sidebar::clearVisited() {
+    _visited.clear();
+    // The rebuild re-seeds from what the Store knows (unreads), msga's
+    // resetVisitedAt: a fresh first-launch view without a restart.
+    rebuild();
+    if (onVisitedChanged)
+        onVisitedChanged();
+}
+
+// msga's isRelevant: unread, open, visited or active within the window, or a
+// channel nothing is known about yet. Agent sessions are always listed.
+bool Sidebar::relevant(ConvRef ref) const {
+    const auto &c = _ctx.store().conversation(ref);
+    if (c.unread > 0 || ref == _selected || _ctx.backend.capabilities().agentSessions)
+        return true;
+    const int64_t cutoff = _now() - int64_t(std::max(1, _filters.relevantDays)) * 86400;
+    const auto    v      = _visited.find(c.id);
+    if (v != _visited.end() && v->second >= cutoff)
+        return true;
+    const model::Ts activity = std::max(c.latest, c.lastRead);
+    if (activity)
+        return tsSecs(activity) >= cutoff;
+    return !c.isDirect();
+}
+
+void Sidebar::rebuild() {
+    for (auto *h : _sections)
+        _collapsed[h->kind] = h->collapsed; // survives the rebuild
+    _items->clearChildren();
+    _rows.clear();
+    _teamRows.clear();
+    _sections.clear();
+    _nav.clear();
+    _navTitles.clear();
+    _savedRow         = nullptr;
+    _threadsRow       = nullptr;
+    const auto &store = _ctx.store();
+    const auto  caps  = _ctx.backend.capabilities();
+
+    auto nav = [&](Icon icon, const char *text, std::function<void()> *hook) {
+        auto *r    = _items->add<NavRow>(icon, text);
+        r->onClick = [hook] {
+            if (*hook)
+                (*hook)();
+        };
+        r->refreshLook();
+        _nav.push_back(r);
+        _navTitles.push_back(text);
+        return r;
+    };
+    if (caps.threadsView) {
+        auto *r = nav(Icon::Split, tr("Threads"), &onThreads);
+        r->setChecked(_threadsSelected);
+        r->unread = store.unreadThreads() > 0;
+        r->refreshLook();
+        _threadsRow = r;
+    } else {
+        _threadsSelected = false;
+    }
+    if (caps.messageReminders) {
+        auto *r = nav(Icon::Bookmark, tr("Saved messages"), &onSavedMessages);
+        r->setChecked(_savedSelected);
+        r->refreshLook();
+        _savedRow = r;
+    } else {
+        _savedSelected = false;
+    }
+
+    // Starred first (any kind), then channels, direct messages, agents &
+    // apps; fixture (= server) order inside each, as msga shows them.
+    std::vector<ConvRef> lists[4], hiddenCh;
+    const auto           listed = [&](ConvRef c) {
+        return !_filters.unreadsOnly || c == _selected || paintsUnread(store.conversation(c));
+    };
+    // msga's seed: a conversation with unread messages is stamped, so it stays
+    // listed for the whole window once read.
+    const int64_t now    = _now();
+    const int64_t cutoff = now - int64_t(std::max(1, _filters.relevantDays)) * 86400;
+    bool          seeded = false;
+    for (ConvRef c = 0; c < store.conversationCount(); ++c) {
+        const auto &cv = store.conversation(c);
+        if (!cv.member || cv.unread <= 0 || cv.id.empty())
+            continue;
+        int64_t &at = _visited[cv.id];
+        if (at < cutoff) {
+            at     = now;
+            seeded = true;
+        }
+    }
+    if (seeded && onVisitedChanged)
+        onVisitedChanged();
+    for (ConvRef c = 0; c < store.conversationCount(); ++c) {
+        const auto &cv = store.conversation(c);
+        if (!cv.member || deadDm(store, cv)) // left channels, closed or dead DMs
+            continue;
+        if (cv.starred)
+            lists[0].push_back(c);
+        else if (isApp(cv)) {
+            if (listed(c) && (_filters.showAgentsApps || c == _selected))
+                lists[3].push_back(c);
+        } else if (cv.isDirect()) {
+            if (relevant(c) && listed(c))
+                lists[2].push_back(c);
+        } else if (relevant(c) && listed(c))
+            lists[1].push_back(c);
+        else
+            hiddenCh.push_back(c);
+    }
+    _hiddenChannels = _showAllChannels ? 0 : int(hiddenCh.size());
+    if (_showAllChannels)
+        lists[1].insert(lists[1].end(), hiddenCh.begin(), hiddenCh.end());
+    const bool agents = caps.agentSessions;
+    _team = agents ? _ctx.backend.agentRoles() : std::vector<model::Backend::AgentRole>{};
+    struct Def {
+        Icon        icon;
+        const char *title;
+    };
+    const Def defs[] = {
+        {Icon::Star, tr("Starred")},
+        {Icon::Hash, tr("Channels")},
+        {Icon::MessagesSquare, agents ? tr("Sessions") : tr("Direct messages")},
+        {Icon::Bot, tr("Agents & apps")},
+    };
+    for (int s = 0; s < 4; ++s) {
+        // No Starred section until something is starred, no Agents & apps
+        // without an app DM, and an agent workspace drops an empty Channels.
+        if (lists[s].empty() && (s == 0 || s == 3 || (s == 1 && agents && hiddenCh.empty())))
+            continue;
+        auto *h      = _items->add<SectionHeader>(*this, s, defs[s].icon, defs[s].title);
+        h->collapsed = _collapsed[s];
+        _sections.push_back(h);
+        h->onClick = [this, h] {
+            h->collapsed = !h->collapsed;
+            applyCollapse(h);
+        };
+        for (ConvRef c : lists[s]) {
+            auto *row    = _items->add<ConvRow>(*this, c);
+            row->section = h;
+            h->rows.push_back(row);
+            _rows.push_back(row);
+        }
+        if (s == 1 && _hiddenChannels > 0) {
+            auto *more = _items->add<ActionRow>(
+                i18n::arg(
+                    tr("%1 more %2"),
+                    str::number(int64_t(_hiddenChannels)),
+                    _hiddenChannels == 1 ? tr("channel") : tr("channels")
+                ),
+                false
+            );
+            more->onClick = [this] { showAllChannels(); };
+            h->extras.push_back(more);
+        }
+        if (s == 1 || (s == 2 && agents)) {
+            auto *add =
+                _items->add<ActionRow>(s == 1 ? tr("Add channels") : tr("Add sessions"), true);
+            add->onClick = [this, add, s] {
+                if (s == 1) {
+                    addChannelsMenu(add);
+                } else if (onSessionMenu) { // Sessions: find one or create one
+                    const RectF r = add->windowRect();
+                    onSessionMenu({r.x + kContentX, r.y + r.h / 2});
+                }
+            };
+            h->extras.push_back(add);
+        }
+        applyCollapse(h);
+        // The team, under the sessions (msga's section 4): the roles sessions
+        // are started with.
+        if (s == 2 && !_team.empty()) {
+            auto *t      = _items->add<SectionHeader>(*this, 4, Icon::Users, tr("Team"));
+            t->collapsed = _collapsed[4];
+            _sections.push_back(t);
+            t->onClick = [this, t] {
+                t->collapsed = !t->collapsed;
+                applyCollapse(t);
+            };
+            for (const auto &mate : _team) {
+                auto *row = _items->add<TeammateRow>(*this, mate);
+                t->extras.push_back(row);
+                _teamRows.push_back(row);
+            }
+            applyCollapse(t);
+        }
+    }
+    refreshTeammates();
+    refreshAll();
+    _footer->refresh();
+    invalidateLayout();
+}
+
+// Collapsed, a section lists nothing under its header (msga's rebuildRows).
+void Sidebar::applyCollapse(SectionHeader *h) {
+    for (ConvRow *r : h->rows)
+        r->setVisible(!h->collapsed);
+    for (View *v : h->extras)
+        v->setVisible(!h->collapsed);
+    h->update();
+}
+
+void Sidebar::showAllChannels() {
+    _showAllChannels = true;
+    rebuildSoon(); // not from inside the row's own click
+}
+
+void Sidebar::rebuildSoon() {
+    if (_rebuildTimer)
+        return;
+    std::weak_ptr<int> alive = _alive;
+    _rebuildTimer            = _ctx.app.platform().addTimer(0, false, [this, alive] {
+        if (alive.expired())
+            return;
+        _rebuildTimer = 0;
+        rebuild();
+        if (ConvRow *r = rowFor(_selected))
+            _scroll->ensureVisible(r, 8);
+    });
+}
+
+void Sidebar::addChannelsMenu(View *row) {
+    Window *w = window();
+    if (!w)
+        return;
+    std::vector<MenuItem> items(2);
+    items[0].id      = 1;
+    items[0].label   = tr("Find a channel");
+    items[0].enabled = bool(onFindChannel);
+    items[1].id      = 2;
+    items[1].label   = tr("Create a channel");
+    items[1].enabled = bool(onCreateChannel);
+    const RectF r    = row->windowRect();
+    Menu::popupAt(*w, {r.x + kContentX, r.y + r.h / 2}, std::move(items), [this](int id) {
+        auto &hook = id == 1 ? onFindChannel : onCreateChannel;
+        if (hook)
+            hook();
+    });
+}
+
+void Sidebar::refreshAll() {
+    for (ConvRow *r : _rows)
+        r->refresh();
+    refreshSections();
+}
+
+void Sidebar::refreshTeammates() {
+    for (TeammateRow *r : _teamRows)
+        r->refresh();
+}
+
+void Sidebar::selectTeammate(const std::string &role) {
+    if (!role.empty()) {
+        select(kNoConv);
+        if (_threadsSelected)
+            selectThreads(false);
+        if (_savedSelected)
+            selectSaved(false);
+    }
+    _selectedTeammate = role;
+    refreshTeammates();
+    for (TeammateRow *r : _teamRows)
+        if (r->role == role) {
+            for (SectionHeader *h : _sections)
+                if (h->kind == 4 && h->collapsed) {
+                    h->collapsed = false;
+                    applyCollapse(h);
+                }
+            _scroll->ensureVisible(r, 8);
+        }
+}
+
+std::vector<std::string> Sidebar::teammates() const {
+    std::vector<std::string> out;
+    for (const TeammateRow *r : _teamRows)
+        out.push_back(r->role);
+    return out;
+}
+
+Sidebar::TeammateState Sidebar::teammateState(const std::string &role) const {
+    TeammateState s;
+    for (const TeammateRow *r : _teamRows)
+        if (r->role == role) {
+            s.exists   = true;
+            s.bold     = r->unread;
+            s.selected = r->checked();
+            s.presence = int(r->avatar->presence());
+        }
+    return s;
+}
+
+int Sidebar::conversationPresence(ConvRef conv) const {
+    const ConvRow *r = rowFor(conv);
+    return r && r->avatar ? int(r->avatar->presence()) : 0;
+}
+
+void Sidebar::refresh(ConvRef conv) {
+    if (ConvRow *r = rowFor(conv))
+        r->refresh();
+}
+
+void Sidebar::refreshSections() {
+    // msga's sectionHasUnread: bright and bold while anything in it is.
+    for (SectionHeader *h : _sections) {
+        bool any = false;
+        for (ConvRow *r : h->rows)
+            any |= r->unread;
+        h->setUnread(any);
+    }
+    // "Saved messages" shows while the saved list is not empty.
+    if (_savedRow)
+        _savedRow->setVisible(_ctx.store().hasSaved());
+}
+
+ConvRow *Sidebar::rowFor(ConvRef conv) const {
+    for (ConvRow *r : _rows)
+        if (r->conv == conv)
+            return r;
+    return nullptr;
+}
+
+void Sidebar::selectThreads(bool on) {
+    _threadsSelected = on && _threadsRow;
+    if (on) {
+        select(kNoConv);
+        selectTeammate({});
+        if (_savedSelected)
+            selectSaved(false);
+    }
+    if (auto *r = static_cast<NavRow *>(_threadsRow)) {
+        r->setChecked(_threadsSelected);
+        r->refreshLook();
+    }
+}
+
+void Sidebar::selectSaved(bool on) {
+    _savedSelected = on && _savedRow;
+    if (on) {
+        select(kNoConv);
+        selectTeammate({});
+        if (_threadsSelected)
+            selectThreads(false);
+    }
+    if (auto *r = static_cast<NavRow *>(_savedRow)) {
+        r->setChecked(_savedSelected);
+        r->refreshLook();
+    }
+}
+
+void Sidebar::select(ConvRef conv) {
+    const ConvRef old = _selected;
+    _selected         = conv;
+    if (conv != kNoConv && _threadsSelected)
+        selectThreads(false); // the Threads page is left
+    if (conv != kNoConv && _savedSelected)
+        selectSaved(false);                              // the Saved messages page is left
+    if (conv != kNoConv && !_selectedTeammate.empty()) { // the teammate's page is left
+        _selectedTeammate.clear();
+        refreshTeammates();
+    }
+    if (conv < _ctx.store().conversationCount()) { // a visit keeps it relevant for the whole window
+        if (const std::string &id = _ctx.store().conversation(conv).id; !id.empty()) {
+            _visited[id] = _now();
+            if (onVisitedChanged)
+                onVisitedChanged();
+        }
+    }
+    refresh(old);
+    // A conversation opened from elsewhere must have a row: msga's
+    // selectConversation lists it (relevance, unreads-only, apps) and
+    // expands its section. Rebuilt after the click that got here.
+    ConvRow *r = rowFor(conv);
+    if (r && r->section->collapsed) {
+        r->section->collapsed = false;
+        applyCollapse(r->section);
+    }
+    if ((conv != kNoConv && !r) || (_filters.unreadsOnly && old != kNoConv && old != conv))
+        rebuildSoon(); // the one left may drop out of unreads-only
+    if (r) {
+        r->refresh();
+        _scroll->ensureVisible(r, 8);
+    }
+    refreshSections();
+}
+
+std::vector<ConvRef> Sidebar::order() const {
+    std::vector<ConvRef> out;
+    for (ConvRow *r : _rows)
+        if (r->visible())
+            out.push_back(r->conv);
+    return out;
+}
+
+std::vector<std::string> Sidebar::sectionTitles() const {
+    std::vector<std::string> out;
+    for (size_t i = 0; i < _nav.size(); ++i)
+        if (_nav[i]->visible())
+            out.push_back(_navTitles[i]);
+    for (const SectionHeader *h : _sections)
+        out.push_back(h->title);
+    return out;
+}
+
+bool Sidebar::toggleSection(std::string_view title) {
+    for (SectionHeader *h : _sections)
+        if (h->title == title) {
+            h->activate();
+            return true;
+        }
+    return false;
+}
+
+Sidebar::RowState Sidebar::rowState(ConvRef conv) const {
+    RowState       s;
+    const ConvRow *r = rowFor(conv);
+    if (!r)
+        return s;
+    s.exists   = true;
+    s.visible  = r->visible();
+    s.bold     = r->unread;
+    s.dot      = r->count == 0 && r->dot;
+    s.badge    = r->count;
+    s.selected = r->checked();
+    s.huddle   = r->huddleCount;
+    return s;
+}
+
+bool Sidebar::threadsUnread() const {
+    return _threadsRow && static_cast<NavRow *>(_threadsRow)->unread;
+}
+
+bool Sidebar::joinHuddle(ConvRef conv) {
+    ConvRow *r = rowFor(conv);
+    if (!r || !r->huddle->visible())
+        return false;
+    r->huddle->onClick();
+    return true;
+}
+
+int Sidebar::attentionCount() const {
+    return workspaceAttention(_ctx.store(), _filters.defaultLevel, _now()).important;
+}
+
+Attention workspaceAttention(const model::Store &st, model::NotifyLevel fallback, int64_t nowSecs) {
+    Attention a;
+    for (ConvRef c = 0; c < st.conversationCount(); ++c) {
+        const auto &cv = st.conversation(c);
+        if (!cv.member || (cv.latest && tsSecs(cv.latest) < nowSecs - kMaxNotifyAgeSecs))
+            continue; // left or closed; or all of it older than the notification window
+        const model::NotifyLevel level = cv.effectiveNotify(fallback);
+        if (level == model::NotifyLevel::Nothing)
+            continue;
+        if (st.answersAreMentions) // an agent session: only what needs you
+            a.important += int(cv.mentions);
+        else if (cv.isDirect())
+            a.important += int(cv.unread);
+        else {
+            a.important += int(cv.mentions);
+            a.unread = a.unread || (level == model::NotifyLevel::All && cv.unread > cv.mentions);
+        }
+    }
+    return a;
+}
+
+} // namespace shell

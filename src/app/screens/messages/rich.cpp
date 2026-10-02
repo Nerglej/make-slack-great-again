@@ -1,0 +1,795 @@
+#include "app/screens/messages/rich.h"
+
+#include "app/model/jobs.h"
+#include "app/mrkdwn/emoji.h"
+#include "app/mrkdwn/link_labels.h"
+#include "app/screens/messages/image_cache.h"
+#include "app/screens/messages/message_list.h"
+#include "gfx/icons_generated.h"
+#include "base/i18n.h"
+#include "base/process.h"
+#include "base/str.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace screens {
+
+using mrkdwn::Kind;
+
+// msga's convPlaceLabel: "#name", a DM peer's name, a group DM's own name or
+// "group message"; "" for a conversation we can't see.
+std::string placeLabel(const Store &st, std::string_view convId) {
+    const ConvRef c = st.findConversation(convId);
+    if (c == model::kNoConv)
+        return {};
+    const model::Conversation &cv = st.conversation(c);
+    if (cv.kind == model::ConvKind::Dm)
+        return cv.dmUser != model::kNoUser ? std::string(st.user(cv.dmUser).label())
+                                           : std::string();
+    if (cv.kind == model::ConvKind::Group) {
+        // msga's groupDmCustomName: never Slack's internal "mpdm-a--b-1".
+        if (!cv.localName.empty())
+            return cv.localName;
+        if (!cv.name.empty() && !str::startsWith(cv.name, "mpdm-"))
+            return cv.name;
+        return i18n::tr("group message");
+    }
+    return cv.name.empty() ? std::string() : "#" + cv.name;
+}
+
+// msga's messageLinkLabel: "Author in #channel", the author, the place, or
+// "message". The author is known only from a rich_text message_mention.
+std::string messageLinkLabel(const Store &st, const mrkdwn::MessageRef &ref) {
+    const std::string place = placeLabel(st, ref.conv);
+    model::UserRef    a =
+        ref.author.empty() ? st.linkedAuthor(ref.conv, ref.ts) : st.findUser(ref.author);
+    const std::string who =
+        a != model::kNoUser && !st.user(a).placeholder ? std::string(st.user(a).label()) : "";
+    if (!who.empty() && !place.empty())
+        return i18n::arg(i18n::tr("%1 in %2"), who, place);
+    if (!who.empty())
+        return who;
+    if (!place.empty())
+        return place;
+    return i18n::tr("message");
+}
+
+namespace {
+
+// What a message link chip's icon box stands for in a label's image list
+// (paintEmojiBoxes draws the icon; no image has this name).
+constexpr const char *kMessageLinkIcon = "\x01icon:message";
+
+// Flattens mrkdwn runs into styled text, resolving entities through the Store.
+struct Builder {
+    Context                       &ctx;
+    const mrkdwn::Rich            &r;
+    text::Style                    base;
+    std::vector<RichLabel::Target> targets;
+    std::vector<std::string>       images;
+    std::vector<mrkdwn::Run>       runs;
+    int                            lastEntity = -1;
+    // plainText(): what the user reads, for the clipboard — no GIF badge,
+    // and (fullUrls) a shortened link label is its URL.
+    bool                           plain = false, fullUrls = false;
+
+    // self: msga's mentionSelfBg (a mention of me, @here/@channel, my group).
+    text::Style pill(text::Style s, bool self = false) const {
+        s.color      = ui::themed(ui::C::MentionText);
+        s.background = ui::themed(self ? ui::C::MentionSelfBg : ui::C::MentionBg);
+        s.weight     = text::Weight::Medium;
+        return s;
+    }
+
+    uint32_t target(Kind k, const std::string &data) {
+        targets.push_back({k, data});
+        return uint32_t(targets.size());
+    }
+
+    void append(text::AttributedText &t, uint32_t a, uint32_t b) {
+        runs.clear();
+        mrkdwn::runs(r, a, b, runs);
+        const Store &store = ctx.store;
+        for (const mrkdwn::Run &run : runs) {
+            const std::string_view slice =
+                std::string_view(r.text).substr(run.start, run.end - run.start);
+            text::Style s = base;
+            if (run.style & mrkdwn::StyleBold)
+                s.weight = text::Weight::Bold;
+            if (run.style & mrkdwn::StyleItalic)
+                s.italic = true;
+            if (run.style & mrkdwn::StyleUnderline)
+                s.underline = true;
+            if (run.style & mrkdwn::StyleStrike)
+                s.strike = true;
+            if (run.style & mrkdwn::StyleCode) {
+                s.mono       = true;
+                s.size       = std::max(10.f, base.size - 2);
+                s.color      = ui::themed(ui::C::CodeText);
+                s.background = ui::themed(ui::C::CodeBg);
+            }
+            if (run.entity < 0) {
+                t.append(slice, s);
+                continue;
+            }
+            const mrkdwn::Entity  &e     = r.entities[size_t(run.entity)];
+            const std::string_view label = std::string_view(r.text).substr(e.start, e.length);
+            // msga's link labels: a GIPHY media link is a "GIF" badge; a
+            // label Slack shortened ("host/…/…") is rebuilt from the URL.
+            const bool giphy = e.kind == Kind::Link && !plain && mrkdwn::isGiphyMediaUrl(e.data);
+            const bool shortened = e.kind == Kind::Link && (!plain || fullUrls) &&
+                                   mrkdwn::isShortenedUrlLabel(label, e.data);
+            // Mentions, emoji and rewritten links are replaced as a whole:
+            // emit them once even when a style change split the entity into
+            // several runs.
+            // A permalink (it has a host; msga's own thread links don't) is
+            // a chip: msga's messageLinkChipHtml.
+            const bool chip =
+                e.kind == Kind::MessageLink && !plain && !mrkdwn::refFromToken(e.data).host.empty();
+            const bool atomic =
+                (e.kind != Kind::Link && e.kind != Kind::MessageLink) || giphy || shortened || chip;
+            if (atomic && run.entity == lastEntity)
+                continue;
+            lastEntity = run.entity;
+            switch (e.kind) {
+            case Kind::Link:
+            case Kind::MessageLink:
+                if (plain) {
+                    t.append(shortened ? std::string_view(e.data) : slice, s);
+                    break;
+                }
+                s.color  = ui::themed(ui::C::Link);
+                s.linkId = target(e.kind, e.data);
+                if (chip) {
+                    // The message icon, then where it is, on the mention tint.
+                    s.background   = ui::themed(ui::C::MentionBg);
+                    text::Style is = s;
+                    images.push_back(kMessageLinkIcon);
+                    is.inlineBoxId = uint32_t(images.size());
+                    is.boxWidth = is.boxHeight = std::round(s.size * 11.f / 15.f);
+                    t.append(" ", is);
+                    t.append("\xC2\xA0" + messageLinkLabel(store, mrkdwn::refFromToken(e.data)), s);
+                } else if (giphy) {
+                    // A pill like a mention: "GIF", then the link's own title.
+                    text::Style ps = pill(s);
+                    ps.linkId      = s.linkId;
+                    ps.weight      = text::Weight::Bold;
+                    t.append(i18n::tr("GIF"), ps);
+                    ps.weight =
+                        s.weight == text::Weight::Bold ? text::Weight::Bold : text::Weight::Medium;
+                    if (!mrkdwn::isUrlLabel(label, e.data))
+                        t.append(std::string(" \xC2\xB7 ") + std::string(label), ps);
+                } else if (shortened) {
+                    constexpr size_t kMaxLinkLabelChars = 96;
+                    t.append(mrkdwn::expandedLabel(e.data, kMaxLinkLabelChars), s);
+                } else {
+                    t.append(slice, s);
+                }
+                break;
+            case Kind::User: {
+                const model::UserRef   u = store.findUser(e.data);
+                const std::string_view label =
+                    u != model::kNoUser ? store.user(u).label() : std::string_view();
+                text::Style ps = pill(s, u != model::kNoUser && u == store.me);
+                ps.linkId      = target(e.kind, e.data);
+                t.append(label.empty() ? std::string(slice) : "@" + std::string(label), ps);
+                break;
+            }
+            case Kind::Channel: {
+                const model::ConvRef c = store.findConversation(e.data);
+                s.color                = ui::themed(ui::C::Link);
+                s.linkId               = target(e.kind, e.data);
+                // One the roster doesn't list: its name is looked up once
+                // (msga's mentionedChannelName / fetchChannelIfNeeded).
+                const std::string *known =
+                    c == model::kNoConv ? store.channelName(e.data) : nullptr;
+                if (c == model::kNoConv && !known)
+                    ctx.backend.resolveChannel(e.data);
+                const std::string name = c != model::kNoConv && !store.conversation(c).name.empty()
+                                             ? "#" + store.conversation(c).name
+                                         : known && !known->empty() ? "#" + *known
+                                                                    : std::string(slice);
+                t.append(name, s);
+                break;
+            }
+            case Kind::Usergroup: {
+                // msga's Usergroup::mentionLabel: the live handle (else name).
+                const Store::Usergroup *g = store.findUsergroup(e.data);
+                const bool mine = std::find(store.myGroups.begin(), store.myGroups.end(), e.data) !=
+                                  store.myGroups.end();
+                t.append(
+                    g ? "@" + (g->handle.empty() ? g->name : g->handle) : std::string(slice),
+                    pill(s, mine)
+                );
+                break;
+            }
+            case Kind::Here:
+            case Kind::ChannelCmd:
+                t.append(slice, pill(s, true));
+                break;
+            case Kind::Emoji: {
+                const Store::EmojiGlyph g = store.emojiFor(e.data);
+                if (!g.unicode.empty()) {
+                    t.append(
+                        run.skinTone ? emoji::applySkinTone(g.unicode, run.skinTone) : g.unicode, s
+                    );
+                } else if (!g.image.empty()) {
+                    images.push_back(g.image);
+                    s.inlineBoxId = uint32_t(images.size());
+                    s.boxWidth = s.boxHeight = std::round(s.size * 1.35f);
+                    t.append(slice, s);
+                } else {
+                    t.append(slice, s);
+                }
+                break;
+            }
+            default:
+                t.append(slice, s);
+                break;
+            }
+        }
+    }
+};
+
+void appendEdited(text::AttributedText &t) {
+    text::Style s = ui::font(ui::Font::Small);
+    s.color       = ui::themed(ui::C::TextFaint);
+    t.append(" ", s);
+    t.append(i18n::tr("(edited)"), s);
+}
+
+} // namespace
+
+// ── RichLabel ───────────────────────────────────────────────────────────────
+
+RichLabel::RichLabel(Context &ctx, ui::View *waiter) : _ctx(ctx), _waiter(waiter ? waiter : this) {
+    onLink = [this](uint32_t id) { activate(id); };
+}
+
+RichLabel::~RichLabel() {
+    _ctx.app.cancelTimer(_animTimer);
+}
+
+void RichLabel::windowChanged() {
+    if (!window()) {
+        _ctx.app.cancelTimer(_animTimer);
+        _animTimer = 0;
+    }
+}
+
+uint8_t RichLabel::cursorAt(ui::PointF local) const {
+    if (_selectable && !linkAt(local))
+        return uint8_t(plat::Cursor::IBeam);
+    return ui::Label::cursorAt(local);
+}
+
+void RichLabel::setContent(
+    text::AttributedText t, std::vector<Target> targets, std::vector<std::string> images
+) {
+    _targets   = std::move(targets);
+    _images    = std::move(images);
+    _base      = t;
+    _hoverLink = 0;
+    _tip.clear();
+    setRichText(std::move(t));
+}
+
+namespace {
+// QUrl::fromPercentEncoding, for the tooltip.
+std::string percentDecoded(std::string_view s) {
+    std::string out;
+    auto        hex = [](char c) {
+        return c >= '0' && c <= '9'   ? c - '0'
+               : c >= 'a' && c <= 'f' ? c - 'a' + 10
+               : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                      : -1;
+    };
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size() && hex(s[i + 1]) >= 0 && hex(s[i + 2]) >= 0) {
+            out += char(hex(s[i + 1]) * 16 + hex(s[i + 2]));
+            i += 2;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+} // namespace
+
+ui::RectF RichLabel::tooltipAnchor() const {
+    return {_tipAt.x, _tipAt.y - 2, 1, 4}; // msga: the cursor point
+}
+
+void RichLabel::hoverLink(uint32_t id, ui::PointF at) {
+    _tipAt = at;
+    if (id == _hoverLink)
+        return;
+    _hoverLink                     = id;
+    // msga's setDocLinkUnderline: every piece of the hovered URL link
+    // underlines together (mentions, channels, message links never).
+    const Target        *tg        = id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
+    const bool           underline = tg && tg->kind == Kind::Link;
+    text::AttributedText t         = _base;
+    std::string          shown;
+    for (text::Span &sp : t.spans)
+        if (id && sp.style.linkId == id) {
+            sp.style.underline = sp.style.underline || underline;
+            shown += t.text.substr(sp.start, sp.end - sp.start);
+        }
+    setRichText(std::move(t));
+    // The URL tooltip: links and message links (their permalink), unless the
+    // text already is the URL.
+    std::string url;
+    if (tg && tg->kind == Kind::Link) {
+        url = percentDecoded(tg->data);
+    } else if (tg && tg->kind == Kind::MessageLink) {
+        const mrkdwn::MessageRef ref = mrkdwn::refFromToken(tg->data);
+        const model::ConvRef     c   = _ctx.store().findConversation(ref.conv);
+        if (c != model::kNoConv && !ref.host.empty()) // msga's own links have no permalink
+            url = _ctx.store().permalink(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
+    }
+    _tip = url == shown ? std::string() : url;
+    if (window())
+        window()->rearmTooltip();
+}
+
+void RichLabel::activate(uint32_t id) {
+    if (id == 0 || id > _targets.size())
+        return;
+    const Target &tg = _targets[id - 1];
+    switch (tg.kind) {
+    case Kind::Link:
+        openLink(_ctx, tg.data, window(), _tipAt);
+        break;
+    case Kind::MessageLink: {
+        const mrkdwn::MessageRef ref    = mrkdwn::refFromToken(tg.data);
+        const model::ConvRef     c      = _ctx.store().findConversation(ref.conv);
+        const model::Ts          thread = model::parseTs(ref.threadTs);
+        if (!ref.host.empty()) {
+            // msga: only this workspace's conversations can be jumped to; a
+            // link into another team (or one we can't see) is still a link.
+            if (c == model::kNoConv) {
+                if (_ctx.openUrl)
+                    _ctx.openUrl(mrkdwn::messagePermalink(ref));
+            } else if (_ctx.openMessage) {
+                _ctx.openMessage(c, model::parseTs(ref.ts), thread);
+            }
+            break;
+        }
+        if (c == model::kNoConv)
+            break;
+        if (thread && _ctx.openThread)
+            _ctx.openThread(c, thread);
+        else if (_ctx.openConversation)
+            _ctx.openConversation(c);
+        break;
+    }
+    case Kind::User: { // msga: a click opens the profile card at once
+        const model::UserRef u = _ctx.store().findUser(tg.data);
+        if (u != model::kNoUser && _ctx.profileHover)
+            _ctx.profileHover(u, windowRect(), 2);
+        else if (u != model::kNoUser && _ctx.openProfile)
+            _ctx.openProfile(u);
+        break;
+    }
+    case Kind::Channel: {
+        const model::ConvRef c = _ctx.store().findConversation(tg.data);
+        if (c != model::kNoConv && _ctx.openConversation)
+            _ctx.openConversation(c);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+const RichLabel::Target *RichLabel::targetAt(ui::PointF local) const {
+    const uint32_t id = linkAt(local);
+    return id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
+}
+
+bool RichLabel::onEvent(ui::Event &e) {
+    switch (e.type) {
+    case ui::EventType::PointerMove:
+    case ui::EventType::PointerLeave: {
+        hoverLink(e.type == ui::EventType::PointerMove ? linkAt(e.pos) : 0, e.windowPos);
+        // Hovering a mention or a name: msga's profile card after a delay.
+        const Target  *tg = e.type == ui::EventType::PointerMove ? targetAt(e.pos) : nullptr;
+        model::UserRef u =
+            tg && tg->kind == Kind::User ? _ctx.store().findUser(tg->data) : model::kNoUser;
+        if (u != _hoverUser && _ctx.profileHover) {
+            if (_hoverUser != model::kNoUser)
+                _ctx.profileHover(_hoverUser, windowRect(), 0);
+            if (u != model::kNoUser)
+                _ctx.profileHover(u, windowRect(), 1);
+        }
+        _hoverUser = u;
+        return ui::Label::onEvent(e);
+    }
+    case ui::EventType::ContextMenu: {
+        // msga's link menu, for links only (mentions, channels: nothing), and
+        // only from a right click (raw set) — no Menu key or long press.
+        const Target *tg = e.raw ? targetAt(e.pos) : nullptr;
+        if (!tg || !window())
+            return false;
+        std::string url;
+        if (tg->kind == Kind::Link) {
+            url = tg->data;
+        } else if (tg->kind == Kind::MessageLink) { // its permalink
+            const mrkdwn::MessageRef ref = mrkdwn::refFromToken(tg->data);
+            const model::ConvRef     c   = _ctx.store().findConversation(ref.conv);
+            if (c != model::kNoConv && !ref.host.empty())
+                url =
+                    _ctx.store().permalink(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
+        }
+        if (url.empty())
+            return false;
+        showLinkMenu(_ctx, *window(), e.windowPos, url);
+        return true;
+    }
+    default:
+        return ui::Label::onEvent(e);
+    }
+}
+
+void RichLabel::paint(gfx::Painter &p) {
+    ui::Label::paint(p);
+    const text::Layout *l = textLayout();
+    if (_images.empty() || !l)
+        return;
+    const double next = paintEmojiBoxes(_ctx, p, *l, textOrigin(), _images, _waiter);
+    if (next >= 0 && !_animTimer && window())
+        _animTimer = _ctx.app.addTimer(int(std::ceil(next)), false, [this] {
+            _animTimer = 0;
+            update();
+        });
+}
+
+double paintEmojiBoxes(
+    Context                        &ctx,
+    gfx::Painter                   &p,
+    const text::Layout             &l,
+    ui::PointF                      o,
+    const std::vector<std::string> &images,
+    ui::View                       *waiter
+) {
+    const float  scale = waiter && waiter->window() ? waiter->window()->scale() : 1.f;
+    // Animated custom emoji (Settings → Animate emoji) all run on one clock,
+    // so every copy of one shows the same frame; the caller repaints when
+    // the soonest of them changes.
+    const bool   anim  = ctx.images.animateEmoji() && !ui::app()->reducedMotion();
+    const double now   = ctx.app.nowMs();
+    double       next  = -1;
+    for (const text::InlineBox &b : l.boxes()) {
+        if (b.id == 0 || b.id > images.size())
+            continue;
+        if (images[b.id - 1] == kMessageLinkIcon) { // a message link chip's icon
+            gfx::drawIcon(
+                p,
+                gfx::Icon::MessageSquare,
+                {b.rect.x + o.x, b.rect.y + o.y, b.rect.w, b.rect.h},
+                ui::color(ui::C::Link)
+            );
+            continue;
+        }
+        const ImageCache::Request r{
+            images[b.id - 1], int(std::lround(b.rect.w * scale)), int(std::lround(b.rect.h * scale))
+        };
+        const ui::RectF    dst{b.rect.x + o.x, b.rect.y + o.y, b.rect.w, b.rect.h};
+        ImageCache::Bitmap still;
+        const gfx::Bitmap *bmp = nullptr;
+        ImageCache::Frames frames;
+        if (anim && (frames = ctx.images.frames(r, waiter)) && frames->size() > 1) {
+            double total = 0;
+            for (const gfx::AnimFrame &f : *frames)
+                total += std::max(20, f.delayMs);
+            double t = std::fmod(now, total);
+            for (const gfx::AnimFrame &f : *frames) {
+                const double d = std::max(20, f.delayMs);
+                if (t < d) {
+                    bmp               = &f.frame;
+                    const double left = d - t;
+                    next              = next < 0 ? left : std::min(next, left);
+                    break;
+                }
+                t -= d;
+            }
+        } else if (frames) {
+            bmp = &(*frames)[0].frame;
+        } else if (!anim) {
+            still = ctx.images.get(r, waiter);
+            bmp   = still.get();
+        }
+        if (bmp)
+            p.drawBitmap(bmp->view(), dst, gfx::Sampling::Nearest);
+    }
+    return next;
+}
+
+EmojiFrameTimer::~EmojiFrameTimer() {
+    _ctx.app.cancelTimer(_id);
+}
+
+void EmojiFrameTimer::schedule(double ms) {
+    if (ms < 0 || _id || !_view.window())
+        return;
+    _id = _ctx.app.addTimer(int(std::ceil(ms)), false, [this] {
+        _id = 0;
+        _view.update();
+    });
+}
+
+// ── Bodies ──────────────────────────────────────────────────────────────────
+
+namespace {
+
+// buildBody and bodyTexts in one: with a column, the labels are made; with
+// none, only their texts are collected (the same ones, in the same order).
+void walkBody(
+    Context                  &ctx,
+    ui::View                 *column,
+    std::string_view          text,
+    const RichOptions        &o,
+    ui::View                 *waiter,
+    std::vector<std::string> *texts
+) {
+    const mrkdwn::Rich               r      = mrkdwn::parse(text);
+    const std::vector<mrkdwn::Block> blocks = mrkdwn::blocks(r);
+    Builder                          b{ctx, r, ui::font(o.font), {}, {}, {}};
+    b.base.color = ui::themed(o.color);
+    b.base.size *= o.scale;
+    auto label = [&](ui::View *parent) -> RichLabel * {
+        if (!parent)
+            return nullptr;
+        auto *l = parent->add<RichLabel>(ctx, waiter);
+        if (o.maxLines > 0)
+            l->setMaxLines(o.maxLines);
+        if (o.labels) {
+            l->setSelectable(true);
+            o.labels->push_back(l);
+        }
+        return l;
+    };
+    auto finish = [&](RichLabel *l, text::AttributedText &t, bool last) {
+        if (last && o.edited)
+            appendEdited(t);
+        if (texts)
+            texts->push_back(t.text);
+        if (l)
+            l->setContent(std::move(t), std::move(b.targets), std::move(b.images));
+        b.targets = {};
+        b.images  = {};
+    };
+    auto edited = [&] {
+        text::AttributedText e;
+        appendEdited(e);
+        if (texts)
+            texts->push_back(e.text);
+        if (RichLabel *l = label(column))
+            l->setContent(std::move(e), {}, {});
+    };
+    ui::View *quote = nullptr; // content column of the current quoted run
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        mrkdwn::Block bl = blocks[i];
+        if (bl.start >= o.cut)
+            break;
+        const bool cutHere = bl.end > o.cut;
+        if (cutHere)
+            bl.end = o.cut;
+        const bool last   = i + 1 == blocks.size() || cutHere;
+        ui::View  *parent = column;
+        if (bl.quoted && column) {
+            if (!quote) {
+                auto *q = column->add<ui::View>();
+                q->style().row().spacing(10);
+                auto *bar = q->add<ui::View>();
+                bar->style().width(4).noShrink();
+                bar->setBackground(ui::C::BorderStrong, 2);
+                quote = q->add<ui::View>();
+                quote->style().flex(1).spacing(2).padding(0, 1);
+            }
+            parent = quote;
+        } else {
+            quote = nullptr;
+        }
+        text::AttributedText t;
+        switch (bl.kind) {
+        case mrkdwn::BlockKind::Paragraph: {
+            RichLabel *l = label(parent);
+            b.append(t, bl.start, bl.end);
+            if (cutHere)
+                t.append("\xE2\x80\xA6", b.base);
+            finish(l, t, last);
+            break;
+        }
+        case mrkdwn::BlockKind::ListItem: {
+            RichLabel *l = nullptr;
+            if (parent) {
+                auto *row = parent->add<ui::View>();
+                row->style().row().margins(float(bl.indent) * 22, 0, 0, 0);
+                std::string marker = bl.ordinal ? std::to_string(bl.ordinal) + "." : "•";
+                auto       *m      = row->add<ui::Label>(std::move(marker), o.font, o.color);
+                m->style().width(22).noShrink();
+                l = label(row);
+                l->style().flex(1);
+            }
+            b.append(t, std::min(bl.markerEnd, bl.end), bl.end);
+            if (cutHere)
+                t.append("\xE2\x80\xA6", b.base);
+            finish(l, t, last);
+            break;
+        }
+        case mrkdwn::BlockKind::Code: {
+            ui::View *box = nullptr;
+            if (parent) {
+                box = parent->add<ui::View>();
+                box->setBackground(ui::C::CodeBg, 4);
+                box->setBorder(ui::C::Border);
+                box->style().padding(10, 8).margins(0, 2, 0, 2);
+            }
+            text::Style mono = ui::font(ui::Font::Mono);
+            mono.color       = ui::themed(o.color);
+            t.append(std::string_view(r.text).substr(bl.start, bl.end - bl.start), mono);
+            RichLabel *l = label(box);
+            finish(l, t, false);
+            if (last && o.edited)
+                edited();
+            break;
+        }
+        }
+        if (cutHere)
+            break;
+    }
+    if (blocks.empty() && o.edited)
+        edited();
+}
+
+} // namespace
+
+void buildBody(
+    Context &ctx, ui::View *column, std::string_view text, const RichOptions &o, ui::View *waiter
+) {
+    walkBody(ctx, column, text, o, waiter, nullptr);
+}
+
+text::AttributedText richText(
+    Context &ctx, std::string_view text, const RichOptions &o, std::vector<std::string> *images
+) {
+    const mrkdwn::Rich r = mrkdwn::parse(text);
+    Builder            b{ctx, r, ui::font(o.font), {}, {}, {}};
+    b.base.color = ui::themed(o.color);
+    b.base.size *= o.scale;
+    if (images)
+        b.images = std::move(*images); // box ids continue after the ones given
+    text::AttributedText t;
+    b.append(t, 0, uint32_t(r.text.size()));
+    for (text::Span &sp : t.spans)
+        sp.style.linkId = 0; // no targets kept
+    if (images)
+        *images = std::move(b.images);
+    return t;
+}
+
+uint32_t previewCut(std::string_view text, int *maxChars, int *maxLines) {
+    const std::string s     = mrkdwn::parse(text).text;
+    int               lines = 1;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if ((s[i] & 0xc0) == 0x80)
+            continue; // a continuation byte: the same character
+        if (*maxChars <= 0 || (s[i] == '\n' && ++lines > *maxLines)) {
+            *maxChars = *maxLines = 0;
+            return uint32_t(i);
+        }
+        --*maxChars;
+    }
+    *maxLines -= lines - 1;
+    return UINT32_MAX;
+}
+
+std::vector<std::string> bodyTexts(Context &ctx, std::string_view text, const RichOptions &o) {
+    std::vector<std::string> out;
+    RichOptions              x = o;
+    x.labels                   = nullptr;
+    walkBody(ctx, nullptr, text, x, nullptr, &out);
+    return out;
+}
+
+std::string plainText(const Context &ctx, std::string_view text, bool fullUrls) {
+    const mrkdwn::Rich r = mrkdwn::parse(text);
+    Builder            b{const_cast<Context &>(ctx), r, ui::font(ui::Font::Body), {}, {}, {}};
+    b.plain    = true;
+    b.fullUrls = fullUrls;
+    text::AttributedText t;
+    b.append(t, 0, uint32_t(r.text.size()));
+    return t.text;
+}
+
+// ── Links ───────────────────────────────────────────────────────────────────
+
+namespace {
+
+#if defined(__linux__)
+// msga's MailtoLink::systemHandlerAvailable: on Linux the opener reports
+// nothing back, so ask xdg-mime whether anything takes mailto: (once; the
+// answer is remembered). 1 = yes, 0 = no, -1 = not asked yet.
+int g_mailHandler = -1;
+#endif
+
+void copyAddress(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at) {
+    // "mailto:a@b?subject=hi" → "a@b".
+    std::string addr = url.substr(7);
+    addr             = addr.substr(0, addr.find('?'));
+    ctx.app.platform().setClipboardText(addr);
+    if (w)
+        showClickToast(ctx, *w, i18n::tr("No email app \xE2\x80\x94 address copied"), 1800, at);
+}
+
+} // namespace
+
+void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at) {
+    const bool mailto = url.size() > 7 && (url[0] | 0x20) == 'm' && (url[1] | 0x20) == 'a' &&
+                        (url[2] | 0x20) == 'i' && (url[3] | 0x20) == 'l' &&
+                        (url[4] | 0x20) == 't' && (url[5] | 0x20) == 'o' && url[6] == ':';
+    if (!mailto) {
+        if (ctx.openUrl)
+            ctx.openUrl(url);
+        return;
+    }
+#if defined(__linux__)
+    if (g_mailHandler < 0) {
+        // The query runs a process: on a worker, then the click goes on.
+        auto found = std::make_shared<bool>(true);
+        model::runInBackground(
+            ctx.app.platform(),
+            [found] {
+                const std::string exe = base::findExecutable("xdg-mime");
+                if (exe.empty())
+                    return; // can't tell: assume a handler and just try
+                base::RunOptions o;
+                o.mergeStderr = false;
+                o.timeoutMs   = 1500;
+                const base::RunResult r =
+                    base::run(exe, {"query", "default", "x-scheme-handler/mailto"}, o);
+                if (r.started && !r.timedOut) {
+                    bool any = false;
+                    for (char c : r.output)
+                        any = any || (c != ' ' && c != '\n' && c != '\t' && c != '\r');
+                    *found = any;
+                }
+            },
+            [&ctx, url, w, at, found] {
+                g_mailHandler = *found ? 1 : 0;
+                openLink(ctx, url, w, at);
+            }
+        );
+        return;
+    }
+    if (g_mailHandler == 0) {
+        copyAddress(ctx, url, w, at);
+        return;
+    }
+#endif
+    if (!ctx.app.platform().openUrl(url))
+        copyAddress(ctx, url, w, at);
+}
+
+gfx::Color parseHexColor(std::string_view hex, gfx::Color fallback) {
+    if (!hex.empty() && hex[0] == '#')
+        hex.remove_prefix(1);
+    if (hex.size() != 6)
+        return fallback;
+    uint32_t v = 0;
+    for (char c : hex) {
+        const int d = c >= '0' && c <= '9'   ? c - '0'
+                      : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                      : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                             : -1;
+        if (d < 0)
+            return fallback;
+        v = v * 16 + uint32_t(d);
+    }
+    return gfx::rgb(v);
+}
+
+} // namespace screens

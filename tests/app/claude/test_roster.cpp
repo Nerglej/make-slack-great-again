@@ -1,0 +1,259 @@
+// The roster: Claude Code's sessions/<pid>.json and jobs/<id>/state.json,
+// against a throwaway Claude Code home (never the user's ~/.claude).
+#include "app/claude/roster.h"
+
+#include "base/file.h"
+#include "base/process.h"
+#include "base/str.h"
+#include "support/test.h"
+
+#include <cstdlib>
+#include <string>
+#include <unistd.h>
+
+using namespace claude;
+
+namespace {
+
+// Under the test HOME (a throwaway one: base::test's, or ctest's test-home),
+// so nothing is left in /tmp.
+std::string tempDir() {
+    return base::test::makeTempDir("roster-", base::env("HOME"));
+}
+
+} // namespace
+
+TEST("roster: roster files parse into sessions") {
+    const auto live = parseInteractiveSession(
+        R"({"pid":42,"sessionId":"S1","cwd":"/src/app","name":"app-1","status":"waiting",
+            "statusUpdatedAt":1790000000000,"entrypoint":"cli","kind":"interactive"})"
+    );
+    REQUIRE(live);
+    CHECK_STR(live->sessionId, "S1");
+    CHECK(live->kind == SessionInfo::Kind::Interactive);
+    CHECK_STR(live->entrypoint, "cli");
+    CHECK(statusNeedsUser(live->status));
+    CHECK(live->pid == 42);
+    CHECK(live->statusSinceMs == 1790000000000);
+
+    const auto job = parseBackgroundJob(
+        R"({"state":"done","sessionId":"S2","name":"Refactor","cwd":"/src/x","needs":null,
+            "linkScanPath":"/p/S2.jsonl","updatedAt":"2026-09-02T06:56:01.982Z"})"
+    );
+    REQUIRE(job);
+    CHECK(job->kind == SessionInfo::Kind::Background);
+    CHECK_FALSE(job->running); // done: msga may continue it
+    CHECK_STR(job->transcriptPath, "/p/S2.jsonl");
+    CHECK(job->statusSinceMs == 1788332161982);
+    CHECK(job->worktreePath.empty());
+    const auto inWorktree = parseBackgroundJob(
+        R"({"state":"done","sessionId":"S4","cwd":"/src/x/.claude/worktrees/w",)"
+        R"("worktreePath":"/src/x/.claude/worktrees/w","worktreeBranch":"worktree-w"})"
+    );
+    REQUIRE(inWorktree);
+    CHECK_STR(inWorktree->worktreePath, "/src/x/.claude/worktrees/w");
+
+    // Waiting for an approval: "working" plus a needs line (verified live).
+    const auto approval = parseBackgroundJob(
+        R"({"state":"working","sessionId":"S3","needs":"approve Bash: touch x"})"
+    );
+    REQUIRE(approval);
+    CHECK(statusNeedsUser(approval->status));
+    CHECK_FALSE(statusIsBusy(approval->status));
+    CHECK(approval->awaitsApproval);
+    // A question that happens to begin with "approve" is still a question
+    // (seen in 2.1.284): answered by message, not in the terminal.
+    const auto question = parseBackgroundJob(
+        R"({"state":"blocked","tempo":"blocked","sessionId":"S5",)"
+        R"("needs":"approve the data-origin wording before filing the issue"})"
+    );
+    REQUIRE(question);
+    CHECK(statusNeedsUser(question->status));
+    CHECK_FALSE(question->awaitsApproval);
+    const auto mcp = parseBackgroundJob(
+        R"({"state":"blocked","sessionId":"S6","needs":)"
+        R"("approve 1 new project MCP server (x) — attach to respond"})"
+    );
+    REQUIRE(mcp);
+    CHECK(mcp->awaitsApproval);
+
+    // A done job whose worker is still alive (idle) counts as running — resuming
+    // it would only start a copy — and a busy worker makes it busy.
+    auto done   = *job;
+    auto worker = parseInteractiveSession(
+        R"({"pid":7,"sessionId":"S2","kind":"bg","status":"busy","entrypoint":"cli",)"
+        R"("statusUpdatedAt":1790411125875})"
+    );
+    REQUIRE(worker);
+    CHECK(worker->kind == SessionInfo::Kind::Background);
+    applyWorker(done, *worker);
+    CHECK(done.running);
+    CHECK(statusIsBusy(done.status));
+    CHECK(done.statusSinceMs == 1790411125875); // the worker's status, the worker's time
+    CHECK(done.pid == 7);
+
+    // A job stuck on "working" after its turn ended: the idle worker wins.
+    auto stale = *parseBackgroundJob(R"({"state":"working","sessionId":"S2"})");
+    auto idle  = parseInteractiveSession(
+        R"({"pid":7,"sessionId":"S2","kind":"bg","status":"idle","entrypoint":"cli"})"
+    );
+    REQUIRE(idle);
+    applyWorker(stale, *idle);
+    CHECK(stale.running);
+    CHECK_FALSE(statusIsBusy(stale.status));
+    // ...but a question waiting for the user stays visible.
+    auto asking = *approval;
+    applyWorker(asking, *idle);
+    CHECK(statusNeedsUser(asking.status));
+
+    CHECK_FALSE(parseInteractiveSession("{}"));
+    CHECK_FALSE(parseBackgroundJob("garbage"));
+    CHECK_FALSE(parseBackgroundJob("[]"));
+    CHECK(statusIsBusy("busy"));
+    CHECK(statusIsBusy("working"));
+    CHECK_FALSE(statusIsBusy("idle"));
+    // Idle with a background command running: nobody is typing.
+    CHECK_FALSE(statusIsBusy("shell"));
+    CHECK(statusHasShell("shell"));
+}
+
+TEST("roster: a background worker is paired with its job by job id") {
+    // A `/clear` sent to a job starts a new session in the same worker: its
+    // sessions/<pid>.json names another session, and only its jobId the job
+    // (seen with 2.1.282).
+    Paths paths;
+    paths.home            = tempDir();
+    const std::string sid = "ed076643-40f1-4f2f-aeb1-a0c39466257b";
+    const int64_t     me  = int64_t(getpid()); // alive
+    REQUIRE(
+        file::writeAtomic(
+            paths.jobsDir() + "/ed076643/state.json",
+            str::concat({R"({"state":"done","sessionId":")", sid, R"(","cwd":"/src/app"})"})
+        )
+    );
+    REQUIRE(
+        file::writeAtomic(
+            paths.sessionsDir() + "/2.json",
+            str::concat(
+                {R"({"pid":)",
+                 str::number(me),
+                 R"(,"sessionId":"b06f80b6-a8d7-45cc-a904-52553cf4e38e","jobId":"ed076643",)",
+                 R"("kind":"bg","status":"idle"})"}
+            )
+        )
+    );
+    // An interactive session whose process is gone is left out.
+    REQUIRE(
+        file::writeAtomic(
+            paths.sessionsDir() + "/3.json",
+            R"({"pid":999999999,"sessionId":"dead","kind":"interactive","status":"idle"})"
+        )
+    );
+    const auto         all = scanSessions(paths);
+    const SessionInfo *job = nullptr;
+    for (const auto &s : all) {
+        CHECK(s.sessionId != "dead");
+        if (s.sessionId == sid)
+            job = &s;
+    }
+    REQUIRE(job != nullptr);
+    CHECK(job->running);
+    CHECK_STR(job->status, "idle");
+    CHECK_STR(job->jobId, "ed076643");
+    CHECK(job->pid == me);
+    const auto pids = liveWorkerPids(paths, sid);
+    REQUIRE(pids.size() == 1);
+    CHECK(pids[0] == me);
+    CHECK(hasLiveWorker(paths, sid));
+    CHECK_FALSE(hasLiveWorker(paths, "ffffffff-0000"));
+    CHECK(readJobState(paths, "ed076643").find(sid) != std::string::npos);
+    CHECK(readJobState(paths, "nope").empty());
+    CHECK(readJobState(paths, "").empty());
+    // Ours, alive; the pty host check finds none (our parent is no --bg-pty-host).
+    const auto stranded = strandedWorker(paths, sid);
+#ifdef __linux__
+    REQUIRE(stranded.size() == 1);
+    CHECK(stranded[0] == me);
+#else
+    CHECK(stranded.empty());
+#endif
+}
+
+TEST("roster: a background job's suggested reply is offered only while it asks") {
+    // Claude Code writes it on a turn that ends on a question, and its own
+    // list offers it only while the job reads "blocked" (verified in 2.1.283).
+    const auto asking = parseBackgroundJob(
+        R"({"state":"blocked","tempo":"blocked","sessionId":"S1","needs":"confirm the copy",
+            "suggestedReply":"copy changes to 'master'"})"
+    );
+    REQUIRE(asking);
+    CHECK_STR(asking->suggestedReply, "copy changes to 'master'");
+
+    // A stopped job keeps a stale one (seen live).
+    const auto stopped = parseBackgroundJob(
+        R"({"state":"stopped","tempo":"idle","sessionId":"S2","suggestedReply":"finish the rest"})"
+    );
+    REQUIRE(stopped);
+    CHECK(stopped->suggestedReply.empty());
+
+    // Multiple-choice questions are answered by picking, not typing.
+    const auto choosing = parseBackgroundJob(
+        R"({"state":"blocked","tempo":"blocked","sessionId":"S3","suggestedReply":"yes",
+            "block":{"questions":[{"question":"Which?","options":[]}]}})"
+    );
+    REQUIRE(choosing);
+    CHECK(choosing->suggestedReply.empty());
+}
+
+TEST("roster: transcripts are found by session id") {
+    Paths paths;
+    paths.home = tempDir();
+    REQUIRE(file::writeAtomic(paths.projectsDir() + "/-src-app/S1.jsonl", "{}\n"));
+    CHECK_STR(paths.findTranscript("S1"), paths.projectsDir() + "/-src-app/S1.jsonl");
+    CHECK(paths.findTranscript("S2").empty());
+    CHECK(paths.findTranscript("").empty());
+    CHECK_STR(
+        Paths::subagentTranscript("/p/-src-app/S1.jsonl", "a42"),
+        "/p/-src-app/S1/subagents/agent-a42.jsonl"
+    );
+}
+
+TEST("roster: process liveness and leftovers") {
+    CHECK(isProcessAlive(int64_t(getpid())));
+    CHECK_FALSE(isProcessAlive(0));
+    CHECK_FALSE(isProcessAlive(-5));
+    CHECK_FALSE(isProcessAlive(999999999));
+    // Nothing carries a made-up session's environment.
+    CHECK(leftoverProcesses("00000000-dead-beef", "00000000").empty());
+    CHECK(leftoverProcesses("", "x").empty());
+}
+
+TEST("roster: a folder is trusted when it or a parent was accepted") {
+    const std::string dir = tempDir();
+    const std::string old = base::env("CLAUDE_CONFIG_DIR");
+    base::test::setEnv("CLAUDE_CONFIG_DIR", dir);
+    // Claude Code's project keys are absolute paths: a drive's on Windows.
+#ifdef _WIN32
+    const std::string r = "C:";
+#else
+    const std::string r;
+#endif
+    CHECK_FALSE(isFolderTrusted(r + "/src/app")); // no config at all
+    REQUIRE(
+        file::writeAtomic(
+            dir + "/.claude.json",
+            R"({"projects":{")" + r + R"(/src/app":{"hasTrustDialogAccepted":true},")" + r +
+                R"(/src/other":{"hasTrustDialogAccepted":false}}})"
+        )
+    );
+    CHECK(isFolderTrusted(r + "/src/app"));
+    CHECK(isFolderTrusted(r + "/src/app/"));
+    CHECK(isFolderTrusted(r + "/src/app/sub/dir"));
+    CHECK_FALSE(isFolderTrusted(r + "/src/other"));
+    CHECK_FALSE(isFolderTrusted(r + "/src/application"));
+    CHECK_FALSE(isFolderTrusted(r + "/src"));
+    if (old.empty())
+        base::test::unsetEnv("CLAUDE_CONFIG_DIR");
+    else
+        base::test::setEnv("CLAUDE_CONFIG_DIR", old);
+}

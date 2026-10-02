@@ -1,0 +1,405 @@
+// Claude Code as a messaging backend: every Claude Code session on this
+// machine is a DM with its own assistant user, so each session gets its own
+// status dot, unread state and notifications.
+//
+//   • Roster: ~/.claude/sessions/*.json (interactive sessions and background
+//     workers) and ~/.claude/jobs/*/state.json (background sessions), watched,
+//     plus the ended sessions msga has seen, kept until Claude Code drops their
+//     transcript (known-sessions.json in msga's data).
+//   • Messages: the session transcripts, tailed while a session is live, and
+//     written into the Store: a conversation's list once its history was
+//     loaded, its unread counts always.
+//   • Writing: a session a terminal or another program drives is read-only.
+//     Everything msga sends goes through BACKGROUND sessions (Launcher), which
+//     Claude Code's daemon runs — they survive msga crashing or quitting. A
+//     message sent while Claude is still on a turn waits for the turn to end,
+//     or is typed into the live worker (`claude attach`).
+//
+// The implementation is split by concern (one class, several files):
+//   backend.cpp         state, roster scans, transcripts → Store, typing,
+//                       history and threads, lifecycle
+//   backend_send.cpp    sending: the outbox, launches, typing live, /btw
+//                       branches, permission questions, Stop
+//   backend_manage.cpp  "Remove from msga" (and the worktrees of sessions msga
+//                       started), finding sessions, the team, your profile,
+//                       commands, prompt history, deleting, reactions, search
+//
+// Nothing runs until this backend is constructed, i.e. until a Claude Code
+// workspace exists.
+#pragma once
+
+#include "app/claude/cli.h"
+#include "app/claude/launcher.h"
+#include "app/claude/roles.h"
+#include "app/claude/roster.h"
+#include "app/claude/transcript.h"
+#include "app/model/backend.h"
+
+#include <deque>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace plat {
+class App;
+}
+
+namespace claude {
+
+class AttachInput;
+class AttachAnswer;
+struct WorktreeRef;
+
+class Backend final : public model::Backend {
+public:
+    Backend(model::Store &store, plat::App &app, Credentials creds);
+    ~Backend() override; // stops its timers; no callback runs afterwards
+
+    // The conversation open when the workspace was last shown (kNoConv).
+    model::ConvRef lastConversation() const;
+    // Saves what it knows and stops looking: before the Store is cleared
+    // (switch, sign-out) — nothing is written into it afterwards.
+    void           close();
+
+    // ── model::Backend: reading (backend.cpp) ───────────────────────────────
+    void           connect(Done done) override;
+    void           loadHistory(model::ConvRef conv, model::Ts before, Done done) override;
+    void           loadThread(model::ConvRef conv, model::Ts root, Done done) override;
+    void           setActiveConversation(model::ConvRef conv, model::Ts thread) override;
+    Capabilities   capabilities() const override;
+    bool           isAgentSession(model::ConvRef conv) const override;
+    std::string    promptSuggestion(model::ConvRef conv) const override;
+    void           markRead(model::ConvRef conv, model::Ts ts) override;
+    void           markUnread(model::ConvRef conv, model::Ts ts) override;
+    void           setStarred(model::ConvRef conv, bool starred) override;
+    void           setMuted(model::ConvRef conv, bool muted) override;
+    void           setNotifyLevel(model::ConvRef conv, model::NotifyLevel level) override;
+    void           setLocalName(model::ConvRef conv, std::string name) override;
+    void           setZenMode(bool on) override;
+    bool           threadAcceptsReplies(model::ConvRef conv, model::Ts root) const override;
+    bool           threadOpensAsSession(model::ConvRef conv, model::Ts root) const override;
+    bool           threadFollowed(model::ConvRef conv, model::Ts root) const override;
+    model::ConvRef openThreadAsSession(model::ConvRef conv, model::Ts root) override;
+    std::string    agentSessionFolder(model::ConvRef conv) const override;
+    // The teammate's role id: the transcript's record, else the one msga
+    // started it with, else the Generalist ("" when it's no session).
+    std::string    agentSessionRole(model::ConvRef conv) const override;
+
+    // ── Sending (backend_send.cpp) ──────────────────────────────────────────
+    void send(model::ConvRef conv, std::string text, model::Ts threadTs, Done done) override;
+    // Files go with the prompt as @mentions of copies in msga's cache: Claude
+    // Code attaches them itself.
+    void sendWithFiles(
+        model::ConvRef           conv,
+        std::string              text,
+        model::Ts                threadTs,
+        std::vector<std::string> files,
+        Done                     done
+    ) override;
+    // "Stop": a background session's worker is stopped (`claude stop`) with
+    // all it runs, mid-turn, waiting on an approval or idle. Sessions a
+    // terminal or another program drives are theirs to stop.
+    bool canStopSession(model::ConvRef conv) const override;
+    void stopSession(model::ConvRef conv) override;
+    // The buttons on "Waiting for your approval": each one is an option of
+    // the permission question on Claude Code's screen, picked there.
+    void
+    pressButton(model::ConvRef conv, model::Ts ts, const std::string &buttonId, Done done) override;
+    std::string agentSessionBlocker(const std::string &dir) const override;
+    void        startAgentSession(
+        const std::string                                       &dir,
+        bool                                                     skipPermissionChecks,
+        const std::string                                       &role,
+        std::function<void(model::ConvRef, const std::string &)> done
+    ) override;
+
+    // ── Managing (backend_manage.cpp) ───────────────────────────────────────
+    // "Remove from msga": hides the session here — Claude Code keeps it — and
+    // deletes it (with its worktrees) if msga started it. It comes back if it
+    // gets new activity after that (resumed elsewhere).
+    void leave(model::ConvRef conv) override;
+    // Takes a prompt or an answer out of the session's transcript, so Claude
+    // doesn't have it either when the session goes on.
+    void remove(model::ConvRef conv, model::Ts ts) override;
+    bool canDeleteMessage(model::ConvRef conv, model::Ts ts) const override;
+    // Your reactions, for you alone: Claude never hears of them, and they're
+    // kept in memory only — gone when msga quits.
+    void react(model::ConvRef conv, model::Ts ts, std::string_view name, bool add) override;
+    void search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
+    std::vector<AgentRole> agentRoles() const override;
+    std::string            saveAgentRole(const AgentRole &role, std::string *error) override;
+    void                   removeAgentRole(const std::string &id) override;
+    void                   restoreAgentRole(const std::string &id) override;
+    void           findAgentSessions(std::function<void(std::vector<FoundSession>)> done) override;
+    model::ConvRef addFoundSession(const std::string &id) override;
+    std::vector<Command> commands(model::ConvRef conv) override;
+    LocalResult          runLocalCommand(
+        model::ConvRef conv, model::Ts thread, const std::string &name, const std::string &args
+    ) override;
+    std::vector<std::string> promptHistory(model::ConvRef conv) override;
+    std::vector<std::string> folderPromptHistory(const std::string &dir) override;
+    void                     loadMyProfile(std::function<void(MyProfile)> done) override;
+    void updateProfile(std::string name, std::string email, std::string phone, Done done) override;
+    void setPhoto(std::string path, Done done) override;
+
+    // Nothing of these exists for a Claude Code session.
+    void edit(model::ConvRef, model::Ts, std::string) override {}
+    void openDm(model::UserRef, std::function<void(model::ConvRef)> done) override {
+        if (done)
+            done(model::kNoConv);
+    }
+    void setPinned(model::ConvRef, model::Ts, bool) override {}
+    void setSaved(model::ConvRef, model::Ts, bool) override {}
+    void deleteFile(model::ConvRef, model::Ts, const std::string &) override {}
+    void setReminder(model::ConvRef, model::Ts, int64_t) override {}
+    void userTyping(model::ConvRef, model::Ts) override {}
+
+    // Each part keeps its private helpers on this struct (one per session).
+    struct Tracked;
+    struct Cleanup;
+
+private:
+    // ── backend.cpp ─────────────────────────────────────────────────────────
+    void           loadKnown();
+    void           saveKnown();
+    void           scheduleSaveKnown();
+    Tracked       &ensureTracked(const std::string &convId);
+    Tracked       *find(std::string_view convId);
+    const Tracked *find(std::string_view convId) const;
+    Tracked       *findRef(model::ConvRef conv);
+    const Tracked *findRef(model::ConvRef conv) const;
+    std::string    convIdFor(const std::string &sessionId) const;
+    void           tail(Tracked &t);
+    void           refresh();
+    void           refreshScan(); // refresh()'s body
+    void           scheduleRefresh();
+    void           watchTick();
+    void           pumpTyping();
+    void           announceRoles();
+    // Puts what the session shows into the Store: its messages (where its
+    // history was loaded), its conversation and its user.
+    void           sync(Tracked &t);
+    void           syncMeta(Tracked &t);
+    void           syncThreads(Tracked &t);
+    void           syncUsers();
+    // Puts a user into the Store and tells its observers (Store::addUser
+    // alone fires nothing: a dot or a name would change unseen). Inside a
+    // roster refresh the users change once, at its end.
+    void           putUser(model::User u);
+    model::UserRef userRef(const std::string &id);
+    model::UserRef roleUser(const std::string &role);
+    model::UserRef sessionUser(const Tracked &t);
+    model::User    meUser() const;
+    model::User    assistantUser(const Tracked &t) const;
+    model::User    teammateUser(const Role &r) const;
+
+    bool           busy(const Tracked &t) const;
+    bool           working(const Tracked &t) const; // busy, msga's own turn aside
+    bool           needsUser(const Tracked &t) const;
+    bool           unavailable(const Tracked &t) const; // the yellow dot
+    std::string    readOnlyReason(const Tracked &t) const;
+    std::string    roleOf(const Tracked &t) const;  // its teammate's role id
+    Role           roleFor(const Tracked &t) const; // …and the teammate, as shown
+    model::UserRef subagentAuthor(const TranscriptItem &item, model::UserRef parent);
+    // What a PeerMessage of `subagent` handing back (at `ts`) shows as in the
+    // session: a line pointing to that subagent's thread.
+    model::Message handbackPointer(
+        const Tracked &t, const TranscriptItem &subagent, model::Ts ts, model::UserRef parent
+    );
+    bool                     roleBusy(const std::string &role) const;
+    bool                     roleSubagentRunning(const std::string &role) const;
+    bool                     roleUnavailable(const std::string &role) const;
+    std::vector<std::string> roleIds() const;
+    std::string              titleOf(const Tracked &t) const;    // Claude Code's name for it
+    std::string              shownTitle(const Tracked &t) const; // the user's name, else titleOf
+    std::string              teammateNames(std::string_view text) const;
+
+    // Branched sessions (/btw threads).
+    std::unordered_set<std::string> detectForks(); // parents whose threads changed
+    bool                            asThread(const Tracked &t) const;
+    Tracked                        *forkFor(const std::string &parentConv, model::Ts root);
+    const Tracked                  *forkFor(const std::string &parentConv, model::Ts root) const;
+    std::string                     subagentOf(const Tracked &t, model::Ts root) const;
+
+    // What a session shows, rendered.
+    const model::Message       &renderedAt(Tracked &t, size_t i);
+    std::vector<model::Message> visibleMessages(Tracked &t);
+    std::vector<model::Message> threadMessages(Tracked &fork);
+    // A terminal session stopped at its prompt for the user.
+    bool                        terminalWaits(const Tracked &t) const;
+    // The ts of the session's "Waiting for you…" message, 0 when it shows none.
+    model::Ts                   waitingTs(const Tracked &t, model::Ts lastTs) const;
+    model::Message              waitingMessage(const Tracked &t, model::Ts ts);
+    // The message at ts in a list the Store doesn't hold, built for its
+    // notification alone (no output files); false when nothing shows there.
+    bool                        newsAt(Tracked &t, bool thread, model::Ts ts, model::Message *out);
+    // A message as sync() takes it: whose and what kind, its thread.
+    struct Seen {
+        bool      mine = false, progress = false;
+        model::Ts thread = 0;
+    };
+    // What visibleMessages / threadMessages show, without rendering any of
+    // it — for the lists the Store doesn't hold (sync).
+    std::map<model::Ts, Seen>   seenOf(Tracked &t, bool thread);
+    std::vector<model::Message> subagentThread(Tracked &t, model::Ts root);
+    void
+    appendOutgoing(const Tracked &t, std::vector<model::Message> &out, model::Ts threadRoot) const;
+    bool isOutgoingCopy(const Tracked &t, model::Ts ts) const;
+    void attachOutputs(
+        model::Message                    &m,
+        const std::vector<TranscriptItem> &items,
+        size_t                             i,
+        const std::string                 &convId,
+        const std::string                 &cwd,
+        const std::string                 &keyPrefix = {}
+    ) const;
+    void applyReactions(const std::string &convId, std::vector<model::Message> &msgs) const;
+    struct SubagentCount;
+    const SubagentCount &subagentStats(const Tracked &t, const std::string &agentId) const;
+    int subagentReplyCount(const Tracked &t, const std::string &agentId, model::Ts *latest) const;
+    // When the subagent's run under way began (epoch ms); 0 = it isn't running.
+    int64_t subagentRunSinceMs(const Tracked &t, const std::string &agentId) const;
+
+    // ── backend_send.cpp ────────────────────────────────────────────────────
+    void        sendText(model::ConvRef conv, std::string text, model::Ts threadTs, Done done);
+    void        sendNext(model::ConvRef conv);
+    void        failSends(Tracked &t, const std::string &reason);
+    bool        loginKnownGood() const;
+    void        whenLoggedIn(std::function<void(bool loggedIn)> then);
+    bool        typesLive(const Tracked &t) const;
+    void        typeLive(Tracked &t);
+    void        dispatch(Tracked &t);
+    void        readApproval(Tracked &t);
+    void        stopWorker(Tracked &t);
+    void        adoptCopy(Tracked &t, const std::string &copyId);
+    void        startFork(Tracked &parent, const std::string &question, Done done);
+    void        launchFork(Tracked &parent, const std::string &question, Done done);
+    void        settleTurn(Tracked &t); // msga's turn: ended, or given up on
+    std::string cannotStartIn(const std::string &dir) const;
+    Tracked &
+    createSession(const std::string &dir, bool skipPermissionChecks, const std::string &role);
+
+    // ── backend_manage.cpp ──────────────────────────────────────────────────
+    void hideSession(const std::string &convId, const std::shared_ptr<Cleanup> &cleanup);
+    void stopRemoved(const std::string &sessionId, const std::string &cwd);
+    void removeOwned(
+        const std::string              &sessionId,
+        const std::string              &jobId,
+        const std::string              &cwd,
+        bool                            background,
+        const std::shared_ptr<Cleanup> &cleanup
+    );
+    void release(const std::shared_ptr<Cleanup> &cleanup);
+    bool startedByMsga(const std::string &sessionId) const;
+    bool startedByMsga(const std::string &sessionId, std::unordered_set<std::string> &seen) const;
+    const TranscriptItem *deletableItem(Tracked &t, model::Ts ts);
+    Tracked              *queuedHolder(const std::string &convId, model::Ts ts, size_t *index);
+    std::vector<std::pair<std::string, std::string>> conversationStatus(Tracked &t);
+    void                                             teamChanged(const std::string &id);
+    void                                             loadProfile();
+    void                                             saveProfile() const;
+    void                                             reportError(const std::string &message);
+
+    // Calls fn later on the loop unless this backend is gone by then.
+    void post(std::function<void()> fn);
+    // A one-shot timer that dies with the backend.
+    void after(int ms, std::function<void()> fn);
+
+    plat::App                                      &_app;
+    Credentials                                     _creds;
+    Paths                                           _paths;
+    Team                                            _team;
+    std::unique_ptr<Launcher>                       _launcher;
+    std::shared_ptr<bool>                           _alive;
+    // By conversation id — the session id, except for a session started with
+    // "+": its conversation exists before Claude Code picks the session's id on
+    // the first message, so it keeps its own id and _convOf maps the session to it.
+    std::map<std::string, std::unique_ptr<Tracked>> _sessions;
+    std::unordered_map<std::string, std::string>    _convOf; // session id → conversation id
+    // Sessions removed from msga, by session id: when, and the transcript whose
+    // later growth brings the session back (forgotten once Claude Code drops it).
+    struct Hidden {
+        int64_t     atMs = 0;
+        std::string transcript;
+        int64_t     seenSize = -1;    // transcript bytes already known not to be new activity
+        bool        stopping = false; // its worker is being stopped (stopRemoved)
+    };
+    std::unordered_map<std::string, Hidden> _hidden;
+    // Sessions msga started ("+" sessions, /btw branches), by session id —
+    // Claude Code records no such thing. Closing msga leaves their workers be;
+    // "Remove from msga" deletes them. Forgotten once Claude Code drops the job.
+    std::unordered_set<std::string>         _launchedHere;
+    // Worktrees being deleted right now (cleaned paths): never twice at once.
+    std::unordered_set<std::string>         _reaping;
+    std::unordered_set<std::string>         _forkingIn; // folders a /btw is being launched in
+    // Sends waiting, in order, behind one whose files are being copied into
+    // the cache on a worker (sendWithFiles); _copying = the conversations
+    // with a copy under way.
+    struct Queued {
+        model::ConvRef           conv = model::kNoConv;
+        std::string              text;
+        model::Ts                threadTs = 0;
+        std::vector<std::string> files;
+        Done                     done;
+    };
+    std::vector<Queued>         _sendQueue;
+    std::vector<model::ConvRef> _copying;
+
+    uint64_t _debounce = 0, _watchTimer = 0, _safetyPoll = 0, _saveTimer = 0, _typingTimer = 0;
+    std::vector<uint64_t>                                        _oneShots;
+    bool                                                         _started       = false;
+    bool                                                         _firstScanDone = false;
+    int                                                          _batchUsers    = 0;
+    bool                                                         _usersDirty    = false;
+    // What the watcher saw last (path → size + mtime), and when it last looked.
+    std::unordered_map<std::string, std::pair<int64_t, int64_t>> _watched;
+    // Typing into live workers (typeLive): misses in a row, and off until when.
+    int                                                          _typeLiveMisses     = 0;
+    int64_t                                                      _typeLiveOffUntilMs = 0;
+    // The CLI's login (whenLoggedIn): the last check's answer and when it came.
+    Login                                                        _login = Login::Unknown;
+    int64_t                                _loginCheckedMs = 0; // 0 = never, or to be checked again
+    bool                                   _loginChecking  = false;
+    std::vector<std::function<void(bool)>> _loginWaiters;
+    int64_t                                _loginFailedSeen = 0; // newest parser loginFailedAt seen
+    bool                                   _zen             = false;
+    std::string                            _myName;       // "" = the login name
+    std::string                            _myAvatarPath; // a copy in msga's data; "" = initials
+    std::string                            _lastConv;     // the conversation open last
+    // Subagent transcripts are only re-parsed when they grow.
+    struct SubagentCount {
+        int64_t              size     = -1;
+        int                  count    = 0;
+        int                  zenCount = 0; // without the tool-call cards
+        model::Ts            latest   = 0;
+        std::vector<int64_t> activity; // every record's epoch micros (TranscriptParser::activity)
+    };
+    mutable std::unordered_map<std::string, SubagentCount> _subagentCounts; // by transcript path
+    struct CommandList {
+        std::vector<SlashCommand> commands;
+        int64_t                   fetchedMs = 0;
+        bool                      loading   = false;
+    };
+    std::unordered_map<std::string, CommandList> _commands;            // by session folder
+    std::unordered_map<std::string, bool> _roleBusy, _roleUnavailable; // by role, as announced
+    Account                               _account; // the login, as Claude Code last reported it
+    // The user's reactions, by conversation then message (react()).
+    std::unordered_map<std::string, std::map<model::Ts, std::vector<model::Reaction>>> _reactions;
+    // What the Store shows of each loaded list, by (conversation, thread root;
+    // 0 = the top-level list): each message's fingerprint, and the oldest ts
+    // served (older messages aren't in the Store).
+    struct Shown {
+        std::map<model::Ts, uint64_t> fp;
+        model::Ts                     from = 0;
+    };
+    std::map<std::pair<model::ConvRef, model::Ts>, Shown>                    _shown;
+    // The typing indicators set in the Store: (conv, user, thread) → since.
+    std::map<std::tuple<model::ConvRef, model::UserRef, model::Ts>, int64_t> _typing;
+};
+
+} // namespace claude

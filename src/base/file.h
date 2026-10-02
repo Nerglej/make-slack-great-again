@@ -1,0 +1,72 @@
+// File helpers. Paths are UTF-8 with '/' separators ('\' also accepted on
+// Windows, where they are converted to wide strings at the OS boundary).
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace file {
+
+// Reads the whole file into *out. False (and *out empty) on any error.
+bool readAll(std::string_view path, std::string *out);
+// Up to `maxBytes` from byte `offset` on (fewer at the end of the file; none
+// past it) — the tail a growing log appended, or a bounded read of a file
+// that should be small. False (and *out empty) when it can't be read.
+bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::string *out);
+// Replaces an existing file's content in place (truncate, then write): the
+// same file, so a process holding it open keeps appending to it. Not atomic;
+// prefer writeAtomic unless that matters.
+bool overwrite(std::string_view path, std::string_view data);
+// Writes `data` so that readers see either the old or the new content, never
+// a torn one: a temp file in the same directory, flushed to disk, then
+// renamed over `path`. Creates missing parent directories.
+// `mode`: POSIX permissions of a newly written file (0600 for secrets).
+bool writeAtomic(std::string_view path, std::string_view data, int mode = 0644);
+
+bool    exists(std::string_view path);
+bool    isDir(std::string_view path);
+int64_t size(std::string_view path); // -1 when missing
+// mkdir -p. True if the directory exists afterwards.
+bool    makeDirs(std::string_view path);
+bool    remove(std::string_view path); // a file or an empty directory
+// Copies a regular file's bytes to `to` (atomically, as writeAtomic).
+bool    copy(std::string_view from, std::string_view to);
+// Sets the modification time to now (LRU disk caches stamp "last used").
+bool    touch(std::string_view path);
+
+// One directory entry ("." and ".." are never listed).
+struct DirEntry {
+    std::string name;
+    int64_t     size   = 0; // bytes; 0 for directories
+    int64_t     mtime  = 0; // last modification, unix seconds
+    bool        isDir  = false;
+    bool        hidden = false; // dot file, or the Windows hidden attribute
+};
+// The entries of `dir` in OS order (symlinks followed). False when it
+// cannot be read (missing, not a directory, no permission).
+bool listDir(std::string_view dir, std::vector<DirEntry> *out);
+
+// ── Path strings (pure, no I/O) ─────────────────────────────────────────────
+std::string_view dirName(std::string_view path);   // "a/b/c.txt" → "a/b"; "c" → ""
+std::string_view baseName(std::string_view path);  // "a/b/c.txt" → "c.txt"
+std::string_view extension(std::string_view path); // "c.tar.gz" → "gz" (no dot); "" if none
+std::string      join(std::string_view dir, std::string_view rel);
+bool             isAbsolute(std::string_view path);
+// `rel` resolved against `base` unless it is already absolute.
+std::string      resolve(std::string_view base, std::string_view rel);
+// The current directory joined in front of a relative path.
+std::string      absolute(std::string_view path);
+
+// An absolute local path as a file:// URL, as Qt's QUrl::fromLocalFile
+// encodes it: "/a/b c" → "file:///a/b%20c", "C:\x" → "file:///C:/x", a UNC
+// "//srv/share/x" → "file://srv/share/x"; bytes outside RFC 3986's path
+// characters (spaces, '%', '#', '?', non-ASCII UTF-8) percent-encoded.
+std::string toFileUrl(std::string_view path);
+// The local path of a file:// URL (QUrl::toLocalFile): percent-decoded,
+// "localhost" dropped, "file:///C:/x" → "C:/x" and another host → UNC on
+// Windows. "" when it isn't a file:// URL.
+std::string fromFileUrl(std::string_view url);
+
+} // namespace file

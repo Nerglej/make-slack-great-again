@@ -1,0 +1,122 @@
+// msga's agent-workspace dialogs (Claude Code), ported item for item:
+//
+//   Session finder (src/ui/session_finder_dialog) "Find a session": every
+//                  session the agent has, from every folder, like Claude
+//                  Code's /resume — a search field ("Search for sessions"),
+//                  "Create a session", the close button; rows with the
+//                  agent's picture, the title, "folder · when · last
+//                  prompt", "In the list" for those listed already.
+//   Teammate       (src/ui/teammate_dialog) "Add a teammate" / "Edit
+//                  teammate": Name, Description, Picture (a glyph on a
+//                  colour), Instructions, the hint; [Restore default] Cancel /
+//                  Add teammate | Save.
+//   Remove teammate "Remove the %1 from the team? …", Cancel / Remove.
+//
+// BrowseList is msga's BrowseListView, the list the finder, the teammate
+// page and "Find a channel" share: 60-px rows (36-px avatar or a channel's
+// hash / lock, bold title, a muted subtitle, a badge on the right), hover
+// and keyboard selection, a substring filter.
+#pragma once
+
+#include "screens/common/context.h"
+#include "screens/shell/avatars.h"
+#include "ui/ui.h"
+
+#include <functional>
+#include <string>
+#include <vector>
+
+namespace shell {
+
+class BrowseList;
+
+// The list's rows, in a base so they exist before the VirtualList asks the
+// adapter for its count. Only the rows on screen are views: a workspace's
+// thousands of people cost a screenful of avatars, not all of them.
+struct BrowseListData {
+    struct Item {
+        std::string id, title, subtitle, avatar, badge;
+        std::string searchKey;           // lower-case, what the filter matches
+        bool        badgeStrong = false; // bold, primary text ("2 new")
+        bool        badgeCheck  = true;  // a check mark before it ("In the list")
+        // A channel's row: no picture, this icon (Hash / Lock) before the title.
+        uint16_t    titleIcon   = 0xffff;
+    };
+    struct Rows final : ui::VirtualList::Adapter {
+        BrowseListData           *data = nullptr;
+        int                       count() const override { return int(data->shown.size()); }
+        std::unique_ptr<ui::View> create(int kind) override;
+        void                      bind(ui::View &row, int index) override;
+        float                     estimateHeight(int index) const override;
+    };
+    BrowseListData() { rows.data = this; }
+    Rows                rows;
+    std::vector<Item>   items;
+    std::vector<size_t> shown; // indices into items passing the filter
+};
+
+class BrowseList : private BrowseListData, public ui::VirtualList {
+public:
+    using Item = BrowseListData::Item;
+    explicit BrowseList(Avatars &avatars);
+    ~BrowseList() override;
+
+    void setItems(std::vector<Item> items);
+    // Rows whose searchKey contains the (trimmed, lower-cased) query.
+    void applyFilter(std::string_view query);
+    // On the content surface (the teammate page) instead of a dialog's card.
+    void setOnContentSurface(bool on) { _onContent = on; }
+    void setAvatarRadius(float r) { _radius = r; } // < 0: round (the default)
+
+    size_t      count() const { return items.size(); }
+    size_t      visibleCount() const { return shown.size(); }
+    const Item &visibleItem(size_t row) const { return items[shown[row]]; }
+    int         selectedRow() const { return _selected; }
+    void        setSelectedRow(int row); // -1: none
+    void        moveSelection(int delta);
+    void        activateSelected();
+    std::function<void(const std::string &id)> onActivated;
+
+    void paint(gfx::Painter &p) override;
+
+private:
+    friend struct BrowseListData;
+    void bindRow(ui::View &row, int index);
+
+    Avatars &_avatars;
+    int      _selected  = -1;
+    float    _radius    = -1;
+    bool     _onContent = false;
+};
+
+// The finders' close button (msga's IconButton(":/ui/x.svg", 32, 14)).
+ui::Clickable *addDialogCloseButton(ui::View *parent);
+
+// "Find a session". pick(id) after a row was chosen (the dialog is closed),
+// create() after "Create a session".
+ui::Popup *showSessionFinder(
+    screens::Context                        &ctx,
+    ui::Window                              &w,
+    Avatars                                 &avatars,
+    std::function<void(const std::string &)> pick,
+    std::function<void()>                    create
+);
+
+// "Add a teammate" (role.id empty) / "Edit teammate". done(role, false) after
+// Save, done({}, true) after "Restore default".
+ui::Popup *showTeammateDialog(
+    ui::Window                                                          &w,
+    const model::Backend::AgentRole                                     &role,
+    std::function<void(const model::Backend::AgentRole &, bool restore)> done
+);
+
+// "Remove teammate": remove() after Remove.
+ui::Popup *
+showRemoveTeammateDialog(ui::Window &w, const std::string &name, std::function<void()> remove);
+
+// The finder's row for a session (msga's SessionFinderDialog::setSessions);
+// `home` is replaced by "~".
+BrowseList::Item
+foundSessionItem(const model::Backend::FoundSession &s, const std::string &home, int64_t nowSecs);
+
+} // namespace shell

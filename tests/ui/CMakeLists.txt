@@ -1,0 +1,22 @@
+# ui: everything runs on plat's headless backend with input injected through
+# its TestHooks, so no display is needed.
+add_executable(ui_tests
+    test_layout.cpp
+    test_input.cpp
+    test_vlist.cpp
+    test_textedit.cpp
+    test_paint.cpp
+    test_menu.cpp
+    test_dialog.cpp
+    main.cpp
+)
+set(ui_test_names layout hit hover focus shortcut popup menu scroll vlist textedit html damage theme)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(ui_tests PRIVATE test_filebrowser.cpp)
+    list(APPEND ui_test_names filebrowser)
+endif()
+target_link_libraries(ui_tests PRIVATE msga_ui msga_test)
+foreach(t ${ui_test_names})
+    add_test(NAME ui_${t} COMMAND ui_tests ${t})
+    set_tests_properties(ui_${t} PROPERTIES ENVIRONMENT "PLAT_BACKEND=headless")
+endforeach()

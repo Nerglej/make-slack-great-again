@@ -1,0 +1,432 @@
+#include "app/screens/common/remote_images.h"
+
+#include "app/identity.h"
+#include "base/crypto.h"
+#include "base/file.h"
+#include "base/log.h"
+#include "base/str.h"
+#include "plat/plat.h"
+
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
+namespace screens {
+
+namespace {
+
+// The old app's CacheEvictor cadence: shortly after start, then every 30
+// minutes, and after a burst of 32 MB of downloads.
+constexpr int     kFirstSweepMs    = 15000;
+constexpr int     kSweepEveryMs    = 30 * 60 * 1000;
+constexpr int64_t kSweepAfterBytes = int64_t(32) << 20;
+constexpr int64_t kDefaultLimit    = int64_t(250) << 20; // CacheEvictor::kDefaultCapMb
+
+double nowMs() {
+    using namespace std::chrono;
+    return double(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+// What gfx can decode (PNG, JPEG, GIF, WebP), by magic bytes. Anything else
+// — Slack's HTML sign-in page for a file fetched without auth, a JSON error —
+// is not kept, so it can't poison the disk cache.
+bool looksLikeImage(std::string_view b) {
+    const auto starts = [&](std::string_view m) {
+        return b.size() >= m.size() && b.compare(0, m.size(), m) == 0;
+    };
+    return starts("\x89PNG") || starts("\xFF\xD8\xFF") || starts("GIF8") ||
+           (b.size() >= 12 && starts("RIFF") && b.compare(8, 4, "WEBP") == 0);
+}
+
+int64_t treeBytes(const std::string &dir) {
+    std::vector<file::DirEntry> all;
+    int64_t                     n = 0;
+    if (file::listDir(dir, &all))
+        for (const file::DirEntry &e : all)
+            n += e.isDir ? treeBytes(file::join(dir, e.name)) : e.size;
+    return n;
+}
+
+// The old CacheEvictor::sweep: while everything (the blob folders and the
+// kept ones) is over `limit`, deletes the least recently used blob. The
+// blob bytes left. Worker thread.
+int64_t sweepDirs(
+    const std::vector<std::string> &blobDirs,
+    const std::vector<std::string> &keptDirs,
+    int64_t                         limit
+) {
+    struct Blob {
+        std::string path;
+        int64_t     size, mtime;
+    };
+    std::vector<Blob> blobs;
+    int64_t           total = 0, blobBytes = 0;
+    for (const std::string &dir : blobDirs) {
+        std::vector<file::DirEntry> all;
+        if (file::listDir(dir, &all))
+            for (const file::DirEntry &e : all)
+                if (!e.isDir) {
+                    blobs.push_back({file::join(dir, e.name), e.size, e.mtime});
+                    blobBytes += e.size;
+                }
+    }
+    total = blobBytes;
+    if (limit != INT64_MAX) // only measuring: the kept folders don't matter
+        for (const std::string &dir : keptDirs)
+            total += treeBytes(dir);
+    // Oldest first, one at a time: a sweep usually deletes a handful, and a
+    // sort would be one more template instantiation in the binary.
+    while (total > limit) {
+        Blob *oldest = nullptr;
+        for (Blob &b : blobs)
+            if (!b.path.empty() && (!oldest || b.mtime < oldest->mtime))
+                oldest = &b;
+        if (!oldest)
+            break;
+        // A file another process holds open (Windows) stays for the next sweep.
+        if (file::remove(oldest->path)) {
+            total -= oldest->size;
+            blobBytes -= oldest->size;
+        }
+        oldest->path.clear(); // done with it either way
+    }
+    return blobBytes;
+}
+
+} // namespace
+
+struct RemoteImages::Impl {
+    plat::App               &app;
+    net::Client             *client;
+    std::string              dir;
+    // coverDirs(): the other folders under the limit.
+    std::vector<std::string> blobDirs, keptDirs;
+    AuthHook                 auth;
+    Fetch                    fetch;
+
+    struct Pending {
+        std::string       url;
+        std::vector<Done> waiters;
+        net::RequestId    req     = 0;
+        bool              started = false;
+    };
+    std::vector<Pending> pending; // running ones and the queue, in order
+    int                  active = 0;
+    struct Failure {
+        std::string url;
+        double      until; // ms, steady clock
+    };
+    std::vector<Failure> failed; // few: a flat list
+    int64_t              limit = kDefaultLimit, disk = 0, sinceSweep = 0;
+    plat::TimerId        firstSweep = 0, everySweep = 0;
+    bool                 alive = true; // UI thread; false once destroyed
+
+    // The worker: disk writes, mtime bumps, sweeps.
+    std::mutex                         m;
+    std::condition_variable            cv;
+    std::vector<std::function<void()>> jobs;
+    std::thread                        thread;
+    bool                               stop = false;
+
+    Impl(plat::App &a, net::Client *c, std::string d) : app(a), client(c), dir(std::move(d)) {}
+
+    static void run(std::shared_ptr<Impl> self) {
+        for (;;) {
+            std::function<void()> job;
+            {
+                std::unique_lock lock(self->m);
+                self->cv.wait(lock, [&] { return self->stop || !self->jobs.empty(); });
+                if (self->stop)
+                    return;
+                job = std::move(self->jobs.front());
+                self->jobs.erase(self->jobs.begin());
+            }
+            job();
+        }
+    }
+    void work(std::function<void()> job) {
+        {
+            std::lock_guard lock(m);
+            jobs.push_back(std::move(job));
+        }
+        cv.notify_one();
+    }
+
+    std::string pathFor(const std::string &url) const {
+        const auto digest = crypto::sha256(url);
+        return file::join(dir, crypto::hex(crypto::bytes(digest)).substr(0, 32));
+    }
+
+    Pending *find(const std::string &url) {
+        for (Pending &p : pending)
+            if (p.url == url)
+                return &p;
+        return nullptr;
+    }
+
+    Failure *failure(const std::string &url) {
+        for (Failure &f : failed)
+            if (f.url == url)
+                return &f;
+        return nullptr;
+    }
+
+    // Down to `limit` (the setting by default; INT64_MAX only measures, 0
+    // clears), then disk = what is left.
+    static void
+    sweep(const std::shared_ptr<Impl> &self, std::function<void()> done = {}, int64_t limit = -1) {
+        self->sinceSweep               = 0;
+        std::vector<std::string> blobs = self->blobDirs;
+        blobs.insert(blobs.begin(), self->dir);
+        if (limit < 0)
+            limit = self->limit;
+        self->work(
+            [self, blobs = std::move(blobs), kept = self->keptDirs, limit, done = std::move(done)] {
+                const int64_t left = sweepDirs(blobs, kept, limit);
+                self->app.post([self, left, done] {
+                    if (!self->alive)
+                        return;
+                    self->disk = left;
+                    if (done)
+                        done();
+                });
+            }
+        );
+    }
+
+    static void pump(const std::shared_ptr<Impl> &self) {
+        for (size_t i = 0; i < self->pending.size() && self->active < kMaxParallel; ++i) {
+            Pending &p = self->pending[i];
+            if (p.started)
+                continue;
+            p.started = true;
+            ++self->active;
+            net::Request req;
+            req.url = p.url;
+            if (self->auth)
+                self->auth(p.url, req.headers);
+            std::string url = p.url;
+            auto        cb  = [self, url](net::Response r) { landed(self, url, std::move(r)); };
+            if (self->fetch)
+                self->fetch(std::move(req), std::move(cb));
+            else
+                p.req = self->client->send(std::move(req), std::move(cb));
+        }
+    }
+
+    static void landed(const std::shared_ptr<Impl> &self, const std::string &url, net::Response r) {
+        if (!self->alive)
+            return;
+        --self->active;
+        if (Pending *p = self->find(url))
+            p->req = 0;
+        if (r.ok() && looksLikeImage(r.body)) {
+            std::string  path = self->pathFor(url);
+            const size_t n    = r.body.size();
+            self->work([self, url, path, n, body = std::move(r.body)] {
+                const bool ok = file::writeAtomic(path, body);
+                self->app.post([self, url, path, n, ok] {
+                    if (self->alive)
+                        finish(self, url, ok ? path : std::string(), ok ? n : 0);
+                });
+            });
+        } else {
+            LOG_DEBUG(
+                "images",
+                "%.80s: %d %s",
+                url.c_str(),
+                r.status,
+                r.error.empty() ? "not an image" : r.error.c_str()
+            );
+            finish(self, url, {}, 0);
+        }
+        pump(self);
+    }
+
+    // CacheEvictor::noteBytesWritten: a burst of downloads sweeps before
+    // the next periodic sweep would.
+    static void written(const std::shared_ptr<Impl> &self, int64_t n) {
+        self->disk += n;
+        self->sinceSweep += n;
+        if (self->sinceSweep >= kSweepAfterBytes)
+            sweep(self);
+    }
+
+    static void finish(
+        const std::shared_ptr<Impl> &self, const std::string &url, const std::string &path, size_t n
+    ) {
+        if (path.empty()) {
+            if (Failure *f = self->failure(url))
+                f->until = nowMs() + kCooldownMs;
+            else
+                self->failed.push_back({url, nowMs() + kCooldownMs});
+        }
+        std::vector<Done> waiters;
+        for (size_t i = 0; i < self->pending.size(); ++i)
+            if (self->pending[i].url == url) {
+                waiters = std::move(self->pending[i].waiters);
+                self->pending.erase(self->pending.begin() + ptrdiff_t(i));
+                break;
+            }
+        if (n)
+            written(self, int64_t(n));
+        for (Done &d : waiters)
+            d(path);
+    }
+};
+
+RemoteImages::RemoteImages(plat::App &app, net::Client *client, std::string dir)
+    : _impl(std::make_shared<Impl>(app, client, std::move(dir))) {
+    Impl &d = *_impl;
+    if (d.dir.empty())
+        return;
+    file::makeDirs(d.dir);
+    d.thread = std::thread(Impl::run, _impl);
+    // How much is there (Settings shows it) — no deleting this early.
+    Impl::sweep(_impl, {}, INT64_MAX);
+    std::weak_ptr<Impl> weak = _impl;
+    d.firstSweep             = app.addTimer(kFirstSweepMs, false, [weak] {
+        if (auto self = weak.lock()) {
+            self->firstSweep = 0;
+            Impl::sweep(self);
+        }
+    });
+    d.everySweep             = app.addTimer(kSweepEveryMs, true, [weak] {
+        if (auto self = weak.lock())
+            Impl::sweep(self);
+    });
+}
+
+RemoteImages::~RemoteImages() {
+    Impl &d = *_impl;
+    d.alive = false; // results still on their way are dropped
+    for (Impl::Pending &p : d.pending)
+        if (p.req && d.client)
+            d.client->cancel(p.req);
+    d.pending.clear();
+    if (d.firstSweep)
+        d.app.cancelTimer(d.firstSweep);
+    if (d.everySweep)
+        d.app.cancelTimer(d.everySweep);
+    {
+        std::lock_guard lock(d.m);
+        d.stop = true;
+        d.jobs.clear();
+    }
+    d.cv.notify_all();
+    if (d.thread.joinable())
+        d.thread.join();
+}
+
+bool RemoteImages::isRemote(std::string_view path) {
+    return str::startsWith(path, "https://") || str::startsWith(path, "http://");
+}
+
+std::string RemoteImages::defaultDir(plat::App &app) {
+    const std::string cache = identity::cacheDir(app);
+    return cache.empty() ? std::string() : file::join(cache, "images");
+}
+
+std::string RemoteImages::cachedPath(const std::string &url) {
+    Impl &d = *_impl;
+    if (d.dir.empty() || url.empty())
+        return {};
+    std::string path = d.pathFor(url);
+    if (!file::exists(path))
+        return {};
+    // A hit is a use: the sweep deletes the least recently viewed first.
+    d.work([path] { file::touch(path); });
+    return path;
+}
+
+bool RemoteImages::failedRecently(const std::string &url) const {
+    const Impl::Failure *f = _impl->failure(url);
+    return f && nowMs() < f->until;
+}
+
+void RemoteImages::fetch(const std::string &url, Done done) {
+    Impl &d = *_impl;
+    if (d.dir.empty() || (!d.client && !d.fetch) || failedRecently(url)) {
+        std::weak_ptr<Impl> weak = _impl;
+        d.app.post([weak, done = std::move(done)] {
+            if (auto self = weak.lock(); self && self->alive && done)
+                done({});
+        });
+        return;
+    }
+    if (Impl::Pending *p = d.find(url)) {
+        p->waiters.push_back(std::move(done));
+        return;
+    }
+    d.pending.push_back({url, {}, 0, false});
+    d.pending.back().waiters.push_back(std::move(done));
+    Impl::pump(_impl);
+}
+
+void RemoteImages::setAuth(AuthHook hook) {
+    _impl->auth = std::move(hook);
+    // A 401 or a sign-in page from before the workspace signed in: try again.
+    _impl->failed.clear();
+}
+
+void RemoteImages::setFetch(Fetch fetch) {
+    _impl->fetch = std::move(fetch);
+}
+
+void RemoteImages::coverDirs(std::vector<std::string> blobs, std::vector<std::string> kept) {
+    _impl->blobDirs = std::move(blobs);
+    _impl->keptDirs = std::move(kept);
+    if (!_impl->dir.empty())
+        Impl::sweep(_impl, {}, INT64_MAX); // what Settings shows now includes them
+}
+
+void RemoteImages::noteWritten(const std::string &path) {
+    if (_impl->dir.empty() || path.empty())
+        return;
+    auto self = _impl;
+    self->work([self, path] {
+        const int64_t n = file::size(path);
+        self->app.post([self, n] {
+            if (self->alive && n > 0)
+                Impl::written(self, n);
+        });
+    });
+}
+
+void RemoteImages::setLimitMb(int mb) {
+    const int64_t limit = int64_t(std::max(mb, 1)) << 20;
+    if (limit == _impl->limit)
+        return;
+    _impl->limit = limit;
+    if (!_impl->dir.empty())
+        Impl::sweep(_impl);
+}
+
+void RemoteImages::clear() {
+    Impl &d = *_impl;
+    if (d.dir.empty())
+        return;
+    d.disk = 0; // what Settings shows right after the click
+    Impl::sweep(_impl, {}, 0);
+}
+
+int64_t RemoteImages::diskBytes() const {
+    return _impl->disk;
+}
+
+size_t RemoteImages::pending() const {
+    return _impl->pending.size();
+}
+
+void RemoteImages::sweepNow(std::function<void()> done) {
+    if (_impl->dir.empty()) {
+        if (done)
+            _impl->app.post(std::move(done));
+        return;
+    }
+    Impl::sweep(_impl, std::move(done));
+}
+
+} // namespace screens

@@ -1,910 +1,159 @@
+# msga — see src/README.md. Size-first build: every flag here exists to make
+# the binary smaller; opt a hot file into -O2 locally, never globally.
 cmake_minimum_required(VERSION 3.21)
-project(msga LANGUAGES CXX)
-
-include("${CMAKE_SOURCE_DIR}/credentials.cmake" OPTIONAL)
-include("${CMAKE_SOURCE_DIR}/version.cmake")
-foreach(_var MSGA_CLIENT_ID MSGA_CLIENT_SECRET MSGA_XAPP MSGA_TEAMS_CLIENT_ID
-        MSGA_GOOGLE_CLIENT_ID MSGA_GOOGLE_CLIENT_SECRET MSGA_GIPHY_KEY)
-    if(NOT DEFINED ${_var})
-        set(${_var} "")
-    endif()
-endforeach()
-string(TIMESTAMP MSGA_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
-configure_file(
-    "${CMAKE_SOURCE_DIR}/src/app_credentials.h.in"
-    "${CMAKE_BINARY_DIR}/app_credentials.h"
-    @ONLY
-)
-
+project(msga LANGUAGES C CXX)
+# Each static library once on a link line where the linker resolves them in
+# any order (Apple's ld warns about the repeats).
+if(POLICY CMP0156)
+    cmake_policy(SET CMP0156 NEW)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-option(MSGA_CLAZY "Add 'clazy' target for Qt-aware static analysis" OFF)
-option(MSGA_ASAN "Build with AddressSanitizer + LeakSanitizer" OFF)
-
-# 6.5 is a hard floor: QtWebSockets only gained QWebSocket::errorOccurred there
-# (QAbstractSocket got it much earlier — the two are unrelated modules), and the
-# realtime sockets rely on it. Without the version here the build fails much
-# later with three unexplained "not a member of QWebSocket" errors.
-set(MSGA_QT_MIN 6.5)
-set(MSGA_QT_COMPONENTS Core Gui Widgets Network WebSockets Svg Concurrent Test)
-
-# The scripts pass -DCMAKE_PREFIX_PATH, but honour $QT_PREFIX here too so a bare
-# `cmake -B build -S .` picks the same Qt as `QT_PREFIX=... ./scripts/build.sh`.
-if(NOT CMAKE_PREFIX_PATH AND DEFINED ENV{QT_PREFIX})
-    set(CMAKE_PREFIX_PATH "$ENV{QT_PREFIX}")
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE MinSizeRel)
 endif()
 
-# Look it up quietly first: CMake's own failure for a missing component is
-# "package configuration file ... set Qt6_FOUND to FALSE", which tells a first-
-# time builder nothing. Diagnose the two real causes instead — a Qt below the
-# floor, and a Qt missing WebSockets (neither qt6-base-dev nor the online
-# installer's default selection includes it).
-find_package(Qt6 ${MSGA_QT_MIN} QUIET COMPONENTS ${MSGA_QT_COMPONENTS})
-if(NOT Qt6_FOUND)
-    set(_msga_qt_hint "\
-Install Qt ${MSGA_QT_MIN}+ with the WebSockets module:
-  Debian/Ubuntu: sudo apt install qt6-base-dev qt6-websockets-dev qt6-svg-dev
-  macOS:         brew install qt
-  Any distro:    https://www.qt.io/download-qt-installer \
-— tick 'Qt WebSockets', it is NOT selected by default
-Then point the build at it: QT_PREFIX=$ENV{HOME}/Qt/<version>/gcc_64 ./scripts/build.sh
-(scripts/configure-linux.sh checks all of this before you build.)")
-
-    # Retry without the version constraint to learn what is actually installed.
-    find_package(Qt6 QUIET COMPONENTS Core)
-    if(Qt6_FOUND AND Qt6_VERSION VERSION_LESS ${MSGA_QT_MIN})
-        message(FATAL_ERROR
-            "Qt ${Qt6_VERSION} (${Qt6_DIR}) is too old — msga needs Qt ${MSGA_QT_MIN}+ for "
-            "QWebSocket::errorOccurred.\n${_msga_qt_hint}")
-    endif()
-
-    set(_msga_qt_missing "")
-    foreach(_comp IN LISTS MSGA_QT_COMPONENTS)
-        find_package(Qt6${_comp} QUIET)
-        if(NOT Qt6${_comp}_FOUND)
-            list(APPEND _msga_qt_missing ${_comp})
-        endif()
-    endforeach()
-    if(_msga_qt_missing)
-        list(JOIN _msga_qt_missing ", " _msga_qt_missing)
-        message(FATAL_ERROR
-            "Qt 6 is installed but these modules are missing: ${_msga_qt_missing}.\n${_msga_qt_hint}")
-    endif()
-
-    message(FATAL_ERROR "Qt ${MSGA_QT_MIN}+ not found.\n${_msga_qt_hint}")
-endif()
-message(STATUS "Qt ${Qt6_VERSION} (${Qt6_DIR})")
-find_package(Qt6 OPTIONAL_COMPONENTS LinguistTools)
-
-include(FetchContent)
-
-FetchContent_Declare(
-    microsoft_gsl
-    GIT_REPOSITORY https://github.com/microsoft/GSL.git
-    GIT_TAG        v4.0.0
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(microsoft_gsl)
-
-# lib_rpl / lib_base are consumed as raw sources (their headers are compiled
-# directly into the msga target), NOT as subprojects. Point SOURCE_SUBDIR at a
-# directory with no CMakeLists.txt so FetchContent_MakeAvailable() only
-# populates the sources and never calls add_subdirectory() on their own build
-# trees. This replaces the deprecated single-argument FetchContent_Populate().
-#
-# Pinned to exact commits (NOT a moving branch) so a build is reproducible and
-# a compromised/rewritten upstream master can't silently inject code into our
-# binary. To intentionally upgrade: bump the SHA below to a reviewed commit.
-# (GIT_SHALLOW is off for a pinned SHA — a shallow fetch of an arbitrary commit
-# is not reliably supported across Git hosts.)
-FetchContent_Declare(
-    lib_rpl
-    GIT_REPOSITORY https://github.com/desktop-app/lib_rpl.git
-    GIT_TAG        c57cccffb01d85570decd7fccb88419c9a682e63 # master @ 2026-07-20
-    SOURCE_SUBDIR  _msga_no_configure
-)
-FetchContent_MakeAvailable(lib_rpl)
-
-FetchContent_Declare(
-    lib_base
-    GIT_REPOSITORY https://github.com/desktop-app/lib_base.git
-    GIT_TAG        82d182a275e197fd717fecc86193d9d91f4fc5b5 # master @ 2026-07-20
-    SOURCE_SUBDIR  _msga_no_configure
-)
-FetchContent_MakeAvailable(lib_base)
-
-add_executable(msga MACOSX_BUNDLE WIN32
-    src/main.cpp
-    src/base_stubs.cpp
-
-    # App
-    src/app/crash_handler.cpp
-    src/app/single_instance.cpp
-
-    # Network (transport mechanics, service-agnostic)
-    src/network/http_queue.cpp
-    src/network/gif_search.cpp
-    src/network/oauth_pkce.cpp
-
-    # Auth (neutral strategy interface + factory; per-service flows live below the seam)
-    src/auth/token_store.cpp
-    src/auth/auth_strategy.h # header-only QObject — listed so AUTOMOC picks it up
-    src/auth/auth_strategy_factory.cpp
-
-    # LLM service (Settings → AI assistance)
-    src/llm/llm_token_store.cpp
-    src/llm/oauth_loopback.cpp # used by the IMAP backend (XOAUTH2), not by the LLM layer
-    src/llm/llm_wire.cpp
-    src/llm/llm_provider.cpp
-    src/llm/llm_service.cpp
-    src/llm/discussion_summary.cpp
-    src/llm/audio_transcriber.cpp
-    src/llm/voice_input.cpp
-    src/llm/voice_prompt.cpp
-
-    # Backend port, registry + factory (neutral). Optional backends add their
-    # sources below (MSGA_BACKEND_*); builtin_backends.cpp registers them.
-    src/backend/backend_factory.cpp
-    src/backend/backend_registry.cpp
-    src/backend/builtin_backends.cpp
-
-    # Slack backend adapter (below the Backend seam) — always built
-    src/backend/slack/slack_module.cpp
-    src/backend/slack/public_backend.cpp
-    src/backend/slack/json_mappers.cpp
-    src/backend/slack/socket_mode_realtime.cpp
-    src/backend/slack/session_realtime.cpp
-    src/backend/slack/rtm_presence.cpp
-    src/backend/slack/slack_events.cpp
-    src/backend/slack/web_api_client.cpp
-    src/backend/slack/shared_realtime.cpp
-    src/backend/slack/slack_auth.cpp
-    src/backend/slack/oauth_flow.cpp
-    src/backend/slack/session_import/browser_login.cpp
-    src/backend/slack/session_import/token_deriver.cpp
-    src/backend/slack/session_import/local_importer.cpp
-    src/backend/slack/session_import/sqlite_reader.cpp
-    src/backend/slack/session_import/session_migrator.cpp
-
-    # Text
-    src/text/link_labels.cpp
-    src/text/markdown_compose.cpp
-    src/text/mrkdwn_parser.cpp
-    src/text/portable_markdown.cpp
-
-    # Utilities
-    src/util/background_tasks.cpp
-    src/util/custom_tray_icon.cpp
-    src/util/custom_workspace_icon.cpp
-    src/util/desktop_integration.cpp
-    # Listed so AUTOMOC processes the Q_OBJECT (the impl TUs are platform-suffixed
-    # — desktop_notifier_{linux,win,mac} — so the basename doesn't match a source).
-    src/util/desktop_notifier.h
-    src/util/emoji.cpp
-    src/util/emoji_catalog.cpp
-    src/util/emoji_data.cpp
-    src/util/emoji_pixmap.cpp
-    src/util/fuzzy_match.cpp
-    src/util/mailto_link.cpp
-    src/util/recent_folders.cpp
-    src/util/relative_time.cpp
-    src/util/avatar_glyphs.cpp
-    src/util/sound_player.cpp
-    src/util/time_format.cpp
-
-    # Media (inline audio playback; the platform engine TU is added below)
-    src/media/audio_player.cpp
-    # Listed so AUTOMOC processes the Q_OBJECT (impl TUs are platform-suffixed).
-    src/media/audio_engine.h
-    # Microphone capture for voice input (platform backend TU added below).
-    src/media/audio_recorder.cpp
-    src/media/audio_recorder.h
-
-    # Spell checking (the platform backend TU is added below)
-    src/spell/spell_checker.cpp
-    src/spell/spell_words.cpp
-
-    # Cache
-    src/cache/workspace_cache.cpp
-    src/cache/cache_evictor.cpp
-
-    # Session / domain store
-    src/session/session.cpp
-
-    # UI
-    src/ui/theme.cpp
-    src/ui/theme_custom.cpp
-    src/ui/theme_manager.cpp
-    src/ui/fonts.cpp
-    src/ui/shortcuts.cpp
-    src/ui/file_dialog_utils.cpp
-    src/ui/virtual_list/virtual_list_widget.cpp
-    src/ui/image_cache.cpp
-    src/ui/main_window.cpp
-    src/ui/title_bar/title_bar.cpp
-    src/ui/loading_indicator/loading_indicator.cpp
-    src/ui/swipe_indicator/swipe_indicator.cpp
-    src/ui/message_list/message_list.cpp
-    src/ui/message_list/message_list_paint.cpp
-    src/ui/message_list/message_render.cpp
-    src/ui/message_list/file_chip_widget.cpp
-    src/ui/image_viewer/image_viewer.cpp
-    src/ui/table_viewer/table_viewer.cpp
-    src/ui/conv_list/conv_list_widget.cpp
-    src/ui/conv_list/named_conversation.cpp
-    src/ui/conv_footer/conv_footer_widget.cpp
-    src/ui/composer/formatting_toolbar.cpp
-    src/ui/composer/attachment_strip.cpp
-    src/ui/composer/edit_mode_banner.cpp
-    src/ui/composer/undo_send_pill.cpp
-    src/ui/composer/composer_widget.cpp
-    src/ui/composer/voice_context.cpp
-    src/ui/composer/voice_recording_strip.cpp
-    src/ui/composer/spell_highlighter.cpp
-    src/ui/emoji_picker/emoji_picker_popup.cpp
-    src/ui/gif_picker/gif_picker_popup.cpp
-    src/ui/composer/mention_completer.cpp
-    src/ui/typing_indicator/typing_indicator.cpp
-    src/ui/mention_popup/mention_popup.cpp
-    src/ui/history_search/history_search_popup.cpp
-    src/ui/members_popup/members_popup.cpp
-    src/ui/context_menu/context_menu.cpp
-    src/ui/popup_tooltip/popup_tooltip.cpp
-    src/ui/user_profile_card/user_profile_card.cpp
-    src/ui/workspace_switcher/workspace_switcher.cpp
-    src/ui/workspace_switcher/workspace_bubble.cpp
-    src/ui/settings/settings_dialog.cpp
-    src/ui/settings/theme_preview_card.cpp
-    src/ui/settings/custom_theme_editor.cpp
-    src/ui/search/search_widget.cpp
-    src/ui/thread_panel/thread_panel.cpp
-    src/ui/thread_panel/thread_export_job.cpp
-    src/ui/threads_page/threads_page.cpp
-    src/ui/saved_page/saved_messages_page.cpp
-    src/ui/overview_card/overview_card.cpp
-    src/ui/teammate_page/teammate_page.cpp
-    src/ui/teammate_dialog/teammate_dialog.cpp
-    src/ui/canvas_page/canvas_page.cpp
-    src/ui/canvas_page/canvas_diff.cpp
-    src/ui/canvas_page/canvas_emoji.cpp
-    src/ui/canvas_page/canvas_display.cpp
-    src/ui/canvas_page/canvas_viewer.cpp
-    src/ui/conv_tabs/conv_tabs_widget.cpp
-    src/ui/welcome_tips/welcome_widget.cpp
-    src/ui/app_dialog/app_dialog.cpp
-    src/ui/delete_message_dialog/delete_message_dialog.cpp
-    src/ui/reminder_dialog/reminder_dialog.cpp
-    src/ui/summary_dialog/summary_dialog.cpp
-    src/ui/transcript_dialog/transcript_dialog.cpp
-    src/ui/summary_dialog/summarize_job.cpp
-    src/ui/conv_selector/conv_selector_widget.cpp
-    src/ui/forward_dialog/forward_dialog.cpp
-    src/ui/move_to_thread_dialog/move_to_thread_dialog.cpp
-    src/ui/styled_line_edit/styled_line_edit.cpp
-    src/ui/styled_button/styled_button.cpp
-    src/ui/icon_button/icon_button.cpp
-    src/ui/dropdown/dropdown.cpp
-    src/ui/create_channel_dialog/create_channel_dialog.cpp
-    src/ui/rename_conversation_dialog/rename_conversation_dialog.cpp
-    src/ui/session_status_dialog/session_status_dialog.cpp
-    src/ui/session_finder_dialog/session_finder_dialog.cpp
-    src/ui/icon_picker_dialog/icon_picker_dialog.cpp
-    src/ui/tray_icon_dialog/tray_icon_dialog.cpp
-    src/ui/workspace_icon_dialog/workspace_icon_dialog.cpp
-    src/ui/session_import_dialog/session_import_dialog.cpp
-    src/ui/profile_dialog/profile_dialog.cpp
-    src/ui/status_dialog/status_dialog.cpp
-    src/ui/browse_channels_dialog/browse_channels_dialog.cpp
-    src/ui/browse_channels_dialog/browse_list_view.cpp
-    src/ui/quick_switcher/quick_switcher_dialog.cpp
-    src/ui/quick_switcher/workspace_tab_strip.cpp
-    src/ui/update_checker/update_checker.cpp
-    src/ui/update_bar/update_bar.cpp
-    src/ui/huddle_banner/huddle_banner.cpp
-    src/ui/parallel_usage_banner/parallel_usage_banner.cpp
-
-    # Qt resources
-    resources/resources.qrc
-)
-
-target_precompile_headers(msga PRIVATE src/pch.h)
-
-# No C++ exceptions in our own code. Nothing in src/ catches one, so any throw
-# (std::bad_alloc, a libstdc++ __throw_* from .value()/.at()) already ends in
-# std::terminate; dropping the unwind landing pads and EH tables leaves that
-# unchanged and saves ~1.2 MB of the static binary (docs/DEPENDENCY_BUILD_AUDIT.md).
-# CXX only: the .mm files compile as OBJCXX and keep the default, so the @try in
-# desktop_notifier_mac.mm stays a real handler. GCC/Clang flag, hence not MSVC
-# (which would need /EHsc removed instead). The tests' copy of the app sources
-# (msga_test_support) reuses this variable; Catch2's own TUs do not.
-if(NOT MSVC)
-    set(MSGA_NO_EXCEPTIONS $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
-endif()
-target_compile_options(msga PRIVATE ${MSGA_NO_EXCEPTIONS})
-
-# rcc only compresses a file when that saves at least --threshold percent
-# (default 70). Small SVGs shrink by 40-65%, so the default stored the whole of
-# resources.qrc raw; 5 lets them compress (~15 KB less in the binary). zlib,
-# not rcc's default zstd: QtCore can always inflate zlib, while a static
-# target Qt built without zstd could not read zstd data. That guard exists
-# only for qt_add_* targets, and msga is a plain add_executable. The tests'
-# resource library reuses this variable (tests/CMakeLists.txt).
-set(MSGA_RCC_OPTIONS --compress-algo zlib --threshold 5)
-set_property(TARGET msga APPEND PROPERTY AUTORCC_OPTIONS ${MSGA_RCC_OPTIONS})
-
-# ── Optional backends ──────────────────────────────────────────────────────
-# Each switch adds the backend's sources AND defines MSGA_BACKEND_<NAME>, which
-# builtin_backends.cpp keys its explicit register call on (never self-registering
-# statics — a static link would drop them silently). A compiled-in backend costs
-# nothing until a workspace for it exists (docs/backend-modules-plan.md §4.5); a
-# stored workspace of a compiled-out backend is kept but hidden.
-option(MSGA_BACKEND_TEAMS "Compile the Microsoft Teams backend" ON)
-option(MSGA_BACKEND_IMAP "Compile the email (IMAP/SMTP) backend" ON)
-option(MSGA_BACKEND_CLAUDE_CODE "Compile the Claude Code sessions backend" ON)
-
-if(MSGA_BACKEND_TEAMS)
-    target_sources(msga PRIVATE
-        src/backend/teams/teams_module.cpp
-        src/backend/teams/teams_backend.cpp
-        src/backend/teams/graph_client.cpp
-        src/backend/teams/json_mappers.cpp
-        src/backend/teams/teams_auth.cpp
-        src/backend/teams/oauth_flow.cpp
-    )
-    target_compile_definitions(msga PRIVATE MSGA_BACKEND_TEAMS)
+# -Oz where the compiler has it (Clang, GCC 12+): Clang's -Oz build is ~20%
+# smaller than its -Os one, GCC's ~1%. MSGA_SIZE_OPT is for the third-party
+# targets that pin their own optimisation level.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag(-Oz MSGA_HAVE_OZ)
+if(MSGA_HAVE_OZ)
+    set(MSGA_SIZE_OPT -Oz)
+    # After CMake's own -Os on the command line, so it wins (every language,
+    # Objective-C++ included, and every target added below).
+    add_compile_options($<$<CONFIG:MinSizeRel>:-Oz>)
+else()
+    set(MSGA_SIZE_OPT -Os)
 endif()
 
-if(MSGA_BACKEND_IMAP)
-    target_sources(msga PRIVATE
-        src/backend/imap/imap_module.cpp
-        src/backend/imap/mime_parser.cpp
-        src/backend/imap/imap_protocol.cpp
-        src/backend/imap/imap_client.cpp
-        src/backend/imap/imap_mappers.cpp
-        src/backend/imap/imap_bucketing.cpp
-        src/backend/imap/imap_auth.cpp
-        src/backend/imap/imap_auth_strategy.cpp
-        src/backend/imap/imap_providers.cpp
-        src/backend/imap/imap_server_detect.cpp
-        src/backend/imap/imap_html.cpp
-        src/backend/imap/imap_bimi.cpp
-        src/backend/imap/imap_favicon.cpp
-        src/backend/imap/imap_compose.cpp
-        src/backend/imap/imap_smtp.cpp
-        src/backend/imap/imap_backend.cpp
-        src/ui/imap_add_account/imap_add_account_dialog.cpp
-    )
-    target_compile_definitions(msga PRIVATE MSGA_BACKEND_IMAP)
-endif()
-
-if(MSGA_BACKEND_CLAUDE_CODE)
-    target_sources(msga PRIVATE
-        src/backend/claude_code/claude_code_module.cpp
-        src/backend/claude_code/claude_code_backend.cpp
-        src/backend/claude_code/claude_code_auth.cpp
-        src/backend/claude_code/cc_roster.cpp
-        src/backend/claude_code/cc_transcript.cpp
-        src/backend/claude_code/cc_catalog.cpp
-        src/backend/claude_code/cc_outputs.cpp
-        src/backend/claude_code/cc_roles.cpp
-        src/backend/claude_code/cc_launcher.cpp
-        src/backend/claude_code/cc_worktrees.cpp
-        src/backend/claude_code/cc_attach.cpp
-        src/backend/claude_code/cc_pty.cpp
-        src/backend/claude_code/cc_vt.cpp
-    )
-    target_compile_definitions(msga PRIVATE MSGA_BACKEND_CLAUDE_CODE)
-endif()
-
-target_include_directories(msga PRIVATE
-    src
-    ${CMAKE_BINARY_DIR}
-)
-
-# Third-party sources we vendor via FetchContent. Mark SYSTEM so the compiler
-# doesn't emit (and we don't try to fix) warnings from headers we don't own —
-# e.g. lib_rpl's rpl/variable.h trips C++20's deprecated implicit [=] capture
-# of 'this'. Keeps our own -Wdeprecated output clean and actionable.
-target_include_directories(msga SYSTEM PRIVATE
-    ${lib_rpl_SOURCE_DIR}
-    ${lib_base_SOURCE_DIR}
-)
-
-target_link_libraries(msga PRIVATE
-    Qt6::Core
-    Qt6::Gui
-    Qt6::Widgets
-    Qt6::Network
-    Qt6::WebSockets
-    Qt6::Svg
-    Qt6::Concurrent
-    Microsoft.GSL::GSL
-)
-
-# Legacy mail charsets (windows-1252, ISO-2022-JP, Shift_JIS, KOI8-R, ...):
-# QStringDecoder only has them when Qt is built with ICU, and the static Linux
-# release builds Qt without it (scripts/qt-features.sh). Mime::decodeText then
-# falls back to iconv(3): part of the C library on Linux, libiconv on macOS.
-if(NOT WIN32)
-    find_package(Iconv)
-endif()
-if(Iconv_FOUND)
-    set(MSGA_ICONV_DEFINES MSGA_HAVE_ICONV)
-    set(MSGA_ICONV_LIBS Iconv::Iconv)
-    target_compile_definitions(msga PRIVATE ${MSGA_ICONV_DEFINES})
-    target_link_libraries(msga PRIVATE ${MSGA_ICONV_LIBS})
-endif()
-
-# macOS app-bundle metadata. CMake's default Info.plist gives the bundle no
-# identifier and — critically — no CFBundleURLTypes, so macOS would not know
-# msga.app handles the msga:// scheme that the OAuth redirect comes back on
-# (the browser then reports "unknown protocol" and sign-in can't complete).
-# Supply our own template (resources/Info.plist.in) that declares the scheme.
-#
-# CMake writes MACOSX_BUNDLE_INFO_PLIST into the .app only at CONFIGURE time —
-# there is no build rule for it. So a plain `cmake --build` after the bundle is
-# recreated (which is every scripts/build.sh run: it reuses the configured dir
-# and only relinks) leaves the app with NO Info.plist, hence no
-# CFBundleIdentifier. That silently breaks two things: codesign falls back to an
-# unstable per-binary ad-hoc identifier (msga-<hash>, different each build), and
-# UNUserNotificationCenter then refuses to register the app — no notification
-# banners, no entry under System Settings ▸ Notifications. To make it robust we
-# generate the plist to a stable build-tree path and re-install + ad-hoc sign it
-# on EVERY build via POST_BUILD, so the identity is always com.nisdos.msga.
-#
-# Everything here must keep matching the plist the release build writes over it
-# (bundle id, CFBundleIconFile, LSMinimumSystemVersion): two bundles claiming
-# msga:// under DIFFERENT ids means LaunchServices can route an OAuth redirect to
-# a stale dev build instead of the installed app.
-if(APPLE)
-    set(MACOSX_BUNDLE_EXECUTABLE_NAME      "msga")
-    set(MACOSX_BUNDLE_BUNDLE_NAME          "msga")
-    set(MACOSX_BUNDLE_DISPLAY_NAME         "msga")
-    set(MACOSX_BUNDLE_INFO_STRING          "msga")
-    # App icon: gfx/mac/icon.icns, generated from gfx/icon.svg. Installed as
-    # Resources/AppIcon.icns — the name the release build's own icns uses, so a
-    # release bundle ends up with one icon file, not two with one unreferenced.
-    set(MACOSX_BUNDLE_ICON_FILE            "AppIcon")
-    set(MACOSX_BUNDLE_GUI_IDENTIFIER       "com.nisdos.msga")
-    set(MACOSX_BUNDLE_BUNDLE_VERSION       "${MSGA_VERSION}")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${MSGA_VERSION}")
-    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${MSGA_VERSION}")
-    # Follow the deployment target when one is passed (the release build sets
-    # it); otherwise state the version releases are built against.
-    if(CMAKE_OSX_DEPLOYMENT_TARGET)
-        set(MSGA_MACOS_MIN_VERSION "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+# Flags for every msga module (not for third-party code, which gets its own).
+add_library(msga_flags INTERFACE)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(msga_flags INTERFACE
+        $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>
+        -ffunction-sections -fdata-sections -fvisibility=hidden
+        -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
+    if(NOT APPLE)
+        target_link_options(msga_flags INTERFACE -Wl,--gc-sections)
     else()
-        set(MSGA_MACOS_MIN_VERSION "14.0")
+        target_link_options(msga_flags INTERFACE -Wl,-dead_strip)
     endif()
-
-    # Fully substitute the template now (the template uses ${VAR} placeholders,
-    # so no @ONLY) into a stable location outside the bundle.
-    set(MSGA_INFO_PLIST "${CMAKE_BINARY_DIR}/msga_Info.plist")
-    configure_file("${CMAKE_SOURCE_DIR}/resources/Info.plist.in" "${MSGA_INFO_PLIST}")
-    set_target_properties(msga PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${MSGA_INFO_PLIST}")
-
-    # App icon. macOS 26 (Tahoe) wants an Icon Composer ".icon", which actool
-    # compiles into an asset catalog (Assets.car) carrying the Liquid Glass
-    # rendition; the same run also emits a legacy AppIcon.icns for older macOS,
-    # so one source covers every version. That input needs Xcode 26's actool: a
-    # Command Line Tools install ships none at all, and an older Xcode's actool
-    # rejects ".icon". Anything else falls back to copying the static
-    # gfx/mac/icon.icns. Failing soft is the point — the icon step runs
-    # POST_BUILD, so a wrong guess here would break every build, not the icon.
-    #
-    # Locate first (xcrun follows the selected developer dir; a full Xcode that
-    # xcode-select doesn't point at is the backup), then prove the binary can
-    # actually compile our .icon.
-    execute_process(COMMAND xcrun --find actool
-        OUTPUT_VARIABLE MSGA_ACTOOL_PATH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-    if(NOT EXISTS "${MSGA_ACTOOL_PATH}")
-        # Own result variable: find_program is a silent no-op while a normal
-        # variable of its result name exists — and execute_process above defines
-        # MSGA_ACTOOL_PATH even when xcrun fails, as the empty string.
-        find_program(MSGA_ACTOOL_PROGRAM actool
-            HINTS /Applications/Xcode.app/Contents/Developer/usr/bin)
-        set(MSGA_ACTOOL_PATH "${MSGA_ACTOOL_PROGRAM}")
-    endif()
-
-    set(MSGA_ACTOOL "")
-    if(EXISTS "${MSGA_ACTOOL_PATH}")
-        # Capability probe rather than a version comparison: run the exact
-        # command the build will run, into a throwaway directory. An actool that
-        # doesn't understand ".icon" exits non-zero here instead of at build time.
-        execute_process(
-            COMMAND "${MSGA_ACTOOL_PATH}" "${CMAKE_SOURCE_DIR}/gfx/mac/AppIcon.icon"
-                    --app-icon "${MACOSX_BUNDLE_ICON_FILE}"
-                    --compile "${CMAKE_BINARY_DIR}/actool_probe"
-                    --platform macosx
-                    --minimum-deployment-target "${MSGA_MACOS_MIN_VERSION}"
-                    --output-partial-info-plist "${CMAKE_BINARY_DIR}/actool_probe.plist"
-            RESULT_VARIABLE MSGA_ACTOOL_PROBE OUTPUT_QUIET ERROR_QUIET)
-        file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/actool_probe"
-                            "${CMAKE_BINARY_DIR}/actool_probe.plist")
-        if(MSGA_ACTOOL_PROBE EQUAL 0)
-            set(MSGA_ACTOOL "${MSGA_ACTOOL_PATH}")
-        else()
-            message(STATUS "msga: ${MSGA_ACTOOL_PATH} cannot compile .icon "
-                           "(needs Xcode 26+) — rc=${MSGA_ACTOOL_PROBE}")
-        endif()
-    endif()
-    if(MSGA_ACTOOL)
-        message(STATUS "msga: app icon via Icon Composer (.icon) → ${MSGA_ACTOOL}")
-        set(MSGA_ICON_STEP
-            COMMAND "${MSGA_ACTOOL}" "${CMAKE_SOURCE_DIR}/gfx/mac/AppIcon.icon"
-                    --app-icon "${MACOSX_BUNDLE_ICON_FILE}"
-                    --compile "$<TARGET_BUNDLE_CONTENT_DIR:msga>/Resources"
-                    --platform macosx
-                    --minimum-deployment-target "${MSGA_MACOS_MIN_VERSION}"
-                    --output-partial-info-plist "${CMAKE_BINARY_DIR}/actool_partial.plist")
-    else()
-        message(STATUS "msga: no Icon Composer-capable actool — app icon via static icon.icns")
-        set(MSGA_ICON_STEP
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/gfx/mac/icon.icns"
-                    "$<TARGET_BUNDLE_CONTENT_DIR:msga>/Resources/${MACOSX_BUNDLE_ICON_FILE}.icns")
-    endif()
-
-    # Guarantee the bundle has its Info.plist + app icon and a stable signature
-    # after every build — including a bare `cmake --build` that never re-runs
-    # configure. (The icon uses the same every-build install as the plist: a
-    # MACOSX_PACKAGE_LOCATION resource would not be re-copied into a bundle
-    # that was recreated without its sources changing.)
-    add_custom_command(TARGET msga POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${MSGA_INFO_PLIST}" "$<TARGET_BUNDLE_CONTENT_DIR:msga>/Info.plist"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_BUNDLE_CONTENT_DIR:msga>/Resources"
-        ${MSGA_ICON_STEP}
-        COMMAND codesign --force --deep --sign - "$<TARGET_BUNDLE_DIR:msga>"
-        VERBATIM
-        COMMENT "Installing Info.plist, app icon and ad-hoc signing msga.app")
 endif()
-
-# Crash reports (src/app/crash_handler.cpp): -rdynamic keeps function names
-# visible to backtrace_symbols on Linux; dbghelp is the Windows symbol engine.
-# A fully static binary (release-linux-static.sh passes -static) has no
-# dynamic symbol table, so -rdynamic is pointless there — frames resolve
-# offline via addr2line instead.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_EXE_LINKER_FLAGS MATCHES "(^| )-static( |$)")
-    set_property(TARGET msga PROPERTY ENABLE_EXPORTS ON)
+include(CheckLinkerFlag)
+if(MINGW)
+    # mingw gcc links with ld.bfd; lld's COFF ICF needs its own recipe
+    # (see memory lld-coff-icf notes) — off until the Windows release script.
+    set(MSGA_HAVE_LLD OFF)
+else()
+    check_linker_flag(CXX "-fuse-ld=lld" MSGA_HAVE_LLD)
 endif()
-
-# Wayland platform plugin import (static builds).
-#
-# On a Wayland desktop, a binary with only the xcb platform plugin runs through
-# XWayland, where a fractionally-scaled output (125%/150%) is rendered at an
-# integer scale and the compositor upscales the whole window — everything looks
-# blurry. The Wayland client plugin makes msga a native Wayland client so the
-# scaling logic in src/main.cpp takes effect and text stays crisp.
-#
-# For a STATIC Qt, a plugin is only usable if it is Q_IMPORT_PLUGIN'd into the
-# binary. Qt's automatic import covers plugins of the modules we link: linking
-# Qt6::Gui pulls in the xcb platform plugin (it lives in qtbase). The Wayland
-# platform plugin and its shell-integration/decoration plugins are registered by
-# the separate Qt6::WaylandClient module, which we don't otherwise link — so they
-# must be found and imported explicitly. The platform plugin alone cannot create
-# windows: it needs a shell integration (xdg-shell on modern compositors), so we
-# import the whole set that exists. No-op on a dynamic build (plugins load from
-# disk at runtime) and when qtwayland isn't present (OPTIONAL_COMPONENTS).
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_package(Qt6 QUIET OPTIONAL_COMPONENTS WaylandClient)
-    if(Qt6WaylandClient_FOUND)
-        set(_msga_wayland_plugins "")
-        foreach(_p
-                QWaylandIntegrationPlugin           # the "wayland" platform plugin
-                QWaylandXdgShellIntegrationPlugin   # shell integration (modern compositors)
-                QWaylandWlShellIntegrationPlugin    # shell integration (legacy wl_shell)
-                QWaylandBradientDecorationPlugin)   # client-side window decorations
-            if(TARGET Qt6::${_p})
-                list(APPEND _msga_wayland_plugins Qt6::${_p})
-            endif()
-        endforeach()
-        if(_msga_wayland_plugins)
-            qt6_import_plugins(msga INCLUDE ${_msga_wayland_plugins})
-            message(STATUS "msga: importing Wayland plugins: ${_msga_wayland_plugins}")
+if(MSGA_HAVE_LLD AND NOT APPLE)
+    target_link_options(msga_flags INTERFACE -fuse-ld=lld)
+endif()
+# Packed relative relocations (DT_RELR): a PIE's vtable and function-pointer
+# fixups shrink from 24 bytes each (~180 KB of .rela.dyn) to a bitmap of ~5 KB.
+# Needs glibc 2.36 / musl 1.2.4 at run time; a static non-PIE has none anyway.
+if(NOT APPLE AND NOT MINGW)
+    if(MSGA_HAVE_LLD)
+        set(CMAKE_REQUIRED_LINK_OPTIONS -fuse-ld=lld)
+    endif()
+    check_linker_flag(CXX "-Wl,-z,pack-relative-relocs" MSGA_HAVE_RELR)
+    unset(CMAKE_REQUIRED_LINK_OPTIONS)
+    if(MSGA_HAVE_RELR)
+        target_link_options(msga_flags INTERFACE -Wl,-z,pack-relative-relocs)
+    endif()
+endif()
+if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # No exceptions → nothing needs .eh_frame; it was ~9% of the Qt build. A
+    # future crash reporter walks frames itself (or we ship symbolised dumps).
+    target_compile_options(msga_flags INTERFACE -fno-asynchronous-unwind-tables -fno-unwind-tables)
+endif()
+# The release scripts turn MSGA_LINK_STRIP off: they build with -g, split the
+# symbols into a .debug / .dSYM for crash reports, then strip themselves.
+option(MSGA_LINK_STRIP "Strip MinSizeRel executables at link time (lld)" ON)
+if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    # lld folds identical functions (template copies, trivial thunks).
+    if(MSGA_HAVE_LLD AND NOT APPLE)
+        target_link_options(msga_flags INTERFACE -Wl,--icf=all)
+        if(MSGA_LINK_STRIP)
+            target_link_options(msga_flags INTERFACE -s)
         endif()
     endif()
 endif()
-# IBus input-context plugin import (static builds) — GitHub issue #79.
-#
-# A statically linked binary cannot dlopen anything, so the external input-method
-# plugins a desktop provides (fcitx5-qt's "fcitx", ibus's own "ibus" build) can
-# never load; Qt then falls back to its "compose" context (dead keys only) and
-# CJK/IME input silently does nothing. Qt's own ibus plugin is built alongside
-# compose, but it is marked QT_DEFAULT_PLUGIN=0 in the static Qt, so — unlike
-# compose — linking Qt6::Gui does not import it. Import it explicitly. fcitx5
-# ships an IBus-frontend that mimics the ibus daemon, so main.cpp treats
-# QT_IM_MODULE=fcitx as ibus in this build (MSGA_STATIC_IM_PLUGINS).
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    get_target_property(_msga_qt_core_type Qt6::Core TYPE)
-    if(_msga_qt_core_type STREQUAL "STATIC_LIBRARY" AND TARGET Qt6::QIbusPlatformInputContextPlugin)
-        qt6_import_plugins(msga INCLUDE Qt6::QIbusPlatformInputContextPlugin)
-        target_compile_definitions(msga PRIVATE MSGA_STATIC_IM_PLUGINS)
-        message(STATUS "msga: importing IBus input-context plugin (static Qt)")
+
+# Fully static executables, the release binaries: on Linux one that runs on
+# any distribution (Alpine/musl, scripts/release-linux-static.sh; every library
+# from its .a, pkg-config asked for the static link lines), on Windows an .exe
+# with libstdc++/libgcc/winpthread linked in (scripts/release-windows.sh).
+option(MSGA_STATIC "Link fully static (the Linux/musl and Windows releases)" OFF)
+if(MSGA_STATIC AND MINGW)
+    target_link_options(msga_flags INTERFACE -static)
+elseif(MSGA_STATIC)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a) # after project(): the platform files reset it
+    set(PKG_CONFIG_ARGN --static)
+    target_link_options(msga_flags INTERFACE -static-pie
+        # musl's default thread stack is 128 KiB (glibc: 8 MiB) and the only
+        # knob for threads we don't create ourselves is PT_GNU_STACK's size,
+        # which musl adopts at startup. The old app segfaulted on it (issue
+        # #70); release-linux-static.sh checks the segment.
+        -Wl,-z,stack-size=8388608)
+endif()
+
+# Linker maps for tools/size_report.py (per-module size + budgets).
+option(MSGA_SIZE_MAP "Write <exe>.map linker maps for the size report" ON)
+function(msga_size_map target)
+    if(MSGA_SIZE_MAP AND MSGA_HAVE_LLD AND NOT APPLE)
+        target_link_options(${target} PRIVATE "-Wl,-Map=$<TARGET_FILE:${target}>.map")
     endif()
-endif()
-if(WIN32)
-    target_compile_definitions(msga PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-    target_link_libraries(msga PRIVATE dbghelp)
+endfunction()
 
-    # Windows application icon + version metadata. windres compiles the .rc into
-    # the PE resource section so Explorer/taskbar/alt-tab show the app icon and
-    # the shell/browser show the app name (FileDescription). The .ico path is
-    # baked in via configure_file (forward slashes — windres treats a backslash
-    # as an escape). The icon is resource id 1 (lowest), which is what the shell
-    # picks as the executable icon. The .rc also carries the VERSIONINFO block;
-    # release-windows.sh strips winpthread's competing VERSION resource from the
-    # static archive first, so windres' .rsrc merge has no duplicate (see
-    # msga.rc.in). @MSGA_VERSION@ comes from version.cmake (included above).
-    set(MSGA_ICON_PATH "${CMAKE_SOURCE_DIR}/gfx/win/icon.ico")
-    configure_file(
-        "${CMAKE_SOURCE_DIR}/resources/msga.rc.in"
-        "${CMAKE_BINARY_DIR}/msga.rc"
-        @ONLY
-    )
-    target_sources(msga PRIVATE "${CMAKE_BINARY_DIR}/msga.rc")
-endif()
-
-# Notification sound backend (src/util/sound_player*): platform-native audio,
-# no Qt Multimedia, so the static Linux binary keeps zero shared-lib deps.
-if(APPLE)
-    enable_language(OBJCXX)
-    target_sources(msga PRIVATE src/util/sound_player_mac.mm)
-    set_source_files_properties(src/util/sound_player_mac.mm
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    target_link_libraries(msga PRIVATE "-framework AppKit" "-framework Foundation")
-elseif(WIN32)
-    target_sources(msga PRIVATE src/util/sound_player_win.cpp)
-    target_link_libraries(msga PRIVATE winmm)
-else()
-    target_sources(msga PRIVATE src/util/sound_player_linux.cpp)
-endif()
-
-# Inline audio playback engine (src/media/audio_engine_*): the same
-# no-Qt-Multimedia constraint as above. macOS plays through AVAudioPlayer,
-# Windows through MFPlay (Media Foundation); Linux decodes in-process with the
-# vendored miniaudio (third_party/miniaudio, public domain — MP3/WAV/FLAC/
-# Vorbis, `ffmpeg` on PATH for anything else) and pipes raw PCM into the
-# desktop's sound-server CLI (pw-cat / paplay / aplay).
-#
-# Voice-input capture (src/media/audio_recorder_*) sits beside it with the same
-# split: AVAudioRecorder (AVFoundation, already linked), waveIn (winmm, linked
-# for the notification sound above), and on Linux the sound server's capture
-# CLI (pw-record / parecord / arecord) — no new libraries anywhere.
-if(APPLE)
-    target_sources(msga PRIVATE src/media/audio_engine_mac.mm src/media/audio_recorder_mac.mm)
-    set_source_files_properties(src/media/audio_engine_mac.mm src/media/audio_recorder_mac.mm
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    target_link_libraries(msga PRIVATE "-framework AVFoundation")
-elseif(WIN32)
-    target_sources(msga PRIVATE src/media/audio_engine_win.cpp src/media/audio_recorder_win.cpp)
-    target_link_libraries(msga PRIVATE mfplay ole32)
-else()
-    enable_language(C)
-    add_library(msga_miniaudio STATIC third_party/miniaudio/miniaudio_impl.c)
-    target_include_directories(msga_miniaudio SYSTEM PUBLIC third_party/miniaudio)
-    target_compile_options(msga_miniaudio PRIVATE -w)
-    target_link_libraries(msga_miniaudio PUBLIC m)
-    target_sources(msga PRIVATE src/media/audio_engine_linux.cpp src/media/audio_recorder_linux.cpp)
-    target_link_libraries(msga PRIVATE msga_miniaudio)
-endif()
-
-# Composer spell checking (src/spell/spell_backend_*): the OS's own checker
-# where there is one — NSSpellChecker (AppKit, linked above) on macOS,
-# ISpellChecker (spellcheck.h, COM via ole32) on Windows. Linux has no system
-# service a static binary can use (Enchant and Sonnet dlopen their providers),
-# so it builds the vendored Hunspell (third_party/hunspell/README: trimmed to
-# ~140 KB of the binary) and reads the distribution's dictionaries at runtime.
-# Only this branch compiles Hunspell; -Os because spell() takes about a
-# microsecond either way. Hidden visibility: the dynamic builds link with
-# -rdynamic (crash reports, below), which would otherwise export — and so
-# keep — all of Hunspell's API, the morphology functions msga never calls
-# included.
-if(APPLE)
-    target_sources(msga PRIVATE src/spell/spell_backend_mac.mm)
-    set_source_files_properties(src/spell/spell_backend_mac.mm
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-elseif(WIN32)
-    target_sources(msga PRIVATE src/spell/spell_backend_win.cpp)
-else()
-    add_library(msga_hunspell STATIC
-        third_party/hunspell/affentry.cxx
-        third_party/hunspell/affixmgr.cxx
-        third_party/hunspell/csutil.cxx
-        third_party/hunspell/filemgr.cxx
-        third_party/hunspell/hashmgr.cxx
-        third_party/hunspell/hunspell.cxx
-        third_party/hunspell/hunzip.cxx
-        third_party/hunspell/phonet.cxx
-        third_party/hunspell/replist.cxx
-        third_party/hunspell/suggestmgr.cxx)
-    set_target_properties(msga_hunspell PROPERTIES AUTOMOC OFF) # no Qt in there
-    target_include_directories(msga_hunspell SYSTEM PUBLIC third_party/hunspell)
-    target_compile_definitions(msga_hunspell
-        PUBLIC HUNSPELL_STATIC
-        PRIVATE HUNSPELL_QT_UNICODE HUNSPELL_NO_XML HUNSPELL_NO_IOSTREAM)
-    target_compile_options(msga_hunspell PRIVATE -w $<$<NOT:$<CONFIG:Debug>>:-Os>
-        -fvisibility=hidden -fvisibility-inlines-hidden ${MSGA_NO_EXCEPTIONS})
-    target_sources(msga PRIVATE src/spell/spell_backend_linux.cpp)
-    target_link_libraries(msga PRIVATE msga_hunspell)
-endif()
-
-# Linux: msga's own std::terminate handler in place of libstdc++'s verbose one,
-# which links the C++ demangler (62 KB) into the static release binary just to
-# print a type name (src/app/terminate_handler.cpp).
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_sources(msga PRIVATE src/app/terminate_handler.cpp)
-endif()
-
-# Native macOS window chrome, using the AppKit dependency above.
-if(APPLE)
-    target_sources(msga PRIVATE src/ui/title_bar/mac_title_bar.mm)
-    set_source_files_properties(src/ui/title_bar/mac_title_bar.mm
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-endif()
-
-# Secret storage (src/util/secret_store*): credentials (tokens, API keys, the
-# personal Slack app secret, IMAP passwords) live in the OS keychain where one
-# exists, never in the plaintext QSettings/plist. macOS uses the Security
-# framework (generic-password items); other platforms fall back to QSettings
-# (documented limitation — see src/util/secret_store.h). secret_store.cpp holds
-# the platform-neutral migration helper and is always compiled.
-target_sources(msga PRIVATE src/util/secret_store.cpp)
-if(APPLE)
-    target_sources(msga PRIVATE src/util/secret_store_mac.mm)
-    set_source_files_properties(src/util/secret_store_mac.mm
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    target_link_libraries(msga PRIVATE "-framework Security" "-framework CoreFoundation")
-else()
-    target_sources(msga PRIVATE src/util/secret_store_qsettings.cpp)
-endif()
-
-# Desktop notifications with per-message avatars (src/util/desktop_notifier*):
-# each OS needs a different API to put the sender avatar into the notification —
-# Qt's QSystemTrayIcon::showMessage can't on any platform. One backend per TU,
-# shared header; each degrades to the tray fallback when its API is unavailable.
-#   • Linux  — org.freedesktop.Notifications `image-data` hint via QtDBus
-#   • Windows — WinRT toast `appLogoOverride` (raw COM) + AUMID/shortcut/scheme
-#   • macOS  — UNUserNotificationCenter banner + attachment (UserNotifications);
-#             the same TU also sets the Dock tile badge (mac_app_badge.h)
-if(APPLE)
-    target_sources(msga PRIVATE src/util/desktop_notifier_mac.mm)
-    set_source_files_properties(src/util/desktop_notifier_mac.mm
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    target_link_libraries(msga PRIVATE "-framework UserNotifications")
-elseif(WIN32)
-    target_sources(msga PRIVATE src/util/desktop_notifier_win.cpp)
-    # runtimeobject: WinRT (RoInitialize/RoGetActivationFactory/HSTRING).
-    # shell32/ole32: Start-Menu shortcut (IShellLink) + COM. uuid: the CLSID_*
-    # / FOLDERID_* GUID symbols. propsys: IPropertyStore plumbing.
-    target_link_libraries(msga PRIVATE runtimeobject propsys shell32 ole32 uuid)
-else()
-    target_sources(msga PRIVATE src/util/desktop_notifier_linux.cpp)
-    find_package(Qt6 QUIET OPTIONAL_COMPONENTS DBus)
-    if(Qt6DBus_FOUND)
-        target_link_libraries(msga PRIVATE Qt6::DBus)
-        target_compile_definitions(msga PRIVATE MSGA_HAS_DBUS)
-    endif()
-endif()
-
-# Optional one-click Slack session import (Settings → System → "Import Slack
-# session"): reads and decrypts the locally-installed Slack desktop app's cookie
-# store. Needs OpenSSL (AES/PBKDF2); the Chromium cookie DB is read by our own
-# sqlite_reader, NOT Qt6::Sql — linking Qt's SQLite plugin cost 1.4 MB of the static
-# binary for one SELECT. The keyring lookup additionally uses Qt6::DBus when present.
-# Linux only for now. Without OpenSSL the importer compiles to a graceful stub and
-# the UI offers the guided manual-paste fallback — so the build is green everywhere.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_package(OpenSSL QUIET COMPONENTS Crypto)
-    if(OpenSSL_FOUND)
-        target_link_libraries(msga PRIVATE OpenSSL::Crypto)
-        target_compile_definitions(msga PRIVATE MSGA_SLACK_SESSION_IMPORT)
-        message(STATUS "Slack session import: enabled (OpenSSL)")
-    else()
-        message(STATUS "Slack session import: disabled — install libssl-dev "
-                       "to enable one-click import (guided manual paste still works)")
-    endif()
-endif()
-
-# AddressSanitizer + LeakSanitizer (MSGA_ASAN=ON). Fast (~2x) runtime detection
-# of heap errors (use-after-free, overflows) and, via the bundled LeakSanitizer,
-# memory leaks reported on exit. -fno-omit-frame-pointer keeps traces readable;
-# pair with a Debug build (-g) so frames resolve to file:line. Use scripts/build.sh
-# --asan, which builds into build-asan/ to keep instrumented objects separate.
-if(MSGA_ASAN)
-    target_compile_options(msga PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(msga PRIVATE -fsanitize=address)
-endif()
-
-# Main-thread hang watchdog (src/app/crash_handler.cpp + the heartbeat in
-# src/main.cpp). DEV-ONLY: compiled into the Debug builds produced by
-# scripts/build.sh and scripts/run-asan.sh, and never into the shipped packages
-# (every release-*.sh configures -DCMAKE_BUILD_TYPE=Release). It dumps the stuck
-# main thread's backtrace when the GUI event loop stalls — a debugging aid, not
-# something to ship. Linux-only: it relies on POSIX per-process timers
-# (timer_create) targeted at a thread via Linux's SIGEV_THREAD_ID, which macOS
-# does not provide.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR MSGA_ASAN))
-    target_compile_definitions(msga PRIVATE MSGA_HANG_WATCHDOG)
-    # SIGEV_THREAD_ID + the sigev_notify_thread_id member are exposed only under
-    # _GNU_SOURCE, which crash_handler.cpp #defines before any include. The
-    # force-included PCH (-include cmake_pch.hxx) would pull in <signal.h> ahead
-    # of that define and defeat it, so skip the PCH for just this one file —
-    # keeping _GNU_SOURCE scoped to this TU instead of the whole target.
-    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/app/crash_handler.cpp
-        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    # timer_create lives in librt on glibc < 2.34; in libc on newer glibc and on
-    # musl. Link librt only where it still exists as a separate library.
-    find_library(MSGA_RT_LIB rt)
-    if(MSGA_RT_LIB)
-        target_link_libraries(msga PRIVATE ${MSGA_RT_LIB})
-    endif()
-endif()
-
-if(Qt6LinguistTools_FOUND)
-    qt_add_translations(msga
-        TS_FILES translations/msga_en.ts translations/msga_ja.ts
-        QM_FILES_OUTPUT_VARIABLE MSGA_QM_FILES
-        # Leave out translations identical to the source text: tr() falls back
-        # to the source string anyway. msga_en.ts repeats every string for
-        # its handful of plural forms, so this takes msga_en.qm from ~110 KB
-        # to ~2.4 KB.
-        LRELEASE_OPTIONS -removeidentical
-    )
-    # Embedded by hand (not RESOURCE_PREFIX) so the .qm files get the same rcc
-    # options as resources.qrc: at rcc's default 70% threshold the 100 KB
-    # msga_ja.qm, which zlib shrinks by about half, went in uncompressed.
-    qt_add_resources(msga "msga_translations"
-        PREFIX "/translations"
-        BASE "${CMAKE_CURRENT_BINARY_DIR}"
-        OPTIONS ${MSGA_RCC_OPTIONS}
-        FILES ${MSGA_QM_FILES}
-    )
-endif()
-
-# Demo mode (`msga --demo <fixture dir>`): a fixture-driven fake workspace and a
-# scripted tour for recording the README demo (demo/README.md). OPT-IN ONLY:
-# nothing under src/backend/demo/ (nor the fake backend) is compiled, and
-# the demo service is not registered, unless -DMSGA_DEMO=ON is passed — which only
-# scripts/demo-video.sh does, into its own build-demo/ tree. Release builds and
-# the public mirror (which has no demo/ directory) never see any of it.
-option(MSGA_DEMO "Compile the fixture-driven demo workspace + tour (--demo, --demo-tour)" OFF)
-if(MSGA_DEMO)
-    target_sources(msga PRIVATE
-        src/backend/fake_backend/fake_backend.cpp
-        src/backend/demo/demo_module.cpp
-        src/backend/demo/demo_fixture.cpp
-        src/backend/demo/demo_backend.cpp
-        src/backend/demo/demo_mode.cpp
-        src/backend/demo/demo_services.cpp
-        src/backend/demo/demo_tour_script.cpp
-        src/backend/demo/demo_tour.cpp
-    )
-    target_compile_definitions(msga PRIVATE MSGA_DEMO)
-endif()
-
-option(MSGA_BUILD_TESTS "Build unit tests" OFF)
+# The fake backend (app/fake: a fixture.json as a workspace; the tests use
+# tests/assets/fixture.json) is OPT-IN ONLY:
+# nothing of it is compiled unless one of these is on, and only MSGA_DEMO puts
+# it into the msga executable (`msga --demo <dir>`, messages_demo). Release
+# builds pass neither.
+option(MSGA_DEMO "Compile the fixture-driven demo workspace into msga (--demo)" OFF)
+option(MSGA_BUILD_TESTS "Build the test suites (and the fake backend they run on)" OFF)
 if(MSGA_BUILD_TESTS)
     enable_testing()
-    add_subdirectory(tests)
 endif()
 
-if(MSGA_CLAZY)
-    find_program(CLAZY_STANDALONE NAMES clazy-standalone REQUIRED)
-    file(GLOB_RECURSE _msga_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
-    add_custom_target(clazy
-        COMMAND ${CLAZY_STANDALONE}
-            -checks=level1
-            -p ${CMAKE_BINARY_DIR}
-            ${_msga_sources}
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        COMMENT "Running clazy (level1)..."
-        VERBATIM
-    )
+# plat, built with the same no-exceptions/no-RTTI flags. Its TestHooks (OS-level
+# input injection and screen readback) and headless backend are only compiled
+# into test and demo builds; release binaries get testHooks() == nullptr.
+set(PLAT_NO_EXCEPTIONS ON CACHE BOOL "" FORCE)
+set(PLAT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+if(MSGA_BUILD_TESTS OR MSGA_DEMO)
+    set(PLAT_TEST_HOOKS ON CACHE BOOL "" FORCE)
+else()
+    set(PLAT_TEST_HOOKS OFF CACHE BOOL "" FORCE)
+endif()
+add_subdirectory(src/plat plat EXCLUDE_FROM_ALL)
+
+# MSGA_VERSION: the release number (the update check, the bundle and .exe
+# version resources).
+include("${CMAKE_CURRENT_SOURCE_DIR}/version.cmake")
+
+# The build's Slack app keys (gitignored; see credentials.cmake.example).
+include("${CMAKE_CURRENT_SOURCE_DIR}/credentials.cmake" OPTIONAL)
+
+# Modules add themselves; dependencies only go downwards (see README).
+# MSGA_MODULES narrows the build to a prefix of the stack (e.g. "base;net"
+# for a cross build of the network layer before the UI ports exist).
+set(MSGA_MODULES "base;net;gfx;text;ui;app" CACHE STRING "Modules to build, bottom-up")
+# The test media (the fake workspace's fixture, avatars, GIFs, SVG fixtures):
+# the test suites read it, and so do the gfx/text/ui gallery dev binaries.
+set(MSGA_TEST_ASSETS "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets")
+foreach(mod ${MSGA_MODULES})
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/${mod}/CMakeLists.txt")
+        add_subdirectory(src/${mod} ${mod})
+    endif()
+endforeach()
+
+# The test suites (tests/CMakeLists.txt), one directory per module.
+if(MSGA_BUILD_TESTS)
+    add_subdirectory(tests)
 endif()
