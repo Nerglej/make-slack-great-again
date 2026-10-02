@@ -5,6 +5,5 @@ add_executable(msga_net_tests test_net.cpp main.cpp)
 target_link_libraries(msga_net_tests PRIVATE msga_net msga_test)
 target_compile_definitions(msga_net_tests PRIVATE
     NET_TEST_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/server.py")
-add_test(NAME msga_net_tests COMMAND msga_net_tests)
-set_tests_properties(msga_net_tests PROPERTIES ENVIRONMENT "PLAT_BACKEND=headless")
+msga_add_test(msga_net_tests COMMAND msga_net_tests)
 msga_size_map(msga_net_tests)

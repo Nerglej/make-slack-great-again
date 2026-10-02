@@ -1,6 +1,6 @@
 // The crash handler (a crashing child leaves its report in crash.log) and the
-// dev-only main-thread hang watchdog. Its own executable: both install
-// process-wide signal handlers and timers.
+// dev-only main-thread hang watchdog. Its own process (BASE_TEST_SUITE_MAIN
+// below): both install process-wide signal handlers and timers.
 //
 // The watchdog cases pin its startup window. Crash log 2026-06-30: under
 // AddressSanitizer the old app's watchdog fired *during* window construction
@@ -127,7 +127,7 @@ TEST("watchdog: a heartbeat keeps the steady window from firing") {
     crash::heartbeat();
 }
 
-int main(int argc, char **argv) {
+BASE_TEST_SUITE_MAIN(argc, argv) {
     // The watchdog on and non-fatal whatever the shell says; reports go to a
     // throwaway crash.log next to the test's HOME.
     base::test::unsetEnv("MSGA_WATCHDOG_DISABLE");
@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
         return 1;
     g_log = dir + "/msga/MSGA/crash.log";
     crash::install(g_log);
-    const int rc = base::test::runAll(argc, argv);
+    const int rc = base::test::runSuite(argc, argv);
     base::test::removeTree(dir);
     return rc;
 }

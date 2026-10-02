@@ -1,8 +1,7 @@
-# msga_app_legacy: the upgrade from the old Qt msga. Its own throwaway HOME:
-# it writes the old app's settings and cache there.
-add_executable(legacy_tests test_legacy.cpp main.cpp)
-target_link_libraries(legacy_tests PRIVATE msga_app_legacy msga_test)
-add_test(NAME legacy_tests COMMAND legacy_tests)
-set(_home "${CMAKE_CURRENT_BINARY_DIR}/test-home")
-set_tests_properties(legacy_tests PROPERTIES ENVIRONMENT
-    "PLAT_BACKEND=headless;HOME=${_home};XDG_CONFIG_HOME=${_home}/.config;XDG_CACHE_HOME=${_home}/.cache;XDG_DATA_HOME=${_home}/.local/share;XDG_STATE_HOME=${_home}/.local/state")
+# msga_app_legacy: the upgrade from the old Qt msga. A suite of
+# msga_app_tests (../CMakeLists.txt). Its own throwaway HOME: it writes the
+# old app's settings and cache there.
+target_sources(msga_app_tests PRIVATE test_legacy.cpp)
+target_link_libraries(msga_app_tests PRIVATE msga_app_legacy)
+msga_add_test(legacy_tests COMMAND msga_app_tests test_legacy
+    HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home LABELS legacy)

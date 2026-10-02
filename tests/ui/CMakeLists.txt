@@ -10,13 +10,14 @@ add_executable(ui_tests
     test_dialog.cpp
     main.cpp
 )
-set(ui_test_names layout hit hover focus shortcut popup menu scroll vlist textedit html damage theme)
+# One ctest test per case group ("hover: ..."), named exactly.
+set(ui_test_names layout visibility label hit hover focus shortcut popup menu scroll vlist textedit
+    html damage theme controls)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(ui_tests PRIVATE test_filebrowser.cpp)
     list(APPEND ui_test_names filebrowser)
 endif()
 target_link_libraries(ui_tests PRIVATE msga_ui msga_test)
 foreach(t ${ui_test_names})
-    add_test(NAME ui_${t} COMMAND ui_tests ${t})
-    set_tests_properties(ui_${t} PROPERTIES ENVIRONMENT "PLAT_BACKEND=headless")
+    msga_add_test(ui_${t} COMMAND ui_tests ${t})
 endforeach()

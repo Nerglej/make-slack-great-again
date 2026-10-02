@@ -2241,7 +2241,7 @@ TEST("blocks: a remove preview on my own message goes to the backend") {
     win.reset();
 }
 
-TEST("threads inline: the reply bar opens the replies under the message, and closes them") {
+TEST("threads: inline, the reply bar opens the replies under the message, and closes them") {
     Env e(true);
     e.ctx.threadsInline = true;
     e.list->setThreadsInline(true);

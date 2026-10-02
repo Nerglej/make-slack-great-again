@@ -71,11 +71,28 @@ if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU
     # future crash reporter walks frames itself (or we ship symbolised dumps).
     target_compile_options(msga_flags INTERFACE -fno-asynchronous-unwind-tables -fno-unwind-tables)
 endif()
+# Coverage (scripts/coverage.sh): gcov instrumentation of our own code and the
+# tests: everything on msga_flags, plus plat (below). Not the vendored code
+# (mbedTLS, FreeType, HarfBuzz, stb, Hunspell), which never links msga_flags:
+# its .gcno/.gcda would only be noise in the report. -O0 comes after the
+# build type's -Os/-Oz, so line counts match the source. Atomic counter
+# updates: the net/loop threads otherwise race them into negative hit counts,
+# which gcov prints and gcovr refuses.
+option(MSGA_COVERAGE "Instrument msga's own code and the tests for coverage (gcov)" OFF)
+if(MSGA_COVERAGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "MSGA_COVERAGE needs GCC or Clang")
+    endif()
+    set(MSGA_COVERAGE_FLAGS --coverage -fprofile-update=atomic -O0 -g)
+    target_compile_options(msga_flags INTERFACE ${MSGA_COVERAGE_FLAGS})
+    target_link_options(msga_flags INTERFACE --coverage)
+endif()
 # The release scripts turn MSGA_LINK_STRIP off: they build with -g, split the
 # symbols into a .debug / .dSYM for crash reports, then strip themselves.
 option(MSGA_LINK_STRIP "Strip MinSizeRel executables at link time (lld)" ON)
-if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-    # lld folds identical functions (template copies, trivial thunks).
+if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel" AND NOT MSGA_COVERAGE)
+    # lld folds identical functions (template copies, trivial thunks). Not
+    # under coverage: folded functions would share one function's counts.
     if(MSGA_HAVE_LLD AND NOT APPLE)
         target_link_options(msga_flags INTERFACE -Wl,--icf=all)
         if(MSGA_LINK_STRIP)
@@ -132,6 +149,12 @@ else()
     set(PLAT_TEST_HOOKS OFF CACHE BOOL "" FORCE)
 endif()
 add_subdirectory(src/plat plat EXCLUDE_FROM_ALL)
+if(MSGA_COVERAGE)
+    # plat has its own flags, not msga_flags. Its generated Wayland protocol
+    # code is instrumented too; it lives in the build dir, outside the report.
+    target_compile_options(plat PRIVATE ${MSGA_COVERAGE_FLAGS})
+    target_link_options(plat INTERFACE --coverage)
+endif()
 
 # MSGA_VERSION: the release number (the update check, the bundle and .exe
 # version resources).
@@ -157,3 +180,6 @@ endforeach()
 if(MSGA_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
+
+# Precompiled standard headers for the test trees (see src/tools/pch.cmake).
+include(src/tools/pch.cmake)

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -22,9 +23,12 @@
 namespace base::test {
 
 namespace {
-Case *g_first = nullptr, *g_last = nullptr;
-int   g_failures   = 0;
-bool  g_caseFailed = false;
+Case       *g_first = nullptr, *g_last = nullptr;
+Suite      *g_suites     = nullptr;
+int         g_failures   = 0;
+bool        g_caseFailed = false;
+// The suite the command line named; "" = every suite.
+std::string g_suite;
 } // namespace
 
 int add(Case *c) {
@@ -34,6 +38,12 @@ int add(Case *c) {
     else
         g_first = c;
     g_last = c;
+    return 0;
+}
+
+int addSuite(Suite *s) {
+    s->next  = g_suites;
+    g_suites = s;
     return 0;
 }
 
@@ -366,12 +376,144 @@ void isolate() {
 }
 } // namespace
 
+namespace {
+
+// A file's suite: its name without the directories and the last extension
+// (".../test_shell.cpp" -> "test_shell").
+std::string_view suiteOf(std::string_view file) {
+    const size_t slash = file.find_last_of("/\\");
+    if (slash != std::string_view::npos)
+        file.remove_prefix(slash + 1);
+    return file.substr(0, file.rfind('.'));
+}
+
+// A case's group: its name before the first ':' ("image: decodes ..." ->
+// "image"); the whole name when it has none.
+std::string_view groupOf(std::string_view name) {
+    return name.substr(0, name.find(':'));
+}
+
+bool isSuite(std::string_view name) {
+    for (Case *c = g_first; c; c = c->next)
+        if (suiteOf(c->file) == name)
+            return true;
+    for (Suite *s = g_suites; s; s = s->next)
+        if (suiteOf(s->file) == name)
+            return true;
+    return false;
+}
+
+bool inSuite(const Case *c) {
+    return g_suite.empty() || suiteOf(c->file) == g_suite;
+}
+
+bool selected(const Case *c, const char *filter) {
+    return inSuite(c) &&
+           (!filter || groupOf(c->name) == filter || std::strcmp(c->name, filter) == 0);
+}
+
+// The suites (and, with `cases`, every case) as the usage and --list show them.
+void listSuites(FILE *out, bool cases) {
+    std::string last;
+    for (Case *c = g_first; c; c = c->next) {
+        const std::string_view suite = suiteOf(c->file);
+        if (suite != last) {
+            last = suite;
+            std::fprintf(out, "%s\n", last.c_str());
+        } else if (!cases) {
+            continue;
+        }
+        if (cases)
+            std::fprintf(out, "  %s\n", c->name);
+    }
+}
+
+void usage(const char *argv0) {
+    std::fprintf(
+        stderr,
+        "usage: %s [suite] [group | case] | --list\n"
+        "A suite is a test file (test_shell.cpp -> test_shell); a group is the cases\n"
+        "whose names start \"<group>:\". Suites:\n",
+        argv0
+    );
+    listSuites(stderr, false);
+}
+
+// Two files of one executable with the same name would be one suite.
+bool suitesUnique() {
+    for (Case *a = g_first; a; a = a->next)
+        for (Case *b = a->next; b; b = b->next)
+            if (std::strcmp(a->file, b->file) != 0 && suiteOf(a->file) == suiteOf(b->file)) {
+                std::fprintf(
+                    stderr,
+                    "two suites named %s: %s, %s\n",
+                    std::string(suiteOf(a->file)).c_str(),
+                    a->file,
+                    b->file
+                );
+                return false;
+            }
+    return true;
+}
+
+} // namespace
+
 int runAll(int argc, char **argv) {
     isolate();
+    const char *argv0 = argc > 0 ? argv[0] : "test";
+    if (!suitesUnique())
+        return 2;
+    if (argc > 1 && std::strcmp(argv[1], "--list") == 0) {
+        listSuites(stdout, true);
+        return 0;
+    }
+    // The suite's name off the command line: what follows is the suite's own.
+    std::vector<char *> args{const_cast<char *>(argv0)};
+    if (argc > 1 && isSuite(argv[1])) {
+        g_suite = argv[1];
+        args.insert(args.end(), argv + 2, argv + argc);
+    } else if (argc > 1) {
+        args.insert(args.end(), argv + 1, argv + argc);
+    }
+    args.push_back(nullptr);
+    const int suiteArgc = int(args.size()) - 1;
+
+    SuiteMain own = nullptr;
+    if (!g_suite.empty()) {
+        for (Suite *s = g_suites; s; s = s->next)
+            if (suiteOf(s->file) == g_suite)
+                own = s->main;
+    } else if (g_suites) {
+        // A suite's process setup must not leak into other suites' cases:
+        // with no suite named, only an executable of that one suite runs it.
+        for (Case *c = g_first; c; c = c->next)
+            if (g_suites->next || suiteOf(c->file) != suiteOf(g_suites->file)) {
+                if (argc > 1)
+                    std::fprintf(stderr, "%s: no suite named '%s'\n", argv0, argv[1]);
+                std::fprintf(
+                    stderr,
+                    "%s: name a suite: %s has its own process setup\n",
+                    argv0,
+                    std::string(suiteOf(g_suites->file)).c_str()
+                );
+                usage(argv0);
+                return 2;
+            }
+        own = g_suites->main;
+    }
+    return own ? own(suiteArgc, args.data()) : runSuite(suiteArgc, args.data());
+}
+
+int runSuite(int argc, char **argv) {
+    const char *argv0  = argc > 0 && argv[0] ? argv[0] : "test";
     const char *filter = argc > 1 ? argv[1] : nullptr;
-    int         ran = 0, failed = 0;
+    if (argc > 2) {
+        usage(argv0);
+        return 2;
+    }
+    int ran = 0, failed = 0;
     for (Case *c = g_first; c; c = c->next) {
-        if (filter && !std::strstr(c->name, filter))
+        if (!selected(c, filter))
             continue;
         g_caseFailed = false;
         c->fn();
@@ -380,6 +522,18 @@ int runAll(int argc, char **argv) {
             ++failed;
             std::fprintf(stderr, "FAIL %s\n", c->name);
         }
+    }
+    if (!ran && filter) {
+        std::fprintf(
+            stderr,
+            "%s: no suite, case group or case named '%s'%s%s\n",
+            argv0,
+            filter,
+            g_suite.empty() ? "" : " in ",
+            g_suite.c_str()
+        );
+        usage(argv0);
+        return 2;
     }
     std::printf("%d cases, %d failed, %d failed checks\n", ran, failed, g_failures);
     return failed ? 1 : 0;

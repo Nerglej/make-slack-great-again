@@ -18,6 +18,5 @@ if(APPLE)
     target_sources(msga_base_tests PRIVATE test_old_settings_mac.mm)
     set_source_files_properties(test_old_settings_mac.mm PROPERTIES COMPILE_OPTIONS "-fno-exceptions;-fno-rtti")
 endif()
-add_test(NAME msga_base_tests COMMAND msga_base_tests)
 # Time formatting tests pin a zone so "local time" is reproducible anywhere.
-set_tests_properties(msga_base_tests PROPERTIES ENVIRONMENT "TZ=Europe/Stockholm")
+msga_add_test(msga_base_tests COMMAND msga_base_tests TZ)

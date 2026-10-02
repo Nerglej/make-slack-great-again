@@ -335,8 +335,6 @@ void removeTree(const std::string &dir) {
 }
 #endif
 
-} // namespace
-
 #ifndef _WIN32
 // A throwaway Claude Code home with one background job (abcdef11), the
 // variables the fake `attach` reads set for the processes started from here.
@@ -366,8 +364,6 @@ struct FakeAttachHome {
     void        setMode(const char *mode) const { file::writeAtomic(dir + "/attach-mode", mode); }
 };
 #endif
-
-namespace {
 
 std::string rule(int n, const std::string &title = {}) {
     std::string r;

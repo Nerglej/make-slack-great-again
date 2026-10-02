@@ -15,6 +15,36 @@ add_library(msga_test STATIC support/test.cpp)
 target_include_directories(msga_test PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(msga_test PUBLIC msga_base msga_flags)
 
+# msga_add_test(<name> COMMAND <exe> [suite] [group] [TZ] [HOME <dir>]
+#               [ENV <var=value>...] [LABELS <label>...])
+# One ctest test, on plat's headless backend. TZ pins a zone, so "local
+# time" is the same anywhere; HOME gives the test a throwaway home <dir>
+# with the XDG folders under it, so it never touches the user's settings or
+# caches. Without one, runAll makes a temporary home of its own (deleted at
+# exit); a <dir> must have "test-home" in its name for runAll to keep it
+# (support/test.cpp).
+function(msga_add_test name)
+    cmake_parse_arguments(PARSE_ARGV 1 arg "TZ" "HOME" "COMMAND;ENV;LABELS")
+    set(env "PLAT_BACKEND=headless")
+    if(arg_TZ)
+        list(APPEND env "TZ=Europe/Stockholm")
+    endif()
+    if(arg_HOME)
+        if(NOT arg_HOME MATCHES "test-home")
+            message(FATAL_ERROR "msga_add_test(${name}): HOME ${arg_HOME} has no \"test-home\"")
+        endif()
+        list(APPEND env "HOME=${arg_HOME}" "XDG_CONFIG_HOME=${arg_HOME}/.config"
+            "XDG_CACHE_HOME=${arg_HOME}/.cache" "XDG_DATA_HOME=${arg_HOME}/.local/share"
+            "XDG_STATE_HOME=${arg_HOME}/.local/state")
+    endif()
+    list(APPEND env ${arg_ENV})
+    add_test(NAME ${name} COMMAND ${arg_COMMAND})
+    set_tests_properties(${name} PROPERTIES ENVIRONMENT "${env}")
+    if(arg_LABELS)
+        set_tests_properties(${name} PROPERTIES LABELS "${arg_LABELS}")
+    endif()
+endfunction()
+
 # A fake AI server (support/fake_llm.py) for any suite that needs answers:
 # the llm tests, and the messages/settings/shell screens'. POSIX only.
 if(TARGET msga_app_llm)

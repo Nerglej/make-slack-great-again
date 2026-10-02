@@ -1,20 +1,11 @@
 # msga_app_claude: the Claude Code workspace, against fake ~/.claude trees.
-add_executable(claude_tests
-    test_terminal.cpp
-    test_launcher.cpp
-    test_roster.cpp
-    test_transcript.cpp
-    test_roles.cpp
-    test_outputs.cpp
-    test_worktrees.cpp
-    test_catalog.cpp
-    test_backend.cpp
-    main.cpp
-)
-target_link_libraries(claude_tests PRIVATE msga_app_claude msga_test)
-target_compile_definitions(claude_tests PRIVATE MSGA_SOURCE_DIR="${MSGA_ROOT}")
-add_test(NAME claude_tests COMMAND claude_tests)
-# Headless plat, a pinned zone, a throwaway HOME/XDG: the tests never see
-# the user's ~/.claude (each case builds its own fake one).
-set_tests_properties(claude_tests PROPERTIES ENVIRONMENT
-    "PLAT_BACKEND=headless;TZ=Europe/Stockholm;HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/.config;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/.cache;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/test-home/.local/share;CLAUDE_CONFIG_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-home/.claude")
+# Suites of msga_app_tests (../CMakeLists.txt), ctest test claude_<suite> each.
+target_link_libraries(msga_app_tests PRIVATE msga_app_claude)
+# Headless plat, a pinned zone, a throwaway HOME/XDG per suite: the tests
+# never see the user's ~/.claude (each case builds its own fake one).
+foreach(s terminal launcher roster transcript roles outputs worktrees catalog backend)
+    target_sources(msga_app_tests PRIVATE test_${s}.cpp)
+    set(_home "${CMAKE_CURRENT_BINARY_DIR}/test-home-${s}")
+    msga_add_test(claude_${s} COMMAND msga_app_tests test_${s} TZ HOME ${_home}
+        ENV "CLAUDE_CONFIG_DIR=${_home}/.claude" LABELS claude)
+endforeach()

@@ -1158,6 +1158,8 @@ TEST("composer: a pasted picture becomes an attachment, pasted text stays text")
     CHECK(c.attachments().size() == 1);
 }
 
+namespace {
+
 // "a b/c" → "a%20b/c": a file URI's path.
 std::string uriPath(const std::string &p) {
     std::string out;
@@ -1165,6 +1167,8 @@ std::string uriPath(const std::string &p) {
         out += ch == ' ' ? std::string("%20") : std::string(1, ch);
     return out;
 }
+
+} // namespace
 
 TEST("composer: files copied in a file manager are attached, other URIs paste as text") {
     Harness           h;
