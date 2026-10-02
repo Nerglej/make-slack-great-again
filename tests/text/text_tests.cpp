@@ -353,6 +353,24 @@ void glyphCache() {
 
 // inkBounds is the box of what paint() draws from a whole-pixel origin: the
 // side bearings and the blank edges of the glyph masks are not in it.
+// inkLean: a "1"'s ink mass sits right of its ink box's centre (the flag is
+// light), a symmetric "0" has none, and it is per glyph: "11" leans like "1",
+// and a "+" after "99" does not pull the string's lean towards it.
+void inkLean() {
+    CHECK(lay("")->inkLean() == 0);
+    for (float scale : {1.0f, 1.5f, 2.0f}) {
+        Style st;
+        st.size         = 11.7f;
+        st.weight       = Weight::Bold;
+        const float px  = 1 / scale;
+        const float one = lay("1", 1e9f, scale, st)->inkLean();
+        CHECK(one > px / 2);
+        CHECK(std::fabs(lay("0", 1e9f, scale, st)->inkLean()) < px / 2);
+        CHECK(std::fabs(lay("11", 1e9f, scale, st)->inkLean() - one) < px / 2);
+        CHECK(std::fabs(lay("99+", 1e9f, scale, st)->inkLean()) < px);
+    }
+}
+
 void inkBounds() {
     CHECK(lay("")->inkBounds().w == 0);
     CHECK(lay(" ")->inkBounds().w == 0);
@@ -556,6 +574,7 @@ constexpr Case kCases[] = {
     {"word_select", wordSelect},
     {"glyph_cache", glyphCache},
     {"ink_bounds", inkBounds},
+    {"ink_lean", inkLean},
     {"perf", perf},
 };
 

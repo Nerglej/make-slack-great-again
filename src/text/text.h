@@ -94,6 +94,13 @@ public:
     // device pixel; empty when nothing draws. For centring a few glyphs by
     // what shows: side bearings are uneven and hinting moves the cap height.
     virtual gfx::RectF              inkBounds() const                                = 0;
+    // How far right of its own ink box's centre each glyph's ink mass sits,
+    // averaged over the glyphs (logical; 0 for colour glyphs). A "1"'s flag
+    // widens its box to the left of the stem, so centring the box alone puts
+    // the stem right of centre; centring on (box centre + lean) centres what
+    // the eye weighs.
+    // Per glyph, so a light "+" in "99+" does not drag the whole string.
+    virtual float                   inkLean() const                                  = 0;
     // Selection highlight between byte offsets, painted behind the text.
     virtual std::vector<gfx::RectF> selectionRects(uint32_t from, uint32_t to) const = 0;
 

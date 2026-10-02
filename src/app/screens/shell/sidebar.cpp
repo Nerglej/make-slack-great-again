@@ -142,8 +142,8 @@ public:
             return;
         const float       s = p.scale();
         const gfx::PointF o = p.toPhysical({0, 0});
-        const float       x = std::floor(o.x + (width() - _ink.w) * s / 2 - _ink.x * s + 0.5f);
-        const float       y = std::floor(o.y + (height() - _ink.h) * s / 2 - _ink.y * s + 0.5f);
+        const float x = std::floor(o.x + (width() - _ink.w) * s / 2 - (_ink.x + _lean) * s + 0.5f);
+        const float y = std::floor(o.y + (height() - _ink.h) * s / 2 - _ink.y * s + 0.5f);
         l->paint(p, {(x - o.x) / s, (y - o.y) / s});
     }
 
@@ -158,6 +158,7 @@ private:
             t.append(_text, font(_font, C::BadgeText));
             _layout = text::Layout::build(t, {}, scale);
             _ink    = _layout->inkBounds();
+            _lean   = _layout->inkLean();
             _scale  = scale;
             _fg     = fg;
         }
@@ -168,6 +169,7 @@ private:
     std::string                   _text;
     std::unique_ptr<text::Layout> _layout;
     RectF                         _ink;
+    float                         _lean  = 0;
     float                         _scale = 0;
     gfx::Color                    _fg    = 0;
 };

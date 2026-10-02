@@ -134,6 +134,7 @@ public:
     bool                          truncated() const override { return _truncated; }
     void                          paint(gfx::Painter &p, gfx::PointF origin) const override;
     gfx::RectF                    inkBounds() const override;
+    float                         inkLean() const override;
     std::vector<gfx::RectF>       selectionRects(uint32_t from, uint32_t to) const override;
     HitResult                     hitTest(gfx::PointF p) const override;
     gfx::RectF                    caretRect(uint32_t offset) const override;
@@ -145,9 +146,11 @@ public:
     void build(const AttributedText &t, const LayoutOptions &o, float scale);
 
 private:
-    void     shapeRun(Run &r, const char *utf8, int len, int itemOff, int itemLen, uint32_t script);
-    void     makeLine(uint32_t u0, uint32_t u1, bool ellipsis, bool soft, const LayoutOptions &o);
-    int      lineOf(uint32_t off) const;
+    void shapeRun(Run &r, const char *utf8, int len, int itemOff, int itemLen, uint32_t script);
+    void makeLine(uint32_t u0, uint32_t u1, bool ellipsis, bool soft, const LayoutOptions &o);
+    int  lineOf(uint32_t off) const;
+    template <class F>
+    void     forEachInk(F &&f) const;
     void     segments(int line, std::vector<Seg> &out) const;
     uint32_t nextGrapheme(uint32_t off) const;
     uint32_t prevGrapheme(uint32_t off) const;
@@ -733,8 +736,11 @@ placeGlyph(const Run &r, const G &g, float cellX, float blY, bool color, int *X,
     return cg;
 }
 
-gfx::RectF LayoutImpl::inkBounds() const {
-    int x0 = INT32_MAX, y0 = INT32_MAX, x1 = INT32_MIN, y1 = INT32_MIN;
+// Each glyph that leaves ink, as painted from a whole-pixel origin: its mask
+// (null for a colour glyph), its physical top-left, and the inked part of the
+// mask [l0, r0) × [t0, b0).
+template <class F>
+void LayoutImpl::forEachInk(F &&f) const {
     for (const Line &l : _lines)
         for (uint32_t i = l.p0; i < l.p1; ++i) {
             const Piece &pc = _pieces[i];
@@ -756,43 +762,70 @@ gfx::RectF LayoutImpl::inkBounds() const {
                 );
                 if (!cg)
                     continue;
+                if (cg->color) {
+                    f(nullptr, X, Y, 0, 0, int(cg->w), int(cg->h));
+                    continue;
+                }
                 // A mask's box can carry blank or barely touched edge rows
                 // and columns: they are not ink.
+                const gfx::Mask8 m   = cache::mask(*cg);
+                auto             ink = [&](int x, int y) { return m.data[y * m.stride + x] >= 32; };
+                auto             col = [&](int x) {
+                    for (int y = 0; y < m.height; ++y)
+                        if (ink(x, y))
+                            return true;
+                    return false;
+                };
+                auto row = [&](int y) {
+                    for (int x = 0; x < m.width; ++x)
+                        if (ink(x, y))
+                            return true;
+                    return false;
+                };
                 int l0 = 0, t0 = 0, r0 = int(cg->w), b0 = int(cg->h);
-                if (!cg->color) {
-                    const gfx::Mask8 m = cache::mask(*cg);
-                    auto ink = [&](int x, int y) { return m.data[y * m.stride + x] >= 32; };
-                    auto col = [&](int x) {
-                        for (int y = 0; y < m.height; ++y)
-                            if (ink(x, y))
-                                return true;
-                        return false;
-                    };
-                    auto row = [&](int y) {
-                        for (int x = 0; x < m.width; ++x)
-                            if (ink(x, y))
-                                return true;
-                        return false;
-                    };
-                    while (l0 < r0 && !col(l0))
-                        ++l0;
-                    while (r0 > l0 && !col(r0 - 1))
-                        --r0;
-                    while (t0 < b0 && !row(t0))
-                        ++t0;
-                    while (b0 > t0 && !row(b0 - 1))
-                        --b0;
-                    if (l0 >= r0)
-                        continue;
-                }
-                x0 = std::min(x0, X + l0), y0 = std::min(y0, Y + t0);
-                x1 = std::max(x1, X + r0), y1 = std::max(y1, Y + b0);
+                while (l0 < r0 && !col(l0))
+                    ++l0;
+                while (r0 > l0 && !col(r0 - 1))
+                    --r0;
+                while (t0 < b0 && !row(t0))
+                    ++t0;
+                while (b0 > t0 && !row(b0 - 1))
+                    --b0;
+                if (l0 < r0)
+                    f(&m, X, Y, l0, t0, r0, b0);
             }
         }
+}
+
+gfx::RectF LayoutImpl::inkBounds() const {
+    int x0 = INT32_MAX, y0 = INT32_MAX, x1 = INT32_MIN, y1 = INT32_MIN;
+    forEachInk([&](const gfx::Mask8 *, int X, int Y, int l0, int t0, int r0, int b0) {
+        x0 = std::min(x0, X + l0), y0 = std::min(y0, Y + t0);
+        x1 = std::max(x1, X + r0), y1 = std::max(y1, Y + b0);
+    });
     if (x0 >= x1 || y0 >= y1)
         return {};
     const float s = _scale;
     return {float(x0) / s, float(y0) / s, float(x1 - x0) / s, float(y1 - y0) / s};
+}
+
+float LayoutImpl::inkLean() const {
+    double sum = 0;
+    int    n   = 0;
+    forEachInk([&](const gfx::Mask8 *m, int, int, int l0, int, int r0, int) {
+        ++n;
+        if (!m)
+            return;
+        double mx = 0, w = 0;
+        for (int y = 0; y < m->height; ++y)
+            for (int x = l0; x < r0; ++x) {
+                const double v = m->data[y * m->stride + x];
+                mx += v * (x + 0.5), w += v;
+            }
+        if (w > 0)
+            sum += mx / w - (l0 + r0) / 2.0;
+    });
+    return n ? float(sum / n) / _scale : 0;
 }
 
 void LayoutImpl::paint(gfx::Painter &p, gfx::PointF origin) const {
