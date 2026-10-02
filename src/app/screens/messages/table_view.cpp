@@ -162,16 +162,18 @@ void TableView::paint(gfx::Painter &p) {
 ui::RectF TableView::pillRect() const {
     if (!hovered() || !const_cast<TableView *>(this)->clipped() || !_pillText)
         return {};
-    // Centred on the visible part of the table (it can be taller than the
-    // list), inset from its right edge.
-    const ui::RectF  win = windowRect();
-    const ui::PointF o   = mapToWindow({0, 0});
-    const float      top = std::max(kMarginV, win.y - o.y);
-    const float      bot = std::min(kMarginV + _tableH, win.y + win.h - o.y);
-    if (bot <= top)
+    // Centred on the visible part of the table (it can be taller or wider
+    // than the list).
+    const ui::RectF  win   = windowRect();
+    const ui::PointF o     = mapToWindow({0, 0});
+    const float      top   = std::max(kMarginV, win.y - o.y);
+    const float      bot   = std::min(kMarginV + _tableH, win.y + win.h - o.y);
+    const float      left  = std::max(0.f, win.x - o.x);
+    const float      right = std::min(_tableW, win.x + win.w - o.x);
+    if (bot <= top || right <= left)
         return {};
     const float w = std::ceil(_pillText->width()) + kPillIconPad;
-    const float x = std::max(0.f, _tableW - w - ui::metric(ui::M::SpaceS));
+    const float x = std::max(left, std::floor((left + right) / 2 - w / 2));
     return {x, std::floor((top + bot) / 2 - kPillH / 2), w, kPillH};
 }
 
