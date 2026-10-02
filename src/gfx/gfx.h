@@ -241,6 +241,20 @@ bool decodeAnimation(std::string_view bytes, std::vector<AnimFrame> *out);
 // High-quality resize (area-average down, bilinear up) — thumbnails, avatars.
 Bitmap resize(const BitmapView &src, int width, int height);
 
+// ── Fitting into shapes (cover.cpp) ────────────────────────────────────────
+// src covering exactly w×h: its centred part with the target's aspect, then
+// one resize (none when that part already is w×h). Empty for empty input.
+Bitmap coverResize(const BitmapView &src, int w, int h);
+// An SVG rendered at the scale that covers w×h (at least that size; its own
+// size when both are <= 0), ready for coverResize. False when not an SVG.
+bool   renderSvgCover(std::string_view svg, int w, int h, Bitmap *out);
+// Scales premultiplied pixels by the coverage of a rounded rect with corner
+// `radius` (a circle when it is half the short side or more), anti-aliased
+// over one pixel.
+void   maskRoundedRect(Bitmap &b, float radius);
+// Clears a disc out of b (rim anti-aliased): Qt's CompositionMode_Clear ellipse.
+void   clearDisc(Bitmap &b, float cx, float cy, float r);
+
 // Decoders refuse images larger than this many pixels (decompression bombs).
 constexpr int64_t kMaxImagePixels = 64ll << 20;
 

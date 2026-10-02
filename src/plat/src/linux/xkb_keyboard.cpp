@@ -1,5 +1,7 @@
 #include "linux/xkb_keyboard.h"
 
+#include "core/input.h"
+
 #include <cstdlib>
 #include <linux/input-event-codes.h>
 
@@ -169,40 +171,8 @@ uint32_t evdevFromKey(Key k) {
 }
 
 Key keyFromKeysym(xkb_keysym_t sym) {
-    if (sym >= XKB_KEY_a && sym <= XKB_KEY_z)
-        return Key(int(Key::A) + int(sym - XKB_KEY_a));
-    if (sym >= XKB_KEY_A && sym <= XKB_KEY_Z)
-        return Key(int(Key::A) + int(sym - XKB_KEY_A));
-    if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9)
-        return Key(int(Key::Num0) + int(sym - XKB_KEY_0));
-    switch (sym) {
-    case XKB_KEY_minus:
-        return Key::Minus;
-    case XKB_KEY_equal:
-        return Key::Equal;
-    case XKB_KEY_bracketleft:
-        return Key::BracketLeft;
-    case XKB_KEY_bracketright:
-        return Key::BracketRight;
-    case XKB_KEY_backslash:
-        return Key::Backslash;
-    case XKB_KEY_semicolon:
-        return Key::Semicolon;
-    case XKB_KEY_apostrophe:
-        return Key::Apostrophe;
-    case XKB_KEY_grave:
-        return Key::Grave;
-    case XKB_KEY_comma:
-        return Key::Comma;
-    case XKB_KEY_period:
-        return Key::Period;
-    case XKB_KEY_slash:
-        return Key::Slash;
-    case XKB_KEY_space:
-        return Key::Space;
-    default:
-        return Key::Unknown;
-    }
+    // Latin-1 keysyms are their code points.
+    return sym == XKB_KEY_space ? Key::Space : sym < 0x80 ? core::keyFromAscii(sym) : Key::Unknown;
 }
 
 XkbKeyboard::XkbKeyboard() {

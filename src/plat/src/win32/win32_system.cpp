@@ -14,6 +14,8 @@
 // so no thread is involved and it keeps working inside OS modal loops.
 #include "win32/win32.h"
 
+#include "core/hash.h"
+
 #include <aclapi.h>
 #include <dwmapi.h>
 #include <netlistmgr.h>
@@ -51,15 +53,7 @@ uint32_t get32(std::string_view s, size_t at) {
 }
 
 // A COM-free, allocation-light hash: monitor ids and over-long pipe keys.
-uint64_t fnv1a(const void *data, size_t n) {
-    uint64_t    h = 1469598103934665603ull;
-    const auto *p = static_cast<const uint8_t *>(data);
-    for (size_t i = 0; i < n; ++i) {
-        h ^= p[i];
-        h *= 1099511628211ull;
-    }
-    return h;
-}
+using core::fnv1a;
 
 UINT monitorDpi(HMONITOR m) {
     UINT x = 0, y = 0;

@@ -25,31 +25,24 @@ constexpr float kScrimMargin = 24;
 // The backdrop: the same dim in both themes (the Qt app's rgba(0,0,0,150)).
 constexpr Color kScrim       = 0x96000000;
 
-float scaleOf(const View *v) {
-    return v->window() ? v->window()->scale() : 1.f;
-}
-
-std::unique_ptr<text::Layout>
-layoutText(std::string_view s, const text::Style &st, float scale, float maxWidth = kInf) {
-    text::AttributedText t;
-    t.append(s, st);
-    text::LayoutOptions o;
-    o.maxWidth = maxWidth;
-    return text::Layout::build(t, o, scale);
-}
+using text::layoutPlain;
 
 std::unique_ptr<text::Layout>
 layoutText(std::string_view s, Font f, C c, float scale, float maxWidth = kInf) {
-    return layoutText(s, font(f, c), scale, maxWidth);
+    return layoutPlain(s, font(f, c), scale, maxWidth);
 }
 
-bool focusShown(const View &v) {
-    return v.focused() && v.window() && v.window()->focusVisible();
-}
-
-void focusRing(const View &v, gfx::Painter &p, RectF r, float radius) {
-    if (focusShown(v))
-        p.strokeRoundRect(r, radius, 2, color(C::FocusRing));
+// Choice's and SectionList's row labels, built once per set of strings.
+void ensureLabels(
+    std::vector<std::unique_ptr<text::Layout>> &labels,
+    const std::vector<std::string>             &texts,
+    const View                                 &v
+) {
+    if (labels.size() == texts.size())
+        return;
+    labels.clear();
+    for (const std::string &t : texts)
+        labels.push_back(layoutText(t, Font::Body, C::FormText, v.windowScale()));
 }
 
 // The field frame of dropdowns and text fields: 1 px, 2 px when active.
@@ -113,7 +106,7 @@ const text::Layout *CheckBox::labelFor(float w) {
     const float tw = std::max(1.f, w - kBox - kBoxGap);
     if (!_l || _builtW != tw) {
         _builtW = tw;
-        _l = layoutText(_label, _font, enabled() ? _color : C::FormTextFaint, scaleOf(this), tw);
+        _l = layoutText(_label, _font, enabled() ? _color : C::FormTextFaint, windowScale(), tw);
     }
     return _l.get();
 }
@@ -163,7 +156,7 @@ void CheckBox::paintIndicator(gfx::Painter &p, RectF r) {
         p.fillRoundRect(r, 4, color(C::FieldWell));
         innerStroke(p, r, 4, color(hovered() && en ? C::FormTextFaint : C::FormDividerStrong));
     }
-    focusRing(*this, p, {r.x - 2, r.y - 2, r.w + 4, r.h + 4}, 6);
+    paintFocusRing(*this, p, {r.x - 2, r.y - 2, r.w + 4, r.h + 4}, 6);
 }
 
 Radio::Radio(std::string label, bool on) : CheckBox(std::move(label), on) {
@@ -186,7 +179,7 @@ void Radio::paintIndicator(gfx::Painter &p, RectF r) {
     p.strokeCircle(c, r.w / 2 - 0.5f, 1, color(ring));
     if (on)
         p.fillCircle(c, 4.5f, color(en ? C::Accent : C::FormTextFaint));
-    focusRing(*this, p, {r.x - 2, r.y - 2, r.w + 4, r.h + 4}, r.w / 2 + 2);
+    paintFocusRing(*this, p, {r.x - 2, r.y - 2, r.w + 4, r.h + 4}, r.w / 2 + 2);
 }
 
 RadioGroup::RadioGroup(const std::vector<std::string> &options, int selected)
@@ -261,11 +254,7 @@ void Choice::styleChanged() {
 }
 
 const text::Layout *Choice::label(size_t i) {
-    if (_labels.size() != _options.size()) {
-        _labels.clear();
-        for (const std::string &o : _options)
-            _labels.push_back(layoutText(o, Font::Body, C::FormText, scaleOf(this)));
-    }
+    ensureLabels(_labels, _options, *this);
     return _labels[i].get();
 }
 
@@ -308,7 +297,7 @@ void Dropdown::paint(gfx::Painter &p) {
 }
 
 void Dropdown::paintOver(gfx::Painter &p) {
-    focusRing(*this, p, bounds(), metric(M::RadiusM));
+    paintFocusRing(*this, p, bounds(), metric(M::RadiusM));
 }
 
 void Dropdown::activate() {
@@ -429,7 +418,7 @@ void SpinBox::paint(gfx::Painter &p) {
         p, gfx::Icon::SpinDown, {snapPx(ax + 3), snapPx(height() / 2 + 1), 10, 10}, color(tint)
     );
     // "14" (selected right after focusing, like a Qt spin box) + " days".
-    const float scale = scaleOf(this);
+    const float scale = windowScale();
     const C     tc    = en ? C::FormText : C::FormTextFaint;
     if (!_num || _typing)
         _num = layoutText(
@@ -732,7 +721,7 @@ SizeF FormButton::measureContent(float, float) {
         const bool filled = _kind == Kind::Primary || _kind == Kind::Danger;
         const Font f      = formButtonFont(_kind, _small);
         const C    c      = !_lEnabled ? C::FormTextFaint : filled ? C::AccentText : C::FormText;
-        _l                = layoutText(_label, f, c, scaleOf(this));
+        _l                = layoutText(_label, f, c, windowScale());
     }
     return {std::ceil(_l->width()), std::ceil(_l->height())};
 }
@@ -749,7 +738,7 @@ void FormButton::paint(gfx::Painter &p) {
     // Centre the capitals, not the line box: the font's ascent leaves more
     // room above the caps than its descent does below the baseline, so a
     // box-centred label sits visibly low.
-    const float cap = text::metrics(font(formButtonFont(_kind, _small)), scaleOf(this)).capHeight;
+    const float cap = text::metrics(font(formButtonFont(_kind, _small)), windowScale()).capHeight;
     p.save();
     p.clipRect(bounds());
     _l->paint(
@@ -759,7 +748,7 @@ void FormButton::paint(gfx::Painter &p) {
 }
 
 void FormButton::paintOver(gfx::Painter &p) {
-    focusRing(*this, p, bounds(), metric(M::RadiusM));
+    paintFocusRing(*this, p, bounds(), metric(M::RadiusM));
 }
 
 // ── SectionList ─────────────────────────────────────────────────────────────
@@ -818,11 +807,7 @@ void SectionList::paint(gfx::Painter &p) {
     p.fillRect({width() - 1, 0, 1, height()}, color(C::FormDivider));
 
     const Style &s = currentStyle();
-    if (_labels.size() != _items.size()) {
-        _labels.clear();
-        for (const std::string &it : _items)
-            _labels.push_back(layoutText(it, Font::Body, C::FormText, scaleOf(this)));
-    }
+    ensureLabels(_labels, _items, *this);
     const float w = width() - 1 - 2 * kRowInsetX;
     for (size_t i = 0; i < _items.size(); ++i) {
         const RectF row{kRowInsetX, s.pad.t + kRowPitch * float(i) + 1, w, kRowH};
@@ -833,7 +818,7 @@ void SectionList::paint(gfx::Painter &p) {
         const text::Layout *l = _labels[i].get();
         l->paint(p, snapPx({row.x + 18, row.y + std::floor((kRowH - l->height()) / 2)}));
         if (int(i) == _selected)
-            focusRing(*this, p, row, 4);
+            paintFocusRing(*this, p, row, 4);
     }
 }
 
@@ -949,6 +934,25 @@ Dialog::Dialog(std::string title, float cardWidth, Scroll scroll) : _w(cardWidth
 
 FormButton *Dialog::makeButton(std::string label, FormButton::Kind k) {
     return new FormButton(std::move(label), k, false); // adopted by addButtonRow
+}
+
+std::unique_ptr<Dialog> Dialog::confirm(
+    std::string                               title,
+    std::string                               text,
+    std::string                               confirmLabel,
+    FormButton::Kind                          kind,
+    Color                                     textColor,
+    const std::function<void(View *content)> &extra
+) {
+    auto d = std::make_unique<Dialog>(std::move(title));
+    styledLabel(d->content(), std::move(text), pxFont(15, text::Weight::Regular, textColor));
+    if (extra)
+        extra(d->content());
+    auto *ok = makeButton(std::move(confirmLabel), kind);
+    d->addButtonRow(ok, makeButton(i18n::tr("Cancel"), FormButton::Kind::Secondary));
+    Dialog *raw = d.get();
+    ok->onClick = [raw] { raw->accept(); };
+    return d;
 }
 
 View *Dialog::addButtonRow(FormButton *primary, FormButton *secondary, View *leading) {

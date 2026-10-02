@@ -99,53 +99,6 @@ std::string systemBusAddress() {
     return "unix:path=/run/dbus/system_bus_socket";
 }
 
-std::string fileUri(std::string_view absPath) {
-    static const char hex[] = "0123456789ABCDEF";
-    std::string       out   = "file://";
-    for (unsigned char c : absPath) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '.' || c == '_' || c == '~' || c == '/') {
-            out += char(c);
-        } else {
-            out += '%';
-            out += hex[c >> 4];
-            out += hex[c & 15];
-        }
-    }
-    return out;
-}
-
-std::string pathFromFileUri(std::string_view uri) {
-    constexpr std::string_view scheme = "file://";
-    if (uri.substr(0, scheme.size()) != scheme)
-        return {};
-    uri.remove_prefix(scheme.size());
-    if (uri.substr(0, 9) == "localhost")
-        uri.remove_prefix(9);
-    if (uri.empty() || uri[0] != '/')
-        return {}; // file://otherhost/… is not ours to open
-    auto hexVal = [](char c) {
-        return c >= '0' && c <= '9'   ? c - '0'
-               : c >= 'a' && c <= 'f' ? c - 'a' + 10
-               : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                      : -1;
-    };
-    std::string out;
-    for (size_t i = 0; i < uri.size(); ++i) {
-        if (uri[i] == '%' && i + 2 < uri.size() && hexVal(uri[i + 1]) >= 0 &&
-            hexVal(uri[i + 2]) >= 0) {
-            const char c = char(hexVal(uri[i + 1]) * 16 + hexVal(uri[i + 2]));
-            if (c == 0)
-                return {}; // no path can hold a NUL
-            out += c;
-            i += 2;
-        } else {
-            out += uri[i];
-        }
-    }
-    return out;
-}
-
 // ── MsgWriter ───────────────────────────────────────────────────────────────
 
 void MsgWriter::str(std::string_view s) {

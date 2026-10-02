@@ -15,6 +15,8 @@
 #pragma once
 
 #include "core/backends.h"
+#include "core/input.h"
+#include "core/transfer.h"
 #include "linux/services.h"
 #include "linux/xkb_keyboard.h"
 #ifdef PLAT_TEST_HOOKS
@@ -442,16 +444,13 @@ public:
         bool   any = false, has120 = false, hasDiscrete = false, stop = false;
         int    source = -1;
     } _axis;
-    std::chrono::steady_clock::time_point _lastPress{};
-    uint32_t                              _lastPressButton = 0;
-    Point                                 _lastPressPos;
-    int                                   _clicks             = 0;
-    Cursor                                _appliedCursor      = Cursor::Hidden;
-    int                                   _appliedCursorScale = 0;
-    bool                                  _cursorApplied      = false;
-    wl_cursor_theme                      *_cursorTheme        = nullptr;
-    int                                   _cursorThemeScale   = 0;
-    wl_surface                           *_cursorSurface      = nullptr;
+    core::ClickCounter _clicks;
+    Cursor             _appliedCursor      = Cursor::Hidden;
+    int                _appliedCursorScale = 0;
+    bool               _cursorApplied      = false;
+    wl_cursor_theme   *_cursorTheme        = nullptr;
+    int                _cursorThemeScale   = 0;
+    wl_surface        *_cursorSurface      = nullptr;
 
     // Touchpad swipes (zwp_pointer_gestures_v1).
     zwp_pointer_gesture_swipe_v1 *_swipe          = nullptr;

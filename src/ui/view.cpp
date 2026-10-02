@@ -5,6 +5,10 @@
 
 namespace ui {
 
+float View::windowScale() const {
+    return _window ? _window->scale() : 1.f;
+}
+
 RectF intersect(RectF a, RectF b) {
     const float x0 = std::max(a.x, b.x), y0 = std::max(a.y, b.y);
     const float x1 = std::min(a.x + a.w, b.x + b.w), y1 = std::min(a.y + a.h, b.y + b.h);
@@ -237,7 +241,7 @@ void View::setBackground(C token, float radius) {
 }
 
 float View::snapPx(float v) const {
-    const float s = _window ? _window->scale() : 1.f;
+    const float s = windowScale();
     return std::floor(v * s + 0.5f + 1e-3f) / s; // biased: ties always round one way
 }
 
@@ -519,7 +523,7 @@ void View::layoutFlex() {
     // Edges land on the physical pixel grid (not whole logical px): at 1.5x
     // nothing sits on a half-pixel tie, where float noise would flip glyph
     // and fill rounding between two paints of the same view.
-    const float gs    = _window ? _window->scale() : 1.f;
+    const float gs    = windowScale();
     auto        round = [gs](float v) { return std::floor(v * gs + 0.5f + 1e-3f) / gs; };
     if (s.dir == Dir::Stack) {
         for (auto &cp : _children) {

@@ -2,6 +2,7 @@
 
 #include "app/identity.h"
 #include "base/crypto.h"
+#include "base/mime.h"
 #include "base/file.h"
 #include "base/log.h"
 #include "base/str.h"
@@ -33,11 +34,7 @@ double nowMs() {
 // — Slack's HTML sign-in page for a file fetched without auth, a JSON error —
 // is not kept, so it can't poison the disk cache.
 bool looksLikeImage(std::string_view b) {
-    const auto starts = [&](std::string_view m) {
-        return b.size() >= m.size() && b.compare(0, m.size(), m) == 0;
-    };
-    return starts("\x89PNG") || starts("\xFF\xD8\xFF") || starts("GIF8") ||
-           (b.size() >= 12 && starts("RIFF") && b.compare(8, 4, "WEBP") == 0);
+    return str::startsWith(mime::sniff(b), "image/");
 }
 
 int64_t treeBytes(const std::string &dir) {

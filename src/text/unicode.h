@@ -9,11 +9,8 @@
 
 namespace text::uni {
 
-// Decodes one code point at s[*i] and advances *i. Malformed input yields
-// U+FFFD and consumes one byte, so offsets always stay on byte boundaries.
-uint32_t decode(const char *s, size_t n, size_t *i);
-// Byte length of the sequence starting with lead byte b (1 for garbage).
-int      seqLen(uint8_t b);
+// UTF-8 decoding is base/utf8.h's utf8::decode (strict: overlong forms and
+// surrogates are U+FFFD, as HarfBuzz's own decoder treats them).
 
 // HarfBuzz general category (hb_unicode_general_category_t) and script.
 int      category(uint32_t cp);
@@ -23,9 +20,12 @@ bool isExtPict(uint32_t cp);          // Extended_Pictographic (emoji bases), ap
 bool isEmojiDefault(uint32_t cp);     // emoji presentation by default (no VS16 needed)
 bool isRegional(uint32_t cp);         // regional indicator (flags)
 bool isDefaultIgnorable(uint32_t cp); // ZWJ, VS, tags… — never need a glyph of their own
-bool isSpace(uint32_t cp);            // a break-after space (not NBSP)
-bool isNewline(uint32_t cp);          // mandatory paragraph break
-bool isWordChar(uint32_t cp);         // letters, digits, marks, '_' — double-click words
+// Not utf8::isSpace (White_Space): NBSP, U+2007 and the newlines are left out.
+bool isBreakSpace(uint32_t cp); // a break-after space (not NBSP)
+bool isNewline(uint32_t cp);    // mandatory paragraph break
+// Exact (UCD general category), unlike utf8::isWordChar's block approximation
+// that base/ and the mrkdwn parser use without HarfBuzz.
+bool isSelectWordChar(uint32_t cp); // letters, digits, marks, '_' — double-click words
 
 // Grapheme cluster boundaries: stateful scan over a code point sequence.
 struct GraphemeScanner {

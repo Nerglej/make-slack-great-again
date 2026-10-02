@@ -1,5 +1,7 @@
 #include "linux/sni_tray.h"
 
+#include "core/image_util.h"
+
 #include <algorithm>
 #include <climits>
 
@@ -228,15 +230,10 @@ void SniTray::setIcon(const std::vector<Image> &sizes) {
         p.argb.resize(size_t(img.width) * img.height * 4);
         uint8_t *o = p.argb.data();
         for (uint32_t px : img.pixels) {
-            const uint32_t a        = px >> 24;
-            auto           straight = [a](uint32_t c) -> uint8_t {
-                return a ? uint8_t(std::min<uint32_t>(255, (c * 255 + a / 2) / a)) : 0;
-            };
             // SNI wants ARGB32 in network byte order with straight alpha.
-            *o++ = uint8_t(a);
-            *o++ = straight((px >> 16) & 0xff);
-            *o++ = straight((px >> 8) & 0xff);
-            *o++ = straight(px & 0xff);
+            const uint32_t s = core::unpremultiply(px);
+            for (int sh = 24; sh >= 0; sh -= 8)
+                *o++ = uint8_t(s >> sh);
         }
         _icons.push_back(std::move(p));
     }

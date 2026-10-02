@@ -16,6 +16,8 @@
 // race in which two simultaneous launches can both end up primary.
 #include "linux/instance.h"
 
+#include "core/hash.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -161,10 +163,8 @@ std::string socketName(std::string_view key) {
     for (char c : key)
         s += (std::isalnum(uint8_t(c)) || c == '.' || c == '-' || c == '_') ? c : '_';
     if (s.size() > 40) {
-        uint64_t h = 1469598103934665603ull; // FNV-1a
-        for (char c : key)
-            h = (h ^ uint8_t(c)) * 1099511628211ull;
-        char hex[17];
+        const uint64_t h = core::fnv1a(key);
+        char           hex[17];
         std::snprintf(hex, sizeof hex, "%016llx", (unsigned long long)h);
         s = s.substr(0, 23) + "-" + hex;
     }

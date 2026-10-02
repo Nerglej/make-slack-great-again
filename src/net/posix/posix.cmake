@@ -59,6 +59,7 @@ target_link_libraries(msga_mbedtls PUBLIC Threads::Threads)
 # ── The transport ───────────────────────────────────────────────────────────
 target_sources(msga_net PRIVATE
     posix/socket.cpp
+    posix/loopback.cpp
     posix/tls.cpp
     posix/http.cpp
     posix/ws.cpp

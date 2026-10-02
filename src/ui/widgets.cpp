@@ -7,20 +7,14 @@ namespace ui {
 
 namespace {
 
-float windowScale(const View *v) {
-    return v->window() ? v->window()->scale() : 1.f;
-}
-
-std::unique_ptr<text::Layout>
-buildPlain(std::string_view s, const text::Style &st, float scale, float maxWidth = kInf) {
-    text::AttributedText t;
-    t.append(s, st);
-    text::LayoutOptions o;
-    o.maxWidth = maxWidth;
-    return text::Layout::build(t, o, scale);
-}
+using text::layoutPlain;
 
 } // namespace
+
+void paintFocusRing(const View &v, gfx::Painter &p, RectF r, float radius) {
+    if (v.focused() && v.window() && v.window()->focusVisible())
+        p.strokeRoundRect(r, radius, 2, color(C::FocusRing));
+}
 
 // ── Label ───────────────────────────────────────────────────────────────────
 
@@ -154,7 +148,7 @@ std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale, bool sele
     // One physical pixel of slack: snapping flex edges to the pixel grid can
     // hand a label a frame that much narrower than the width it measured,
     // which must not wrap its last word (the ink margin covers the overhang).
-    o.maxWidth   = w + 1.f / (window() ? window()->scale() : 1.f);
+    o.maxWidth   = w + 1.f / windowScale();
     o.maxLines   = _maxLines;
     o.ellipsis   = _maxLines > 0;
     o.align      = _align;
@@ -163,8 +157,8 @@ std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale, bool sele
 }
 
 const text::Layout *Label::layoutFor(float w) {
-    const float slack = 1.f / (window() ? window()->scale() : 1.f);
-    const float scale = windowScale(this);
+    const float slack = 1.f / windowScale();
+    const float scale = windowScale();
     if (_layout && _layoutScale == scale) {
         if (w == _layoutW)
             return _layout.get();
@@ -500,7 +494,7 @@ const text::Layout *Button::labelLayout() {
         } else if (_kind == Kind::Primary) {
             f = Font::BodyBold;
         }
-        _layout = buildPlain(_label, font(f, c), windowScale(this));
+        _layout = layoutPlain(_label, font(f, c), windowScale());
     }
     return _layout.get();
 }
@@ -534,8 +528,7 @@ void Button::paint(gfx::Painter &p) {
 void Button::paintOver(gfx::Painter &p) {
     if (_kind == Kind::Tab && checked())
         p.fillRect({0, height() - 2, width(), 2}, color(C::Text));
-    if (focused() && window() && window()->focusVisible())
-        p.strokeRoundRect(bounds(), _look.radius, 2, color(C::FocusRing));
+    paintFocusRing(*this, p, bounds(), _look.radius);
 }
 
 // ── Badge ───────────────────────────────────────────────────────────────────
@@ -581,10 +574,10 @@ SizeF Badge::measureContent(float, float) {
     if (_dot && _count <= 0)
         return {8, 8};
     if (!_layout)
-        _layout = buildPlain(
+        _layout = layoutPlain(
             _count > 99 ? std::string("99+") : std::to_string(_count),
             font(Font::SmallBold, _fg),
-            windowScale(this)
+            windowScale()
         );
     return {std::max(18.f, std::ceil(_layout->width()) + 10), 18};
 }

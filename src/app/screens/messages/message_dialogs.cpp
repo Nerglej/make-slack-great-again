@@ -106,17 +106,15 @@ ui::Popup *showDeleteMessageDialog(Context &ctx, ui::Window &w, ConvRef conv, Ts
     const model::Message *m = ctx.store().findMessage(conv, ts);
     if (!m)
         return nullptr;
-    auto d = std::make_unique<ui::Dialog>(tr("Delete message"));
-    ui::styledLabel(
-        d->content(),
+    auto d = ui::Dialog::confirm(
+        tr("Delete message"),
         tr("This action cannot be undone."),
-        ui::pxFont(15, text::Weight::Regular, ui::color(C::FormTextMuted))
+        tr("Delete"),
+        V::Danger,
+        ui::color(C::FormTextMuted),
+        [&](ui::View *content) { addMessagePreview(ctx, content, *m, 160, false); }
     );
-    addMessagePreview(ctx, d->content(), *m, 160, false);
-    auto *del = d->makeButton(tr("Delete"), V::Danger);
-    d->addButtonRow(del, d->makeButton(tr("Cancel"), V::Secondary));
     ui::Dialog *raw = d.get();
-    del->onClick    = [raw] { raw->accept(); };
     d->onAccepted   = [&ctx, conv, ts] { ctx.backend.remove(conv, ts); };
     w.showPopup(std::move(d));
     return raw;
@@ -554,7 +552,7 @@ private:
             return;
         _built            = true;
         const float textW = std::max(50.f, width() - 96 - 24);
-        const float k     = window() ? window()->scale() : 1.f;
+        const float k     = windowScale();
         size_t      cols  = 0;
         for (auto &r : _rows)
             cols = std::max(cols, r.size());

@@ -8,6 +8,7 @@ add_library(msga_base STATIC
     locale_names.cpp
     i18n.cpp
     str.cpp
+    mime.cpp
     crypto.cpp
     process.cpp
     old_settings.cpp

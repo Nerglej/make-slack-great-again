@@ -35,6 +35,18 @@ std::string apiBase(const Auth &auth);
 // answers {"ok":false,"error":"ratelimited","retry_after":<Retry-After secs>}.
 using ApiDone = std::function<void(const json::Document &doc, const std::string &error)>;
 
+// The one classification of an ApiDone error both the read queue and the
+// write actions use. A transport failure: no answer at all (net's "dns",
+// "connect", "tls", "timeout", "protocol", "too_many_redirects", with or
+// without ": detail") or one that isn't Slack's ("bad_json": a proxy's 5xx
+// or HTML gateway page). The request may or may not have reached Slack.
+bool isTransportError(const std::string &error);
+// Slack's own "likely a transient issue on our end" codes.
+bool isTransientSlackError(const std::string &error);
+// msga's retry backoff: 1 s, 2 s, 4 s … capped at 60 s, for retry `attempt`
+// (0-based).
+int  retryBackoffMs(int attempt);
+
 net::RequestId apiCall(
     net::Client &client, const Auth &auth, std::string_view method, std::string form, ApiDone done
 );

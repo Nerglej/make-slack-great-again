@@ -19,12 +19,12 @@ const char *const kTextMimes[5] = {
 };
 
 bool isTextMime(std::string_view m) {
-    return std::find(std::begin(kTextMimes), std::end(kTextMimes), m) != std::end(kTextMimes);
+    return core::isTextMime(m);
 }
 
 namespace {
 
-constexpr const char *kText        = "text/plain;charset=utf-8";
+constexpr const char *kText        = core::kTextMime;
 constexpr const char *kUriList     = "text/uri-list";
 constexpr const char *kHtml        = "text/html";
 constexpr const char *kPng         = "image/png";
@@ -66,10 +66,14 @@ const DataItem *itemFor(const std::vector<DataItem> &items, std::string_view mim
 std::string pickMime(const std::vector<std::string> &offered, std::string_view want) {
     if (std::find(offered.begin(), offered.end(), want) != offered.end())
         return std::string(want);
-    if (isTextMime(want))
+    if (isTextMime(want)) {
         for (const char *m : kTextMimes)
             if (std::find(offered.begin(), offered.end(), m) != offered.end())
                 return m;
+        for (const std::string &m : offered) // e.g. "text/plain; charset=UTF-8"
+            if (isTextMime(m))
+                return m;
+    }
     return {};
 }
 
@@ -200,24 +204,6 @@ const zwp_primary_selection_source_v1_listener kPrimarySourceListener = {
     .cancelled = [](void                            *d,
                     zwp_primary_selection_source_v1 *s) { appOf(d)->onPrimarySourceCancelled(s); },
 };
-
-std::vector<std::string> parseUriList(const std::string &s) {
-    // RFC 2483: CRLF-separated, '#' lines are comments.
-    std::vector<std::string> out;
-    size_t                   pos = 0;
-    while (pos < s.size()) {
-        size_t end = s.find('\n', pos);
-        if (end == std::string::npos)
-            end = s.size();
-        std::string line = s.substr(pos, end - pos);
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\0'))
-            line.pop_back();
-        if (!line.empty() && line[0] != '#')
-            out.push_back(std::move(line));
-        pos = end + 1;
-    }
-    return out;
-}
 
 void setNonBlocking(int fd) {
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
@@ -644,7 +630,7 @@ void WlApp::onDrop() {
                         continue;
                     const std::string &mime = p->want[k].first;
                     if (mime == kUriList)
-                        e.uris = parseUriList(*p->got[k]);
+                        e.uris = core::parseUriList(*p->got[k]);
                     else if (mime == kText)
                         e.text = *p->got[k];
                     e.items.push_back({mime, std::move(*p->got[k])});

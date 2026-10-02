@@ -200,7 +200,7 @@ public:
     void paint(gfx::Painter &p) override {
         const float       top   = scroll ? scroll->scrollOffset() : 0,
                           vh    = scroll ? scroll->height() : height();
-        const float       scale = window() ? window()->scale() : 1.f;
+        const float       scale = windowScale();
         const std::string tg    = toneGlyph(g_tone);
         for (const Row &r : _rows) {
             if (r.y + r.h < top || r.y > top + vh)

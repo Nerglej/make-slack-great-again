@@ -3,7 +3,9 @@
 // the HTTP/1.1 head parser shared by requests and the WebSocket upgrade.
 #pragma once
 
+#include "base/str.h"
 #include "net/net.h"
+#include "net/transport.h"
 
 #include <atomic>
 #include <cstdint>
@@ -16,7 +18,7 @@ namespace net::detail {
 
 int64_t nowMs(); // monotonic
 
-bool iequals(std::string_view a, std::string_view b); // ASCII case-insensitive
+using str::iequals; // ASCII case-insensitive
 
 // What every blocking step waits for besides its fd. Waits are cut into
 // ≤250 ms slices so a cancel flag set from another thread is seen promptly;
@@ -87,8 +89,7 @@ struct Head {
 long readHead(
     Stream &s, std::string *buf, const Waiter &w, Head *head, std::string *error, bool *gotAny
 );
-std::string_view headerValue(const std::vector<Header> &headers, std::string_view name);
 // "Host" header value: IPv6 literals in brackets, the port unless default.
-std::string      hostHeader(const Url &url);
+std::string hostHeader(const Url &url);
 
 } // namespace net::detail

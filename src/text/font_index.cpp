@@ -2,6 +2,7 @@
 
 #include "base/file.h"
 #include "base/process.h"
+#include "base/utf8.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -180,24 +181,6 @@ Tables readTables(const Buf &file, size_t faceOff) {
     return t;
 }
 
-void appendUtf8(std::string &s, uint32_t cp) {
-    if (cp < 0x80) {
-        s += char(cp);
-    } else if (cp < 0x800) {
-        s += char(0xC0 | cp >> 6);
-        s += char(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        s += char(0xE0 | cp >> 12);
-        s += char(0x80 | ((cp >> 6) & 0x3F));
-        s += char(0x80 | (cp & 0x3F));
-    } else {
-        s += char(0xF0 | cp >> 18);
-        s += char(0x80 | ((cp >> 12) & 0x3F));
-        s += char(0x80 | ((cp >> 6) & 0x3F));
-        s += char(0x80 | (cp & 0x3F));
-    }
-}
-
 // The typographic family (name ID 16) if present, else the legacy family (1);
 // Windows-platform English first, then any Windows language, then Mac Roman.
 std::string familyName(const Buf &name) {
@@ -237,7 +220,7 @@ std::string familyName(const Buf &name) {
                 c = 0x10000 + ((c - 0xD800) << 10) + (s.u16(k + 2) - 0xDC00);
                 k += 2;
             }
-            appendUtf8(out, c);
+            utf8::append(out, c);
         }
     }
     for (auto &c : out)

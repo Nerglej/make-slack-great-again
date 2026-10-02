@@ -5,6 +5,7 @@
 #include "app/screens/common/downloads.h"
 #include "app/screens/common/file_dialogs.h"
 #include "app/screens/common/loading_indicator.h"
+#include "app/screens/common/message_text.h"
 #include "app/screens/common/remote_images.h"
 
 #include "app/screens/messages/emoji_picker.h"
@@ -1231,7 +1232,7 @@ public:
             st.weight               = text::Weight::Medium;
             st.color                = ui::color(C::TooltipText);
             t.append(_text, st);
-            _l = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+            _l = text::Layout::build(t, {}, windowScale());
         }
         return {std::ceil(_l->width()) + 20, std::ceil(_l->height()) + 10 + 6};
     }
@@ -1386,15 +1387,6 @@ void addSeparator(std::vector<ui::MenuItem> &out) {
         out.push_back(ui::MenuItem::separatorItem());
 }
 
-// The first URL the message text links to ("" when none).
-std::string firstLink(std::string_view text) {
-    const mrkdwn::Rich r = mrkdwn::parse(text);
-    for (const mrkdwn::Entity &e : r.entities)
-        if (e.kind == mrkdwn::Kind::Link)
-            return e.data;
-    return {};
-}
-
 std::string imageMime(std::string_view path) {
     std::string e(file::extension(path));
     for (char &c : e)
@@ -1409,16 +1401,6 @@ bool isCsv(const model::File &f) {
     const size_t n = f.name.size();
     return f.mime == "text/csv" || (n > 4 && (f.name.compare(n - 4, 4, ".csv") == 0 ||
                                               f.name.compare(n - 4, 4, ".CSV") == 0));
-}
-
-std::string fileUrl(const std::string &path) {
-    return path.find("://") != std::string::npos ? path : file::toFileUrl(path);
-}
-
-// A tempDownloadPath() copy, and the directory made for it.
-void removeTemp(const std::string &path) {
-    file::remove(path);
-    file::remove(file::dirName(path));
 }
 
 // Due times of the presets, from `now` (local): +20 min, +1 h, +3 h,
@@ -1750,7 +1732,7 @@ void MessageList::copyImage(const model::File &f) {
             [bytes, ok, local, temp] {
                 *ok = file::readAll(local, bytes.get());
                 if (temp)
-                    removeTemp(local);
+                    removeTempDownload(local);
             },
             [&pa, job, mime, bytes, ok, local, withUri] {
                 if (*ok) {
@@ -1787,7 +1769,7 @@ void MessageList::copyImage(const model::File &f) {
             return;
         }
         LOG_WARN("messages", "Copy full image failed: %s", err.c_str());
-        removeTemp(temp);
+        removeTempDownload(temp);
         model::jobs().end(job);
     });
 }
@@ -1810,7 +1792,7 @@ void MessageList::openCsvPreview(const model::File &f) {
             [rows, local, temp] {
                 *rows = readCsvFile(local);
                 if (temp)
-                    removeTemp(local);
+                    removeTempDownload(local);
             },
             [this, alive, rows, job] {
                 model::jobs().end(job);
@@ -1835,7 +1817,7 @@ void MessageList::openCsvPreview(const model::File &f) {
             return;
         }
         LOG_WARN("messages", "CSV preview download failed: %s", err.c_str());
-        removeTemp(temp);
+        removeTempDownload(temp);
         model::jobs().end(job);
     });
 }

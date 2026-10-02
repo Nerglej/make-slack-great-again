@@ -420,19 +420,13 @@ void ConvHeader::refresh() {
         Avatar     *a = _avatar->single();
         a->setBitmap(_avatars.get(u.avatar, 56));
         a->setInitial(u.label());
-        using P            = Avatar::Presence;
         // msga: phantom (yellow) for me while no official client is
         // connected, and for any peer that can't be reached (an agent
-        // session that is gone).
-        const bool self    = c.dmUser == st.me;
-        const auto sp      = _ctx.backend.selfPresence();
-        const bool phantom = (self && sp.phantomAway()) || u.unavailable;
+        // session that is gone: presenceOf).
+        const bool self = c.dmUser == st.me;
+        const auto sp   = _ctx.backend.selfPresence();
         a->setPresence(
-            !caps.presence || u.bot ? P::None
-            : u.dnd                 ? P::Dnd
-            : u.active              ? P::Active
-            : phantom               ? P::Phantom
-                                    : P::Away,
+            Avatar::presenceOf(&u, caps.presence, self && sp.phantomAway()),
             C::BadgeText // msga rings the header dot in white
         );
         // msga's selfPresenceTooltip: nothing until my presence is known.

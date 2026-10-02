@@ -101,7 +101,7 @@ private:
     void build() {
         if (!_lines.empty())
             return;
-        const float         k = window() ? window()->scale() : 1.f;
+        const float         k = windowScale();
         text::LayoutOptions o;
         o.maxWidth       = kTipMaxW;
         o.maxLines       = 1;

@@ -4,6 +4,8 @@
 // links, line breaks and block boundaries, and ignores everything else.
 #include "ui/textedit.h"
 
+#include "base/str.h"
+
 #include <cstring>
 
 namespace ui::rich {
@@ -34,24 +36,6 @@ void escape(std::string &out, std::string_view s, bool attr) {
         default:
             out.push_back(c);
         }
-    }
-}
-
-void appendUtf8(std::string &out, uint32_t cp) {
-    if (cp < 0x80) {
-        out.push_back(char(cp));
-    } else if (cp < 0x800) {
-        out.push_back(char(0xc0 | (cp >> 6)));
-        out.push_back(char(0x80 | (cp & 0x3f)));
-    } else if (cp < 0x10000) {
-        out.push_back(char(0xe0 | (cp >> 12)));
-        out.push_back(char(0x80 | ((cp >> 6) & 0x3f)));
-        out.push_back(char(0x80 | (cp & 0x3f)));
-    } else if (cp < 0x110000) {
-        out.push_back(char(0xf0 | (cp >> 18)));
-        out.push_back(char(0x80 | ((cp >> 12) & 0x3f)));
-        out.push_back(char(0x80 | ((cp >> 6) & 0x3f)));
-        out.push_back(char(0x80 | (cp & 0x3f)));
     }
 }
 
@@ -86,53 +70,9 @@ bool icontains(std::string_view hay, const char *needle) {
     return false;
 }
 
-// Decodes entities in s (text or an attribute value).
+// Decodes entities in s (text or an attribute value); &nbsp; is a plain space.
 std::string decode(std::string_view s) {
-    std::string out;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] != '&') {
-            out.push_back(s[i]);
-            continue;
-        }
-        const size_t semi = s.find(';', i);
-        if (semi == std::string_view::npos || semi - i > 10) {
-            out.push_back('&');
-            continue;
-        }
-        const std::string_view name = s.substr(i + 1, semi - i - 1);
-        uint32_t               cp   = 0;
-        if (!name.empty() && name[0] == '#') {
-            const bool hex = name.size() > 1 && (name[1] | 0x20) == 'x';
-            for (size_t k = hex ? 2 : 1; k < name.size(); ++k) {
-                const char c = name[k];
-                const int  d = c >= '0' && c <= '9' ? c - '0'
-                               : hex && (c | 0x20) >= 'a' && (c | 0x20) <= 'f'
-                                   ? (c | 0x20) - 'a' + 10
-                                   : -1;
-                if (d < 0)
-                    break;
-                cp = cp * (hex ? 16 : 10) + uint32_t(d);
-            }
-        } else if (ieq(name, "amp"))
-            cp = '&';
-        else if (ieq(name, "lt"))
-            cp = '<';
-        else if (ieq(name, "gt"))
-            cp = '>';
-        else if (ieq(name, "quot"))
-            cp = '"';
-        else if (ieq(name, "apos"))
-            cp = '\'';
-        else if (ieq(name, "nbsp"))
-            cp = ' ';
-        if (cp == 0) {
-            out.push_back('&');
-            continue;
-        }
-        appendUtf8(out, cp == 0xa0 ? ' ' : cp);
-        i = semi;
-    }
-    return out;
+    return str::decodeEntities(s, true);
 }
 
 // Value of attribute `name` inside a tag's attribute text.

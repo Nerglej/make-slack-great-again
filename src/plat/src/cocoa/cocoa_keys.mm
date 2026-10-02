@@ -142,38 +142,7 @@ constexpr VkKey kFixedKeys[] = {
 };
 
 Key keyFromChar(UniChar c) {
-    if (c >= 'a' && c <= 'z')
-        return Key(int(Key::A) + (c - 'a'));
-    if (c >= 'A' && c <= 'Z')
-        return Key(int(Key::A) + (c - 'A'));
-    if (c >= '0' && c <= '9')
-        return Key(int(Key::Num0) + (c - '0'));
-    switch (c) {
-    case '-':
-        return Key::Minus;
-    case '=':
-        return Key::Equal;
-    case '[':
-        return Key::BracketLeft;
-    case ']':
-        return Key::BracketRight;
-    case '\\':
-        return Key::Backslash;
-    case ';':
-        return Key::Semicolon;
-    case '\'':
-        return Key::Apostrophe;
-    case '`':
-        return Key::Grave;
-    case ',':
-        return Key::Comma;
-    case '.':
-        return Key::Period;
-    case '/':
-        return Key::Slash;
-    default:
-        return Key::Unknown;
-    }
+    return core::keyFromAscii(c);
 }
 
 // Carbon's modifier state byte for UCKeyTranslate ((EventModifiers >> 8) & 0xff).

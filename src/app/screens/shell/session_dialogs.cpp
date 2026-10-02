@@ -261,7 +261,7 @@ public:
         if (isColor) {
             p.fillCircle({3 + kSwatch / 2, 3 + kSwatch / 2}, kSwatch / 2 - 4, 0xff000000U | color);
         } else {
-            const float k  = window() ? window()->scale() : 1.f;
+            const float k  = windowScale();
             const int   px = int(std::lround(kSwatch * k));
             if (!_bmp || _bmp->width() != px)
                 _bmp = tile(glyph, color, px);
@@ -395,23 +395,10 @@ public:
     TextField &name() { return *_name; }
 
 private:
-    // msga's simplified(): runs of whitespace become one space, trimmed.
-    static std::string simplified(std::string_view s) {
-        std::string out;
-        for (char c : s) {
-            const bool ws = c == ' ' || c == '\n' || c == '\t' || c == '\r';
-            if (ws && (out.empty() || out.back() == ' '))
-                continue;
-            out += ws ? ' ' : c;
-        }
-        while (!out.empty() && out.back() == ' ')
-            out.pop_back();
-        return out;
-    }
     AgentRole result() const {
         AgentRole r   = _role;
-        r.name        = simplified(_name->text());
-        r.description = simplified(_desc->text());
+        r.name        = str::simplified(_name->text());
+        r.description = str::simplified(_desc->text());
         r.glyph       = _glyph;
         r.color       = _color;
         r.prompt      = std::string(str::trim(_prompt->text()));
@@ -595,24 +582,19 @@ Popup *showTeammateDialog(
 }
 
 Popup *showRemoveTeammateDialog(Window &w, const std::string &name, std::function<void()> remove) {
-    auto d = std::make_unique<Dialog>(tr("Remove teammate"));
-    styledLabel(
-        d->content(),
+    auto d = Dialog::confirm(
+        tr("Remove teammate"),
         i18n::arg(
             tr("Remove the %1 from the team? Its sessions stay in the list, with its name and "
                "picture."),
             name
         ),
-        pxFont(15, text::Weight::Regular, themed(C::FormText))
+        tr("Remove"),
+        V::Danger,
+        themed(C::FormText)
     );
-    auto *rm = Dialog::makeButton(tr("Remove"), V::Danger);
-    d->addButtonRow(rm, Dialog::makeButton(tr("Cancel"), V::Secondary));
-    Dialog *raw = d.get();
-    rm->onClick = [raw, remove = std::move(remove)] {
-        raw->accept();
-        if (remove)
-            remove();
-    };
+    Dialog *raw   = d.get();
+    d->onAccepted = std::move(remove);
     w.showPopup(std::move(d));
     return raw;
 }

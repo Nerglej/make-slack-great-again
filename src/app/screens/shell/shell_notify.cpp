@@ -3,6 +3,7 @@
 // (maybeNotifyHuddle) and message reminders going off (notifyReminderDue).
 // Shell members kept apart from shell.cpp; the clicks are handleAppEvent's.
 #include "app/media/sounds.h"
+#include "app/screens/common/message_text.h"
 #include "base/i18n.h"
 #include "base/str.h"
 #include "base/utf8.h"
@@ -42,12 +43,12 @@ std::string capped(std::string s) {
 
 // msga's notificationPreview: the text, else what the attachments say.
 std::string preview(const model::Store &st, const model::Message &m) {
-    std::string text(str::trim(plainText(st, m.text)));
+    std::string text(str::trim(screens::plainText(st, m.text)));
     if (!text.empty())
         return text;
     std::vector<std::string> parts;
     auto                     add = [&](std::string_view mrkdwn) {
-        std::string t(str::trim(plainText(st, mrkdwn)));
+        std::string t(str::trim(screens::plainText(st, mrkdwn)));
         if (!t.empty())
             parts.push_back(std::move(t));
     };
@@ -75,7 +76,8 @@ std::string personName(const model::Store &st, model::UserRef u) {
     return std::string(x.label());
 }
 
-bool looksLikeUserId(std::string_view id) {
+// A user id's prefix only (U…, W… on Enterprise Grid), not its full shape.
+bool hasUserIdPrefix(std::string_view id) {
     return id.size() > 1 && (id[0] == 'U' || id[0] == 'W');
 }
 
@@ -182,7 +184,7 @@ void Shell::maybeNotify(
     if (allowDefer) {
         std::vector<model::UserRef> pending;
         auto                        want = [&](model::UserRef u) {
-            if (u != kNoUser && st.user(u).placeholder && looksLikeUserId(st.user(u).id) &&
+            if (u != kNoUser && st.user(u).placeholder && hasUserIdPrefix(st.user(u).id) &&
                 std::find(pending.begin(), pending.end(), u) == pending.end())
                 pending.push_back(u);
         };
@@ -351,7 +353,7 @@ void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef 
         backendFor(st).resolveUser(it->author);
     // msga's snippet: the text simplified, at most 120 characters.
     std::string snippet;
-    for (char ch : plainText(st, it->text))
+    for (char ch : screens::plainText(st, it->text))
         if (!(ch == ' ' || ch == '\n' || ch == '\t') || (!snippet.empty() && snippet.back() != ' '))
             snippet += ch == '\n' || ch == '\t' ? ' ' : ch;
     snippet = std::string(str::trim(snippet));

@@ -50,6 +50,31 @@ void arm(plat::App &app, uint64_t &slot, int ms, std::function<void()> fn) {
     });
 }
 
+// How AttachInput and AttachAnswer end. detach(): the terminal goes once
+// `attach` has exited (or been made to), the session goes on. Then, after
+// `done`, lingerOrRelease(): released now if `attach` is already gone, else
+// when it exits or after kLingerMs. dropSelf(): the last hold goes on the
+// loop's next turn, not in mid-call.
+void detach(Pty &pty, std::function<void()> release) {
+    pty.onOutput   = nullptr;
+    pty.onFinished = std::move(release);
+    pty.terminate();
+}
+
+void lingerOrRelease(plat::App &app, Pty &pty, uint64_t &linger, std::function<void()> release) {
+    if (!pty.isRunning())
+        release();
+    else
+        arm(app, linger, kLingerMs, std::move(release));
+}
+
+template <class T>
+void dropSelf(plat::App &app, uint64_t &linger, std::shared_ptr<T> &self) {
+    disarm(app, linger);
+    if (self)
+        app.post([self = std::move(self)] {});
+}
+
 bool startsWith(std::string_view s, std::string_view p) {
     return s.substr(0, p.size()) == p;
 }
@@ -294,22 +319,14 @@ void AttachInput::finish(Outcome outcome, std::string_view detail) {
     disarm(_app, _limit);
     disarm(_app, _nothing);
     disarm(_app, _gap);
-    _pty->onOutput   = nullptr;
-    // The terminal goes once `attach` has exited (or been made to).
-    _pty->onFinished = [this] { release(); };
-    _pty->terminate(); // detaching: the session goes on
+    detach(*_pty, [this] { release(); });
     if (auto done = std::exchange(_done, {}))
         done(outcome, std::string(detail));
-    if (!_pty->isRunning())
-        release();
-    else
-        arm(_app, _linger, kLingerMs, [this] { release(); });
+    lingerOrRelease(_app, *_pty, _linger, [this] { release(); });
 }
 
 void AttachInput::release() {
-    disarm(_app, _linger);
-    if (_self) // the last hold goes on the loop's next turn, not in mid-call
-        _app.post([self = std::move(_self)] {});
+    dropSelf(_app, _linger, _self);
 }
 
 // ── AttachAnswer ────────────────────────────────────────────────────────────
@@ -491,21 +508,14 @@ void AttachAnswer::finish(Outcome outcome, std::string_view detail) {
     disarm(_app, _quiet);
     disarm(_app, _limit);
     disarm(_app, _step);
-    _pty->onOutput   = nullptr;
-    _pty->onFinished = [this] { release(); };
-    _pty->terminate(); // detaching: the session goes on
+    detach(*_pty, [this] { release(); });
     if (auto done = std::exchange(_done, {}))
         done(outcome, read && outcome == Outcome::Done ? _seen : std::nullopt, std::string(detail));
-    if (!_pty->isRunning())
-        release();
-    else
-        arm(_app, _linger, kLingerMs, [this] { release(); });
+    lingerOrRelease(_app, *_pty, _linger, [this] { release(); });
 }
 
 void AttachAnswer::release() {
-    disarm(_app, _linger);
-    if (_self)
-        _app.post([self = std::move(_self)] {});
+    dropSelf(_app, _linger, _self);
 }
 
 // ── Matching a question to a job's needs ────────────────────────────────────

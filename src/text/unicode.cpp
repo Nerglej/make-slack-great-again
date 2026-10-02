@@ -275,43 +275,6 @@ bool isNeutral(uint8_t t) {
 
 } // namespace
 
-int seqLen(uint8_t b) {
-    if (b < 0x80)
-        return 1;
-    if ((b & 0xE0) == 0xC0)
-        return 2;
-    if ((b & 0xF0) == 0xE0)
-        return 3;
-    if ((b & 0xF8) == 0xF0)
-        return 4;
-    return 1;
-}
-
-uint32_t decode(const char *s, size_t n, size_t *i) {
-    const auto   *p    = reinterpret_cast<const uint8_t *>(s) + *i;
-    const size_t  left = n - *i;
-    const uint8_t b    = p[0];
-    if (b < 0x80) {
-        *i += 1;
-        return b;
-    }
-    const int len = seqLen(b);
-    if (len == 1 || size_t(len) > left) {
-        *i += 1;
-        return 0xFFFD;
-    }
-    uint32_t cp = b & (0x7F >> len);
-    for (int k = 1; k < len; ++k) {
-        if ((p[k] & 0xC0) != 0x80) {
-            *i += 1;
-            return 0xFFFD;
-        }
-        cp = (cp << 6) | (p[k] & 0x3F);
-    }
-    *i += len;
-    return cp;
-}
-
 int category(uint32_t cp) {
     return hb_unicode_general_category(ufuncs(), cp);
 }
@@ -336,7 +299,7 @@ bool isDefaultIgnorable(uint32_t cp) {
            (cp >= 0xE0000 && cp <= 0xE0FFF) || cp == 0x20E3 || cp == 0x00AD;
 }
 
-bool isSpace(uint32_t cp) {
+bool isBreakSpace(uint32_t cp) {
     return cp == ' ' || cp == '\t' || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x2006) ||
            (cp >= 0x2008 && cp <= 0x200A) || cp == 0x205F || cp == 0x3000;
 }
@@ -346,7 +309,7 @@ bool isNewline(uint32_t cp) {
            cp == 0x2029;
 }
 
-bool isWordChar(uint32_t cp) {
+bool isSelectWordChar(uint32_t cp) {
     if (cp < 0x80)
         return cp == '_' || (cp >= '0' && cp <= '9') || ((cp | 0x20) >= 'a' && (cp | 0x20) <= 'z');
     switch (category(cp)) {
@@ -412,9 +375,9 @@ Break breakBetween(uint32_t a, uint32_t b) {
     auto glue = [](uint32_t c) {
         return c == 0xA0 || c == 0x202F || c == 0x2060 || c == 0xFEFF || c == 0x2007;
     };
-    if (glue(a) || glue(b) || isSpace(b))
+    if (glue(a) || glue(b) || isBreakSpace(b))
         return Break::None;
-    if (a == 0x200B || isSpace(a))
+    if (a == 0x200B || isBreakSpace(a))
         return Break::Allowed;
     if (inRanges(kNoBreakBefore, b) || inRanges(kNoBreakAfter, a))
         return Break::None;

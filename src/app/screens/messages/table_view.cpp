@@ -48,7 +48,7 @@ void TableView::styleChanged() {
 }
 
 void TableView::build(float width) {
-    const float scale = window() ? window()->scale() : 1.f;
+    const float scale = windowScale();
     if (_builtW == width && _builtScale == scale)
         return;
     _builtW            = width;
@@ -183,7 +183,7 @@ void TableView::paintOver(gfx::Painter &p) {
     if (!_pillText) {
         text::AttributedText t;
         t.append(i18n::tr("Open full table"), ui::font(ui::Font::Body, C::TooltipText));
-        _pillText = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+        _pillText = text::Layout::build(t, {}, windowScale());
     }
     const ui::RectF r = pillRect();
     if (r.w <= 0)

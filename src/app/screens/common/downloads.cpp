@@ -58,4 +58,9 @@ std::string tempDownloadPath(plat::App &app, std::string_view name) {
     return file::join(dir, base);
 }
 
+void removeTempDownload(const std::string &path) {
+    file::remove(path);
+    file::remove(file::dirName(path));
+}
+
 } // namespace screens

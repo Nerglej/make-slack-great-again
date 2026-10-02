@@ -151,7 +151,7 @@ private:
     const text::Layout *textLayout() {
         if (_text.empty())
             return nullptr;
-        const float      scale = window() ? window()->scale() : 1.f;
+        const float      scale = windowScale();
         const gfx::Color fg    = color(C::BadgeText);
         if (!_layout || _scale != scale || _fg != fg) {
             text::AttributedText t;
@@ -220,9 +220,8 @@ bool looksLikeUserId(std::string_view s) {
     return true;
 }
 
-// msga's rebuildFilteredConvs liveness filter: a DM outlives its peer (the
-// service never prunes it), so one whose peer was deactivated or never
-// resolves to a name is not listed. A peer not loaded yet is let through.
+} // namespace
+
 bool deadDm(const model::Store &store, const model::Conversation &c) {
     if (c.kind != ConvKind::Dm || c.dmUser == model::kNoUser)
         return false;
@@ -230,8 +229,6 @@ bool deadDm(const model::Store &store, const model::Conversation &c) {
     return !u.placeholder &&
            (u.deleted || u.displayName == "deactivateduser" || looksLikeUserId(u.label()));
 }
-
-} // namespace
 
 // ── Rows ────────────────────────────────────────────────────────────────────
 
@@ -382,7 +379,35 @@ public:
 
 } // namespace
 
-class ConvRow final : public Clickable {
+// What a conversation row and a teammate row share: msga selects on press
+// (not on release), the row's context menu, a hover repaint (the presence
+// dot's ring takes the hover colour), and the full name over a truncated one
+// (msga's truncated-name tooltip).
+class SidebarRow : public Clickable {
+public:
+    bool onEvent(Event &e) override {
+        if (e.type == EventType::ContextMenu && showMenu(e.windowPos))
+            return true;
+        if (e.type == EventType::PointerDown && e.button == plat::Button::Left) {
+            activate();
+            return true;
+        }
+        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
+            refresh();
+        return Clickable::onEvent(e);
+    }
+    std::string tooltip() const override {
+        auto *l = const_cast<Label *>(label);
+        return l->measure(kInf, kInf).w > label->width() + 0.5f ? label->text() : std::string();
+    }
+
+protected:
+    virtual void refresh()                 = 0;
+    virtual bool showMenu(PointF windowAt) = 0; // false: no menu here
+    Label       *label                     = nullptr;
+};
+
+class ConvRow final : public SidebarRow {
 public:
     ConvRow(Sidebar &sb, ConvRef c) : sidebar(sb), conv(c) {
         setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
@@ -448,29 +473,14 @@ public:
         };
     }
 
-    bool onEvent(Event &e) override {
-        if (e.type == EventType::ContextMenu && sidebar._menus) {
-            sidebar._menus->showChat(conv, e.windowPos);
-            return true;
-        }
-        // msga selects on press, not on release.
-        if (e.type == EventType::PointerDown && e.button == plat::Button::Left) {
-            activate();
-            return true;
-        }
-        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
-            refresh(); // the presence dot's ring takes the hover colour
-        return Clickable::onEvent(e);
-    }
-
-    // The full name over a truncated one (msga's truncated-name tooltip).
-    std::string tooltip() const override {
-        auto *l = const_cast<Label *>(label);
-        return l->measure(kInf, kInf).w > label->width() + 0.5f ? label->text() : std::string();
+    bool showMenu(PointF at) override {
+        if (sidebar._menus)
+            sidebar._menus->showChat(conv, at);
+        return sidebar._menus != nullptr;
     }
 
     // Everything that depends on Store state.
-    void refresh() {
+    void refresh() override {
         const auto &store = sidebar._ctx.store();
         const auto &cv    = store.conversation(conv);
         const auto  caps  = sidebar._ctx.backend.capabilities();
@@ -493,19 +503,10 @@ public:
         if (you)
             you->setColor(sel ? text : C::SidebarTextMuted);
         if (avatar) {
-            using P             = Avatar::Presence;
-            const auto &u       = store.user(cv.dmUser);
-            const bool  phantom = cv.dmUser == store.me && store.me != model::kNoUser &&
-                                  sidebar._ctx.backend.selfPresence().phantomAway();
-            // Yellow too for a session that is there but not reachable from
-            // here (User::unavailable), as msga's drawUserAvatar.
-            const P     pr      = u.bot || !caps.presence    ? P::None
-                                  : u.dnd                    ? P::Dnd
-                                  : u.active                 ? P::Active
-                                  : phantom || u.unavailable ? P::Phantom
-                                                             : P::Away;
+            const bool phantom = cv.dmUser == store.me && store.me != model::kNoUser &&
+                                 sidebar._ctx.backend.selfPresence().phantomAway();
             avatar->setPresence(
-                pr,
+                Avatar::presenceOf(&store.user(cv.dmUser), caps.presence, phantom),
                 sel         ? C::SidebarSelected
                 : hovered() ? C::SidebarHover
                             : C::Sidebar,
@@ -533,9 +534,9 @@ public:
 
     Sidebar       &sidebar;
     ConvRef        conv;
-    Avatar        *avatar = nullptr;
-    IconView      *glyph  = nullptr;
-    Label         *label = nullptr, *you = nullptr;
+    Avatar        *avatar  = nullptr;
+    IconView      *glyph   = nullptr;
+    Label         *you     = nullptr;
     CountBadge    *badge   = nullptr;
     HuddlePill    *huddle  = nullptr;
     SectionHeader *section = nullptr;
@@ -546,7 +547,7 @@ public:
 // A teammate in the Team section (msga's paintTeammateRow): the pill of a
 // conversation row, its user's avatar and presence, its name — bright while
 // any of its sessions has something unread (the sessions carry the badges).
-class TeammateRow final : public Clickable {
+class TeammateRow final : public SidebarRow {
 public:
     TeammateRow(Sidebar &sb, const model::Backend::AgentRole &mate) : sidebar(sb), role(mate.id) {
         setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
@@ -575,24 +576,12 @@ public:
                 sidebar.onTeammate(role);
         };
     }
-    bool onEvent(Event &e) override {
-        if (e.type == EventType::ContextMenu && sidebar._menus) {
-            sidebar._menus->showTeammate(role, e.windowPos);
-            return true;
-        }
-        if (e.type == EventType::PointerDown && e.button == plat::Button::Left) {
-            activate(); // msga selects on press
-            return true;
-        }
-        if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
-            refresh();
-        return Clickable::onEvent(e);
+    bool showMenu(PointF at) override {
+        if (sidebar._menus)
+            sidebar._menus->showTeammate(role, at);
+        return sidebar._menus != nullptr;
     }
-    std::string tooltip() const override {
-        auto *l = const_cast<Label *>(label);
-        return l->measure(kInf, kInf).w > label->width() + 0.5f ? label->text() : std::string();
-    }
-    void refresh() {
+    void refresh() override {
         const auto &store = sidebar._ctx.store();
         const bool  sel   = sidebar._selectedTeammate == role;
         unread            = false;
@@ -607,16 +596,9 @@ public:
             : unread ? C::SidebarText
                      : C::SidebarTextMuted
         );
-        using P                    = Avatar::Presence;
-        const model::User *u       = user < store.userCount() ? &store.user(user) : nullptr;
-        const bool         present = sidebar._ctx.backend.capabilities().presence;
-        const P            pr      = !u || u->bot || !present ? P::None
-                                     : u->dnd                 ? P::Dnd
-                                     : u->active              ? P::Active
-                                     : u->unavailable         ? P::Phantom
-                                                              : P::Away;
+        const model::User *u = user < store.userCount() ? &store.user(user) : nullptr;
         avatar->setPresence(
-            pr,
+            Avatar::presenceOf(u, sidebar._ctx.backend.capabilities().presence),
             sel         ? C::SidebarSelected
             : hovered() ? C::SidebarHover
                         : C::Sidebar,
@@ -629,7 +611,6 @@ public:
     std::string    role;
     model::UserRef user   = model::kNoUser;
     Avatar        *avatar = nullptr;
-    Label         *label  = nullptr;
     bool           unread = false;
 };
 

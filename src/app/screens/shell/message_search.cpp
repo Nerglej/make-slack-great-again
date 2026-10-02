@@ -1,6 +1,6 @@
 #include "screens/shell/message_search.h"
 
-#include "app/mrkdwn/mrkdwn.h"
+#include "app/screens/common/message_text.h"
 #include "base/i18n.h"
 #include "base/str.h"
 #include "base/time.h"
@@ -88,25 +88,11 @@ std::string searchConvLabel(const model::Store &store, ConvRef conv) {
 }
 
 std::string searchPreview(const model::Store &store, std::string_view text) {
-    // msga's resolvePreview: the rendered text, a known user's mention as
-    // "@name" (the parser's label is kept for anyone else).
-    const mrkdwn::Rich r = mrkdwn::parse(text);
-    std::string        out;
-    size_t             pos = 0;
-    for (const mrkdwn::Entity &e : r.entities) {
-        if (e.kind != mrkdwn::Kind::User || e.start < pos)
-            continue;
-        const model::UserRef u = store.findUser(e.data);
-        if (u == model::kNoUser || store.user(u).label().empty())
-            continue;
-        out.append(r.text, pos, e.start - pos);
-        out += '@';
-        out += store.user(u).label();
-        pos = e.end();
-    }
-    out.append(r.text, pos, std::string::npos);
+    // msga's resolvePreview: the rendered text with mentions resolved (the
+    // parser's label is kept for anyone unknown).
+    std::string out = screens::plainText(store, text);
     // The first 120 characters, newlines as spaces.
-    size_t end = 0;
+    size_t      end = 0;
     for (size_t n = 0; n < kPreviewChars && end < out.size(); ++n)
         end = utf8::nextBoundary(out, end);
     out.resize(end);

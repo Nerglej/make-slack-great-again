@@ -202,6 +202,6 @@ TEST("outputs: paths are cleaned as QDir::cleanPath does") {
     CHECK_STR(cleanPath("/.."), "/");
     CHECK_STR(cleanPath("a/../../b"), "../b");
     CHECK_STR(cleanPath("./"), ".");
-    CHECK_STR(simplified("  fix \t the\nbuild "), "fix the build");
+    CHECK_STR(str::simplified("  fix \t the\nbuild "), "fix the build");
     CHECK_STR(trimmed("  x y \n"), "x y");
 }

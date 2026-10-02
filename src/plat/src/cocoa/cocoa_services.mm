@@ -9,6 +9,8 @@
 // sources, and the one thing on its own queue — the path monitor — posts.
 #include "cocoa/cocoa_internal.h"
 
+#include "core/hash.h"
+
 #import <CoreServices/CoreServices.h> // AESendMessage, kInternetEventClass/kAEGetURL
 #import <Network/Network.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -175,10 +177,8 @@ std::string socketPathFor(std::string_view key) {
     const std::string dir = userTempDir();
     if (dir.empty())
         return {};
-    uint64_t h = 1469598103934665603ull; // FNV-1a
-    for (unsigned char c : key)
-        h = (h ^ c) * 1099511628211ull;
-    char hex[17];
+    const uint64_t h = core::fnv1a(key);
+    char           hex[17];
     std::snprintf(hex, sizeof hex, "%016llx", (unsigned long long)h);
     bool plain = !key.empty();
     for (char c : key)

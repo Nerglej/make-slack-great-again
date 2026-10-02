@@ -7,6 +7,7 @@
 #include "screens/common/avatar_initial.h"
 #include "screens/shell/fuzzy_match.h"
 #include "screens/shell/shortcuts.h"
+#include "screens/shell/sidebar.h"
 
 #include <algorithm>
 
@@ -100,15 +101,6 @@ private:
 
 namespace {
 
-bool looksLikeUserId(std::string_view s) {
-    if (s.size() < 9 || (s[0] != 'U' && s[0] != 'W'))
-        return false;
-    for (char ch : s.substr(1))
-        if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')))
-            return false;
-    return true;
-}
-
 // Seconds of a message timestamp (epoch micros).
 int64_t secs(model::Ts ts) {
     return ts / 1000000;
@@ -129,13 +121,8 @@ std::vector<ConvRef> quickSwitchOrder(
         const model::Conversation &cv = store.conversation(c);
         if (!cv.member)
             continue;
-        // msga's rebuildFilteredConvs: a DM whose peer is gone, or still
-        // only an id, is not something to jump to.
-        if (cv.kind == model::ConvKind::Dm && cv.dmUser != model::kNoUser) {
-            const model::User &u = store.user(cv.dmUser);
-            if (u.deleted || u.displayName == "deactivateduser" || looksLikeUserId(u.label()))
-                continue;
-        }
+        if (deadDm(store, cv)) // a DM whose peer is gone: nothing to jump to
+            continue;
         const auto v = visited.find(cv.id);
         list.push_back(
             {c,

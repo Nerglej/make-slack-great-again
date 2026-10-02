@@ -381,6 +381,24 @@ TEST("quick switcher: msga's namedConversations — members, live peers, most re
     CHECK(order[0] == zed);
 }
 
+TEST("quick switcher: a DM whose peer is still loading is listed, as in the sidebar") {
+    model::Store store;
+    Conversation c;
+    c.id = "D9", c.kind = ConvKind::Dm, c.latest = 1'000'000;
+    c.dmUser            = store.internUser("U0LATE001"); // a placeholder: not loaded yet
+    const ConvRef dm    = store.addConversation(std::move(c));
+    const auto    order = shell::quickSwitchOrder(store, {});
+    REQUIRE(order.size() == 1);
+    CHECK(order[0] == dm);
+    CHECK_FALSE(shell::deadDm(store, store.conversation(dm)));
+    // Once it resolves to nothing but its id, it is dead in both.
+    User u;
+    u.id = "U0LATE001";
+    store.addUser(std::move(u));
+    CHECK(shell::deadDm(store, store.conversation(dm)));
+    CHECK(shell::quickSwitchOrder(store, {}).empty());
+}
+
 TEST("settings: round trip through the file") {
     shell::Settings s;
     s.width = 1300, s.height = 900, s.hasPosition = true, s.x = 40, s.y = 60, s.maximized = true;

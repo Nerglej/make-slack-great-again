@@ -8,6 +8,8 @@
 
 #include "core/backends.h"
 #include "core/loop_core.h"
+#include "core/input.h"
+#include "core/transfer.h"
 #include "plat/testing.h"
 
 #include <map>

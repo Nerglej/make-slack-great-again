@@ -18,6 +18,10 @@ option(PLAT_NO_EXCEPTIONS "Build plat with -fno-exceptions -fno-rtti" OFF)
 add_library(plat STATIC
     src/core/common.cpp
     src/core/loop_core.cpp
+    src/core/transfer.cpp
+    src/core/input.cpp
+    src/core/image_util.cpp
+    src/core/hash.cpp
 )
 target_include_directories(plat PUBLIC include PRIVATE src)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -61,7 +65,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME MATCHES "BSD")
     if(PLAT_WAYLAND OR PLAT_X11)
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(PLAT_XKB REQUIRED IMPORTED_TARGET xkbcommon)
-        target_sources(plat PRIVATE src/linux/xkb_keyboard.cpp src/linux/instance.cpp src/linux/xdg_dirs.cpp)
+        target_sources(plat PRIVATE src/linux/xkb_keyboard.cpp src/linux/instance.cpp src/linux/xdg_dirs.cpp
+            src/linux/cursor_names.cpp)
         # D-Bus desktop services (tray, notifications, badge, portal) shared by
         # both Linux backends; src/linux/services.cmake replaces the stub.
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/linux/services.cmake")

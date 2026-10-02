@@ -25,6 +25,10 @@ namespace screens {
 class RemoteImages;
 }
 
+namespace model {
+struct User;
+}
+
 namespace shell {
 
 class Avatars {
@@ -70,13 +74,18 @@ public:
     enum class Presence : uint8_t { None, Active, Away, Phantom, Dnd };
     Avatar();
     ~Avatar() override;
-    void     setPresence(Presence p, ui::C ring, bool selected = false);
-    Presence presence() const { return _presence; }
+    void            setPresence(Presence p, ui::C ring, bool selected = false);
+    // msga's drawUserAvatar dot for a user: none for a bot or a backend
+    // without presence, then DND, active, phantom (yellow: `phantom`, e.g. me
+    // with no official client connected, or a peer that can't be reached,
+    // User::unavailable), else away. Null u: none.
+    static Presence presenceOf(const model::User *u, bool hasPresence, bool phantom = false);
+    Presence        presence() const { return _presence; }
     // msga's initial-letter placeholder: the first letter of `name` over the
     // placeholder until the photo is there.
-    void     setInitial(std::string_view name);
-    void     paintOver(gfx::Painter &p) override;
-    void     styleChanged() override;
+    void            setInitial(std::string_view name);
+    void            paintOver(gfx::Painter &p) override;
+    void            styleChanged() override;
 
 private:
     std::string                   _initial;

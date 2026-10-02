@@ -40,7 +40,7 @@ public:
     SizeF measureContent(float, float) override { return {kCell * 7, kHead + kCell * 7}; }
     void  paint(gfx::Painter &p) override {
         Popup::paint(p);
-        const float k  = window() ? window()->scale() : 1.f;
+        const float k  = windowScale();
         auto        tx = [&](std::string_view s, text::Style st, RectF r) {
             text::AttributedText t;
             t.append(s, st);
@@ -390,7 +390,7 @@ void DateTimeField::paint(gfx::Painter &p) {
     if (!_built) {
         _layouts.clear();
         _xs.clear();
-        const float k = window() ? window()->scale() : 1.f;
+        const float k = windowScale();
         float       x = kPadX;
         for (const Part &pt : ps) {
             text::AttributedText t;
@@ -423,8 +423,7 @@ void DateTimeField::paint(gfx::Painter &p) {
         if (ps[i].field() && focus && sec == _sec) {
             text::AttributedText t;
             t.append(ps[i].text, ui::pxFont(13, text::Weight::Regular, ui::color(C::AccentText)));
-            text::Layout::build(t, {}, window() ? window()->scale() : 1.f)
-                ->paint(p, snapPx({_xs[i], y}));
+            text::Layout::build(t, {}, windowScale())->paint(p, snapPx({_xs[i], y}));
         } else {
             l->paint(p, snapPx({_xs[i], y}));
         }

@@ -33,5 +33,7 @@ void fetchFile(
 // (<Temp>/msga/downloads/<random>/<name>, the directory created), so
 // a viewer or an upload can open it under its own name; "" if none.
 std::string tempDownloadPath(plat::App &app, std::string_view name);
+// Removes such a copy and the directory made for it.
+void        removeTempDownload(const std::string &path);
 
 } // namespace screens

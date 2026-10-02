@@ -125,40 +125,6 @@ UINT taskbarCreatedMsg() {
     return m;
 }
 
-std::string percentEncode(std::string_view s) {
-    static const char *hex = "0123456789ABCDEF";
-    std::string        out;
-    for (unsigned char c : s) {
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '_' || c == '.' || c == '~') {
-            out += char(c);
-        } else {
-            out += '%';
-            out += hex[c >> 4];
-            out += hex[c & 15];
-        }
-    }
-    return out;
-}
-
-std::string percentDecode(std::string_view s) {
-    std::string out;
-    auto        hex = [](char c) {
-        return c >= '0' && c <= '9'   ? c - '0'
-               : c >= 'A' && c <= 'F' ? c - 'A' + 10
-               : c >= 'a' && c <= 'f' ? c - 'a' + 10
-                                      : -1;
-    };
-    for (size_t i = 0; i < s.size(); ++i)
-        if (s[i] == '%' && i + 2 < s.size() && hex(s[i + 1]) >= 0 && hex(s[i + 2]) >= 0) {
-            out += char(hex(s[i + 1]) * 16 + hex(s[i + 2]));
-            i += 2;
-        } else {
-            out += s[i];
-        }
-    return out;
-}
-
 std::string xmlEscape(std::string_view s) {
     std::string out;
     for (char c : s) {
@@ -185,7 +151,7 @@ std::string xmlEscape(std::string_view s) {
 // What a toast hands back on activation: "plat:<id>:<percent-encoded key>",
 // key empty for the body. The test hook feeds the same string in.
 std::string toastArguments(uint64_t id, std::string_view key) {
-    return "plat:" + std::to_string(id) + ":" + percentEncode(key);
+    return "plat:" + std::to_string(id) + ":" + core::percentEncode(key);
 }
 
 bool parseToastArguments(std::string_view args, uint64_t *id, std::string *key) {
@@ -202,7 +168,7 @@ bool parseToastArguments(std::string_view args, uint64_t *id, std::string *key) 
         v = v * 10 + uint64_t(c - '0');
     }
     *id  = v;
-    *key = percentDecode(args.substr(colon + 1));
+    *key = core::percentDecode(args.substr(colon + 1));
     return true;
 }
 

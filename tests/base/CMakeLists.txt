@@ -1,6 +1,8 @@
 # msga_base: UTF-8, JSON, files, time, i18n, the keychain, the old app's settings.
 add_executable(msga_base_tests
     test_utf8.cpp
+    test_str.cpp
+    test_mime.cpp
     test_json.cpp
     test_file.cpp
     test_time.cpp

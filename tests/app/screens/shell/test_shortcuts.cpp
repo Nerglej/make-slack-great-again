@@ -8,6 +8,7 @@
 #include "base/time.h"
 #include "plat/testing.h"
 #include "base/utf8.h"
+#include "screens/common/message_text.h"
 #include "screens/shell/composer.h"
 #include "screens/shell/header.h"
 #include "screens/shell/message_search.h"
@@ -334,6 +335,42 @@ TEST("search: a result's labels are msga's") {
         "ping @" + mira + " and @U9NOBODY now"
     );
     CHECK(utf8::countCodePoints(shell::searchPreview(st, std::string(300, 'x'))) == 120);
+}
+
+TEST("search: previews and notifications resolve mentions the same way") {
+    model::Store st;
+    model::User  u;
+    u.id = "U0ANNA001", u.name = "anna";
+    st.addUser(std::move(u));
+    model::Conversation c;
+    c.id = "C0GEN0001", c.name = "general", c.kind = model::ConvKind::Channel;
+    st.addConversation(std::move(c));
+    st.setChannelName("C0OTHER01", "elsewhere");
+    st.setUsergroups({{"S0DEV0001", "devs", "Developers", {}}});
+    const std::string text = "<@U0ANNA001> in <#C0GEN0001> and <#C0OTHER01>, <!subteam^S0DEV0001> "
+                             ":smile: <@U9NOBODY9> <#C9NOWHERE>";
+    const std::string want = "@anna in #general and #elsewhere, @devs \xF0\x9F\x98\x84 ";
+    const std::string got  = screens::plainText(st, text);
+    CHECK(got.rfind(want, 0) == 0);
+    // Unknown ones keep the parser's text.
+    CHECK(got.find("U9NOBODY9") != std::string::npos);
+    CHECK(got.find("C9NOWHERE") != std::string::npos);
+    // The search preview is the same text, newlines as spaces.
+    CHECK_STR(shell::searchPreview(st, "<#C0GEN0001>\n:smile:"), "#general \xF0\x9F\x98\x84");
+}
+
+TEST("search: firstLink finds a URL or a message permalink") {
+    CHECK_STR(screens::firstLink("no links here"), "");
+    CHECK_STR(
+        screens::firstLink("see <https://example.com/a|this> and https://b.example"),
+        "https://example.com/a"
+    );
+    // A permalink to another message is a link too (msga's firstLinkInMessage).
+    const std::string pl =
+        screens::firstLink("look: https://acme.slack.com/archives/C0GEN0001/p1700000000000100");
+    CHECK(pl.rfind("https://acme.slack.com/archives/C0GEN0001/p1700000000000100", 0) == 0);
+    CHECK_STR(screens::fileUrl("https://x.example/f"), "https://x.example/f");
+    CHECK(screens::fileUrl("/tmp/a b.txt").rfind("file://", 0) == 0);
 }
 
 TEST("shortcuts: Alt+Left/Right and Back/Forward walk the conversations opened") {

@@ -96,7 +96,7 @@ float TextEdit::lineHeight() const {
 }
 
 const text::Layout *TextEdit::layoutFor(float w) {
-    const float scale = window() ? window()->scale() : 1.f;
+    const float scale = windowScale();
     if (_layout && w == _layoutW)
         return _layout.get();
     const text::Style    base = baseStyle(C::Text);
@@ -848,7 +848,7 @@ void TextEdit::paint(gfx::Painter &p) {
             o.maxWidth         = contentWidth();
             o.maxLines         = _maxLines; // a multi-line field may show a list of examples
             o.ellipsis         = true;
-            _placeholderLayout = text::Layout::build(t, o, window() ? window()->scale() : 1.f);
+            _placeholderLayout = text::Layout::build(t, o, windowScale());
         }
         _placeholderLayout->paint(p, {0, 0});
     }

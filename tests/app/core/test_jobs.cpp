@@ -1,6 +1,7 @@
 // model::Jobs (the footer's background-task list) and runInBackground (work
 // on a worker thread, the answer on the UI thread).
 #include "app/model/jobs.h"
+#include "app/model/timers.h"
 #include "support/test.h"
 
 #ifndef _WIN32
@@ -104,5 +105,40 @@ TEST("jobs: runInBackground works on a worker, answers later on the UI thread") 
     model::runInBackground(app, nullptr, [&] { ran = true; });
     model::runInBackground(app, [] {}, nullptr);
     REQUIRE(fakeslack::pumpUntil([&] { return ran; }, 5000));
+}
+#endif
+
+#ifndef _WIN32
+TEST("timers: one-shots forget themselves; the owner cancels the rest") {
+    plat::App &app   = fakeslack::app();
+    int        fired = 0;
+    {
+        model::OneShotTimers t(app);
+        t.after(0, [&] { ++fired; });
+        t.after(-5, [&] { ++fired; }); // < 0 is 0
+        t.after(60'000, [&] { fired += 100; });
+        CHECK(t.pending() == 3);
+        REQUIRE(fakeslack::pumpUntil([&] { return fired == 2; }, 5000));
+        CHECK(t.pending() == 1); // the two that fired are gone
+    } // the owner goes: the minute-long one is cancelled
+    fakeslack::pumpFor(30);
+    CHECK(fired == 2);
+}
+
+TEST("timers: postWhileAlive drops the call once its owner is gone") {
+    plat::App &app  = fakeslack::app();
+    int        ran  = 0;
+    auto       flag = std::make_shared<bool>(true);
+    model::postWhileAlive(app, flag, [&] { ++ran; });
+    model::postWhileAlive(app, flag, [&] { ran += 10; });
+    *flag      = false; // the owner goes before the loop turns: neither runs
+    auto owned = std::make_shared<char>(0);
+    model::postWhileAlive(app, std::weak_ptr<void>(owned), [&] { ran += 100; });
+    auto gone = std::make_shared<char>(0);
+    model::postWhileAlive(app, std::weak_ptr<void>(gone), [&] { ran += 1000; });
+    gone.reset();
+    CHECK(ran == 0); // never inside the call
+    fakeslack::pumpFor(30);
+    CHECK(ran == 100);
 }
 #endif

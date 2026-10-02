@@ -26,6 +26,9 @@
 
 #include "core/backends.h"
 #include "core/loop_core.h"
+#include "core/image_util.h"
+#include "core/input.h"
+#include "core/transfer.h"
 #include "plat/testing.h"
 
 #include <atomic>
@@ -52,8 +55,7 @@ std::string  fileUri(std::wstring_view path);
 // "file:///C:/a%20b" → "C:\a b", "file://srv/s/x" → "\\srv\s\x"; nullopt
 // for anything that is not a local or UNC file (other schemes, /tmp/x).
 std::optional<std::wstring> pathFromFileUri(std::string_view uri);
-// The URIs of a text/uri-list (CRLF or LF, "#" comment lines skipped).
-std::vector<std::string>    parseUriList(std::string_view list);
+using core::parseUriList; // the URIs of a text/uri-list
 
 Key      keyFromVk(UINT vk, bool extended, UINT scan);
 UINT     vkFromKey(Key k, bool *extended); // for SendInput; 0 = no mapping
@@ -108,9 +110,9 @@ UINT        cfUriList(); // registered "text/uri-list": exact bytes between plat
 
 // ── Images (win32_image.cpp) ────────────────────────────────────────────────
 // The image of `sizes` best suited to a size×size slot: the smallest one at
-// least that big, else the largest; then scaled (area average) to fit.
-Image       fitImage(const std::vector<Image> &sizes, int size);
-Image       scaleImage(const Image &src, int w, int h);
+// least that big, else the largest; then scaled (core::scaleImage) to fit.
+Image fitImage(const std::vector<Image> &sizes, int size);
+using core::scaleImage;
 // HICON from premultiplied pixels (icons want straight alpha); null on failure.
 HICON       iconFromImage(const Image &img);
 // A top-down 32-bpp premultiplied DIB section, as SHDRAGIMAGE wants it.
@@ -289,17 +291,14 @@ private:
 
     // Pointer.
     std::function<HitArea(Point)> _hitTest;
-    bool     _pointerInside = false, _trackingClient = false, _trackingNonClient = false;
-    POINT    _lastMove{INT_MIN, INT_MIN};
-    uint32_t _buttons      = 0;     // bit per Button held (captured)
-    bool     _captionPress = false; // left press on HTCAPTION, not yet a drag
-    POINT    _captionPressAt{};
-    DWORD    _lastClickTime = 0;
-    POINT    _lastClickAt{};
-    Button   _lastClickButton = Button::Left;
-    int      _clicks          = 0;
-    Cursor   _cursor          = Cursor::Arrow;
-    HCURSOR  _cursorHandle    = nullptr;
+    bool               _pointerInside = false, _trackingClient = false, _trackingNonClient = false;
+    POINT              _lastMove{INT_MIN, INT_MIN};
+    uint32_t           _buttons      = 0;     // bit per Button held (captured)
+    bool               _captionPress = false; // left press on HTCAPTION, not yet a drag
+    POINT              _captionPressAt{};
+    core::ClickCounter _clicks;
+    Cursor             _cursor       = Cursor::Arrow;
+    HCURSOR            _cursorHandle = nullptr;
 
     // Keyboard / IME.
     TextInputState _textInput;

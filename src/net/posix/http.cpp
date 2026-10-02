@@ -103,27 +103,7 @@ bool parseHead(std::string_view text, Head *head) {
         head->status = head->status * 10 + (line[i] - '0');
     }
     head->headers.clear();
-    while (eol != std::string_view::npos) {
-        text.remove_prefix(eol + 2);
-        eol  = text.find("\r\n");
-        line = text.substr(0, eol);
-        if (line.empty())
-            break;
-        if (line[0] == ' ' || line[0] == '\t') { // obsolete line folding
-            if (head->headers.empty())
-                return false;
-            head->headers.back().value += ' ';
-            head->headers.back().value += str::trim(line);
-            continue;
-        }
-        const size_t colon = line.find(':');
-        if (colon == std::string_view::npos || colon == 0)
-            return false;
-        head->headers.push_back(
-            {std::string(line.substr(0, colon)), std::string(str::trim(line.substr(colon + 1)))}
-        );
-    }
-    return true;
+    return eol == std::string_view::npos || parseHeaderLines(text.substr(eol + 2), &head->headers);
 }
 
 // Takes bytes from the front of *buf, reading more as needed.
@@ -285,20 +265,17 @@ Outcome exchange(
         if (!body.chunked(&resp.body))
             return Outcome::Failed;
     } else if (!cl.empty()) {
-        size_t n = 0;
-        for (char c : cl) {
-            if (c < '0' || c > '9' || n > kMaxBody) {
-                *error = n > kMaxBody ? "protocol: body too large" : "protocol: bad content-length";
-                return Outcome::Failed;
-            }
-            n = n * 10 + size_t(c - '0');
+        int64_t n = 0;
+        if (!parseContentLength(cl, &n)) {
+            *error = "protocol: bad content-length";
+            return Outcome::Failed;
         }
-        if (n > kMaxBody) {
+        if (uint64_t(n) > kMaxBody) {
             *error = "protocol: body too large";
             return Outcome::Failed;
         }
-        resp.body.reserve(n);
-        if (!body.take(n, &resp.body))
+        resp.body.reserve(size_t(n));
+        if (!body.take(size_t(n), &resp.body))
             return Outcome::Failed;
     } else {
         // Neither: the body runs until the server closes.
@@ -372,13 +349,6 @@ long readHead(
         }
         *gotAny = true;
     }
-}
-
-std::string_view headerValue(const std::vector<Header> &headers, std::string_view name) {
-    for (const auto &h : headers)
-        if (iequals(h.name, name))
-            return h.value;
-    return {};
 }
 
 std::string hostHeader(const Url &url) {

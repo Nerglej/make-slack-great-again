@@ -17,10 +17,7 @@ using model::Ts;
 
 FakeBackend::FakeBackend(model::Store &store, plat::App &app) : Backend(store), _app(app) {}
 
-FakeBackend::~FakeBackend() {
-    for (plat::TimerId id : _timers)
-        _app.cancelTimer(id);
-}
+FakeBackend::~FakeBackend() = default; // _timers cancels what is pending
 
 void FakeBackend::setFixture(std::string path, int64_t nowSecs) {
     _path = std::move(path);
@@ -28,14 +25,7 @@ void FakeBackend::setFixture(std::string path, int64_t nowSecs) {
 }
 
 void FakeBackend::later(int ms, std::function<void()> fn) {
-    // One-shot timer that forgets itself when it fires, so the destructor
-    // only cancels the ones still pending.
-    auto id = std::make_shared<plat::TimerId>(0);
-    *id     = _app.addTimer(std::max(ms, 0), false, [this, id, fn = std::move(fn)] {
-        std::erase(_timers, *id);
-        fn();
-    });
-    _timers.push_back(*id);
+    _timers.after(ms, std::move(fn));
 }
 
 // $MSGA_FAKE_SLOW_MS: extra latency for connect and the history / thread

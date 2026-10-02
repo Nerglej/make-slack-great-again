@@ -2,6 +2,7 @@
 #include "app/model/image_size.h"
 
 #include "base/file.h"
+#include "base/mime.h"
 #include "base/json.h"
 #include "base/str.h"
 #include "base/time.h"
@@ -21,32 +22,11 @@ using model::UserRef;
 
 namespace {
 
-std::string owned(json::Value v) {
-    return std::string(v.str());
-}
-
-// JSON field → struct member tables: one loop per struct instead of an
-// inlined lookup + string assignment per field.
-template <class T>
-struct StrField {
-    const char *key;
-    std::string T::*field;
-};
-template <class T>
-struct BoolField {
-    const char *key;
-    bool T::*field;
-};
-template <class T, size_t N>
-void readStrings(json::Value o, T &obj, const StrField<T> (&fields)[N]) {
-    for (const auto &f : fields)
-        obj.*f.field = owned(o[f.key]);
-}
-template <class T, size_t N>
-void readBools(json::Value o, T &obj, const BoolField<T> (&fields)[N]) {
-    for (const auto &f : fields)
-        obj.*f.field = o[f.key].boolean();
-}
+using json::BoolField;
+using json::owned;
+using json::readBools;
+using json::readStrings;
+using json::StrField;
 
 const StrField<model::User> kUserStrings[] = {
     {"id", &model::User::id},
@@ -81,68 +61,20 @@ const StrField<model::Attachment> kAttachmentStrings[] = {
     {"service", &model::Attachment::service},
 };
 
-// Up to `max` leading bytes of a file (headers for sniffing).
-std::string readHead(const std::string &path, size_t max) {
-    std::string out;
-    if (FILE *f = std::fopen(path.c_str(), "rb")) {
-        out.resize(max);
-        out.resize(std::fread(out.data(), 1, max, f));
-        std::fclose(f);
-    }
-    return out;
+// Magic first: extensions lie more often than headers; an ID3 tag (it can
+// front other audio too) only when the extension says nothing.
+std::string mimeFor(std::string_view name, std::string_view head) {
+    const std::string_view magic = mime::sniff(head);
+    if (!magic.empty() && magic != "audio/mpeg")
+        return std::string(magic);
+    if (const std::string_view byName = mime::fromName(name); !byName.empty())
+        return std::string(byName);
+    return std::string(magic.empty() ? std::string_view("application/octet-stream") : magic);
 }
 
-const char *mimeFor(std::string_view name, const std::string &head) {
-    const auto  *h = reinterpret_cast<const unsigned char *>(head.data());
-    const size_t n = head.size();
-    // Magic first: extensions lie more often than headers.
-    if (n >= 8 && std::memcmp(h, "\x89PNG\r\n\x1a\n", 8) == 0)
-        return "image/png";
-    if (n >= 3 && h[0] == 0xFF && h[1] == 0xD8 && h[2] == 0xFF)
-        return "image/jpeg";
-    if (n >= 6 && (std::memcmp(h, "GIF87a", 6) == 0 || std::memcmp(h, "GIF89a", 6) == 0))
-        return "image/gif";
-    if (n >= 12 && std::memcmp(h, "RIFF", 4) == 0 && std::memcmp(h + 8, "WEBP", 4) == 0)
-        return "image/webp";
-    if (n >= 5 && std::memcmp(h, "%PDF-", 5) == 0)
-        return "application/pdf";
-    static const struct {
-        const char *ext, *mime;
-    } kByExt[] = {
-        {"png", "image/png"},       {"jpg", "image/jpeg"},        {"jpeg", "image/jpeg"},
-        {"gif", "image/gif"},       {"webp", "image/webp"},       {"svg", "image/svg+xml"},
-        {"pdf", "application/pdf"}, {"csv", "text/csv"},          {"txt", "text/plain"},
-        {"md", "text/markdown"},    {"json", "application/json"}, {"html", "text/html"},
-        {"zip", "application/zip"}, {"mp3", "audio/mpeg"},        {"m4a", "audio/mp4"},
-        {"ogg", "audio/ogg"},       {"wav", "audio/wav"},         {"mp4", "video/mp4"},
-        {"webm", "video/webm"},     {"mov", "video/quicktime"},
-    };
-    const std::string ext = str::asciiLower(file::extension(name));
-    for (const auto &e : kByExt)
-        if (ext == e.ext)
-            return e.mime;
-    if (n >= 3 && std::memcmp(h, "ID3", 3) == 0)
-        return "audio/mpeg";
-    return "application/octet-stream";
-}
-
-std::string prettyTypeFor(std::string_view mime, std::string_view name) {
-    static const struct {
-        const char *mime, *label;
-    } kKnown[] = {
-        {"image/png", "PNG"},
-        {"image/jpeg", "JPEG"},
-        {"image/gif", "GIF"},
-        {"image/webp", "WebP"},
-        {"image/svg+xml", "SVG"},
-        {"application/pdf", "PDF"},
-        {"text/csv", "CSV"},
-        {"text/plain", "Plain text"},
-        {"application/zip", "Zip"},
-    };
-    for (const auto &k : kKnown)
-        if (mime == k.mime)
-            return k.label;
+std::string prettyTypeFor(std::string_view type, std::string_view name) {
+    if (const std::string_view l = mime::label(type); !l.empty())
+        return std::string(l);
     const std::string suffix = str::asciiUpper(file::extension(name));
     return suffix.empty() ? "File" : suffix;
 }
@@ -279,9 +211,11 @@ model::File fileFromLocalPath(const std::string &absPath, int index) {
     model::File f;
     char        id[16];
     std::snprintf(id, sizeof id, "FDEMO%04d", index);
-    f.id         = id;
-    f.name       = std::string(file::baseName(absPath));
-    f.mime       = mimeFor(f.name, readHead(absPath, 16));
+    f.id   = id;
+    f.name = std::string(file::baseName(absPath));
+    std::string head;
+    file::readRange(absPath, 0, 16, &head); // sniffing headers
+    f.mime       = mimeFor(f.name, head);
     f.prettyType = prettyTypeFor(f.mime, f.name);
     f.path       = absPath;
     f.size       = std::max<int64_t>(0, file::size(absPath));

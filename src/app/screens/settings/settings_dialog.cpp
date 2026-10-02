@@ -173,7 +173,7 @@ public:
                 tr(kPaletteNames[size_t(_p)]),
                 font(sel ? Font::SmallBold : Font::Small, sel ? C::Accent : C::FormTextMuted)
             );
-            _l = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+            _l = text::Layout::build(t, {}, windowScale());
         }
         _l->paint(
             p,

@@ -29,7 +29,4 @@ private:
     model::Store::ObserverId _observer = 0;
 };
 
-// Plain text for a message body: mrkdwn rendered, :shortcodes: as emoji.
-std::string plainText(const model::Store &store, std::string_view mrkdwn);
-
 } // namespace shell

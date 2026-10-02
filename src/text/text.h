@@ -112,6 +112,10 @@ public:
     virtual const std::vector<InlineBox> &boxes() const               = 0;
 };
 
+// One run of text in one style, laid out: what most labels and badges need.
+std::unique_ptr<Layout>
+layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth = 1e9f);
+
 // Single-line width without building a full layout (sidebar names, badges).
 float measure(std::string_view utf8, const Style &s, float scale);
 

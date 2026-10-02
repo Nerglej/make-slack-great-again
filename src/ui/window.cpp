@@ -60,7 +60,7 @@ public:
             st.weight               = text::Weight::Medium;
             st.color                = color(C::TooltipText); // text.onDark
             t.append(_text, st);
-            _l = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+            _l = text::Layout::build(t, {}, windowScale());
         }
         return {std::ceil(_l->width()) + 2 * kPadH, std::ceil(_l->height()) + 2 * kPadV + kArrowH};
     }

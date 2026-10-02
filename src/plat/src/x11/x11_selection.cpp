@@ -37,16 +37,7 @@ readProperty(xcb_connection_t *c, xcb_window_t w, xcb_atom_t prop, xcb_atom_t *t
 } // namespace
 
 bool isTextMime(std::string_view m) {
-    if (m == "UTF8_STRING" || m == "STRING" || m == "TEXT" || m == "text/plain")
-        return true;
-    // "text/plain;charset=utf-8" in any capitalisation of the charset.
-    constexpr std::string_view kPrefix = "text/plain;charset=";
-    if (m.size() != kPrefix.size() + 5 || m.substr(0, kPrefix.size()) != kPrefix)
-        return false;
-    std::string cs(m.substr(kPrefix.size()));
-    for (char &ch : cs)
-        ch = char(std::tolower((unsigned char)ch));
-    return cs == "utf-8";
+    return core::isTextMime(m);
 }
 
 std::string normaliseMime(std::string_view name) {
@@ -56,7 +47,7 @@ std::string normaliseMime(std::string_view name) {
         name == "SAVE_TARGETS" || name == "COMPOUND_TEXT")
         return {};
     if (isTextMime(name))
-        return "text/plain;charset=utf-8";
+        return core::kTextMime;
     return std::string(name);
 }
 

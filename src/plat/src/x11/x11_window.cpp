@@ -2,6 +2,8 @@
 // MIT-SHM (memfd or SysV) with a chunked PutImage fallback for remote servers.
 #include "x11/x11_internal.h"
 
+#include "core/image_util.h"
+
 #include <xcb/shm.h>
 
 #include <algorithm>
@@ -37,15 +39,6 @@ void setProp(
     const void       *data
 ) {
     xcb_change_property(c, XCB_PROP_MODE_REPLACE, w, prop, type, format, count, data);
-}
-
-// Premultiplied ARGB32 -> straight ARGB32 (_NET_WM_ICON's format).
-uint32_t unpremultiply(uint32_t p) {
-    const uint32_t a = p >> 24;
-    if (a == 0 || a == 255)
-        return a ? p : 0;
-    auto ch = [a](uint32_t v) { return std::min<uint32_t>(255, (v * 255 + a / 2) / a); };
-    return a << 24 | ch((p >> 16) & 0xff) << 16 | ch((p >> 8) & 0xff) << 8 | ch(p & 0xff);
 }
 
 } // namespace
@@ -113,7 +106,7 @@ X11Window::X11Window(X11App *app, const WindowDesc &d)
         icon.push_back(uint32_t(im.width));
         icon.push_back(uint32_t(im.height));
         for (size_t i = 0; i < n; ++i) {
-            icon.push_back(unpremultiply(im.pixels[i]));
+            icon.push_back(core::unpremultiply(im.pixels[i])); // _NET_WM_ICON's format
         }
     }
     if (!icon.empty())

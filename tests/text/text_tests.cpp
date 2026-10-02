@@ -329,6 +329,26 @@ void wordSelect() {
     CHECK(l->wordEnd(uint32_t(s.size())) == s.size());
 }
 
+// Layout decodes with base's strict utf8::decode: an overlong '/', a UTF-16
+// surrogate and a value above U+10FFFF are U+FFFD per byte (as HarfBuzz sees
+// them), never a code point the caret skips over in one step.
+void malformedUtf8() {
+    const std::string     s = "a\xC0\xAF"
+                              "b\xED\xA0\x80"
+                              "c\xF4\x90\x80\x80"
+                              "d";
+    auto                  l = lay(s);
+    std::vector<uint32_t> stops;
+    for (uint32_t off = 0; off < s.size();)
+        stops.push_back(off = l->moveCaret(off, 1, 0));
+    std::vector<uint32_t> want;
+    for (uint32_t i = 1; i <= s.size(); ++i)
+        want.push_back(i);
+    CHECK(stops == want);
+    // A double-click on a malformed byte selects just that byte.
+    CHECK(l->wordStart(1) == 1 && l->wordEnd(1) == 2);
+}
+
 void glyphCache() {
     gfx::Bitmap  bmp(400, 200);
     gfx::Painter p(bmp.view(), 1.5f);
@@ -572,6 +592,7 @@ constexpr Case kCases[] = {
     {"inline_box", inlineBox},
     {"style_boundary", styleBoundary},
     {"word_select", wordSelect},
+    {"malformed_utf8", malformedUtf8},
     {"glyph_cache", glyphCache},
     {"ink_bounds", inkBounds},
     {"ink_lean", inkLean},

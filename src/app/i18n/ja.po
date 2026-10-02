@@ -64,6 +64,10 @@ msgstr "表示"
 msgid "Hide"
 msgstr "非表示"
 
+#: src/ui/controls.cpp src/ui/filebrowser.cpp src/app/screens/messages/message_dialogs.cpp src/app/screens/settings/settings_pages.cpp src/app/screens/shell/composer.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/session_dialogs.cpp src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/signin_dialogs.cpp src/app/screens/shell/status_dialog.cpp
+msgid "Cancel"
+msgstr "キャンセル"
+
 #: src/ui/filebrowser.cpp
 msgid "Open file"
 msgstr "ファイルを開く"
@@ -107,10 +111,6 @@ msgstr "隠しファイルを表示 (Ctrl+H)"
 #: src/ui/filebrowser.cpp src/app/screens/settings/settings_pages.cpp src/app/screens/shell/channel_dialogs.cpp src/app/screens/shell/session_dialogs.cpp src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/status_dialog.cpp
 msgid "Name"
 msgstr "名前"
-
-#: src/ui/filebrowser.cpp src/app/screens/messages/message_dialogs.cpp src/app/screens/settings/settings_pages.cpp src/app/screens/shell/canvas_page.cpp src/app/screens/shell/composer.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/session_dialogs.cpp src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/signin_dialogs.cpp src/app/screens/shell/status_dialog.cpp
-msgid "Cancel"
-msgstr "キャンセル"
 
 #: src/ui/filebrowser.cpp
 msgid "This folder can’t be opened."

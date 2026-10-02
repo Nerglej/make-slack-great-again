@@ -62,15 +62,12 @@ bool        awaitsApproval(const SessionInfo &s);
 // + "login required — run /login" (verified 2.1.283): not a question for the user.
 bool        needsLogin(const SessionInfo &s);
 
-// FNV-1a over `bytes`, going on from `h` (kFnvBasis to start).
-inline constexpr uint64_t kFnvBasis = 1469598103934665603ull;
-uint64_t                  fnv1a(uint64_t h, std::string_view bytes);
 // What a message looks like, for telling a changed one from the same: what
 // it says (who, its text, files, buttons…), hashed once per rendered
 // message, then where it sits and what it gathered (ts, thread, replies,
 // reactions) mixed in. fingerprint(m) = fingerprint(contentFingerprint(m), m's).
-uint64_t                  contentFingerprint(const model::Message &m);
-uint64_t                  fingerprint(
+uint64_t contentFingerprint(const model::Message &m);
+uint64_t fingerprint(
     uint64_t                            content,
     model::Ts                           ts,
     model::Ts                           threadTs,

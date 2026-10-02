@@ -1,6 +1,8 @@
 #include "support/test.h"
 #include "base/utf8.h"
 
+#include <cstring>
+
 TEST("utf8: decode and append round trip") {
     const std::string s = "a\xC3\xA5\xE2\x82\xAC\xF0\x9F\x9A\x80"; // a å € 🚀
     size_t            i = 0;
@@ -85,4 +87,72 @@ TEST("utf8: word characters") {
     CHECK_FALSE(utf8::isWordChar(0x2014)); // em dash
     CHECK(utf8::isSpace(0xA0));
     CHECK_FALSE(utf8::isSpace('x'));
+}
+
+TEST("utf8: encode lengths at every boundary") {
+    struct {
+        uint32_t    cp;
+        const char *want;
+    } cases[] = {
+        {0x00, ""},
+        {0x7F, "\x7F"},
+        {0x80, "\xC2\x80"},
+        {0x7FF, "\xDF\xBF"},
+        {0x800, "\xE0\xA0\x80"},
+        {0xD7FF, "\xED\x9F\xBF"},
+        {0xE000, "\xEE\x80\x80"},
+        {0xFFFF, "\xEF\xBF\xBF"},
+        {0x10000, "\xF0\x90\x80\x80"},
+        {0x10FFFF, "\xF4\x8F\xBF\xBF"},
+    };
+    for (const auto &c : cases) {
+        char         b[4];
+        const size_t n    = utf8::encode(b, c.cp);
+        const size_t want = c.cp ? std::strlen(c.want) : 1;
+        CHECK(n == want);
+        CHECK(std::string_view(b, n) == std::string_view(c.want, want));
+        CHECK(int(n) == utf8::encodedLength(c.cp));
+        // And it decodes back to itself.
+        size_t i = 0;
+        CHECK(utf8::decode(std::string_view(b, n), i) == c.cp);
+        CHECK(i == n);
+    }
+    // Surrogates (either half) and values above U+10FFFF encode as U+FFFD.
+    for (uint32_t cp : {0xD800u, 0xDBFFu, 0xDC00u, 0xDFFFu, 0x110000u, 0xFFFFFFFFu}) {
+        char b[4];
+        CHECK(utf8::encode(b, cp) == 3);
+        CHECK(std::string_view(b, 3) == "\xEF\xBF\xBD");
+        std::string out = "x";
+        utf8::append(out, cp);
+        CHECK(out == "x\xEF\xBF\xBD");
+    }
+}
+
+TEST("utf8: overlong forms of every length are rejected") {
+    // NUL and '/' in 2, 3 and 4 bytes, the smallest overlong of each length,
+    // and the CESU-8 surrogate pair for U+1F600.
+    const std::string_view bad[] = {
+        std::string_view("\xC0\x80", 2),
+        "\xC1\xBF",
+        "\xE0\x80\xAF",
+        "\xE0\x9F\xBF",
+        "\xF0\x80\x80\xAF",
+        "\xF0\x8F\xBF\xBF",
+        "\xED\xA0\xBD\xED\xB8\x80",
+        "\xED\xBF\xBF",
+        "\xF5\x80\x80\x80",
+    };
+    for (std::string_view s : bad) {
+        CHECK_FALSE(utf8::isValid(s));
+        // Every byte resyncs on its own: as many U+FFFD as bytes.
+        size_t i = 0, n = 0;
+        while (i < s.size()) {
+            CHECK(utf8::decode(s, i) == utf8::kReplacement);
+            ++n;
+        }
+        CHECK(n == s.size());
+    }
+    // The shortest forms right next to them are fine.
+    for (std::string_view s : {"\xC2\x80", "\xE0\xA0\x80", "\xF0\x90\x80\x80", "\xED\x9F\xBF"})
+        CHECK(utf8::isValid(s));
 }

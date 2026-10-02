@@ -5,10 +5,12 @@
 #include "app/mrkdwn/link_labels.h"
 #include "app/screens/messages/image_cache.h"
 #include "app/screens/messages/message_list.h"
+#include "app/screens/common/message_text.h"
 #include "gfx/icons_generated.h"
 #include "base/i18n.h"
 #include "base/process.h"
 #include "base/str.h"
+#include "net/net.h"
 
 #include <algorithm>
 #include <cmath>
@@ -168,40 +170,29 @@ struct Builder {
                 }
                 break;
             case Kind::User: {
-                const model::UserRef   u = store.findUser(e.data);
-                const std::string_view label =
-                    u != model::kNoUser ? store.user(u).label() : std::string_view();
-                text::Style ps = pill(s, u != model::kNoUser && u == store.me);
-                ps.linkId      = target(e.kind, e.data);
-                t.append(label.empty() ? std::string(slice) : "@" + std::string(label), ps);
+                const model::UserRef u    = store.findUser(e.data);
+                const std::string    name = entityText(store, e);
+                text::Style          ps   = pill(s, u != model::kNoUser && u == store.me);
+                ps.linkId                 = target(e.kind, e.data);
+                t.append(name.empty() ? std::string(slice) : name, ps);
                 break;
             }
             case Kind::Channel: {
-                const model::ConvRef c = store.findConversation(e.data);
-                s.color                = ui::themed(ui::C::Link);
-                s.linkId               = target(e.kind, e.data);
+                s.color  = ui::themed(ui::C::Link);
+                s.linkId = target(e.kind, e.data);
                 // One the roster doesn't list: its name is looked up once
                 // (msga's mentionedChannelName / fetchChannelIfNeeded).
-                const std::string *known =
-                    c == model::kNoConv ? store.channelName(e.data) : nullptr;
-                if (c == model::kNoConv && !known)
+                if (store.findConversation(e.data) == model::kNoConv && !store.channelName(e.data))
                     ctx.backend.resolveChannel(e.data);
-                const std::string name = c != model::kNoConv && !store.conversation(c).name.empty()
-                                             ? "#" + store.conversation(c).name
-                                         : known && !known->empty() ? "#" + *known
-                                                                    : std::string(slice);
-                t.append(name, s);
+                const std::string name = entityText(store, e);
+                t.append(name.empty() ? std::string(slice) : name, s);
                 break;
             }
             case Kind::Usergroup: {
-                // msga's Usergroup::mentionLabel: the live handle (else name).
-                const Store::Usergroup *g = store.findUsergroup(e.data);
                 const bool mine = std::find(store.myGroups.begin(), store.myGroups.end(), e.data) !=
                                   store.myGroups.end();
-                t.append(
-                    g ? "@" + (g->handle.empty() ? g->name : g->handle) : std::string(slice),
-                    pill(s, mine)
-                );
+                const std::string name = entityText(store, e);
+                t.append(name.empty() ? std::string(slice) : name, pill(s, mine));
                 break;
             }
             case Kind::Here:
@@ -211,9 +202,7 @@ struct Builder {
             case Kind::Emoji: {
                 const Store::EmojiGlyph g = store.emojiFor(e.data);
                 if (!g.unicode.empty()) {
-                    t.append(
-                        run.skinTone ? emoji::applySkinTone(g.unicode, run.skinTone) : g.unicode, s
-                    );
+                    t.append(entityText(store, e, run.skinTone), s);
                 } else if (!g.image.empty()) {
                     images.push_back(g.image);
                     s.inlineBoxId = uint32_t(images.size());
@@ -275,28 +264,6 @@ void RichLabel::setContent(
     setRichText(std::move(t));
 }
 
-namespace {
-// QUrl::fromPercentEncoding, for the tooltip.
-std::string percentDecoded(std::string_view s) {
-    std::string out;
-    auto        hex = [](char c) {
-        return c >= '0' && c <= '9'   ? c - '0'
-               : c >= 'a' && c <= 'f' ? c - 'a' + 10
-               : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                      : -1;
-    };
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size() && hex(s[i + 1]) >= 0 && hex(s[i + 2]) >= 0) {
-            out += char(hex(s[i + 1]) * 16 + hex(s[i + 2]));
-            i += 2;
-        } else {
-            out += s[i];
-        }
-    }
-    return out;
-}
-} // namespace
-
 ui::RectF RichLabel::tooltipAnchor() const {
     return {_tipAt.x, _tipAt.y - 2, 1, 4}; // msga: the cursor point
 }
@@ -322,7 +289,7 @@ void RichLabel::hoverLink(uint32_t id, ui::PointF at) {
     // text already is the URL.
     std::string url;
     if (tg && tg->kind == Kind::Link) {
-        url = percentDecoded(tg->data);
+        url = net::percentDecode(tg->data); // QUrl::fromPercentEncoding
     } else if (tg && tg->kind == Kind::MessageLink) {
         const mrkdwn::MessageRef ref = mrkdwn::refFromToken(tg->data);
         const model::ConvRef     c   = _ctx.store().findConversation(ref.conv);
@@ -454,7 +421,7 @@ double paintEmojiBoxes(
     const std::vector<std::string> &images,
     ui::View                       *waiter
 ) {
-    const float  scale = waiter && waiter->window() ? waiter->window()->scale() : 1.f;
+    const float  scale = waiter ? waiter->windowScale() : 1.f;
     // Animated custom emoji (Settings → Animate emoji) all run on one clock,
     // so every copy of one shows the same frame; the caller repaints when
     // the soonest of them changes.

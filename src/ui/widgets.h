@@ -12,6 +12,10 @@
 
 namespace ui {
 
+// The keyboard focus ring (2 px, C::FocusRing) around r, drawn only while v
+// has focus and its window shows focus (keyboard navigation).
+void paintFocusRing(const View &v, gfx::Painter &p, RectF r, float radius);
+
 // ── Label ───────────────────────────────────────────────────────────────────
 // Plain or rich text. Wraps at the width it is given; with maxLines > 0 the
 // last line ends in "…" when cut. Rich text may use themed() sentinel colours

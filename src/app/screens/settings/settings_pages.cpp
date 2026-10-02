@@ -118,17 +118,6 @@ const struct {
     {"zh", "\xE4\xB8\xAD\xE6\x96\x87"},
 };
 
-std::string formatBytes(uint64_t b) {
-    char buf[32];
-    if (b < 1024)
-        std::snprintf(buf, sizeof buf, "%llu B", (unsigned long long)b);
-    else if (b < 1024 * 1024)
-        std::snprintf(buf, sizeof buf, "%llu KB", (unsigned long long)(b / 1024));
-    else
-        std::snprintf(buf, sizeof buf, "%llu MB", (unsigned long long)(b / (1024 * 1024)));
-    return buf;
-}
-
 // The process's private memory, the number each OS's task manager shows
 // (the Qt app's ProcessStats::rssBytes); 0 when unknown.
 uint64_t privateBytes() {
@@ -725,13 +714,13 @@ void SettingsDialog::refreshCache() {
     // workspaces' cached data).
     const int64_t data = cache::WorkspaceCache::diskBytes(_ctx.app.platform());
     if (_ctx.remote) {
-        _p->cacheSize->setText(formatBytes(_ctx.remote->diskBytes() + data));
+        _p->cacheSize->setText(str::byteSize(int64_t(_ctx.remote->diskBytes() + data)));
         return;
     }
 #ifdef MSGA_HAVE_MESSAGES
-    _p->cacheSize->setText(formatBytes(int64_t(_ctx.images.bytes()) + data));
+    _p->cacheSize->setText(str::byteSize(int64_t(_ctx.images.bytes()) + data));
 #else
-    _p->cacheSize->setText(formatBytes(data));
+    _p->cacheSize->setText(str::byteSize(data));
 #endif
 }
 

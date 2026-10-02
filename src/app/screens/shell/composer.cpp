@@ -349,7 +349,7 @@ private:
         // Measured before the pill is attached to a window, the first build
         // runs at scale 1; rebuild once the real display scale is known, or
         // the text paints at a fraction of its size until a hover rebuilds it.
-        const float k = window() ? window()->scale() : 1.f;
+        const float k = windowScale();
         if (_a && _scale == k)
             return;
         _scale    = k;
@@ -478,15 +478,6 @@ bool looksLikeText(std::string_view path) {
         if (ext == e)
             return true;
     return false;
-}
-
-// msga's fmtSize.
-std::string sizeText(int64_t b) {
-    if (b < 1024)
-        return str::concat({str::number(b), " B"});
-    if (b < 1024 * 1024)
-        return str::concat({str::number(b / 1024), " KB"});
-    return str::concat({str::number(b / (1024 * 1024)), " MB"});
 }
 
 // A name longer than 18 characters: its first 15, "…", its extension.
@@ -1168,17 +1159,9 @@ bool Composer::openPromptSearch() {
     if (_historySearch)
         _historySearch->dismiss();
     // What's typed so far is where the search starts; picking replaces it.
-    std::string typed;
-    for (char c : _edit->text()) { // simplified()
-        const bool ws = c == ' ' || c == '\n' || c == '\t' || c == '\r';
-        if (ws && (typed.empty() || typed.back() == ' '))
-            continue;
-        typed += ws ? ' ' : c;
-    }
-    while (!typed.empty() && typed.back() == ' ')
-        typed.pop_back();
-    View *area = _popupArea ? _popupArea : parent();
-    auto *hs   = HistorySearch::open(
+    const std::string typed = str::simplified(_edit->text());
+    View             *area  = _popupArea ? _popupArea : parent();
+    auto             *hs    = HistorySearch::open(
         *w, std::move(history), typed, _box->windowRect(), area ? area->windowRect() : RectF{}
     );
     _historySearch           = hs;
@@ -1202,17 +1185,7 @@ bool Composer::openPromptSearch() {
 }
 
 void Composer::setSuggestion(std::string text) {
-    // msga's simplified(): runs of whitespace become one space.
-    std::string s;
-    for (char c : text) {
-        const bool ws = c == ' ' || c == '\n' || c == '\t' || c == '\r';
-        if (ws && (s.empty() || s.back() == ' '))
-            continue;
-        s += ws ? ' ' : c;
-    }
-    while (!s.empty() && s.back() == ' ')
-        s.pop_back();
-    _suggestion = std::move(s);
+    _suggestion = str::simplified(text); // msga's simplified()
     refreshLook();
 }
 
@@ -1692,7 +1665,7 @@ void Composer::rebuildChips() {
         plates->style().padding(8).spacing(2).justifyContent(Justify::End);
         plates->setHitTransparent(true);
         plate(plates, chipName(path), Font::PlateName);
-        plate(plates, sizeText(std::max<int64_t>(0, file::size(path))), Font::Tiny);
+        plate(plates, str::byteSize(std::max<int64_t>(0, file::size(path))), Font::Tiny);
         // The remove cross, top-right.
         auto *x = chip->add<GlyphButton>(
             Icon::X, 16, 10, image ? C::OverlayText : C::FormIcon, tr("Remove attachment")

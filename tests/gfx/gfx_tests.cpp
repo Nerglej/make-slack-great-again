@@ -1273,6 +1273,64 @@ void testSvgFuzz() {
     CHECK(!renderSvgOwn(many + "</svg>", 16, 16, &b));
 }
 
+void testCover() {
+    // 6×2, a column per value: covering 2×2 keeps the middle two columns.
+    Bitmap wide(6, 2);
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 6; ++x)
+            wide.pixels()[y * 6 + x] = 0xff000000u | uint32_t(x);
+    Bitmap sq = coverResize(wide.view(), 2, 2);
+    CHECK(sq.width() == 2 && sq.height() == 2);
+    CHECK_PX(px(sq, 0, 0), 0xff000002u);
+    CHECK_PX(px(sq, 1, 1), 0xff000003u);
+    // Tall to wide: the middle rows, then a resize (2×6 → crop 2×1 → 4×2).
+    Bitmap tall(2, 6);
+    for (int y = 0; y < 6; ++y)
+        for (int x = 0; x < 2; ++x)
+            tall.pixels()[y * 2 + x] = y == 2 || y == 3 ? 0xffffffffu : 0xff000000u;
+    Bitmap band = coverResize(tall.view(), 2, 2);
+    CHECK(band.width() == 2 && band.height() == 2);
+    CHECK_PX(px(band, 0, 0), 0xffffffffu);
+    CHECK_PX(px(band, 1, 1), 0xffffffffu);
+    CHECK(coverResize(tall.view(), 8, 4).width() == 8);
+    CHECK(coverResize(BitmapView{}, 4, 4).empty());
+    CHECK(coverResize(tall.view(), 0, 4).empty());
+
+    // Masks: a circle clears the corners and keeps the centre.
+    Bitmap disc(20, 20);
+    fillBitmap(disc, 0xffffffffu);
+    maskRoundedRect(disc, 1e9f);
+    CHECK_PX(px(disc, 0, 0), 0u);
+    CHECK_PX(px(disc, 19, 19), 0u);
+    CHECK_PX(px(disc, 10, 10), 0xffffffffu);
+    CHECK_PX(px(disc, 10, 1), 0xffffffffu); // just inside the top edge
+    // Premultiplied: a partly covered pixel scales every channel alike.
+    const uint32_t rim = px(disc, 2, 3);
+    CHECK((rim >> 24) > 0 && (rim >> 24) < 255 && (rim & 0xff) == (rim >> 24));
+    Bitmap rounded(20, 20);
+    fillBitmap(rounded, 0xffffffffu);
+    maskRoundedRect(rounded, 4);
+    CHECK_PX(px(rounded, 0, 0), 0u);
+    CHECK_PX(px(rounded, 4, 0), 0xffffffffu);
+    CHECK_PX(px(rounded, 0, 10), 0xffffffffu);
+    Bitmap holed(20, 20);
+    fillBitmap(holed, 0xffffffffu);
+    clearDisc(holed, 10, 10, 4);
+    CHECK_PX(px(holed, 10, 10), 0u);
+    CHECK_PX(px(holed, 0, 0), 0xffffffffu);
+    CHECK(alphaSum(holed) < 400 - 40 && alphaSum(holed) > 400 - 60); // ~π·4² cleared
+
+    // An SVG renders covering the box, at least that big.
+    const std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'>"
+                            "<rect width='20' height='10' fill='#f00'/></svg>";
+    Bitmap            r;
+    CHECK(renderSvgCover(svg, 8, 8, &r));
+    CHECK(r.width() == 16 && r.height() == 8);
+    CHECK(renderSvgCover(svg, 0, 0, &r));
+    CHECK(r.width() == 20 && r.height() == 10);
+    CHECK(!renderSvgCover("not svg", 8, 8, &r));
+}
+
 struct Group {
     const char *name;
     void (*fn)();
@@ -1295,6 +1353,7 @@ const Group kGroups[] = {
     {"svg", testSvg},
     {"svgsize", testSvgSize},
     {"svgfuzz", testSvgFuzz},
+    {"cover", testCover},
 };
 
 } // namespace

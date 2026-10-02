@@ -106,7 +106,7 @@ void ProfileCard::styleChanged() {
 
 void ProfileCard::build() {
     const model::User &u     = _ctx.store().user(_user);
-    const float        k     = window() ? window()->scale() : 1.f;
+    const float        k     = windowScale();
     const float        textW = kWidth - 2 * kPad - kAv - kAvGap;
     const char        *role  = u.owner   ? tr("Workspace Owner")
                                : u.admin ? tr("Workspace Admin")

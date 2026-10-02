@@ -288,7 +288,19 @@ public:
     // [leading] stretch [secondary] [primary]; secondary rejects.
     View *addButtonRow(FormButton *primary, FormButton *secondary, View *leading = nullptr);
     // A Normal-size button for addButtonRow (which adopts it).
-    static FormButton *makeButton(std::string label, FormButton::Kind k);
+    static FormButton             *makeButton(std::string label, FormButton::Kind k);
+    // msga's confirmation dialog: `title`, `text` as a 15-px paragraph in
+    // `textColor` (a themed() sentinel or a colour), whatever `extra` adds
+    // below it, then [Cancel] [confirmLabel]. Confirming accepts (onAccepted
+    // runs); Cancel and × reject. Not shown yet.
+    static std::unique_ptr<Dialog> confirm(
+        std::string                               title,
+        std::string                               text,
+        std::string                               confirmLabel,
+        FormButton::Kind                          kind,
+        Color                                     textColor,
+        const std::function<void(View *content)> &extra = {}
+    );
 
     void                  accept(); // closes, then onAccepted
     void                  reject(); // closes, then onRejected

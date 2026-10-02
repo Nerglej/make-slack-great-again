@@ -8,7 +8,9 @@
 #include "app/claude/outputs.h"
 #include "app/claude/render.h"
 #include "app/model/jobs.h"
+#include "app/model/timers.h"
 #include "app/mrkdwn/mrkdwn.h"
+#include "base/crypto.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/json.h"
@@ -122,15 +124,9 @@ bool needsLogin(const SessionInfo &s) {
     return str::startsWith(s.needs, "login required");
 }
 
-uint64_t fnv1a(uint64_t h, std::string_view bytes) {
-    for (unsigned char c : bytes)
-        h = (h ^ c) * 1099511628211ull;
-    return h;
-}
-
 namespace {
 uint64_t mix(uint64_t h, std::string_view s) {
-    return (fnv1a(h, s) ^ 0xff) * 1099511628211ull; // a field's end: "ab"+"c" ≠ "a"+"bc"
+    return (crypto::fnv1a(s, h) ^ 0xff) * 1099511628211ull; // a field's end: "ab"+"c" ≠ "a"+"bc"
 }
 uint64_t mix(uint64_t h, int64_t v) {
     return mix(h, std::string_view(reinterpret_cast<const char *>(&v), sizeof v));
@@ -164,7 +160,7 @@ uint64_t fingerprint(const Message &m) {
 }
 
 uint64_t contentFingerprint(const Message &m) {
-    uint64_t h = kFnvBasis;
+    uint64_t h = crypto::kFnvOffset;
     h          = mix(h, int64_t(m.user));
     h          = mix(h, m.text);
     h          = mix(h, int64_t(m.pending));
@@ -223,9 +219,7 @@ void Backend::close() {
             _app.cancelTimer(*t);
         *t = 0;
     }
-    for (uint64_t id : _oneShots)
-        _app.cancelTimer(id);
-    _oneShots.clear();
+    _oneShots.cancelAll();
     for (auto &[id, t] : _sessions) {
         if (const auto typing = std::exchange(t->typing, {}).lock())
             typing->cancel(); // its done finds the backend gone
@@ -234,21 +228,11 @@ void Backend::close() {
 }
 
 void Backend::post(std::function<void()> fn) {
-    _app.post([alive = _alive, fn = std::move(fn)] {
-        if (*alive)
-            fn();
-    });
+    model::postWhileAlive(_app, _alive, std::move(fn));
 }
 
 void Backend::after(int ms, std::function<void()> fn) {
-    auto slot = std::make_shared<uint64_t>(0);
-    *slot     = _app.addTimer(ms, false, [this, alive = _alive, slot, fn = std::move(fn)] {
-        if (!*alive)
-            return;
-        std::erase(_oneShots, *slot);
-        fn();
-    });
-    _oneShots.push_back(*slot);
+    _oneShots.after(ms, std::move(fn)); // close() cancels the pending ones
 }
 
 Backend::Capabilities Backend::capabilities() const {
@@ -381,7 +365,7 @@ void Backend::saveKnown() {
         return;
     // Saved after every refresh: written (and synced to disk) only when it
     // says something new.
-    const uint64_t h = fnv1a(kFnvBasis, w.str());
+    const uint64_t h = crypto::fnv1a(w.str());
     if (h == _savedHash)
         return;
     if (file::writeAtomic(knownSessionsPath(), w.str(), 0600))
@@ -2026,9 +2010,9 @@ void Backend::watchTick() {
     // A directory's entries' names say what came and went; the sessions
     // folder's one listing serves for that and for its files alike.
     const auto        names = [](const std::vector<file::DirEntry> &list) {
-        uint64_t h = kFnvBasis;
+        uint64_t h = crypto::kFnvOffset;
         for (const auto &e : list)
-            h ^= fnv1a(kFnvBasis, e.name); // whatever order the OS lists them in
+            h ^= crypto::fnv1a(e.name); // whatever order the OS lists them in
         return int64_t(h);
     };
     std::vector<file::DirEntry> entries;

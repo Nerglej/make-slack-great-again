@@ -121,7 +121,7 @@ void VoiceStrip::layout() {
 void VoiceStrip::paint(gfx::Painter &p) {
     if (_mode == Mode::Hidden)
         return;
-    const float k     = window() ? window()->scale() : 1.f;
+    const float k     = windowScale();
     const float cy    = height() / 2;
     const float right = _cancel->frame().x - kSpSm;
     float       x     = kSpMd;

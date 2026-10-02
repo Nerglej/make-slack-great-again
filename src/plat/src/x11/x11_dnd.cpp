@@ -7,6 +7,8 @@
 // own windows, which answer through the server like anyone else's would.
 #include "x11/x11_internal.h"
 
+#include "core/image_util.h"
+
 #include <xcb/xfixes.h>
 
 #include <algorithm>
@@ -31,51 +33,6 @@ void sendClientMessage(
     ev.type          = type;
     std::memcpy(ev.data.data32, d, 5 * sizeof(uint32_t));
     xcb_send_event(c, 0, to, XCB_EVENT_MASK_NO_EVENT, reinterpret_cast<const char *>(&ev));
-}
-
-// Resample premultiplied ARGB to w×h: box-average when shrinking (a 2× drag
-// image on a 1× screen stays smooth), bilinear when growing. Premultiplied
-// channels average correctly without un-premultiplying.
-std::vector<uint32_t> resample(const Image &img, int w, int h) {
-    std::vector<uint32_t> out(size_t(w) * size_t(h));
-    const double          sx = double(img.width) / w, sy = double(img.height) / h;
-    auto                  px = [&](int x, int y) {
-        x = std::clamp(x, 0, img.width - 1);
-        y = std::clamp(y, 0, img.height - 1);
-        return img.pixels[size_t(y) * img.width + x];
-    };
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            double acc[4] = {};
-            if (sx > 1 || sy > 1) {
-                const int x0 = int(x * sx), x1 = std::max(x0 + 1, int((x + 1) * sx));
-                const int y0 = int(y * sy), y1 = std::max(y0 + 1, int((y + 1) * sy));
-                for (int yy = y0; yy < y1; ++yy)
-                    for (int xx = x0; xx < x1; ++xx)
-                        for (int k = 0; k < 4; ++k)
-                            acc[k] += (px(xx, yy) >> (8 * k)) & 0xff;
-                const double n = double(x1 - x0) * (y1 - y0);
-                for (double &v : acc)
-                    v /= n;
-            } else {
-                const double   fx = (x + 0.5) * sx - 0.5, fy = (y + 0.5) * sy - 0.5;
-                const int      ix = int(std::floor(fx)), iy = int(std::floor(fy));
-                const double   ax = fx - ix, ay = fy - iy;
-                const uint32_t q[4] = {
-                    px(ix, iy), px(ix + 1, iy), px(ix, iy + 1), px(ix + 1, iy + 1)
-                };
-                const double wq[4] = {(1 - ax) * (1 - ay), ax * (1 - ay), (1 - ax) * ay, ax * ay};
-                for (int k = 0; k < 4; ++k)
-                    for (int j = 0; j < 4; ++j)
-                        acc[k] += wq[j] * ((q[j] >> (8 * k)) & 0xff);
-            }
-            uint32_t v = 0;
-            for (int k = 0; k < 4; ++k)
-                v |= uint32_t(std::clamp(int(std::lround(acc[k])), 0, 255)) << (8 * k);
-            out[size_t(y) * w + x] = v;
-        }
-    }
-    return out;
 }
 
 uint32_t bitOf(DropAction a) {
@@ -106,24 +63,6 @@ std::vector<xcb_atom_t> readAtoms(xcb_connection_t *c, xcb_window_t w, xcb_atom_
         return {};
     auto *a = static_cast<xcb_atom_t *>(xcb_get_property_value(r.p));
     return {a, a + xcb_get_property_value_length(r.p) / 4};
-}
-
-// RFC 2483: CRLF-separated, '#' lines are comments.
-std::vector<std::string> parseUriList(const std::string &data) {
-    std::vector<std::string> out;
-    size_t                   pos = 0;
-    while (pos < data.size()) {
-        size_t end = data.find('\n', pos);
-        if (end == std::string::npos)
-            end = data.size();
-        std::string line = data.substr(pos, end - pos);
-        pos              = end + 1;
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\0'))
-            line.pop_back();
-        if (!line.empty() && line[0] != '#')
-            out.push_back(std::move(line));
-    }
-    return out;
 }
 
 } // namespace
@@ -296,7 +235,7 @@ void X11App::dndFetchNext() {
     ev.allowedActions = _dnd.allowed;
     for (auto &item : _dnd.got) {
         if (item.mime == "text/uri-list")
-            ev.uris = parseUriList(item.data);
+            ev.uris = core::parseUriList(item.data);
         else if (item.mime == "text/plain;charset=utf-8")
             ev.text = item.data;
     }
@@ -456,7 +395,7 @@ void X11App::createDragIcon(const Image &srcImg, Point hotspot) {
     const int    tw   = std::max(1, int(std::lround(srcImg.width * factor)));
     const int    th   = std::max(1, int(std::lround(srcImg.height * factor)));
     if ((tw != srcImg.width || th != srcImg.height) && tw <= 4096 && th <= 4096) {
-        scaled = {tw, th, resample(srcImg, tw, th), 1.0}; // cropped to 1024² below
+        scaled = core::scaleImage(srcImg, tw, th); // cropped to 1024² below
         imgp   = &scaled;
     }
     const Image &img = *imgp;

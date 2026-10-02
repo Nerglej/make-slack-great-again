@@ -102,7 +102,7 @@ public:
         const float w     = std::max(0.f, right - left);
         if (!_lines[0] || _builtW != w) {
             _builtW                = w;
-            const float         k  = window() ? window()->scale() : 1.f;
+            const float         k  = windowScale();
             const Color         hi = color(_hover ? C::TooltipText : C::FormText);
             const Color         lo = color(_hover ? C::OnDarkDim : C::FormTextFaint);
             text::LayoutOptions o;
@@ -779,19 +779,6 @@ std::vector<std::string> queryWords(std::string_view q) {
     return out;
 }
 
-// QString::simplified: runs of whitespace become one space, none at the ends.
-std::string simplified(std::string_view s) {
-    std::string out;
-    for (char c : s) {
-        if (isWs(c) && (out.empty() || out.back() == ' '))
-            continue;
-        out += isWs(c) ? ' ' : c;
-    }
-    while (!out.empty() && out.back() == ' ')
-        out.pop_back();
-    return out;
-}
-
 // The shade over the message area while the panel is open; a click on it
 // closes the panel like Esc.
 class HistoryShade final : public Popup {
@@ -986,7 +973,7 @@ void HistorySearch::refilter() {
     const std::string q = query();
     // Newest at the bottom, next to the search field.
     for (size_t r = _matches.size(); r-- > 0;) {
-        std::string text = simplified(_entries[_matches[r]]);
+        std::string text = str::simplified(_entries[_matches[r]]);
         if (const auto m = historyMatches(text, q); !m.empty() && m.front().first > kLateMatch) {
             size_t from = m.front().first - kLeadIn;
             while (from > 0 && (uint8_t(text[from]) & 0xC0) == 0x80)

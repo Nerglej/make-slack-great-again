@@ -16,57 +16,6 @@ namespace screens {
 
 namespace {
 
-// Scales `src` to exactly w×h, covering (centre crop) when the aspect differs.
-gfx::Bitmap coverScale(const gfx::Bitmap &src, int w, int h) {
-    if (w <= 0 || h <= 0 || (w == src.width() && h == src.height()))
-        return src;
-    const float s  = std::max(float(w) / float(src.width()), float(h) / float(src.height()));
-    const int   tw = std::max(w, int(std::ceil(float(src.width()) * s)));
-    const int   th = std::max(h, int(std::ceil(float(src.height()) * s)));
-    gfx::Bitmap r  = gfx::resize(src.view(), tw, th);
-    if (tw == w && th == h)
-        return r;
-    gfx::Bitmap out(w, h);
-    const int   ox = (tw - w) / 2, oy = (th - h) / 2;
-    for (int y = 0; y < h; ++y)
-        std::copy_n(
-            r.pixels() + size_t(y + oy) * size_t(tw) + size_t(ox),
-            size_t(w),
-            out.pixels() + size_t(y) * size_t(w)
-        );
-    return out;
-}
-
-// Multiplies premultiplied pixels by the coverage of a rounded rect (a circle
-// when radius >= half the short side), anti-aliased over one pixel.
-void maskCorners(gfx::Bitmap &b, float radius) {
-    const int   w = b.width(), h = b.height();
-    const float r = std::min(radius, std::min(w, h) / 2.f);
-    if (r <= 0)
-        return;
-    uint32_t *px = b.pixels();
-    for (int y = 0; y < h; ++y) {
-        const float fy = float(y) + 0.5f;
-        const float cy = fy < r ? r : fy > float(h) - r ? float(h) - r : fy;
-        for (int x = 0; x < w; ++x) {
-            const float fx = float(x) + 0.5f;
-            const float cx = fx < r ? r : fx > float(w) - r ? float(w) - r : fx;
-            if (cx == fx || cy == fy)
-                continue; // not in a corner square: fully inside
-            const float d   = std::hypot(fx - cx, fy - cy);
-            const float cov = std::clamp(r - d + 0.5f, 0.f, 1.f);
-            if (cov >= 1)
-                continue;
-            uint32_t      &p  = px[size_t(y) * size_t(w) + size_t(x)];
-            const uint32_t a  = uint32_t(float(p >> 24) * cov + 0.5f);
-            const uint32_t rr = uint32_t(float((p >> 16) & 0xff) * cov + 0.5f);
-            const uint32_t g  = uint32_t(float((p >> 8) & 0xff) * cov + 0.5f);
-            const uint32_t bb = uint32_t(float(p & 0xff) * cov + 0.5f);
-            p                 = (a << 24) | (rr << 16) | (g << 8) | bb;
-        }
-    }
-}
-
 std::string keyOf(const ImageCache::Request &r, bool animated) {
     std::string k = r.path;
     k += '\x1f';
@@ -124,34 +73,24 @@ struct ImageCache::Impl {
                 }
                 // An SVG (the Claude Code teammates' glyph tiles): rendered
                 // to cover the requested size, as the shell's avatars do.
-                float sw = 0, sh = 0;
-                if (!ok && gfx::svgSize(data, &sw, &sh) && sw > 0 && sh > 0) {
-                    const Request &q = job.req;
-                    const float    k = q.width <= 0 && q.height <= 0
-                                           ? 1.f
-                                           : std::max(float(q.width) / sw, float(q.height) / sh);
-                    gfx::AnimFrame f;
-                    ok = gfx::renderSvg(
-                        data,
-                        std::max(1, int(std::lround(sw * k))),
-                        std::max(1, int(std::lround(sh * k))),
-                        &f.frame
-                    );
-                    if (ok) {
-                        frames->clear();
-                        frames->push_back(std::move(f));
-                    }
+                if (gfx::AnimFrame f;
+                    !ok && gfx::renderSvgCover(data, job.req.width, job.req.height, &f.frame)) {
+                    ok = true;
+                    frames->clear();
+                    frames->push_back(std::move(f));
                 }
             }
             data = {};
             if (ok) {
                 const Request &r = job.req;
                 for (gfx::AnimFrame &f : *frames) {
-                    f.frame = coverScale(f.frame, r.width, r.height);
+                    if (r.width > 0 && r.height > 0 &&
+                        (r.width != f.frame.width() || r.height != f.frame.height()))
+                        f.frame = gfx::coverResize(f.frame.view(), r.width, r.height);
                     if (r.shape == Shape::Circle)
-                        maskCorners(f.frame, 1e9f);
+                        gfx::maskRoundedRect(f.frame, 1e9f);
                     else if (r.shape == Shape::Rounded)
-                        maskCorners(f.frame, r.radius);
+                        gfx::maskRoundedRect(f.frame, r.radius);
                 }
             }
             const uint64_t id = job.id;
@@ -446,7 +385,7 @@ void CachedImage::setAnimated(bool on, bool emoji) {
 }
 
 ImageCache::Request CachedImage::request() const {
-    const float s = window() ? window()->scale() : 1.f;
+    const float s = windowScale();
     return {
         _path, int(std::lround(width() * s)), int(std::lround(height() * s)), _shape, _radius * s
     };
@@ -503,7 +442,7 @@ void CachedImage::paint(gfx::Painter &p) {
             t.append(_loadingText, ui::font(ui::Font::Body, _loadingColor));
             text::LayoutOptions o;
             o.maxLines     = 1;
-            _loadingLayout = text::Layout::build(t, o, window() ? window()->scale() : 1.f);
+            _loadingLayout = text::Layout::build(t, o, windowScale());
         }
         const text::Layout &l = *_loadingLayout;
         p.save();

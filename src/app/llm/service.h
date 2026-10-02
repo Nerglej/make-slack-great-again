@@ -89,7 +89,9 @@ public:
     bool isStandIn(const Provider *p) const { return _standInAnswer && p == &_standIn; }
 
 private:
+    // `done` with `error`, later (never re-entered), unless the Service is gone.
     void fail(TranscribeDone done, std::string error);
+    void failChat(ChatDone done, std::string error);
 
     plat::App                                              &_app;
     net::Client                                             _net;

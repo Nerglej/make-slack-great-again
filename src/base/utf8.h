@@ -16,6 +16,10 @@ constexpr uint32_t kReplacement = 0xFFFD;
 // surrogates, values above U+10FFFF and truncated sequences yield U+FFFD
 // (advancing one byte, so a resync happens at the next lead byte).
 uint32_t decode(std::string_view s, size_t &i);
+// Writes cp as UTF-8 into out[0..3] and returns the byte count (1-4); U+FFFD
+// for surrogates / out of range. The one encoder: append() and the JSON
+// parser's in-place unescape both use it.
+size_t   encode(char *out, uint32_t cp);
 // Appends cp as UTF-8 (U+FFFD for surrogates / out of range).
 void     append(std::string &out, uint32_t cp);
 // Byte length of cp encoded (1-4; 3 for invalid, i.e. U+FFFD).

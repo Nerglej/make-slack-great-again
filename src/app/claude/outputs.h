@@ -78,7 +78,5 @@ int64_t          modifiedMicros(std::string_view path);
 bool             fileStat(std::string_view path, int64_t *size, int64_t *mtimeMicros);
 // Unicode whitespace off both ends (QString::trimmed).
 std::string_view trimmed(std::string_view s);
-// …and runs of it inside as one space (QString::simplified).
-std::string      simplified(std::string_view s);
 
 } // namespace claude

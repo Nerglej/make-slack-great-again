@@ -41,7 +41,16 @@ void perform(
     const Progress          &progress
 );
 // The Content-Length header's value; 0 when absent or not a number.
-int64_t contentLength(const std::vector<Header> &headers);
+int64_t          contentLength(const std::vector<Header> &headers);
+// A Content-Length value: digits only (surrounding spaces allowed), at most
+// 2^50. False otherwise.
+bool             parseContentLength(std::string_view value, int64_t *n);
+// The first header called `name` (ASCII case-insensitive); "" if none.
+std::string_view headerValue(const std::vector<Header> &headers, std::string_view name);
+// The "Name: value" lines of a response head after its status line, up to
+// the blank line (CRLF-separated; obsolete folded lines are joined on). False
+// for a line that is not a header; *out then holds those before it.
+bool             parseHeaderLines(std::string_view lines, std::vector<Header> *out);
 
 // Drops idle kept-alive connections (Client destructor of the last client).
 void closeIdleConnections();

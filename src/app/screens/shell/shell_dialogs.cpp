@@ -5,6 +5,7 @@
 #include "app/model/jobs.h"
 #include "app/screens/common/downloads.h"
 #include "app/screens/common/file_dialogs.h"
+#include "app/screens/common/message_text.h"
 #include "app/screens/common/remote_images.h"
 #include "base/file.h"
 #include "base/i18n.h"
@@ -79,7 +80,7 @@ public:
         p.fillRoundRect(b, 4, 0xffffffffU);
         p.save();
         p.clipRoundRect(b, 4);
-        const float k = window() ? window()->scale() : 1.f;
+        const float k = windowScale();
         for (size_t i = 0; i < _items.size(); ++i) {
             const float y = 2 + rowH() * float(i) - _scroll;
             if (y + rowH() < 0 || y > b.h)
@@ -324,12 +325,6 @@ bool PickerList::onEvent(Event &e) {
 
 // ── Forward ─────────────────────────────────────────────────────────────────
 
-// A downloaded copy and the folder tempDownloadPath made for it.
-void removeTemp(const std::string &path) {
-    file::remove(path);
-    file::remove(file::dirName(path));
-}
-
 // What a forward's files become (msga's fetchForwardedFiles): `paths` to
 // upload again, in file order; `links` that go along as text instead (a
 // canvas, a file with nothing to fetch, or every file when the target can't
@@ -371,7 +366,7 @@ void fetchForwardedFiles(
         if (std::exchange(batch->failed, true))
             return;
         for (const std::string &t : batch->out.temps) // those still coming go as they land
-            removeTemp(t);
+            screens::removeTempDownload(t);
         batch->done({}, err.empty() ? std::string("download failed") : err);
     };
     // Held at 1 until every download has started: one that answers at once
@@ -403,7 +398,7 @@ void fetchForwardedFiles(
             to,
             [batch, finish, fail, i, to](bool ok, const std::string &err) {
                 if (batch->failed) {
-                    removeTemp(to);
+                    screens::removeTempDownload(to);
                     return;
                 }
                 if (!ok)
@@ -542,26 +537,8 @@ private:
         const model::Message *m  = st.findMessage(_conv, _ts);
         if (!m)
             return;
-        std::string url;
-        if (!_onlyFile.empty()) {
-            url =
-                _onlyFile.find("://") != std::string::npos ? _onlyFile : file::toFileUrl(_onlyFile);
-        } else {
-            const mrkdwn::Rich r = mrkdwn::parse(m->text);
-            for (const mrkdwn::Entity &e : r.entities) {
-                if (e.kind == mrkdwn::Kind::Link) {
-                    url = e.data;
-                    break;
-                }
-                if (e.kind == mrkdwn::Kind::MessageLink) {
-                    const mrkdwn::MessageRef ref = mrkdwn::refFromToken(e.data);
-                    const ConvRef            c   = st.findConversation(ref.conv);
-                    if (c != kNoConv && !ref.host.empty()) // msga's own links have no permalink
-                        url = st.permalink(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
-                    break;
-                }
-            }
-        }
+        std::string url =
+            !_onlyFile.empty() ? screens::fileUrl(_onlyFile) : screens::firstLink(m->text);
         if (!url.empty())
             _src->app.platform().setClipboardText(std::move(url));
     }
@@ -595,7 +572,7 @@ private:
                                            onError = _onError](std::string text, ForwardFiles ff) {
             auto cleanup = [temps = ff.temps] {
                 for (const std::string &t : temps)
-                    removeTemp(t);
+                    screens::removeTempDownload(t);
             };
             const auto there = [to, ws] {
                 return (!to.alive || to.alive()) && to.store->workspaceId == ws;
@@ -716,7 +693,7 @@ public:
                       : std::string(1, char(n[0] >= 'a' && n[0] <= 'z' ? n[0] - 32 : n[0]));
         text::AttributedText t;
         t.append(letter, ui::pxFont(std::round(96.f * 17 / 40), text::Weight::Bold, 0xffffffffU));
-        auto l = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+        auto l = text::Layout::build(t, {}, windowScale());
         l->paint(
             p, snapPx({std::floor((96 - l->width()) / 2), std::floor((96 - l->height()) / 2)})
         );

@@ -163,4 +163,31 @@ private:
 // Serialises a parsed value.
 std::string write(const Value &v, bool pretty = false);
 
+// ── Mapping onto structs ────────────────────────────────────────────────────
+// v's string, copied ("" when it isn't one).
+std::string owned(const Value &v);
+
+// JSON field → struct member tables: one loop per struct instead of an
+// inlined lookup and string assignment per field at every call site.
+template <class T>
+struct StrField {
+    const char *key;
+    std::string T::*field;
+};
+template <class T>
+struct BoolField {
+    const char *key;
+    bool T::*field;
+};
+template <class T, size_t N>
+void readStrings(const Value &o, T &obj, const StrField<T> (&fields)[N]) {
+    for (const StrField<T> &f : fields)
+        obj.*f.field = owned(o[f.key]);
+}
+template <class T, size_t N>
+void readBools(const Value &o, T &obj, const BoolField<T> (&fields)[N]) {
+    for (const BoolField<T> &f : fields)
+        obj.*f.field = o[f.key].boolean();
+}
+
 } // namespace json

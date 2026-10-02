@@ -199,7 +199,7 @@ std::vector<uint32_t> codePoints(std::string_view s, bool fold) {
 }
 
 std::string oneLine(std::string_view s) {
-    return simplified(s);
+    return str::simplified(s);
 }
 
 // The header line's name and id: "Data analyst (msga: data-analyst)" — or, as

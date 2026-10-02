@@ -79,6 +79,30 @@ TEST("auth: workspace store persists order, active, muted; remove moves active")
     CHECK(auth::WorkspaceStore(path).empty());
 }
 
+TEST("slack: one classification of transient errors for reads and writes") {
+    for (const char *e :
+         {"dns",
+          "connect: refused",
+          "tls: bad cert",
+          "timeout",
+          "protocol",
+          "too_many_redirects",
+          "bad_json"})
+        CHECK(slack::isTransportError(e));
+    for (const char *e :
+         {"", "ratelimited", "internal_error", "invalid_auth", "cancelled", "dnsx", "url: bad"})
+        CHECK_FALSE(slack::isTransportError(e));
+    for (const char *e : {"internal_error", "service_unavailable", "fatal_error"})
+        CHECK(slack::isTransientSlackError(e));
+    CHECK_FALSE(slack::isTransientSlackError("timeout"));
+    CHECK_FALSE(slack::isTransientSlackError("channel_not_found"));
+    CHECK(slack::retryBackoffMs(0) == 1000);
+    CHECK(slack::retryBackoffMs(1) == 2000);
+    CHECK(slack::retryBackoffMs(5) == 32000);
+    CHECK(slack::retryBackoffMs(6) == 60000);
+    CHECK(slack::retryBackoffMs(40) == 60000);
+}
+
 TEST("slack: a file downloads with its own workspace's credentials") {
     CHECK_STR(slack::fileTeamId("https://files.slack.com/files-pri/T0A1-F0B2/shot.png"), "T0A1");
     CHECK_STR(

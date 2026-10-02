@@ -2,6 +2,7 @@
 
 #include "app/identity.h"
 #include "base/file.h"
+#include "base/crypto.h"
 #include "base/log.h"
 #include "base/str.h"
 #include "plat/plat.h"
@@ -336,20 +337,13 @@ void fields(IO &io, model::Conversation &c) {
 
 // ── Files ───────────────────────────────────────────────────────────────────
 
-uint64_t fnv1a(std::string_view s) {
-    uint64_t h = 1469598103934665603ULL;
-    for (unsigned char ch : s)
-        h = (h ^ ch) * 1099511628211ULL;
-    return h;
-}
-
 // A file of ours, parsed, if its version is ours.
 bool readDoc(const std::string &path, json::Document *doc, uint64_t *hash) {
     std::string text;
     if (!file::readAll(path, &text) || text.empty())
         return false;
     if (hash)
-        *hash = fnv1a(text);
+        *hash = crypto::fnv1a(text);
     if (!doc->parse(std::move(text)) || doc->root()["v"].integer() != kVersion) {
         LOG_INFO("cache", "ignoring %s (unreadable or another version)", path.c_str());
         return false;
@@ -634,7 +628,7 @@ void WorkspaceCache::schedule() {
 }
 
 void WorkspaceCache::write(const char *name, std::string data) {
-    const uint64_t h  = fnv1a(data);
+    const uint64_t h  = crypto::fnv1a(data);
     const auto     it = _written.find(name);
     if (it != _written.end() && it->second == h)
         return; // unchanged since we read or wrote it

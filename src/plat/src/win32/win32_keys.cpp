@@ -54,27 +54,10 @@ std::string fileUri(std::wstring_view path) {
     for (char &c : p)
         if (c == '\\')
             c = '/';
-    std::string out = "file://";
-    size_t      i   = 0;
-    if (p.rfind("//", 0) == 0)
-        i = 2; // UNC: the server becomes the URI authority
-    else
-        out += '/'; // "C:/x" → "file:///C:/x"
-    static const char *hex = "0123456789ABCDEF";
-    for (; i < p.size(); ++i) {
-        const unsigned char c = (unsigned char)p[i];
-        const bool keep = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                          (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || c == '~' ||
-                          c == '/' || c == ':';
-        if (keep) {
-            out += char(c);
-        } else {
-            out += '%';
-            out += hex[c >> 4];
-            out += hex[c & 15];
-        }
-    }
-    return out;
+    // UNC: the server becomes the URI authority; "C:/x" → "file:///C:/x".
+    const bool unc = p.rfind("//", 0) == 0;
+    return (unc ? "file://" : "file:///") +
+           core::percentEncode(std::string_view(p).substr(unc ? 2 : 0), "/:");
 }
 
 std::optional<std::wstring> pathFromFileUri(std::string_view uri) {
@@ -93,45 +76,17 @@ std::optional<std::wstring> pathFromFileUri(std::string_view uri) {
     } else {
         raw = "\\\\"; // UNC: the authority is the server
     }
-    auto hex = [](char c) {
-        return c >= '0' && c <= '9'   ? c - '0'
-               : c >= 'a' && c <= 'f' ? c - 'a' + 10
-               : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                      : -1;
-    };
-    for (size_t i = 0; i < rest.size(); ++i) {
-        const char c = rest[i];
-        if (c == '?' || c == '#')
-            break;
-        if (c == '%' && i + 2 < rest.size() && hex(rest[i + 1]) >= 0 && hex(rest[i + 2]) >= 0) {
-            raw += char(hex(rest[i + 1]) * 16 + hex(rest[i + 2]));
-            i += 2;
-        } else {
-            raw += c == '/' ? '\\' : c;
-        }
-    }
+    // Separators first (a decoded %2F stays a '/'), up to any query/fragment.
+    std::string path(rest.substr(0, rest.find_first_of("?#")));
+    for (char &c : path)
+        if (c == '/')
+            c = '\\';
+    raw += core::percentDecode(path);
     if (raw.size() >= 2 && raw[1] == '|')
         raw[1] = ':';
     if (raw.find('\0') != std::string::npos)
         return std::nullopt;
     return toWide(raw);
-}
-
-std::vector<std::string> parseUriList(std::string_view list) {
-    std::vector<std::string> out;
-    size_t                   start = 0;
-    while (start < list.size()) {
-        size_t end = list.find('\n', start);
-        if (end == std::string_view::npos)
-            end = list.size();
-        std::string_view line = list.substr(start, end - start);
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
-            line.remove_suffix(1);
-        if (!line.empty() && line[0] != '#')
-            out.emplace_back(line);
-        start = end + 1;
-    }
-    return out;
 }
 
 namespace {
@@ -141,32 +96,7 @@ namespace {
 // that; fall back to the US position when it types something that has no Key
 // (a letter such as ö, a dead key's base).
 Key keyFromChar(wchar_t c) {
-    switch (c) {
-    case L'-':
-        return Key::Minus;
-    case L'=':
-        return Key::Equal;
-    case L'[':
-        return Key::BracketLeft;
-    case L']':
-        return Key::BracketRight;
-    case L'\\':
-        return Key::Backslash;
-    case L';':
-        return Key::Semicolon;
-    case L'\'':
-        return Key::Apostrophe;
-    case L'`':
-        return Key::Grave;
-    case L',':
-        return Key::Comma;
-    case L'.':
-        return Key::Period;
-    case L'/':
-        return Key::Slash;
-    default:
-        return Key::Unknown;
-    }
+    return core::keyFromPunctuation(uint32_t(c));
 }
 
 Key oemKeyUsPosition(UINT vk) {

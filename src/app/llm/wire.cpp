@@ -76,23 +76,6 @@ std::string jsonError(json::Value o, int status) {
     return {};
 }
 
-// Whitespace runs folded to one space, trimmed (QString::simplified).
-std::string simplified(std::string_view s) {
-    std::string out;
-    bool        space = false;
-    for (char c : s) {
-        if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\f' || c == '\v') {
-            space = !out.empty();
-            continue;
-        }
-        if (space)
-            out += ' ';
-        space = false;
-        out += c;
-    }
-    return out;
-}
-
 // What a 404 means for the endpoint called: the chat URL is the one users
 // mistype; a missing transcription route is a server without STT.
 enum class Route : uint8_t { Chat, Transcription };
@@ -107,7 +90,7 @@ std::string httpFailure(const net::Response &r, Route route = Route::Chat) {
             "No chat endpoint at this URL (HTTP 404) \xE2\x80\x94 most servers expect it to "
             "end in /v1"
         );
-    std::string snippet = simplified(r.body);
+    std::string snippet = str::simplified(r.body);
     if (utf8::countCodePoints(snippet) > 200) {
         size_t i = 0;
         for (int n = 0; n < 200; ++n)
@@ -139,13 +122,6 @@ bool preflight(
         return false;
     }
     return true;
-}
-
-void addFormField(
-    std::string &body, std::string_view boundary, const char *name, std::string_view v
-) {
-    body += str::concat({"--", boundary, "\r\nContent-Disposition: form-data; name=\"", name});
-    body += str::concat({"\"\r\n\r\n", v, "\r\n"});
 }
 
 bool hasLineBreak(std::string_view s) {
@@ -256,17 +232,16 @@ buildTranscription(const Endpoint &ep, const TranscriptionInput &in, std::string
         crypto::randomBytes(rnd, sizeof rnd);
         boundary = "msga-" + crypto::hex({reinterpret_cast<const char *>(rnd), sizeof rnd});
     }
-    out.headers.push_back({"Content-Type", "multipart/form-data; boundary=" + boundary});
-
-    std::string &body = out.body;
-    body.reserve(in.audio.size() + 1024);
-    addFormField(body, boundary, "model", in.model);
-    addFormField(body, boundary, "response_format", "json");
+    net::Multipart form(boundary);
+    out.headers.push_back({"Content-Type", form.contentType()});
+    form.reserve(in.audio.size() + 1024);
+    form.field("model", in.model);
+    form.field("response_format", "json");
     if (!str::trim(in.prompt).empty())
-        addFormField(body, boundary, "prompt", in.prompt);
+        form.field("prompt", in.prompt);
     if (str::startsWith(in.model, "gpt-")) {
         for (const std::string &k : sanitizeTranscriptionKeywords(in.keywords))
-            addFormField(body, boundary, "keywords[]", k);
+            form.field("keywords[]", k);
         std::vector<std::string> seen;
         for (const std::string &raw : in.languages) {
             const std::string lang = str::asciiLower(str::trim(raw));
@@ -274,28 +249,13 @@ buildTranscription(const Endpoint &ep, const TranscriptionInput &in, std::string
                 std::find(seen.begin(), seen.end(), lang) != seen.end())
                 continue;
             seen.push_back(lang);
-            addFormField(body, boundary, "languages[]", lang);
+            form.field("languages[]", lang);
         }
     }
     // Quotes in the file name would break the header; the id-based names
-    // callers pass never carry any, but be safe.
-    std::string fileName = in.fileName;
-    for (char &c : fileName)
-        if (c == '"')
-            c = '_';
-        else if (c == '\r' || c == '\n')
-            c = ' ';
-    body += str::concat(
-        {"--",
-         boundary,
-         "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"",
-         fileName,
-         "\"\r\nContent-Type: ",
-         in.mimeType.empty() ? std::string_view("application/octet-stream") : in.mimeType,
-         "\r\n\r\n"}
-    );
-    body += in.audio;
-    body += str::concat({"\r\n--", boundary, "--\r\n"});
+    // callers pass never carry any, but Multipart makes it safe anyway.
+    form.file("file", in.fileName, in.mimeType, in.audio);
+    out.body = form.body();
     return out;
 }
 

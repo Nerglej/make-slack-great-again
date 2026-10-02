@@ -9,6 +9,7 @@ add_library(msga_screens_common STATIC
     downloads.cpp
     file_dialogs.cpp
     loading_indicator.cpp
+    message_text.cpp
     remote_images.cpp
 )
 target_include_directories(msga_screens_common PUBLIC

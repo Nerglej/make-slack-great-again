@@ -11,6 +11,7 @@ add_library(msga_gfx STATIC
     core.cpp
     blend.cpp
     shapes.cpp
+    cover.cpp
     raster.cpp
     image.cpp
     icons.cpp
@@ -22,7 +23,7 @@ add_library(msga_gfx STATIC
 # Direct2D/NSImage paths were measured and dropped — same pixels everywhere,
 # and macOS CoreSVG drew display="none"/hidden elements. 25 KB buys that.
 target_include_directories(msga_gfx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(msga_gfx PUBLIC msga_flags PRIVATE msga_stb)
+target_link_libraries(msga_gfx PUBLIC msga_flags PRIVATE msga_stb msga_base)
 # blend.cpp holds the per-pixel loops (span blending, coverage rows, image
 # sampling, the scanline rasterizer): every painted pixel goes through them
 # each frame, so it is the one file where -O2 pays for its size (~8 KB more,

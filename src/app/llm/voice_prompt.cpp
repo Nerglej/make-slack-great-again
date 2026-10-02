@@ -58,28 +58,9 @@ bool isLower(uint32_t c) {
     return (c >= 0xDF && c <= 0x24F) || (c >= 0x370 && c <= 0x58F) || (c >= 0x1E00 && c <= 0x1FFF);
 }
 
-// QString::simplified: whitespace runs as one space, trimmed.
-std::string simplified(std::string_view s) {
-    std::string out;
-    bool        space = false;
-    for (size_t i = 0; i < s.size();) {
-        const size_t   start = i;
-        const uint32_t cp    = utf8::decode(s, i);
-        if (utf8::isSpace(cp)) {
-            space = !out.empty();
-            continue;
-        }
-        if (space)
-            out += ' ';
-        space = false;
-        out.append(s, start, i - start);
-    }
-    return out;
-}
-
 // Simplified, and at most `max` characters (the last one an ellipsis).
 std::string clip(std::string_view text, size_t max) {
-    std::string s = simplified(text);
+    std::string s = str::simplified(text);
     if (utf8::countCodePoints(s) <= max)
         return s;
     const Cps cps = codePoints(s);
@@ -353,7 +334,7 @@ extractKeywords(const VoiceContext &ctx, const std::vector<std::string> &glossar
         return {};
     std::vector<std::string> ordered;
     const auto               addFixed = [&](std::string_view term) {
-        std::string t = simplified(term);
+        std::string t = str::simplified(term);
         if (!t.empty() && utf8::countCodePoints(t) <= kMaxKeywordChars)
             ordered.push_back(std::move(t));
     };

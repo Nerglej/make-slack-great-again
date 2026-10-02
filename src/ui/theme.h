@@ -202,6 +202,9 @@ text::Style pxFont(float px, text::Weight w, Color c);
 // theme switches too. resolve() maps a sentinel to the live colour and
 // passes ordinary colours through (a sentinel has alpha 0 and a marker byte).
 Color themed(C c);
+// A raw colour per theme, for the Qt theme's values the token table doesn't
+// carry (message.* tints); resolved now, not a sentinel.
+Color byTheme(uint32_t dark, uint32_t light);
 Color resolve(Color c);
 // Resolves colour and background sentinels in every span.
 void  resolveSpans(text::AttributedText &t);

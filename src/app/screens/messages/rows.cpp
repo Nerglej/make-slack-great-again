@@ -209,7 +209,7 @@ public:
             if (c >= 'a' && c <= 'z')
                 c = char(c - 32);
         _sub = f.prettyType;
-        if (const std::string sz = fileSizeText(f.size); !sz.empty())
+        if (const std::string sz = str::byteSize(f.size, str::ByteSize::File); !sz.empty())
             _sub = _sub.empty() ? sz : _sub + " \xC2\xB7 " + sz;
     }
     bool onEvent(ui::Event &e) override {
@@ -294,7 +294,7 @@ private:
     void build() {
         if (_n)
             return;
-        const float          k  = window() ? window()->scale() : 1.f;
+        const float          k  = windowScale();
         const float          aw = width() > 0 ? width() - 60 - 12 : 1e9f;
         text::AttributedText n, s, l;
         n.append(_name, ui::pxFont(15, text::Weight::Bold, ui::color(C::FormText)));
@@ -503,12 +503,6 @@ private:
 
 bool isBot(const Store &st, const model::Message &m) {
     return m.subtype() == "bot_message" || (m.user != model::kNoUser && st.user(m.user).bot);
-}
-
-// A raw colour per theme (the Qt theme's message.* values the token table
-// doesn't carry).
-gfx::Color tone(uint32_t dark, uint32_t light) {
-    return gfx::Color(ui::app()->dark() ? dark : light);
 }
 
 // An attachment card: tells the row it is hovered (the dismiss "×").
@@ -741,7 +735,7 @@ public:
     void paint(gfx::Painter &p) override {
         constexpr float kPad = 14, kTile = 36, kHdr = 60;
         const ui::RectF b     = bounds();
-        const float     scale = window() ? window()->scale() : 1.f;
+        const float     scale = windowScale();
         p.fillRoundRect(b, 8, ui::color(C::FileChipBg));
         p.strokeRoundRect(
             {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, 8, 1, ui::color(C::FileChipBorder)
@@ -875,9 +869,9 @@ public:
         if (!_hover)
             return;
         const ui::RectF b = bounds();
-        p.fillRoundRect(b, 6, tone(0xff282828U, 0xfff8f8f8U));
+        p.fillRoundRect(b, 6, ui::byTheme(0xff282828U, 0xfff8f8f8U));
         p.strokeRoundRect(
-            {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, 6, 1, tone(0xff3e3e3eU, 0xffd1d5dbU)
+            {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, 6, 1, ui::byTheme(0xff3e3e3eU, 0xffd1d5dbU)
         );
     }
 
@@ -930,21 +924,6 @@ private:
 
 } // namespace
 
-std::string fileSizeText(int64_t n) {
-    char buf[32];
-    if (n <= 0)
-        return {};
-    if (n < 1024)
-        std::snprintf(buf, sizeof buf, "%lld B", (long long)n);
-    else if (n < 1024 * 1024)
-        std::snprintf(buf, sizeof buf, "%lld KB", (long long)(n / 1024));
-    else {
-        const double mb = double(n) / (1024.0 * 1024.0);
-        std::snprintf(buf, sizeof buf, mb < 10 ? "%.1f MB" : "%.0f MB", mb);
-    }
-    return buf;
-}
-
 std::vector<std::string> selectableTexts(Context &ctx, const model::Message &m) {
     // What MessageRow registers, in the same order (buildBlocks / buildBody).
     if (!m.extra || m.extra->blocks.empty()) {
@@ -971,17 +950,6 @@ std::vector<std::string> selectableTexts(Context &ctx, const model::Message &m) 
             out.push_back(std::move(t));
     }
     return out;
-}
-
-std::string formatBytes(int64_t n) {
-    char buf[32];
-    if (n < 1024)
-        std::snprintf(buf, sizeof buf, "%lld B", (long long)n);
-    else if (n < 1024 * 1024)
-        std::snprintf(buf, sizeof buf, "%lld KB", (long long)((n + 512) / 1024));
-    else
-        std::snprintf(buf, sizeof buf, "%.1f MB", double(n) / (1024.0 * 1024.0));
-    return buf;
 }
 
 ui::Clickable *addFileChip(ui::View *parent, const model::File &f, MessageList *list, Ts ts) {
@@ -1730,7 +1698,7 @@ void MessageRow::paint(gfx::Painter &p) {
         p.fillRect(bounds(), ui::color(C::MentionBg));
     else if (hovered() || _list.toolbarRow() == this)
         p.fillRect(bounds(), ui::color(C::SurfaceHover));
-    const float scale  = window() ? window()->scale() : 1.f;
+    const float scale  = windowScale();
     auto        banner = [&](std::unique_ptr<text::Layout> &l,
                              const std::string             &s,
                              gfx::Icon                      icon,
@@ -1770,7 +1738,7 @@ void MessageRow::paint(gfx::Painter &p) {
             t.append(_hoverTime, s);
             text::LayoutOptions lo;
             lo.maxLines  = 1;
-            _hoverLayout = text::Layout::build(t, lo, window() ? window()->scale() : 1.f);
+            _hoverLayout = text::Layout::build(t, lo, windowScale());
         }
         const float x = kPadH + kAvSize - _hoverLayout->width();
         _hoverLayout->paint(p, snapPx({std::floor(x), by + kPadVGrouped + 3}));
@@ -1784,7 +1752,7 @@ void MessageRow::paintOver(gfx::Painter &p) {
         return;
     text::AttributedText t;
     t.append("\xC3\x97", ui::pxFont(15 * 1.15f, text::Weight::Regular, bannerColor(1)));
-    auto l = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+    auto l = text::Layout::build(t, {}, windowScale());
     l->paint(
         p,
         snapPx(

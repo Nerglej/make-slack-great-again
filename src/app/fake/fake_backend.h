@@ -9,6 +9,7 @@
 #pragma once
 
 #include "app/fake/fixture.h"
+#include "app/model/timers.h"
 #include "app/model/backend.h"
 
 #include <plat/plat.h>
@@ -117,15 +118,15 @@ private:
     // The conversation whose canvas `fileId` is (kNoConv: none).
     model::ConvRef canvasConv(std::string_view fileId) const;
 
-    plat::App                 &_app;
-    std::string                _path;
-    int64_t                    _now = 0;
-    Fixture                    _fx;
-    std::string                _replyUsed; // a byte per _fx.autoReplies entry: 1 = posted
-    std::vector<plat::TimerId> _timers;
-    model::Ts                  _lastTs = 0;
-    std::string                _phone;
-    uint32_t                   _uploads = 0;
+    plat::App           &_app;
+    std::string          _path;
+    int64_t              _now = 0;
+    Fixture              _fx;
+    std::string          _replyUsed;    // a byte per _fx.autoReplies entry: 1 = posted
+    model::OneShotTimers _timers{_app}; // they capture this
+    model::Ts            _lastTs = 0;
+    std::string          _phone;
+    uint32_t             _uploads = 0;
     struct ThreadRead {
         model::ConvRef conv;
         model::Ts      root, read;

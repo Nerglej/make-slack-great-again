@@ -7,6 +7,7 @@
 #pragma once
 
 #include "core/backends.h"
+#include "core/transfer.h"
 
 #include <dbus/dbus.h>
 
@@ -31,11 +32,9 @@ std::string sessionBusAddress();
 // else the well-known socket.
 std::string systemBusAddress();
 
-// file:// URI <-> local path. fileUri percent-encodes everything but the
-// unreserved characters and '/'; pathFromFileUri accepts file:///p and
-// file://localhost/p only (other hosts and schemes give "").
-std::string fileUri(std::string_view absPath);
-std::string pathFromFileUri(std::string_view uri);
+// file:// URI <-> local path: core/transfer.h.
+using core::fileUri;
+using core::pathFromFileUri;
 
 // Appends arguments to a message. Containers take a callback that fills them.
 class MsgWriter {

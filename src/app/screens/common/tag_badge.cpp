@@ -12,12 +12,6 @@ using ui::C;
 
 namespace {
 
-// A raw colour per theme (the Qt theme's message.* values the token table
-// doesn't carry).
-gfx::Color tone(uint32_t dark, uint32_t light) {
-    return gfx::Color(ui::app()->dark() ? dark : light);
-}
-
 // msga's paintTagBadge: a 14-px pill, 4 px around the text, radius 2, the
 // app font at 0.62 in bold.
 class TagBadge final : public ui::View {
@@ -32,9 +26,9 @@ public:
         build();
         gfx::Color bg = 0;
         if (!_ext)
-            bg = tone(0x1effffffU, 0x211d1c1dU);
+            bg = ui::byTheme(0x1effffffU, 0x211d1c1dU);
         else if (!_sidebar)
-            bg = tone(0x1ee6c98aU, 0x26c6920aU);
+            bg = ui::byTheme(0x1ee6c98aU, 0x26c6920aU);
         else
             bg = lightRail() ? 0x26c6920aU : 0x26e6c98aU;
         p.fillRoundRect(bounds(), 2, bg);
@@ -58,14 +52,14 @@ private:
             return;
         gfx::Color fg = 0;
         if (!_ext)
-            fg = tone(0xffa8a8a8U, 0xff616061U);
+            fg = ui::byTheme(0xffa8a8a8U, 0xff616061U);
         else if (!_sidebar)
-            fg = tone(0xffd9b45cU, 0xff8a6508U);
+            fg = ui::byTheme(0xffd9b45cU, 0xff8a6508U);
         else
             fg = lightRail() ? 0xff8a6508U : 0xffe6c98aU;
         text::AttributedText t;
         t.append(_ext ? tr("EXT") : tr("APP"), ui::pxFont(15 * 0.62f, text::Weight::Bold, fg));
-        _l = text::Layout::build(t, {}, window() ? window()->scale() : 1.f);
+        _l = text::Layout::build(t, {}, windowScale());
     }
     std::unique_ptr<text::Layout> _l;
     bool                          _ext, _sidebar;

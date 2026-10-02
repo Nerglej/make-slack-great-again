@@ -8,6 +8,7 @@
 // (old-msga/src/backend/slack/public_backend.cpp). Typing (user_typing is
 // RTM-only, dead over Socket Mode) is not here.
 #include "app/slack/rtm_presence.h"
+#include "app/model/timers.h"
 #include "app/slack/slack_backend.h"
 #include "app/slack/slack_json.h"
 #include "app/slack/socket_mode.h"
@@ -57,10 +58,10 @@ struct SlackBackend::Live {
     explicit Live(SlackBackend &b);
     ~Live();
 
-    SlackBackend              &b;
-    model::Store              &s;
-    int64_t                    speed = 1; // MSGA_SLACK_TEST_SPEEDUP, as the read half
-    std::vector<plat::TimerId> timers;
+    SlackBackend        &b;
+    model::Store        &s;
+    int64_t              speed = 1; // MSGA_SLACK_TEST_SPEEDUP, as the read half
+    model::OneShotTimers timers{b._app};
 
     int64_t now() const { return base::monotonicMs() * speed; }
     void    later(int64_t ms, std::function<void()> fn);
@@ -157,8 +158,7 @@ SlackBackend::Live::~Live() {
     rtm.reset(); // before anything it calls into
     if (socket && sink)
         socket->removeSink(sink);
-    for (plat::TimerId id : timers)
-        b._app.cancelTimer(id);
+    timers.cancelAll(); // before the rest goes: they capture this
     for (plat::TimerId id : {groupsTimer, patchTimer, selfTimer, refreshTimer})
         if (id)
             b._app.cancelTimer(id);
@@ -167,14 +167,7 @@ SlackBackend::Live::~Live() {
 }
 
 void SlackBackend::Live::later(int64_t ms, std::function<void()> fn) {
-    auto id = std::make_shared<plat::TimerId>(0);
-    *id     = b._app.addTimer(
-        int(std::max<int64_t>(ms / speed, 0)), false, [this, id, fn = std::move(fn)] {
-            std::erase(timers, *id);
-            fn();
-        }
-    );
-    timers.push_back(*id);
+    timers.after(int(std::max<int64_t>(ms / speed, 0)), std::move(fn));
 }
 
 // ── Socket Mode ─────────────────────────────────────────────────────────────

@@ -53,24 +53,34 @@ int encodedLength(uint32_t cp) {
     return cp <= 0x10FFFF ? 4 : 3;
 }
 
-void append(std::string &out, uint32_t cp) {
+size_t encode(char *out, uint32_t cp) {
     if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
         cp = kReplacement;
     if (cp < 0x80) {
-        out += char(cp);
-    } else if (cp < 0x800) {
-        out += char(0xC0 | (cp >> 6));
-        out += char(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        out += char(0xE0 | (cp >> 12));
-        out += char(0x80 | ((cp >> 6) & 0x3F));
-        out += char(0x80 | (cp & 0x3F));
-    } else {
-        out += char(0xF0 | (cp >> 18));
-        out += char(0x80 | ((cp >> 12) & 0x3F));
-        out += char(0x80 | ((cp >> 6) & 0x3F));
-        out += char(0x80 | (cp & 0x3F));
+        out[0] = char(cp);
+        return 1;
     }
+    if (cp < 0x800) {
+        out[0] = char(0xC0 | (cp >> 6));
+        out[1] = char(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        out[0] = char(0xE0 | (cp >> 12));
+        out[1] = char(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = char(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    out[0] = char(0xF0 | (cp >> 18));
+    out[1] = char(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = char(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = char(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+void append(std::string &out, uint32_t cp) {
+    char b[4];
+    out.append(b, encode(b, cp));
 }
 
 // A decoded U+FFFD is only an error when the input did not literally hold

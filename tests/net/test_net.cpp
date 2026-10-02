@@ -16,6 +16,7 @@
 // which honours SSL_CERT_FILE — the posix transport only).
 #include "support/test.h"
 #include "net/net.h"
+#include "net/transport.h"
 #include "plat/plat.h"
 
 #include <algorithm>
@@ -327,6 +328,57 @@ TEST("response: header lookup") {
     CHECK(r.ok());
     r.status = 302;
     CHECK_FALSE(r.ok());
+}
+
+TEST("response: header lines, content length (every transport's parser)") {
+    std::vector<net::Header> h;
+    CHECK(
+        net::detail::parseHeaderLines(
+            "Content-Type: text/plain\r\nX-Long: a\r\n  b\r\n\tc\r\nContent-Length:  12 "
+            "\r\n\r\nbody",
+            &h
+        )
+    );
+    REQUIRE(h.size() == 3);
+    CHECK_STR(h[0].name, "Content-Type");
+    CHECK_STR(h[1].value, "a b c"); // folded lines join on
+    CHECK_STR(net::detail::headerValue(h, "CONTENT-length"), "12");
+    CHECK(net::detail::contentLength(h) == 12);
+    h.clear();
+    CHECK(net::detail::parseHeaderLines("A: 1\r\nB: 2", &h) && h.size() == 2); // no final CRLF
+    h.clear();
+    CHECK_FALSE(net::detail::parseHeaderLines("A: 1\r\nno colon\r\n\r\n", &h));
+    CHECK(h.size() == 1);
+    h.clear();
+    CHECK_FALSE(net::detail::parseHeaderLines(" folded first\r\n", &h));
+    CHECK_FALSE(net::detail::parseHeaderLines(": no name\r\n", &h));
+
+    int64_t n = -1;
+    CHECK(net::detail::parseContentLength(" 0 ", &n) && n == 0);
+    CHECK(net::detail::parseContentLength("1125899906842624", &n) && n == (int64_t(1) << 50));
+    CHECK_FALSE(net::detail::parseContentLength("", &n));
+    CHECK_FALSE(net::detail::parseContentLength("12a", &n));
+    CHECK_FALSE(net::detail::parseContentLength("-1", &n));
+    CHECK_FALSE(net::detail::parseContentLength("99999999999999999999", &n));
+    CHECK(net::detail::contentLength({{"Content-Length", "x"}}) == 0);
+    CHECK(net::detail::contentLength({}) == 0);
+}
+
+TEST("multipart: fields, a file, the closing boundary") {
+    net::Multipart m("BND");
+    m.field("model", "whisper-1");
+    m.file("file", "a\"b\r\n.ogg", "audio/ogg", "DATA");
+    m.file("image", "x.png", {}, "PNG");
+    CHECK_STR(m.contentType(), "multipart/form-data; boundary=BND");
+    CHECK_STR(
+        m.body(),
+        "--BND\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1\r\n"
+        "--BND\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a_b  .ogg\"\r\n"
+        "Content-Type: audio/ogg\r\n\r\nDATA\r\n"
+        "--BND\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x.png\"\r\n"
+        "Content-Type: application/octet-stream\r\n\r\nPNG\r\n"
+        "--BND--\r\n"
+    );
 }
 
 TEST("loopback port") {

@@ -203,6 +203,44 @@ std::string formEncode(std::initializer_list<std::pair<std::string_view, std::st
     return out;
 }
 
+void Multipart::field(std::string_view name, std::string_view value) {
+    _body += str::concat({"--", _boundary, "\r\nContent-Disposition: form-data; name=\"", name});
+    _body += str::concat({"\"\r\n\r\n", value, "\r\n"});
+}
+
+void Multipart::file(
+    std::string_view name, std::string_view fileName, std::string_view mime, std::string_view data
+) {
+    std::string safe(fileName);
+    for (char &c : safe)
+        if (c == '"')
+            c = '_';
+        else if (c == '\r' || c == '\n')
+            c = ' ';
+    _body += str::concat(
+        {"--",
+         _boundary,
+         "\r\nContent-Disposition: form-data; name=\"",
+         name,
+         "\"; filename=\"",
+         safe,
+         "\"\r\nContent-Type: ",
+         mime.empty() ? std::string_view("application/octet-stream") : mime,
+         "\r\n\r\n"}
+    );
+    _body += data;
+    _body += "\r\n";
+}
+
+std::string Multipart::contentType() const {
+    return str::concat({"multipart/form-data; boundary=", _boundary});
+}
+
+std::string Multipart::body() {
+    _body += str::concat({"--", _boundary, "--\r\n"});
+    return std::move(_body);
+}
+
 std::string queryValue(std::string_view query, std::string_view name) {
     if (!query.empty() && query[0] == '?')
         query.remove_prefix(1);

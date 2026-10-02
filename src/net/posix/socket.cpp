@@ -37,21 +37,6 @@ int64_t nowMs() {
     return int64_t(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
 }
 
-bool iequals(std::string_view a, std::string_view b) {
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        char x = a[i], y = b[i];
-        if (x >= 'A' && x <= 'Z')
-            x = char(x + 32);
-        if (y >= 'A' && y <= 'Z')
-            y = char(y + 32);
-        if (x != y)
-            return false;
-    }
-    return true;
-}
-
 Wait waitFd(int fd, short events, const Waiter &w, bool returnOnWake) {
     for (;;) {
         if (w.cancel && w.cancel->load(std::memory_order_relaxed))
@@ -379,22 +364,6 @@ bool Stream::idleDead() {
     char       c;
     const long r = tryRead(&c, 1);
     return r != Again;
-}
-
-int loopbackPort() {
-    const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0)
-        return 0;
-    sockaddr_in a{};
-    a.sin_family      = AF_INET;
-    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    socklen_t len     = sizeof a;
-    int       port    = 0;
-    if (::bind(fd, reinterpret_cast<sockaddr *>(&a), sizeof a) == 0 &&
-        getsockname(fd, reinterpret_cast<sockaddr *>(&a), &len) == 0)
-        port = ntohs(a.sin_port);
-    ::close(fd);
-    return port;
 }
 
 } // namespace net::detail

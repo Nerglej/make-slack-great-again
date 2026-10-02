@@ -442,17 +442,14 @@ void CanvasPage::confirmDelete() {
     Window *w = window();
     if (!w)
         return;
-    auto d = std::make_unique<Dialog>(tr("Delete canvas"));
-    styledLabel(
-        d->content(),
+    auto d = Dialog::confirm(
+        tr("Delete canvas"),
         tr("The canvas will be deleted for everyone in the conversation.\nThis action cannot be "
            "undone."),
-        pxFont(15, text::Weight::Regular, themed(C::TextMuted))
+        tr("Delete canvas"),
+        FormButton::Kind::Danger,
+        themed(C::TextMuted)
     );
-    auto *del = Dialog::makeButton(tr("Delete canvas"), FormButton::Kind::Danger);
-    d->addButtonRow(del, Dialog::makeButton(tr("Cancel"), FormButton::Kind::Secondary));
-    Dialog *raw   = d.get();
-    del->onClick  = [raw] { raw->accept(); };
     d->onAccepted = [this, alive = std::weak_ptr<bool>(_alive)] {
         if (alive.expired() || _fileId.empty())
             return;

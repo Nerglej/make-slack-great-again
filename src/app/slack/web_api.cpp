@@ -1,5 +1,7 @@
 #include "app/slack/web_api.h"
 
+#include <algorithm>
+
 #include "base/str.h"
 
 #include <cstdlib>
@@ -97,6 +99,31 @@ net::RequestId apiCall(
         std::string err(root["error"].str());
         done(doc, err.empty() ? "unknown_error" : err);
     });
+}
+
+bool isTransportError(const std::string &e) {
+    static const char *const kReasons[] = {
+        "dns",
+        "connect",
+        "tls",
+        "timeout",
+        "protocol",
+        "too_many_redirects",
+        "bad_json",
+    };
+    const std::string_view head = std::string_view(e).substr(0, e.find(':'));
+    for (const char *r : kReasons)
+        if (head == r)
+            return true;
+    return false;
+}
+
+bool isTransientSlackError(const std::string &e) {
+    return e == "internal_error" || e == "service_unavailable" || e == "fatal_error";
+}
+
+int retryBackoffMs(int attempt) {
+    return std::min(1000 << std::min(std::max(attempt, 0), 6), 60000);
 }
 
 } // namespace slack

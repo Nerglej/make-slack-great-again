@@ -612,6 +612,10 @@ Color themed(C c) {
     return kSentinel | uint32_t(c);
 }
 
+Color byTheme(uint32_t dark, uint32_t light) {
+    return Color(app() && app()->dark() ? dark : light);
+}
+
 Color resolve(Color c) {
     return (c & kSentinelMask) == kSentinel ? color(C(c & 0xff)) : c;
 }

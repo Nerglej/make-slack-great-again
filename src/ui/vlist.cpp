@@ -476,7 +476,7 @@ float VirtualList::scrollPixels(float dy) {
         return 0;
     // Whole physical pixels only (the rest carries over): a blit needs an
     // integer shift, and sub-pixel touchpad deltas still add up.
-    const float s    = window() ? window()->scale() : 1.f;
+    const float s    = windowScale();
     const float want = dy + _subpixel;
     dy               = std::trunc(want * s) / s;
     _subpixel        = want - dy;

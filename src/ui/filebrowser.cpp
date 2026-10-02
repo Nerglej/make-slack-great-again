@@ -2,6 +2,7 @@
 
 #include "base/i18n.h"
 #include "base/utf8.h"
+#include "base/str.h"
 #include "gfx/icons_generated.h"
 #include "ui/textedit.h"
 
@@ -17,20 +18,6 @@ using Mode = plat::FileDialogDesc::Mode;
 using i18n::tr;
 
 constexpr float kCardW = 640, kCardH = 460, kRowH = 28, kIcon = 16;
-
-// "812 B", "12 KB", "1.4 MB" (the file chips' format).
-std::string humanSize(int64_t n) {
-    char buf[32];
-    if (n < 1024)
-        std::snprintf(buf, sizeof buf, "%d B", int(n));
-    else if (n < 1024 * 1024)
-        std::snprintf(buf, sizeof buf, "%d KB", int((n + 512) / 1024));
-    else if (n < int64_t(1024) * 1024 * 1024)
-        std::snprintf(buf, sizeof buf, "%.1f MB", double(n) / (1024.0 * 1024.0));
-    else
-        std::snprintf(buf, sizeof buf, "%.1f GB", double(n) / (1024.0 * 1024.0 * 1024.0));
-    return buf;
-}
 
 char lower(char c) {
     return c >= 'A' && c <= 'Z' ? char(c | 0x20) : c;
@@ -112,7 +99,7 @@ public:
 
     void paint(gfx::Painter &p) override {
         View::paint(p);
-        const float       scale = window() ? window()->scale() : 1.f;
+        const float       scale = windowScale();
         // Only the rows inside the viewport (the list is as tall as all rows).
         const ScrollView *s     = scroller();
         const float       off   = s ? s->scrollOffset() : 0;
@@ -141,7 +128,9 @@ public:
             if (!e.isDir) {
                 if (!_sizes[i]) {
                     text::AttributedText t;
-                    t.append(humanSize(e.size), font(Font::Small, C::TextMuted));
+                    t.append(
+                        str::byteSize(e.size, str::ByteSize::Exact), font(Font::Small, C::TextMuted)
+                    );
                     _sizes[i] = text::Layout::build(t, {}, scale);
                 }
                 sizeW = std::ceil(_sizes[i]->width());

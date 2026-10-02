@@ -15,6 +15,7 @@
 // share; HANDLE_CLOSING (the last callback a handle gets) drops the
 // handle's reference.
 #include "base/str.h"
+#include "base/utf8.h"
 #include "net/transport.h"
 
 #include <winsock2.h>
@@ -50,16 +51,10 @@ std::string headerBytes(const wchar_t *s, size_t n) {
     out.reserve(n);
     for (size_t i = 0; i < n; ++i) {
         const unsigned c = s[i];
-        if (c < 0x100) {
+        if (c < 0x100)
             out += char(c);
-        } else if (c < 0x800) {
-            out += char(0xC0 | (c >> 6));
-            out += char(0x80 | (c & 0x3F));
-        } else {
-            out += char(0xE0 | (c >> 12));
-            out += char(0x80 | ((c >> 6) & 0x3F));
-            out += char(0x80 | (c & 0x3F));
-        }
+        else
+            utf8::append(out, c);
     }
     return out;
 }
@@ -439,25 +434,11 @@ struct Exchange {
                 WINHTTP_NO_HEADER_INDEX
             ))
             return;
-        const std::string text = headerBytes(raw.data(), len / sizeof(wchar_t));
-        std::string_view  rest(text);
-        bool              first = true; // the status line
-        while (!rest.empty()) {
-            const size_t     eol  = rest.find("\r\n");
-            std::string_view line = rest.substr(0, eol);
-            rest = eol == std::string_view::npos ? std::string_view() : rest.substr(eol + 2);
-            if (first) {
-                first = false;
-                continue;
-            }
-            const size_t colon = line.find(':');
-            if (colon == std::string_view::npos || colon == 0)
-                continue;
-            out.push_back(
-                {std::string(str::trim(line.substr(0, colon))),
-                 std::string(str::trim(line.substr(colon + 1)))}
-            );
-        }
+        const std::string      text = headerBytes(raw.data(), len / sizeof(wchar_t));
+        const size_t           eol  = text.find("\r\n"); // past the status line
+        const std::string_view rest =
+            eol == std::string::npos ? std::string_view() : std::string_view(text).substr(eol + 2);
+        parseHeaderLines(rest, &out); // WinHTTP validated them: nothing is dropped
     }
     // The whole body (WinHTTP has already undone any chunked encoding).
     std::string read(

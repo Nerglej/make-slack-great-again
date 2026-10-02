@@ -1,4 +1,5 @@
 #include "app/llm/service.h"
+#include "app/model/timers.h"
 
 #include "app/llm/audio_transcriber.h"
 #include "app/llm/voice_input.h"
@@ -66,30 +67,17 @@ void Service::setStandIn(Provider p, std::function<std::string(std::string_view)
 net::RequestId Service::chat(Request req, ChatDone done) {
     if (const Provider *p = active())
         return chat(*p, std::move(req), std::move(done));
-    // Later, as every answer: callers rely on never being re-entered.
-    std::weak_ptr<char> alive = _alive;
-    _app.post([alive, done = std::move(done)] {
-        if (alive.expired() || !done)
-            return;
-        ChatResult r;
-        r.error =
-            tr("No AI provider connected \xE2\x80\x94 connect one in Settings \xE2\x86\x92 AI "
-               "assistance");
-        done(std::move(r));
-    });
+    failChat(
+        std::move(done),
+        tr("No AI provider connected \xE2\x80\x94 connect one in Settings \xE2\x86\x92 AI "
+           "assistance")
+    );
     return 0;
 }
 
 net::RequestId Service::chat(const Provider &p, Request req, ChatDone done) {
     if (!p.connected()) {
-        std::weak_ptr<char> alive = _alive;
-        _app.post([alive, name = p.name, done = std::move(done)] {
-            if (alive.expired() || !done)
-                return;
-            ChatResult r;
-            r.error = arg(tr("%1 is not connected"), name);
-            done(std::move(r));
-        });
+        failChat(std::move(done), arg(tr("%1 is not connected"), p.name));
         return 0;
     }
     if (req.model.empty())
@@ -98,9 +86,9 @@ net::RequestId Service::chat(const Provider &p, Request req, ChatDone done) {
         std::string text = req.system;
         for (const Message &m : req.messages)
             text += "\n" + m.text;
-        std::weak_ptr<char> alive = _alive;
-        _app.post([this, alive, text = std::move(text), done = std::move(done)] {
-            if (alive.expired() || !done)
+        // Later, as every answer: callers rely on never being re-entered.
+        model::postWhileAlive(_app, _alive, [this, text = std::move(text), done = std::move(done)] {
+            if (!done)
                 return;
             ChatResult r;
             r.ok             = true;
@@ -128,11 +116,20 @@ net::RequestId Service::listModels(const Provider &p, ModelsDone done) {
 
 void Service::fail(TranscribeDone done, std::string error) {
     // Later, as every answer: callers rely on never being re-entered.
-    std::weak_ptr<char> alive = _alive;
-    _app.post([alive, error = std::move(error), done = std::move(done)] {
-        if (alive.expired() || !done)
+    model::postWhileAlive(_app, _alive, [error = std::move(error), done = std::move(done)] {
+        if (!done)
             return;
         TranscriptionResult r;
+        r.error = error;
+        done(std::move(r));
+    });
+}
+
+void Service::failChat(ChatDone done, std::string error) {
+    model::postWhileAlive(_app, _alive, [error = std::move(error), done = std::move(done)] {
+        if (!done)
+            return;
+        ChatResult r;
         r.error = error;
         done(std::move(r));
     });

@@ -1,7 +1,6 @@
 #include "screens/shell/standin.h"
 
-#include "app/mrkdwn/emoji.h"
-#include "app/mrkdwn/mrkdwn.h"
+#include "app/screens/common/message_text.h"
 #include "base/i18n.h"
 #include "base/str.h"
 #include "base/time.h"
@@ -10,43 +9,6 @@ using namespace ui;
 using i18n::tr;
 
 namespace shell {
-
-std::string plainText(const model::Store &store, std::string_view text) {
-    const mrkdwn::Rich r   = mrkdwn::parse(text);
-    // Entities keep their raw form in the text (":name:", "@U0…", "#C0…"):
-    // swap in glyphs and names (msga's notificationText), back to front.
-    std::string        out = r.text;
-    for (size_t i = r.entities.size(); i-- > 0;) {
-        const auto &e = r.entities[i];
-        std::string to;
-        switch (e.kind) {
-        case mrkdwn::Kind::Emoji:
-            to = store.emojiFor(e.data).unicode;
-            break;
-        case mrkdwn::Kind::User:
-            if (const model::UserRef u = store.findUser(e.data);
-                u != model::kNoUser && !store.user(u).label().empty())
-                to = "@" + std::string(store.user(u).label());
-            break;
-        case mrkdwn::Kind::Channel:
-            if (const model::ConvRef c = store.findConversation(e.data);
-                c != model::kNoConv && !store.conversation(c).name.empty())
-                to = "#" + store.conversation(c).name;
-            else if (const std::string *n = store.channelName(e.data); n && !n->empty())
-                to = "#" + *n;
-            break;
-        case mrkdwn::Kind::Usergroup:
-            if (const model::Store::Usergroup *g = store.findUsergroup(e.data))
-                to = "@" + (g->handle.empty() ? g->name : g->handle);
-            break;
-        default:
-            break;
-        }
-        if (!to.empty())
-            out.replace(e.start, e.length, to);
-    }
-    return out;
-}
 
 MessageStandIn::MessageStandIn(screens::Context &ctx, Avatars &avatars)
     : _ctx(ctx), _avatars(avatars) {
@@ -106,7 +68,7 @@ void MessageStandIn::rebuild() {
             Font::BodyBold
         );
         head->add<Label>(base::dateTimeLabel(model::tsSecs(m->ts), now), Font::Small, C::TextFaint);
-        std::string body = plainText(store, m->text);
+        std::string body = screens::plainText(store, m->text);
         for (const auto &a : m->attachments())
             body += str::concat(
                 {body.empty() ? "" : "\n", "\xE2\x96\x8E ", a.title.empty() ? a.link : a.title}

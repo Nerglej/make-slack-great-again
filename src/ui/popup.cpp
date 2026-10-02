@@ -259,7 +259,7 @@ bool Menu::anyChecked() const {
 }
 
 SizeF Menu::measureContent(float, float) {
-    const float scale = window() ? window()->scale() : 1.f;
+    const float scale = windowScale();
     if (_labels.size() != _items.size()) {
         _labels.clear();
         _hints.clear();

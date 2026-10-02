@@ -67,23 +67,6 @@ oneLine(std::string_view s, const text::Style &st, float maxW, float scale) {
     return text::Layout::build(t, o, scale);
 }
 
-// QString::simplified.
-std::string simplified(std::string_view s) {
-    std::string out;
-    bool        space = false;
-    for (char c : s) {
-        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
-            space = !out.empty();
-            continue;
-        }
-        if (space)
-            out += ' ';
-        space = false;
-        out += c;
-    }
-    return out;
-}
-
 bool live(AudioPlayer::State s) {
     return s == AudioPlayer::State::Playing || s == AudioPlayer::State::Paused ||
            s == AudioPlayer::State::Ended;
@@ -246,11 +229,11 @@ public:
         setLook({C::None, C::None, C::None, C::None, 0});
     }
     ui::SizeF measureContent(float, float) override {
-        const float k = window() ? window()->scale() : 1.f;
+        const float k = windowScale();
         return {std::ceil(text::measure(label(), lineFont(C::Link), k)), 15 * kLine};
     }
     void paint(gfx::Painter &p) override {
-        const float k = window() ? window()->scale() : 1.f;
+        const float k = windowScale();
         auto        l = oneLine(label(), lineFont(C::Link), 1e9f, k);
         l->paint(p, snapPx({0, std::floor((height() - l->height()) / 2)}));
     }
@@ -368,7 +351,7 @@ public:
     void styleChanged() override { Clickable::styleChanged(); }
 
     void paint(gfx::Painter &p) override {
-        const float                k  = window() ? window()->scale() : 1.f;
+        const float                k  = windowScale();
         const AudioPlayer::Status *st = status();
         const AudioPlayer::State   ph = st ? st->state : AudioPlayer::State::Idle;
         const int64_t   dur = st && st->durationMs > 0 ? st->durationMs : _file.durationMs;
@@ -392,7 +375,7 @@ public:
         } else if (ph == AudioPlayer::State::Loading) {
             sub = tr("Loading\xE2\x80\xA6");
         } else {
-            const std::string sz = fileSizeText(_file.size);
+            const std::string sz = str::byteSize(_file.size, str::ByteSize::File);
             if (dur > 0)
                 sub = formatDuration(dur, true) + (sz.empty() ? "" : " (" + sz + ")");
             else
@@ -450,7 +433,7 @@ public:
             const ui::RectF tl = transcriptText();
             p.fillRoundRect({0, tl.y, 3, tl.h}, 1.5f, ui::color(C::FormDivider));
             if (tl.w > 0)
-                oneLine(simplified(_file.transcript), lineFont(C::FormTextMuted), tl.w, k)
+                oneLine(str::simplified(_file.transcript), lineFont(C::FormTextMuted), tl.w, k)
                     ->paint(p, snapPx({tl.x, tl.y}));
         }
     }
@@ -490,7 +473,7 @@ private:
     // Sized from the duration so its right edge doesn't move as the time
     // ticks: the clip's length, or the widest "m:ss" when unknown.
     ui::RectF barRect(int64_t durationMs) const {
-        const float k  = window() ? window()->scale() : 1.f;
+        const float k  = windowScale();
         const float lw = std::max(
             text::measure(durationMs > 0 ? formatDuration(durationMs, true) : "0:00", subFont(), k),
             text::measure("0:00", subFont(), k)
@@ -502,14 +485,15 @@ private:
     // The quoted preview's box: after the 3-px quote bar, as wide as the text
     // up to what leaves room for "View transcript".
     ui::RectF transcriptText() const {
-        const float k     = window() ? window()->scale() : 1.f;
-        const float h     = 15 * kLine;
-        const float top   = kAudioCardH + std::floor((kAudioTranscriptH - h) / 2);
-        const float textX = 3 + kPad;
-        const float linkW = std::ceil(text::measure(tr("View transcript"), lineFont(C::Link), k));
-        const float avail = width() - textX - linkW - 6;
-        const float natural =
-            std::ceil(text::measure(simplified(_file.transcript), lineFont(C::FormTextMuted), k));
+        const float k       = windowScale();
+        const float h       = 15 * kLine;
+        const float top     = kAudioCardH + std::floor((kAudioTranscriptH - h) / 2);
+        const float textX   = 3 + kPad;
+        const float linkW   = std::ceil(text::measure(tr("View transcript"), lineFont(C::Link), k));
+        const float avail   = width() - textX - linkW - 6;
+        const float natural = std::ceil(
+            text::measure(str::simplified(_file.transcript), lineFont(C::FormTextMuted), k)
+        );
         return {textX, top, std::max(0.f, std::min(avail, natural)), h};
     }
 
@@ -864,7 +848,7 @@ std::vector<VttCue> parseVtt(std::string_view vtt) {
                 l.erase(0, 2);
             payload += (payload.empty() ? "" : " ") + l;
         }
-        cue.text = simplified(payload);
+        cue.text = str::simplified(payload);
         if (!cue.text.empty())
             cues.push_back(std::move(cue));
     }

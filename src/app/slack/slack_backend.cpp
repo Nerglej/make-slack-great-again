@@ -14,6 +14,7 @@
 #include "app/slack/slack_backend.h"
 
 #include "app/cache/workspace_cache.h"
+#include "app/model/timers.h"
 #include "app/slack/slack_json.h"
 #include "base/i18n.h"
 #include "base/log.h"
@@ -91,22 +92,8 @@ bool methodUnavailable(const std::string &e) {
     return false;
 }
 
-// Slack's "likely a transient issue on our end": retried with backoff.
-bool transientSlack(const std::string &e) {
-    return e == "internal_error" || e == "service_unavailable" || e == "fatal_error";
-}
-
-// net's reasons for "no answer" ("dns", "timeout: …"), or an answer that is
-// not Slack's (a proxy's 5xx / HTML gateway page: "bad_json"). Reads retry
-// them (msga retried 5xx on idempotent calls).
-bool transportError(const std::string &e) {
-    for (const char *p : {"dns", "connect", "tls", "timeout", "protocol", "bad_json"})
-        if (str::startsWith(e, p))
-            return true;
-    return false;
-}
-
-bool looksLikeUserId(std::string_view id) {
+// A user id's prefix only (U…, W… on Enterprise Grid), not its full shape.
+bool hasUserIdPrefix(std::string_view id) {
     return id.size() > 1 && (id[0] == 'U' || id[0] == 'W');
 }
 
@@ -142,7 +129,7 @@ struct SlackBackend::Read {
         int         attempt = 0;
         Lane        lane    = Lane::Normal;
     };
-    std::vector<plat::TimerId>               timers; // pending one-shots
+    model::OneShotTimers                     timers{b._app}; // pending one-shots
     plat::TimerId                            tickTimer = 0;
     std::deque<Call>                         paced;
     bool                                     pacedBusy     = false;
@@ -306,22 +293,13 @@ SlackBackend::Read::Read(SlackBackend &b) : b(b), s(b.store()), session(b._creds
 }
 
 SlackBackend::Read::~Read() {
-    for (plat::TimerId id : timers)
-        b._app.cancelTimer(id);
     for (plat::TimerId id : {tickTimer, reminderTimer})
         if (id)
             b._app.cancelTimer(id);
 }
 
 void SlackBackend::Read::later(int64_t ms, std::function<void()> fn) {
-    auto id = std::make_shared<plat::TimerId>(0);
-    *id     = b._app.addTimer(
-        int(std::max<int64_t>(ms / speed, 0)), false, [this, id, fn = std::move(fn)] {
-            std::erase(timers, *id);
-            fn();
-        }
-    );
-    timers.push_back(*id);
+    timers.after(int(std::max<int64_t>(ms / speed, 0)), std::move(fn));
 }
 
 void SlackBackend::Read::call(std::string method, std::string form, ApiDone done, Lane lane) {
@@ -375,11 +353,11 @@ void SlackBackend::Read::issue(Call c) {
             }
             // Transient Slack errors and lost connections: a bounded backoff
             // (msga's HttpQueue / WebApiClient), then the caller hears it.
-            const bool transient = transientSlack(err) && c.attempt < kMaxTransientRetries;
-            const bool transport = transportError(err) && c.attempt < kMaxTransportRetries;
+            // Reads retry a lost answer too (msga retried 5xx on idempotent calls).
+            const bool transient = isTransientSlackError(err) && c.attempt < kMaxTransientRetries;
+            const bool transport = isTransportError(err) && c.attempt < kMaxTransportRetries;
             if (transient || transport) {
-                const int64_t delay =
-                    c.attempt == 0 ? 0 : std::min<int64_t>(1000LL << (c.attempt - 1), 60'000);
+                const int64_t delay = c.attempt == 0 ? 0 : retryBackoffMs(c.attempt - 1);
                 ++c.attempt;
                 later(delay, [this, c = std::move(c)]() mutable { issue(std::move(c)); });
                 return;
@@ -983,7 +961,7 @@ void SlackBackend::Read::fetchUserIfNeeded(UserRef ref) {
     if (pendingUsers.count(id))
         return;
     const bool bot = id.size() > 1 && id[0] == 'B';
-    if (!bot && !looksLikeUserId(id))
+    if (!bot && !hasUserIdPrefix(id))
         return;
     pendingUsers.insert(id);
     // A bot id (a bot post without a profile) resolves through bots.info.
@@ -1048,7 +1026,7 @@ void SlackBackend::Read::reprobeOffRoster() {
     const int64_t                                t = now();
     std::vector<std::pair<int64_t, std::string>> due;
     for (const std::string &id : offRoster) {
-        if (!looksLikeUserId(id) || mapjson::isSlackSystemUser(id) || pendingUsers.count(id))
+        if (!hasUserIdPrefix(id) || mapjson::isSlackSystemUser(id) || pendingUsers.count(id))
             continue;
         const auto    it   = probedAt.find(id);
         const int64_t last = it == probedAt.end() ? 0 : it->second;

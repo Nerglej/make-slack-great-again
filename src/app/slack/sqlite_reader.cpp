@@ -6,6 +6,7 @@
 
 #include "base/file.h"
 #include "base/str.h"
+#include "base/utf8.h"
 
 #include <cstring>
 #include <optional>
@@ -240,16 +241,7 @@ private:
                     const uint8_t  a = uint8_t(p[i]), b = uint8_t(p[i + 1]);
                     const uint16_t u16v =
                         _encoding == 3 ? (uint16_t(a) << 8 | b) : (uint16_t(b) << 8 | a);
-                    if (u16v < 0x80)
-                        s += char(u16v);
-                    else if (u16v < 0x800) {
-                        s += char(0xc0 | (u16v >> 6));
-                        s += char(0x80 | (u16v & 0x3f));
-                    } else {
-                        s += char(0xe0 | (u16v >> 12));
-                        s += char(0x80 | ((u16v >> 6) & 0x3f));
-                        s += char(0x80 | (u16v & 0x3f));
-                    }
+                    utf8::append(s, u16v);
                 }
                 cell.v = std::move(s);
             }

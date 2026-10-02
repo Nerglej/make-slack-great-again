@@ -182,30 +182,6 @@ private:
         return true;
     }
 
-    // UTF-8 for a valid scalar value (surrogates were mapped out above).
-    static size_t encode(char *o, uint32_t cp) {
-        if (cp < 0x80) {
-            o[0] = char(cp);
-            return 1;
-        }
-        if (cp < 0x800) {
-            o[0] = char(0xC0 | (cp >> 6));
-            o[1] = char(0x80 | (cp & 0x3F));
-            return 2;
-        }
-        if (cp < 0x10000) {
-            o[0] = char(0xE0 | (cp >> 12));
-            o[1] = char(0x80 | ((cp >> 6) & 0x3F));
-            o[2] = char(0x80 | (cp & 0x3F));
-            return 3;
-        }
-        o[0] = char(0xF0 | (cp >> 18));
-        o[1] = char(0x80 | ((cp >> 12) & 0x3F));
-        o[2] = char(0x80 | ((cp >> 6) & 0x3F));
-        o[3] = char(0x80 | (cp & 0x3F));
-        return 4;
-    }
-
     static int hexVal(char c) {
         if (c >= '0' && c <= '9')
             return c - '0';
@@ -304,7 +280,7 @@ private:
                 } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
                     cp = utf8::kReplacement;
                 }
-                w += encode(_s + w, cp);
+                w += utf8::encode(_s + w, cp);
                 break;
             }
             default:
@@ -661,6 +637,10 @@ std::string write(const Value &v, bool pretty) {
     Writer w(pretty);
     w.value(v);
     return w.take();
+}
+
+std::string owned(const Value &v) {
+    return std::string(v.str());
 }
 
 } // namespace json

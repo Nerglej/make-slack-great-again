@@ -9,6 +9,8 @@
 #include "text/text.h"
 #include "text/unicode.h"
 
+#include "base/utf8.h"
+
 #include <hb.h>
 
 #include <algorithm>
@@ -103,18 +105,15 @@ Scratch &scratch() {
 uint32_t prevCp(const std::string &t, uint32_t at) {
     if (!at)
         return 0;
-    uint32_t i = at - 1;
-    while (i > 0 && (uint8_t(t[i]) & 0xC0) == 0x80)
-        --i;
-    size_t k = i;
-    return uni::decode(t.data(), t.size(), &k);
+    size_t k = utf8::prevBoundary(t, at);
+    return utf8::decode(t, k);
 }
 
 uint32_t cpAt(const std::string &t, uint32_t at) {
     if (at >= t.size())
         return 0;
     size_t k = at;
-    return uni::decode(t.data(), t.size(), &k);
+    return utf8::decode(t, k);
 }
 
 bool commonScript(uint32_t s) {
@@ -266,7 +265,7 @@ void LayoutImpl::build(const AttributedText &t, const LayoutOptions &o, float sc
             const auto off = uint32_t(i);
             while (span + 1 < _spanStart.size() && _spanStart[span + 1] <= off)
                 ++span;
-            const uint32_t cp = uni::decode(s.data(), s.size(), &i);
+            const uint32_t cp = utf8::decode(s, i);
             sc.cps.push_back(cp);
             sc.offs.push_back(off);
             sc.spanOf.push_back(uint16_t(span));
@@ -458,7 +457,7 @@ void LayoutImpl::build(const AttributedText &t, const LayoutOptions &o, float sc
             const uint32_t end = gi != gEnd ? _glyphs[gi].cluster : r.end;
             const uint32_t c0  = cpAt(s, cl);
             units.push_back(
-                {cl, end, ri, w, uni::Break::None, uni::isSpace(c0) && end - cl <= 3, false}
+                {cl, end, ri, w, uni::Break::None, uni::isBreakSpace(c0) && end - cl <= 3, false}
             );
         }
     }
@@ -468,7 +467,7 @@ void LayoutImpl::build(const AttributedText &t, const LayoutOptions &o, float sc
         const uint32_t a    = boxA ? 0xFFFC : prevCp(s, units[u].start);
         const uint32_t b    = boxB ? 0xFFFC : cpAt(s, units[u].start);
         units[u].brk        = uni::breakBetween(a, b);
-        if (units[u].brk == uni::Break::None && (boxA || boxB) && !uni::isSpace(b) &&
+        if (units[u].brk == uni::Break::None && (boxA || boxB) && !uni::isBreakSpace(b) &&
             !uni::isNewline(b) && a != 0xA0 && b != 0xA0)
             units[u].brk = uni::Break::Allowed; // inline boxes behave like ideographs
         if (units[u - 1].nl)
@@ -998,7 +997,7 @@ void LayoutImpl::segments(int li, std::vector<Seg> &out) const {
                 uni::GraphemeScanner gs;
                 for (size_t k = cl; k < ce && nb < 31;) {
                     const auto     at = uint32_t(k);
-                    const uint32_t cp = uni::decode(_text.data(), ce, &k);
+                    const uint32_t cp = utf8::decode(std::string_view(_text).substr(0, ce), k);
                     if (gs.next(cp) && at != cl)
                         bounds[nb++] = at;
                 }
@@ -1159,10 +1158,10 @@ uint32_t LayoutImpl::nextGrapheme(uint32_t off) const {
         return uint32_t(_text.size());
     uni::GraphemeScanner gs;
     size_t               k = off;
-    gs.next(uni::decode(_text.data(), _text.size(), &k));
+    gs.next(utf8::decode(_text, k));
     while (k < _text.size()) {
         size_t         m  = k;
-        const uint32_t cp = uni::decode(_text.data(), _text.size(), &m);
+        const uint32_t cp = utf8::decode(_text, m);
         if (gs.next(cp))
             break;
         k = m;
@@ -1213,9 +1212,9 @@ uint32_t LayoutImpl::moveCaret(uint32_t off, int dx, int dy) const {
 // else one grapheme at a time.
 int wordClass(const std::string &t, uint32_t off) {
     const uint32_t cp = cpAt(t, off);
-    if (uni::isWordChar(cp))
+    if (uni::isSelectWordChar(cp))
         return 1;
-    if (uni::isSpace(cp))
+    if (uni::isBreakSpace(cp))
         return 2;
     return 0;
 }
@@ -1274,10 +1273,17 @@ Layout::build(const AttributedText &t, const LayoutOptions &o, float scale) {
     return l;
 }
 
-float measure(std::string_view utf8, const Style &s, float scale) {
+std::unique_ptr<Layout>
+layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth) {
     AttributedText t;
     t.append(utf8, s);
-    return Layout::build(t, LayoutOptions{}, scale)->width();
+    LayoutOptions o;
+    o.maxWidth = maxWidth;
+    return Layout::build(t, o, scale);
+}
+
+float measure(std::string_view utf8, const Style &s, float scale) {
+    return layoutPlain(utf8, s, scale)->width();
 }
 
 Metrics metrics(const Style &s, float scale) {

@@ -20,20 +20,7 @@ namespace {
 
 constexpr int kMaxWorkers = 4;
 
-bool iequals(std::string_view a, std::string_view b) {
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        char x = a[i], y = b[i];
-        if (x >= 'A' && x <= 'Z')
-            x = char(x + 32);
-        if (y >= 'A' && y <= 'Z')
-            y = char(y + 32);
-        if (x != y)
-            return false;
-    }
-    return true;
-}
+using str::iequals;
 
 // "team.slack.com" → "slack.com": the scope a caller's own Cookie header
 // keeps across redirects (the Slack boot chain stays on *.slack.com).
@@ -177,28 +164,60 @@ struct Client::Impl : std::enable_shared_from_this<Client::Impl> {
 
 namespace detail {
 
-int64_t contentLength(const std::vector<Header> &headers) {
-    for (const auto &h : headers) {
-        if (!iequals(h.name, "content-length"))
-            continue;
-        int64_t n = 0;
-        for (char c : str::trim(h.value)) {
-            if (c < '0' || c > '9' || n > (int64_t(1) << 50))
-                return 0;
-            n = n * 10 + (c - '0');
-        }
-        return n;
+bool parseContentLength(std::string_view v, int64_t *out) {
+    v = str::trim(v);
+    if (v.empty())
+        return false;
+    int64_t n = 0;
+    for (char c : v) {
+        if (c < '0' || c > '9' || n > (int64_t(1) << 50))
+            return false;
+        n = n * 10 + (c - '0');
     }
-    return 0;
+    *out = n;
+    return true;
+}
+
+int64_t contentLength(const std::vector<Header> &headers) {
+    int64_t n = 0;
+    return parseContentLength(headerValue(headers, "content-length"), &n) ? n : 0;
+}
+
+std::string_view headerValue(const std::vector<Header> &headers, std::string_view name) {
+    for (const auto &h : headers)
+        if (iequals(h.name, name))
+            return h.value;
+    return {};
+}
+
+bool parseHeaderLines(std::string_view text, std::vector<Header> *out) {
+    while (!text.empty()) {
+        const size_t     eol  = text.find("\r\n");
+        std::string_view line = text.substr(0, eol);
+        text = eol == std::string_view::npos ? std::string_view() : text.substr(eol + 2);
+        if (line.empty())
+            break;
+        if (line[0] == ' ' || line[0] == '\t') { // obsolete line folding
+            if (out->empty())
+                return false;
+            out->back().value += ' ';
+            out->back().value += str::trim(line);
+            continue;
+        }
+        const size_t colon = line.find(':');
+        if (colon == std::string_view::npos || colon == 0)
+            return false;
+        out->push_back(
+            {std::string(line.substr(0, colon)), std::string(str::trim(line.substr(colon + 1)))}
+        );
+    }
+    return true;
 }
 
 } // namespace detail
 
 std::string_view Response::header(std::string_view name) const {
-    for (const auto &h : headers)
-        if (iequals(h.name, name))
-            return h.value;
-    return {};
+    return detail::headerValue(headers, name);
 }
 
 void Client::Impl::workerLoop() {

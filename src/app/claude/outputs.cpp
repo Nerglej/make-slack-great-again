@@ -3,6 +3,7 @@
 #include "app/claude/common.h"
 #include "app/model/image_size.h"
 #include "base/file.h"
+#include "base/mime.h"
 #include "base/json.h"
 #include "base/process.h"
 #include "base/str.h"
@@ -40,40 +41,23 @@ constexpr int64_t kSlackMicros  = 2'000'000;
 constexpr std::string_view kIndex         = "index.json";
 constexpr size_t           kMaxIndexBytes = 1024 * 1024; // ten entries are a few hundred bytes
 
-// The kinds shown as attachments, by extension.
-struct Kind {
-    const char *ext;
-    const char *mime;
-    const char *label; // File::prettyType
-};
-const Kind kKinds[] = {
-    {"png", "image/png", "PNG"},     {"jpg", "image/jpeg", "JPEG"},
-    {"jpeg", "image/jpeg", "JPEG"},  {"gif", "image/gif", "GIF"},
-    {"webp", "image/webp", "WebP"},  {"bmp", "image/bmp", "BMP"},
-    {"svg", "image/svg+xml", "SVG"}, {"pdf", "application/pdf", "PDF"},
-    {"mp3", "audio/mpeg", "MP3"},    {"wav", "audio/wav", "WAV"},
-    {"ogg", "audio/ogg", "OGG"},     {"m4a", "audio/mp4", "M4A"},
-    {"flac", "audio/flac", "FLAC"},  {"mp4", "video/mp4", "MP4"},
-    {"webm", "video/webm", "WebM"},  {"mov", "video/quicktime", "MOV"},
-    {"html", "text/html", "HTML"},   {"htm", "text/html", "HTML"},
-    {"csv", "text/csv", "CSV"},
-};
-
-const Kind *kindOf(std::string_view path) {
-    const std::string ext = str::asciiLower(file::extension(file::baseName(path)));
-    for (const Kind &k : kKinds)
-        if (ext == k.ext)
-            return &k;
-    return nullptr;
+// The kinds shown as attachments: pictures, sound, video, PDF, HTML and CSV
+// (mime's table by extension; text, JSON and the like stay paths).
+std::string_view shownMimeOf(std::string_view path) {
+    const std::string_view m = mime::fromName(path);
+    const bool shown = str::startsWith(m, "image/") || str::startsWith(m, "audio/") ||
+                       str::startsWith(m, "video/") || m == "application/pdf" || m == "text/html" ||
+                       m == "text/csv";
+    return shown ? m : std::string_view();
 }
 
 bool shownKind(std::string_view path) {
-    return kindOf(path) != nullptr;
+    return !shownMimeOf(path).empty();
 }
 
 std::string_view prettyTypeOf(std::string_view name, std::string_view mime) {
-    if (const Kind *k = kindOf(name); k && mime == k->mime)
-        return k->label;
+    if (const std::string_view m = shownMimeOf(name); !m.empty() && mime == m)
+        return mime::label(m);
     return "File";
 }
 
@@ -170,11 +154,11 @@ bool copyInto(
     std::string       data;
     if (!file::readAll(src, &data) || !file::writeAtomic(dest, data, 0600))
         return false;
-    const Kind *k    = kindOf(src);
-    std::string mime = k ? k->mime : "application/octet-stream";
-    int32_t     iw = 0, ih = 0;
+    const std::string_view kind = shownMimeOf(src);
+    std::string            mime(kind.empty() ? std::string_view("application/octet-stream") : kind);
+    int32_t                iw = 0, ih = 0;
     // An SVG is a picture at its own size (the image cache renders it).
-    float       sw = 0, sh = 0;
+    float                  sw = 0, sh = 0;
     if (mime == "image/svg+xml") {
         if (gfx::svgSize(data, &sw, &sh) && sw >= 1 && sh >= 1) {
             iw = int32_t(std::lround(sw));
@@ -350,24 +334,6 @@ bool fileStat(std::string_view path, int64_t *size, int64_t *mtimeMicros) {
 #endif
 #endif
     return true;
-}
-
-std::string simplified(std::string_view s) {
-    std::string out;
-    bool        gap = false;
-    for (size_t i = 0; i < s.size();) {
-        const size_t   at = i;
-        const uint32_t cp = utf8::decode(s, i);
-        if (utf8::isSpace(cp)) {
-            gap = !out.empty();
-            continue;
-        }
-        if (gap)
-            out += ' ';
-        gap = false;
-        out.append(s.substr(at, i - at));
-    }
-    return out;
 }
 
 std::string_view trimmed(std::string_view s) {

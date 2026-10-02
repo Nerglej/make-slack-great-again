@@ -17,7 +17,7 @@ constexpr int64_t kEndBytes = 96 * 1024; // read from each end of a transcript
 
 // One line, at most 200 characters.
 std::string oneLine(std::string_view s) {
-    std::string out = simplified(s);
+    std::string out = str::simplified(s);
     if (utf8::countCodePoints(out) > 200) {
         size_t at = 0;
         for (int n = 0; n < 199; ++n)

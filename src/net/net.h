@@ -148,6 +148,31 @@ std::string formEncode(std::initializer_list<std::pair<std::string_view, std::st
 // ('+' as space); "" if absent.
 std::string queryValue(std::string_view query, std::string_view name);
 
+// A multipart/form-data body (RFC 7578), built in memory: fields and files
+// in order, then body() closes it. The boundary must not occur in any part
+// (a random one never occurs in practice; callers pick it).
+class Multipart {
+public:
+    explicit Multipart(std::string boundary) : _boundary(std::move(boundary)) {}
+    void reserve(size_t bytes) { _body.reserve(bytes); }
+    void field(std::string_view name, std::string_view value);
+    // A file part. In the file name a '"' becomes '_' and a line break ' ',
+    // so it can't break out of its header; "" mime is application/octet-stream.
+    void file(
+        std::string_view name,
+        std::string_view fileName,
+        std::string_view mime,
+        std::string_view data
+    );
+    // The Content-Type header value: "multipart/form-data; boundary=…".
+    std::string contentType() const;
+    // The finished body (the closing boundary appended); the builder is spent.
+    std::string body();
+
+private:
+    std::string _boundary, _body;
+};
+
 // A TCP port on 127.0.0.1 that was free a moment ago (bind to 0, read it,
 // close); 0 on failure. For handing a port to a child process (DevTools).
 int freeLoopbackPort();

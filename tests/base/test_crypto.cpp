@@ -131,3 +131,11 @@ TEST("process: start, run, kill the group") {
     CHECK(!q.start("/nonexistent/binary", {}));
 }
 #endif
+
+TEST("crypto: fnv1a 64-bit, and continuing a hash") {
+    CHECK(crypto::fnv1a("") == crypto::kFnvOffset);
+    // The tree's basis (see crypto.h), so not the published FNV test vectors.
+    CHECK(crypto::fnv1a("a") == 0x44bd8ad473cd9906ull);
+    CHECK(crypto::fnv1a("foobar") == 0x88fad7c0a8ff07f2ull);
+    CHECK(crypto::fnv1a("bar", crypto::fnv1a("foo")) == crypto::fnv1a("foobar"));
+}

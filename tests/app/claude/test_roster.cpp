@@ -1,6 +1,7 @@
 // The roster: Claude Code's sessions/<pid>.json and jobs/<id>/state.json,
 // against a throwaway Claude Code home (never the user's ~/.claude).
 #include "app/claude/roster.h"
+#include "app/claude/common.h"
 
 #include "base/file.h"
 #include "base/process.h"
@@ -311,4 +312,16 @@ TEST("roster: a folder is trusted when it or a parent was accepted") {
         base::test::unsetEnv("CLAUDE_CONFIG_DIR");
     else
         base::test::setEnv("CLAUDE_CONFIG_DIR", old);
+}
+
+TEST("roster: one place derives a transcript's subagents folder") {
+    using claude::Paths;
+    CHECK_STR(Paths::subagentsDir("/p/q/abc-123.jsonl"), "/p/q/abc-123/subagents");
+    CHECK_STR(Paths::subagentsDir("/p/q/name.v2.jsonl"), "/p/q/name.v2/subagents");
+    CHECK_STR(Paths::subagentsDir("/p/q/.hidden"), "/p/q/.hidden/subagents");
+    // Paths::subagentTranscript files its agents in exactly that folder.
+    CHECK_STR(
+        Paths::subagentTranscript("/p/q/abc.jsonl", "7"),
+        Paths::subagentsDir("/p/q/abc.jsonl") + "/agent-7.jsonl"
+    );
 }

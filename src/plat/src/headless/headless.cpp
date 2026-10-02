@@ -4,6 +4,8 @@
 // (condition variable, no poll) so the unit tests also run on Windows/macOS.
 #include "core/backends.h"
 #include "core/loop_core.h"
+#include "core/input.h"
+#include "core/transfer.h"
 #include "plat/testing.h"
 
 #include <cstdlib>
@@ -211,7 +213,7 @@ public:
     ) override {
         std::optional<std::string> v;
         for (const auto &i : _clipboard[size_t(sel)])
-            if (i.mime == mime || (isText(i.mime) && isText(mime)))
+            if (i.mime == mime || (core::isTextMime(i.mime) && core::isTextMime(mime)))
                 v = i.data;
         post([cb = std::move(cb), v = std::move(v)] { cb(v); });
     }
@@ -402,12 +404,7 @@ public:
         auto &w = static_cast<HeadlessWindow &>(win);
         if (down) {
             focus(&w);
-            const auto now = core::Clock::now();
-            const bool again =
-                b == _lastButton && now - _lastPress < std::chrono::milliseconds(doubleClickMs());
-            _clicks     = again ? _clicks + 1 : 1;
-            _lastPress  = now;
-            _lastButton = b;
+            _clicks.press(int(b), 0, 0, core::monotonicMs(), doubleClickMs(), 0, 0);
             // Mirror the real backends: a press on a non-client area becomes an
             // OS move/resize and is not delivered to the app.
             if (w.hitTest && b == Button::Left) {
@@ -426,7 +423,7 @@ public:
             {.type   = down ? EventType::PointerDown : EventType::PointerUp,
              .pos    = _pointer,
              .button = b,
-             .clicks = down ? _clicks : 0,
+             .clicks = down ? _clicks.clicks() : 0,
              .mods   = _mods}
         );
         return true;
@@ -527,9 +524,6 @@ public:
     int                              badge = 0;
 
 private:
-    static bool isText(std::string_view m) {
-        return m == "text/plain;charset=utf-8" || m == "text/plain" || m == "UTF8_STRING";
-    }
     static DropAction preferred(uint32_t actions) {
         return (actions & ActCopy)   ? DropAction::Copy
                : (actions & ActMove) ? DropAction::Move
@@ -557,7 +551,7 @@ private:
                         e.uris.push_back(line);
                     start = end + 1;
                 }
-            } else if (isText(i.mime)) {
+            } else if (core::isTextMime(i.mime)) {
                 e.text = i.data;
             }
         }
@@ -648,9 +642,7 @@ private:
     uint32_t                                _mods                     = 0;
     bool                                    _down[size_t(Key::Count)] = {};
     Point                                   _pointer;
-    core::Clock::time_point                 _lastPress{};
-    Button                                  _lastButton = Button::Left;
-    int                                     _clicks     = 0;
+    core::ClickCounter                      _clicks;
 
     friend class HeadlessWindow;
 };

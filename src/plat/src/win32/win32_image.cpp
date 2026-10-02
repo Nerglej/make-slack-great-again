@@ -3,6 +3,8 @@
 // library, so plat carries no encoder), and the taskbar badge bitmap.
 #include "win32/win32.h"
 
+#include "core/image_util.h"
+
 #include <objbase.h>
 #include <wincodec.h>
 
@@ -28,18 +30,6 @@ struct Com {
     T       *operator->() const { return p; }
     explicit operator bool() const { return p != nullptr; }
 };
-
-uint32_t unpremultiply(uint32_t px) {
-    const uint32_t a = px >> 24;
-    if (a == 0)
-        return 0;
-    if (a == 255)
-        return px;
-    auto ch = [&](int s) {
-        return std::min<uint32_t>(255, (((px >> s) & 0xff) * 255 + a / 2) / a);
-    };
-    return (a << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0);
-}
 
 IWICImagingFactory *wic() {
     // Per call rather than cached: COM objects must not outlive the
@@ -97,42 +87,6 @@ std::string encodePngBgra(IWICImagingFactory *f, int w, int h, const uint32_t *p
 
 } // namespace
 
-Image scaleImage(const Image &src, int w, int h) {
-    Image out{w, h, std::vector<uint32_t>(size_t(std::max(w, 0)) * std::max(h, 0), 0)};
-    if (src.empty() || w <= 0 || h <= 0)
-        return out;
-    if (w == src.width && h == src.height) {
-        out.pixels = src.pixels;
-        return out;
-    }
-    // Area average over premultiplied pixels (the correct space to mix in):
-    // each destination pixel covers a fractional rectangle of the source.
-    const double sx = double(src.width) / w, sy = double(src.height) / h;
-    for (int y = 0; y < h; ++y) {
-        const double y0 = y * sy, y1 = (y + 1) * sy;
-        for (int x = 0; x < w; ++x) {
-            const double x0 = x * sx, x1 = (x + 1) * sx;
-            double       acc[4] = {0, 0, 0, 0}, area = 0;
-            for (int iy = int(y0); iy < std::min(src.height, int(std::ceil(y1))); ++iy) {
-                const double wy = std::min(y1, iy + 1.0) - std::max(y0, double(iy));
-                for (int ix = int(x0); ix < std::min(src.width, int(std::ceil(x1))); ++ix) {
-                    const double   wx = std::min(x1, ix + 1.0) - std::max(x0, double(ix));
-                    const double   a  = wx * wy;
-                    const uint32_t p  = src.pixels[size_t(iy) * src.width + ix];
-                    for (int c = 0; c < 4; ++c)
-                        acc[c] += a * ((p >> (c * 8)) & 0xff);
-                    area += a;
-                }
-            }
-            uint32_t v = 0;
-            for (int c = 0; c < 4; ++c)
-                v |= uint32_t(std::lround(area > 0 ? acc[c] / area : 0)) << (c * 8);
-            out.pixels[size_t(y) * w + x] = v;
-        }
-    }
-    return out;
-}
-
 Image fitImage(const std::vector<Image> &sizes, int size) {
     return fitImage(sizes, size, 0);
 }
@@ -162,7 +116,7 @@ Image fitImage(const std::vector<Image> &sizes, int size, double scale) {
     const double k  = double(size) / std::max(best->width, best->height);
     const int    w  = std::max(1, int(std::lround(best->width * k)));
     const int    h  = std::max(1, int(std::lround(best->height * k)));
-    const Image  sc = scaleImage(*best, w, h);
+    const Image  sc = core::scaleImage(*best, w, h);
     Image        out{size, size, std::vector<uint32_t>(size_t(size) * size, 0)};
     const int    ox = (size - w) / 2, oy = (size - h) / 2;
     for (int y = 0; y < h; ++y)
@@ -195,7 +149,7 @@ HICON iconFromImage(const Image &img) {
     // HICON colour bitmaps carry straight alpha; Image is premultiplied.
     Image straight = img;
     for (auto &p : straight.pixels)
-        p = unpremultiply(p);
+        p = core::unpremultiply(p);
     HBITMAP              color = dibFromImage(straight);
     // The AND mask is ignored for 32-bpp icons with alpha, but must exist.
     std::vector<uint8_t> zeros(size_t((img.width + 15) / 16 * 2) * img.height, 0);
@@ -226,7 +180,7 @@ std::string encodePng(const Image &img) {
         img.pixels.begin(), img.pixels.begin() + size_t(img.width) * img.height
     );
     for (auto &p : straight)
-        p = unpremultiply(p);
+        p = core::unpremultiply(p);
     return encodePngBgra(f.p, img.width, img.height, straight.data());
 }
 

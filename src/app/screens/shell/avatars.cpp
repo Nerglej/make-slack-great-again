@@ -1,5 +1,6 @@
 #include "screens/shell/avatars.h"
 
+#include "app/model/types.h"
 #include "app/screens/common/avatar_initial.h"
 #include "app/screens/common/remote_images.h"
 #include "base/file.h"
@@ -12,39 +13,19 @@ namespace shell {
 
 namespace {
 
-// An SVG (the Claude Code teammates' glyph tiles, custom workspace icons)
-// rendered so its shorter side is px: the crop below squares it like a photo.
-bool renderSvgCover(std::string_view bytes, int px, gfx::Bitmap *out) {
-    float w = 0, h = 0;
-    if (!gfx::svgSize(bytes, &w, &h) || w <= 0 || h <= 0)
-        return false;
-    const float k = float(px) / std::min(w, h);
-    return gfx::renderSvg(
-        bytes, std::max(px, int(std::lround(w * k))), std::max(px, int(std::lround(h * k))), out
-    );
-}
-
 // The file at `path` centre-cropped to a square and resized to px×px into
 // *out; false when it can't be read as an image.
 bool decodeSquare(const std::string &path, int px, gfx::Bitmap *out) {
     std::string bytes;
     gfx::Bitmap b;
+    // An SVG (the Claude Code teammates' glyph tiles, custom workspace icons)
+    // is rendered so its shorter side is px.
     if (!file::readAll(path, &bytes) ||
-        !(gfx::decodeImage(bytes, &b) || renderSvgCover(bytes, px, &b)) || b.empty())
+        !(gfx::decodeImage(bytes, &b) || gfx::renderSvgCover(bytes, px, px, &b)) || b.empty())
         return false;
     // Centre-crop to a square, then one high-quality resize: painting then
     // only copies pixels (drawBitmap would area-average on every frame).
-    const int side = std::min(b.width(), b.height());
-    if (b.width() != b.height()) {
-        gfx::Bitmap sq(side, side);
-        const int   ox = (b.width() - side) / 2, oy = (b.height() - side) / 2;
-        for (int y = 0; y < side; ++y)
-            std::copy_n(
-                b.pixels() + size_t(y + oy) * b.width() + ox, side, sq.pixels() + size_t(y) * side
-            );
-        b = std::move(sq);
-    }
-    *out = side == px ? std::move(b) : gfx::resize(b.view(), px, px);
+    *out = b.width() == px && b.height() == px ? std::move(b) : gfx::coverResize(b.view(), px, px);
     return true;
 }
 
@@ -114,35 +95,20 @@ plat::Image toPlatImage(const gfx::Bitmap &b) {
 }
 
 plat::Image roundedNotificationImage(const gfx::Bitmap &b) {
-    plat::Image img;
-    const int   side = std::min(b.width(), b.height());
+    const int side = std::min(b.width(), b.height());
     if (side <= 0)
-        return img;
-    img.width  = side;
-    img.height = side;
-    img.pixels.resize(size_t(side) * side);
-    const int       x0 = (b.width() - side) / 2, y0 = (b.height() - side) / 2;
-    const float     r  = side * 0.22f;
-    const uint32_t *px = b.pixels();
-    for (int y = 0; y < side; ++y)
-        for (int x = 0; x < side; ++x) {
-            // Coverage of the pixel by the rounded square: its centre's
-            // distance past the corner arc, ±half a pixel.
-            const float    cx = x + 0.5f, cy = y + 0.5f;
-            const float    dx = std::max({r - cx, cx - (side - r), 0.f});
-            const float    dy = std::max({r - cy, cy - (side - r), 0.f});
-            const float    a  = std::clamp(r + 0.5f - std::sqrt(dx * dx + dy * dy), 0.f, 1.f);
-            const uint32_t p  = px[size_t(y + y0) * b.width() + (x + x0)];
-            uint32_t       q  = 0;
-            if (a >= 1.f) {
-                q = p;
-            } else if (a > 0.f) { // premultiplied: every channel scales
-                for (int sh = 0; sh < 32; sh += 8)
-                    q |= uint32_t(float((p >> sh) & 0xff) * a + 0.5f) << sh;
-            }
-            img.pixels[size_t(y) * side + x] = q;
-        }
-    return img;
+        return {};
+    gfx::Bitmap sq = gfx::coverResize(b.view(), side, side); // a crop, no resize
+    gfx::maskRoundedRect(sq, float(side) * 0.22f);
+    return toPlatImage(sq);
+}
+
+Avatar::Presence Avatar::presenceOf(const model::User *u, bool hasPresence, bool phantom) {
+    return !u || u->bot || !hasPresence ? Presence::None
+           : u->dnd                     ? Presence::Dnd
+           : u->active                  ? Presence::Active
+           : phantom || u->unavailable  ? Presence::Phantom
+                                        : Presence::Away;
 }
 
 Avatar::Avatar() {

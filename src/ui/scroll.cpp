@@ -50,7 +50,7 @@ ScrollArea::ScrollArea() {
 }
 
 float ScrollArea::snap(float v) const {
-    const float s = window() ? window()->scale() : 1.f;
+    const float s = windowScale();
     return std::floor(v * s + 0.5f + 1e-3f) / s; // biased: ties always round the same way
 }
 

@@ -19,22 +19,10 @@ namespace {
 using json::Value;
 using model::File;
 
-std::string owned(const Value &v) {
-    return std::string(v.str());
-}
-
-// The string fields a mapper copies verbatim, as data (one loop instead of a
-// string construction per field at every call site).
-template <class T>
-struct StrField {
-    const char *key;
-    std::string T::*field;
-};
-template <class T, size_t N>
-void readStrings(const Value &o, T &out, const StrField<T> (&t)[N]) {
-    for (const StrField<T> &f : t)
-        out.*(f.field) = owned(o[f.key]);
-}
+// The string fields a mapper copies verbatim, as data (json.h).
+using json::owned;
+using json::readStrings;
+using json::StrField;
 
 std::string trimmed(const Value &v) {
     return std::string(str::trim(v.str()));

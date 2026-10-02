@@ -1,6 +1,9 @@
 // Backend-independent tests: the loop core (timers, posting) and the event
 // contract, driven through the headless backend.
 #include "core/loop_core.h"
+#include "core/image_util.h"
+#include "core/input.h"
+#include "core/transfer.h"
 #include "plat/plat.h"
 #include "plat/testing.h"
 #include "test_util.h"
@@ -314,6 +317,147 @@ void testKeyNames() {
     CHECK(std::string(keyName(Key::Count)) == "Unknown");
 }
 
+void testTextMimes() {
+    using core::isTextMime;
+    for (const char *m :
+         {"text/plain",
+          "text/plain;charset=utf-8",
+          "text/plain;charset=UTF-8",
+          "text/plain; charset=utf-8",
+          "TEXT/PLAIN;CHARSET=Utf-8",
+          "text/plain;charset=utf8",
+          "text/plain;charset=\"utf-8\"",
+          "UTF8_STRING",
+          "STRING",
+          "TEXT",
+          core::kTextMime})
+        CHECK(isTextMime(m));
+    // Another charset is not text: nothing transcodes it.
+    for (const char *m :
+         {"text/plain;charset=iso-8859-1",
+          "text/plain;charset=utf-16",
+          "text/plain;format=flowed",
+          "text/plainx",
+          "text/html",
+          "text/uri-list",
+          "utf8_string",
+          "string",
+          "",
+          "text/plain;charset=",
+          "COMPOUND_TEXT"})
+        CHECK(!isTextMime(m));
+}
+
+void testUriList() {
+    using V = std::vector<std::string>;
+    CHECK(core::parseUriList("") == V{});
+    CHECK(core::parseUriList("file:///a\r\nfile:///b\r\n") == (V{"file:///a", "file:///b"}));
+    CHECK(core::parseUriList("file:///a\nfile:///b") == (V{"file:///a", "file:///b"}));
+    // Comments, blank lines, GTK's trailing NUL and stray trailing spaces.
+    static const char kList[] = "# c\r\n\r\nfile:///a  \r\nfile:///b\r\n\0";
+    CHECK(
+        core::parseUriList(std::string_view(kList, sizeof kList - 1)) ==
+        (V{"file:///a", "file:///b"})
+    );
+    CHECK(core::parseUriList("#only a comment\n") == V{});
+}
+
+void testPercentAndFileUris() {
+    CHECK(core::percentEncode("a b/ü~-._") == "a%20b%2F%C3%BC~-._");
+    CHECK(core::percentEncode("a b/c:d", "/:") == "a%20b/c:d");
+    CHECK(core::percentDecode("a%20b%2f%C3%BC") == "a b/\xC3\xBC");
+    // Malformed escapes stay literal.
+    CHECK(core::percentDecode("100%") == "100%");
+    CHECK(core::percentDecode("%2") == "%2");
+    CHECK(core::percentDecode("%zz%4") == "%zz%4");
+    CHECK(core::percentDecode("%41") == "A");
+    CHECK(core::fileUri("/tmp/a b/ü#1.txt") == "file:///tmp/a%20b/%C3%BC%231.txt");
+    CHECK(core::pathFromFileUri("file:///tmp/a%20b/%C3%BC%231.txt") == "/tmp/a b/\xC3\xBC#1.txt");
+    CHECK(core::pathFromFileUri("file://localhost/tmp/x") == "/tmp/x");
+    CHECK(core::pathFromFileUri("file://otherhost/tmp/x").empty());
+    CHECK(core::pathFromFileUri("http:///tmp/x").empty());
+    CHECK(core::pathFromFileUri("file:///tmp/a%00b").empty());
+    CHECK(core::pathFromFileUri("file://").empty());
+    // Round trip of every byte but NUL.
+    std::string all = "/";
+    for (int c = 1; c < 256; ++c)
+        all += char(c);
+    CHECK(core::pathFromFileUri(core::fileUri(all)) == all);
+}
+
+void testClickCounter() {
+    core::ClickCounter c;
+    CHECK(c.press(1, 10, 10, 1000, 400, 4, 4) == 1);
+    CHECK(c.press(1, 12, 13, 1300, 400, 4, 4) == 2);
+    CHECK(c.press(1, 12, 13, 1700, 400, 4, 4) == 3); // 400 ms is still in
+    CHECK(c.press(1, 12, 13, 2101, 400, 4, 4) == 1); // too late
+    CHECK(c.press(3, 12, 13, 2200, 400, 4, 4) == 1); // another button
+    CHECK(c.press(3, 17, 13, 2300, 400, 4, 4) == 1); // too far
+    CHECK(c.clicks() == 1);
+    c.reset();
+    CHECK(c.press(3, 17, 13, 2350, 400, 4, 4) == 1); // reset: a fresh run
+    // A 32-bit millisecond clock that wraps between the presses.
+    core::ClickCounter w;
+    CHECK(w.press(1, 0, 0, 0xFFFFFF00u, 400, 4, 4) == 1);
+    CHECK(w.press(1, 0, 0, 0x00000010u, 400, 4, 4) == 2);
+}
+
+void testKeyFromAscii() {
+    CHECK(core::keyFromAscii('a') == Key::A && core::keyFromAscii('Z') == Key::Z);
+    CHECK(core::keyFromAscii('0') == Key::Num0 && core::keyFromAscii('9') == Key::Num9);
+    const struct {
+        char c;
+        Key  k;
+    } punct[] = {
+        {'-', Key::Minus},
+        {'=', Key::Equal},
+        {'[', Key::BracketLeft},
+        {']', Key::BracketRight},
+        {'\\', Key::Backslash},
+        {';', Key::Semicolon},
+        {'\'', Key::Apostrophe},
+        {'`', Key::Grave},
+        {',', Key::Comma},
+        {'.', Key::Period},
+        {'/', Key::Slash}
+    };
+    for (const auto &p : punct) {
+        CHECK(core::keyFromAscii(uint32_t(p.c)) == p.k);
+        CHECK(core::keyFromPunctuation(uint32_t(p.c)) == p.k);
+    }
+    // Punctuation only: letters, digits, space and non-ASCII have no Key there.
+    CHECK(core::keyFromPunctuation('a') == Key::Unknown);
+    CHECK(core::keyFromPunctuation('1') == Key::Unknown);
+    CHECK(core::keyFromAscii(' ') == Key::Unknown);
+    CHECK(core::keyFromAscii(0xF6) == Key::Unknown); // ö
+}
+
+void testImageUtil() {
+    CHECK(core::unpremultiply(0) == 0);
+    CHECK(core::unpremultiply(0x00ffffffu) == 0); // alpha 0: nothing left
+    CHECK(core::unpremultiply(0xff123456u) == 0xff123456u);
+    CHECK(core::unpremultiply(0x80404040u) == 0x80808080u);
+    CHECK(core::unpremultiply(0x80ff0000u) == 0x80ff0000u); // clamped at 255
+    // Shrinking averages areas: a 2×2 checker to 1×1 is the mean.
+    Image chk{2, 2, {0xffffffffu, 0xff000000u, 0xff000000u, 0xffffffffu}};
+    Image one = core::scaleImage(chk, 1, 1);
+    CHECK(one.width == 1 && one.pixels.size() == 1);
+    CHECK(one.pixels[0] == 0xff808080u);
+    // 3 → 2 columns: fractional coverage (1.5 source pixels each).
+    Image row{3, 1, {0xff000000u, 0xff000000u, 0xffffffffu}};
+    Image two = core::scaleImage(row, 2, 1);
+    CHECK(two.pixels[0] == 0xff000000u);
+    CHECK(two.pixels[1] == 0xffaaaaaau); // (0.5·0 + 1·255) / 1.5
+    // Growing is bilinear: the ends keep their colour, the middle blends.
+    Image grow = core::scaleImage(Image{2, 1, {0xff000000u, 0xffffffffu}}, 4, 1);
+    CHECK(grow.pixels[0] == 0xff000000u && grow.pixels[3] == 0xffffffffu);
+    CHECK((grow.pixels[1] & 0xff) > 0 && (grow.pixels[1] & 0xff) < 0x80);
+    // Same size is a copy; empty input gives transparent pixels.
+    CHECK(core::scaleImage(chk, 2, 2).pixels == chk.pixels);
+    Image none = core::scaleImage(Image{}, 3, 2);
+    CHECK(none.width == 3 && none.pixels.size() == 6 && none.pixels[5] == 0);
+}
+
 } // namespace
 
 int main() {
@@ -332,5 +476,11 @@ int main() {
     runCase("pointer: double-click count, caption press swallowed", testPointerClicksAndHitTest);
     runCase("clipboard: async, typed, never re-entrant", testClipboardIsAsyncAndTyped);
     runCase("key names", testKeyNames);
+    runCase("transfer: text MIME names", testTextMimes);
+    runCase("transfer: text/uri-list parsing", testUriList);
+    runCase("transfer: percent and file:// URIs", testPercentAndFileUris);
+    runCase("input: multi-click counter", testClickCounter);
+    runCase("input: keys from ASCII", testKeyFromAscii);
+    runCase("image: unpremultiply and scale", testImageUtil);
     return plat_test::summary();
 }

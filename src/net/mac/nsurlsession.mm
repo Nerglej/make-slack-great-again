@@ -528,20 +528,4 @@ std::unique_ptr<WsConn> makeWsConn() {
     return std::make_unique<MacWsConn>();
 }
 
-int loopbackPort() {
-    const int s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0)
-        return 0;
-    sockaddr_in addr{};
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    socklen_t len        = sizeof addr;
-    int       port       = 0;
-    if (bind(s, reinterpret_cast<sockaddr *>(&addr), sizeof addr) == 0 &&
-        getsockname(s, reinterpret_cast<sockaddr *>(&addr), &len) == 0)
-        port = ntohs(addr.sin_port);
-    ::close(s);
-    return port;
-}
-
 } // namespace net::detail

@@ -2,6 +2,7 @@
 // scale, openUrl, XTEST hooks). Windows and present live in x11_window.cpp,
 // clipboard and XDND in x11_selection.cpp.
 #include "x11/x11_internal.h"
+#include "linux/cursor_names.h"
 
 #include <xcb/randr.h>
 #include <xcb/shm.h>
@@ -993,15 +994,9 @@ void X11App::handleButton(xcb_button_press_event_t *e, bool down) {
         }
     }
 
-    const bool again = int(e->detail) == _lastPressButton &&
-                       e->time - _lastPressTime <= uint32_t(doubleClickMs()) &&
-                       std::abs(p.x - _lastPressPos.x) <= 4 && std::abs(p.y - _lastPressPos.y) <= 4;
-    _clicks          = again ? _clicks + 1 : 1;
-    _lastPressTime   = e->time;
-    _lastPressButton = e->detail;
-    _lastPressPos    = p;
+    const int clicks = _clicks.press(int(e->detail), p.x, p.y, e->time, doubleClickMs(), 4, 4);
     w->emit(
-        {.type = EventType::PointerDown, .pos = p, .button = b, .clicks = _clicks, .mods = mods}
+        {.type = EventType::PointerDown, .pos = p, .button = b, .clicks = clicks, .mods = mods}
     );
 }
 
@@ -1151,33 +1146,16 @@ xcb_cursor_t X11App::cursor(Cursor c) {
         return _cursors[i] = cur;
     }
 
-    // Theme names (CSS/freedesktop first, legacy X names after), then the
-    // core cursor-font glyph for servers or setups with no theme at all.
-    struct Names {
-        const char *names[3];
-        uint16_t    glyph; // X11/cursorfont.h
+    // Theme names (linux/cursor_names), then the core cursor-font glyph
+    // (X11/cursorfont.h) for servers or setups with no theme at all.
+    static constexpr uint16_t kGlyphs[] = {
+        68, 152, 60, 150, 150, 34, 0, 52, 58, 52, 108, 116, 14, 12
     };
-    static constexpr Names kNames[] = {
-        {{"default", "left_ptr", nullptr}, 68},
-        {{"text", "xterm", nullptr}, 152},
-        {{"pointer", "hand2", "hand"}, 60},
-        {{"wait", "watch", nullptr}, 150},
-        {{"progress", "left_ptr_watch", "watch"}, 150},
-        {{"crosshair", "cross", nullptr}, 34},
-        {{"not-allowed", "crossed_circle", "circle"}, 0},
-        {{"move", "fleur", "all-scroll"}, 52},
-        {{"grab", "openhand", "hand1"}, 58},
-        {{"grabbing", "closedhand", "fleur"}, 52},
-        {{"ew-resize", "sb_h_double_arrow", "h_double_arrow"}, 108},
-        {{"ns-resize", "sb_v_double_arrow", "v_double_arrow"}, 116},
-        {{"nwse-resize", "size_fdiag", "bottom_right_corner"}, 14},
-        {{"nesw-resize", "size_bdiag", "bottom_left_corner"}, 12},
-    };
-    static_assert(std::size(kNames) == size_t(Cursor::Hidden));
+    static_assert(std::size(kGlyphs) == size_t(Cursor::Hidden));
     xcb_cursor_t cur = XCB_NONE;
     if (_cursorCtx)
-        for (const char *n : kNames[i].names)
-            if (n && (cur = xcb_cursor_load_cursor(_cursorCtx, n)) != XCB_NONE)
+        for (const char *const *n = linux_cursor::themeNames(c); *n; ++n)
+            if ((cur = xcb_cursor_load_cursor(_cursorCtx, *n)) != XCB_NONE)
                 break;
     if (cur == XCB_NONE) {
         if (!_cursorFont) {
@@ -1185,7 +1163,7 @@ xcb_cursor_t X11App::cursor(Cursor c) {
             xcb_open_font(_c, _cursorFont, 6, "cursor");
         }
         cur               = xcb_generate_id(_c);
-        const uint16_t gl = kNames[i].glyph;
+        const uint16_t gl = kGlyphs[i];
         xcb_create_glyph_cursor(
             _c, cur, _cursorFont, _cursorFont, gl, gl + 1, 0, 0, 0, 0xffff, 0xffff, 0xffff
         );

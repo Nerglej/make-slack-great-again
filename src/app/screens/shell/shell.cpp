@@ -167,7 +167,7 @@ public:
         const bool  photo  = bitmap && !bitmap->empty();
         if (photo) {
             // Shrunk once per size (drawBitmap would area-average every frame).
-            const int px = int(std::lround(r.w * (window() ? window()->scale() : 1.f)));
+            const int px = int(std::lround(r.w * windowScale()));
             if (!scaled || scaled->width() != px)
                 scaled = std::make_shared<gfx::Bitmap>(gfx::resize(bitmap->view(), px, px));
             p.save();
@@ -2422,30 +2422,6 @@ void Shell::updateAttention() {
     _lastTray  = tray;
 }
 
-#ifdef __APPLE__
-namespace {
-
-// msga's CompositionMode_Clear ellipse: a disc of `b` made transparent (its
-// rim antialiased), so the dot stays apart from the plane's wing.
-void clearDisc(gfx::Bitmap &b, float cx, float cy, float r) {
-    uint32_t *px = b.pixels();
-    for (int y = 0; y < b.height(); ++y)
-        for (int x = 0; x < b.width(); ++x) {
-            const float k =
-                std::clamp(std::hypot(x + 0.5f - cx, y + 0.5f - cy) - r + 0.5f, 0.f, 1.f);
-            if (k >= 1.f)
-                continue;
-            uint32_t &c = px[size_t(y) * b.width() + x];
-            uint32_t  o = 0;
-            for (int sh = 0; sh < 32; sh += 8) // premultiplied: every channel scales
-                o |= uint32_t(std::lround(((c >> sh) & 0xff) * k)) << sh;
-            c = o;
-        }
-}
-
-} // namespace
-#endif
-
 void Shell::refreshTrayIcon(int mentions, bool unread) {
     if (!_tray)
         return;
@@ -2497,8 +2473,8 @@ void Shell::refreshTrayIcon(int mentions, bool unread) {
             const float d = std::max(6.f, float(n) * 0.3f);
             const float c = float(n) - d / 2;
 #ifdef __APPLE__
-            if (templ)
-                clearDisc(b, c, c, d / 2 + float(n) * 4 / 128);
+            if (templ) // msga's clear halo, so the dot stays apart from the plane's wing
+                gfx::clearDisc(b, c, c, d / 2 + float(n) * 4 / 128);
 #endif
             gfx::Painter p(b.view(), 1.f);
             p.fillCircle(

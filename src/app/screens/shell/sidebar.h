@@ -47,6 +47,12 @@ struct Attention {
 Attention
 workspaceAttention(const model::Store &store, model::NotifyLevel fallback, int64_t nowSecs);
 
+// msga's rebuildFilteredConvs liveness filter, shared by the sidebar and the
+// quick switcher: a DM outlives its peer (the service never prunes it), so
+// one whose peer was deactivated or never resolves to a name is not listed.
+// A peer not loaded yet (a placeholder) is let through.
+bool deadDm(const model::Store &store, const model::Conversation &c);
+
 class ConvRow;
 class Menus;
 class SectionHeader;

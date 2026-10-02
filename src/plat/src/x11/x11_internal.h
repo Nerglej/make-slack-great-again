@@ -5,6 +5,8 @@
 #pragma once
 
 #include "core/backends.h"
+#include "core/input.h"
+#include "core/transfer.h"
 #include "linux/services.h"
 #include "linux/xkb_keyboard.h"
 #ifdef PLAT_TEST_HOOKS
@@ -390,14 +392,11 @@ private:
     bool                     _keyDown[256] = {};
 
     // Pointer.
-    xcb_timestamp_t _lastTime        = 0;
-    xcb_timestamp_t _lastPressTime   = 0;
-    int             _lastPressButton = -1;
-    Point           _lastPressPos;
-    int             _clicks         = 0;
-    uint32_t        _swallowRelease = 0; // bitmask of X buttons whose release we eat
-    uint32_t        _buttonsHeld    = 0; // bitmask of X buttons down (startDrag needs one)
-    Point           _pointerPos;         // logical, last seen, for scroll events
+    xcb_timestamp_t    _lastTime = 0;
+    core::ClickCounter _clicks;
+    uint32_t           _swallowRelease = 0; // bitmask of X buttons whose release we eat
+    uint32_t           _buttonsHeld    = 0; // bitmask of X buttons down (startDrag needs one)
+    Point              _pointerPos;         // logical, last seen, for scroll events
 
     // Cursors.
     xcb_cursor_context_t *_cursorCtx                           = nullptr;

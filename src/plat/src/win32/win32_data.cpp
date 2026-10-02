@@ -124,7 +124,7 @@ UINT cfUriList() {
 }
 
 bool isTextMime(std::string_view m) {
-    return m.rfind("text/plain", 0) == 0 || m == "UTF8_STRING" || m == "TEXT" || m == "STRING";
+    return core::isTextMime(m);
 }
 
 // ── CF_HTML ─────────────────────────────────────────────────────────────────

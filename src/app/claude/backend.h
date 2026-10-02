@@ -34,6 +34,7 @@
 #include "app/claude/roster.h"
 #include "app/claude/transcript.h"
 #include "app/model/backend.h"
+#include "app/model/timers.h"
 
 #include <deque>
 #include <functional>
@@ -386,7 +387,7 @@ private:
     std::vector<model::ConvRef> _copying;
 
     uint64_t _debounce = 0, _watchTimer = 0, _safetyPoll = 0, _saveTimer = 0, _typingTimer = 0;
-    std::vector<uint64_t>                                        _oneShots;
+    model::OneShotTimers                                         _oneShots{_app};
     bool                                                         _started       = false;
     bool                                                         _firstScanDone = false;
     int                                                          _batchUsers    = 0;

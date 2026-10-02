@@ -16,24 +16,6 @@ NSString *nsString(std::string_view s) {
     return [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding];
 }
 
-// text/uri-list lines (RFC 2483): CRLF or LF separated, '#' lines are comments.
-std::vector<std::string> uriLines(std::string_view list) {
-    std::vector<std::string> out;
-    size_t                   start = 0;
-    while (start < list.size()) {
-        size_t end = list.find('\n', start);
-        if (end == std::string_view::npos)
-            end = list.size();
-        std::string line(list.substr(start, end - start));
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
-        if (!line.empty() && line[0] != '#')
-            out.push_back(std::move(line));
-        start = end + 1;
-    }
-    return out;
-}
-
 // File-reference URLs (file:///.file/id=…) are not portable paths.
 NSURL *portable(NSURL *u) {
     return u.isFileReferenceURL ? u.filePathURL : u;
@@ -42,8 +24,7 @@ NSURL *portable(NSURL *u) {
 } // namespace
 
 bool isTextMime(std::string_view m) {
-    return m == "text/plain" || m.substr(0, 11) == "text/plain;" || m == "UTF8_STRING" ||
-           m == "STRING" || m == "TEXT";
+    return core::isTextMime(m);
 }
 
 NSPasteboardType pasteboardTypeForMime(std::string_view mime) {
@@ -112,7 +93,7 @@ NSArray<NSPasteboardItem *> *pasteboardItems(const std::vector<DataItem> &items)
     std::vector<std::string> uris;
     for (const auto &i : items) {
         if (i.mime == "text/uri-list") {
-            auto lines = uriLines(i.data);
+            auto lines = core::parseUriList(i.data);
             uris.insert(uris.end(), lines.begin(), lines.end());
             continue;
         }

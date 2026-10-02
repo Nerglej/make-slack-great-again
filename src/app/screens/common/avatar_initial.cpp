@@ -58,7 +58,7 @@ void paintInitial(
         if (px <= 0)
             px = r.h * 0.38f * 4 / 3;
         t.append(letter, ui::pxFont(px, text::Weight::Bold, 0xffffffffU));
-        cache = text::Layout::build(t, {}, v.window() ? v.window()->scale() : 1.f);
+        cache = text::Layout::build(t, {}, v.windowScale());
     }
     const text::Layout &l = *cache;
     l.paint(

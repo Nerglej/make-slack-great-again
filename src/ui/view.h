@@ -222,6 +222,8 @@ public:
     // ── Tree ────────────────────────────────────────────────────────────────
     View   *parent() const { return _parent; }
     Window *window() const { return _window; }
+    // The window's device scale; 1 while not in one.
+    float   windowScale() const;
     size_t  childCount() const { return _children.size(); }
     View   *child(size_t i) const { return _children[i].get(); }
     // Takes ownership; index < 0 appends. Returns the raw pointer.

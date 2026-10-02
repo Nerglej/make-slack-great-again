@@ -6,6 +6,7 @@
 #include "app/mrkdwn/markdown.h"
 #include "app/model/image_size.h"
 #include "base/file.h"
+#include "base/mime.h"
 #include "base/i18n.h"
 #include "base/str.h"
 
@@ -259,31 +260,7 @@ std::string linkBareUrls(std::string_view escaped) {
 }
 
 std::string mimeFor(std::string_view path) {
-    const std::string ext = str::asciiLower(file::extension(path));
-    static const struct {
-        const char *ext, *mime;
-    } kTypes[] = {
-        {"png", "image/png"},
-        {"jpg", "image/jpeg"},
-        {"jpeg", "image/jpeg"},
-        {"gif", "image/gif"},
-        {"webp", "image/webp"},
-        {"svg", "image/svg+xml"},
-        {"pdf", "application/pdf"},
-        {"txt", "text/plain"},
-        {"md", "text/markdown"},
-        {"csv", "text/csv"},
-        {"html", "text/html"},
-        {"json", "application/json"},
-        {"mp3", "audio/mpeg"},
-        {"m4a", "audio/mp4"},
-        {"wav", "audio/wav"},
-        {"mp4", "video/mp4"},
-    };
-    for (const auto &t : kTypes)
-        if (ext == t.ext)
-            return t.mime;
-    return "application/octet-stream";
+    return std::string(mime::fromNameOr(path));
 }
 
 // "| a | b |" → {"a", "b"}. A pipe escaped (\|) or inside `code` stays in

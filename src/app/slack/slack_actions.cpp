@@ -10,6 +10,7 @@
 // duplicate-message bug was a blind retransmit).
 #include "app/model/image_size.h"
 #include "app/model/jobs.h"
+#include "app/model/timers.h"
 #include "app/slack/slack_backend.h"
 #include "app/slack/slack_json.h"
 #include "base/file.h"
@@ -29,36 +30,19 @@ using model::Ts;
 
 namespace {
 
-// Base of the send/delete/upload retry backoff (msga's _sendRetryDelayMs).
-constexpr int kRetryBaseMs     = 1000;
-constexpr int kRetryMaxMs      = 60000;
 constexpr int kDeleteRetries   = 6; // msga's kMaxDeleteRetries
 constexpr int kUploadScans     = 6; // msga's kMaxUploadReconcileRetries
 constexpr int kUploadTimeoutMs = 300000;
 
+// The send/delete/upload retry backoff (msga's _sendRetryDelayMs).
 int backoff(int attempt) {
-    return std::min(kRetryBaseMs << std::min(attempt, 6), kRetryMaxMs);
+    return retryBackoffMs(attempt);
 }
 
-// The request may have reached Slack or not: a transport failure (net's
-// reasons, "+ : detail"), a non-JSON answer (a proxy's 5xx page), or a rate
+// The request may have reached Slack or not: a transport failure or a rate
 // limit. Anything else is Slack's own verdict.
 bool transient(const std::string &e) {
-    static const char *const kReasons[] = {
-        "dns",
-        "connect",
-        "tls",
-        "timeout",
-        "protocol",
-        "too_many_redirects",
-        "bad_json",
-        "ratelimited",
-    };
-    const std::string_view head = std::string_view(e).substr(0, e.find(':'));
-    for (const char *r : kReasons)
-        if (head == r)
-            return true;
-    return false;
+    return isTransportError(e) || e == "ratelimited";
 }
 
 // msga's isMethodUnavailable: the endpoint itself is refused for this token
@@ -211,10 +195,6 @@ int parseDndMinutes(std::string_view args) {
 
 struct SlackBackend::Write {
     explicit Write(SlackBackend &b) : b(b) {}
-    ~Write() {
-        for (plat::TimerId id : timers)
-            b._app.cancelTimer(id);
-    }
 
     // One send from the pending copy to the confirmed message.
     struct Send {
@@ -244,31 +224,19 @@ struct SlackBackend::Write {
         ConvRef conv;
         Ts      local, server;
     };
-    std::vector<Confirmed>     confirmed;
-    std::vector<plat::TimerId> timers;
-    Ts                         lastLocal        = 0;
-    bool                       savedUnavailable = false, threadMarkUnavailable = false;
-    MyProfile                  profile; // the last users.profile.get (updateProfile diffs it)
-    bool                       profileLoaded = false;
+    std::vector<Confirmed> confirmed;
+    model::OneShotTimers   timers{b._app}; // cancelled with the Write
+    Ts                     lastLocal        = 0;
+    bool                   savedUnavailable = false, threadMarkUnavailable = false;
+    MyProfile              profile; // the last users.profile.get (updateProfile diffs it)
+    bool                   profileLoaded = false;
 
     model::Store      &store() { return b._store; }
     const std::string &meId() { return store().user(store().me).id; }
 
-    void later(int ms, std::function<void()> fn) {
-        auto id = std::make_shared<plat::TimerId>(0);
-        *id     = b._app.addTimer(ms, false, [this, id, fn = std::move(fn)] {
-            std::erase(timers, *id);
-            fn();
-        });
-        timers.push_back(*id);
-    }
+    void later(int ms, std::function<void()> fn) { timers.after(ms, std::move(fn)); }
     // `done` later, never from inside the call (the Backend contract).
-    void post(std::function<void()> fn) {
-        b._app.post([alive = b._alive, fn = std::move(fn)] {
-            if (*alive)
-                fn();
-        });
-    }
+    void post(std::function<void()> fn) { model::postWhileAlive(b._app, b._alive, std::move(fn)); }
 
     // A request outside the form-encoded Web API (an upload's bytes, a
     // multipart photo, a file's bytes), on the transfer pool: the backend's
@@ -855,15 +823,13 @@ struct SlackBackend::Write {
     }
 
     // users.setPhoto with a multipart body built off the UI thread.
-    void photo(std::string body, std::string_view boundary, Done done) {
+    void photo(std::string body, std::string contentType, Done done) {
         net::Request req;
         req.method    = "POST";
         req.url       = apiBase(b._auth).append("users.setPhoto");
         req.timeoutMs = kUploadTimeoutMs;
         req.body      = std::move(body);
-        req.headers.push_back(
-            {"Content-Type", str::concat({"multipart/form-data; boundary=", boundary})}
-        );
+        req.headers.push_back({"Content-Type", std::move(contentType)});
         addAuthHeaders(req.headers, b._auth);
         raw(std::move(req), [this, done = std::move(done)](net::Response r) {
             json::Document doc;
@@ -1585,16 +1551,11 @@ void SlackBackend::setPhoto(std::string path, Done done) {
             std::string data;
             if (!file::readAll(path, &data))
                 return;
-            *body = str::concat(
-                {"--",
-                 kBoundary,
-                 "\r\nContent-Disposition: form-data; name=\"image\"; filename=\"",
-                 file::baseName(path),
-                 "\"\r\nContent-Type: application/octet-stream\r\n\r\n"}
-            );
-            *body += data;
-            *body += str::concat({"\r\n--", kBoundary, "--\r\n"});
-            *ok = true;
+            net::Multipart form{std::string(kBoundary)};
+            form.reserve(data.size() + 256);
+            form.file("image", file::baseName(path), {}, data);
+            *body = form.body();
+            *ok   = true;
         },
         [this, alive = _alive, body, ok, done = std::move(done)]() mutable {
             if (!*alive)
@@ -1604,7 +1565,11 @@ void SlackBackend::setPhoto(std::string path, Done done) {
                     done(false, "cannot_open_file");
                 return;
             }
-            _write->photo(std::move(*body), kBoundary, std::move(done));
+            _write->photo(
+                std::move(*body),
+                net::Multipart(std::string(kBoundary)).contentType(),
+                std::move(done)
+            );
         }
     );
 }

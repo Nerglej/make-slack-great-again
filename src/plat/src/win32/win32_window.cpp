@@ -768,15 +768,15 @@ int Win32Window::countClick(Button b) {
     const DWORD t   = GetMessageTime();
     const DWORD pos = GetMessagePos();
     const POINT pt{GET_X_LPARAM(pos), GET_Y_LPARAM(pos)};
-    const bool  again = _clicks > 0 && b == _lastClickButton &&
-                        DWORD(t - _lastClickTime) <= GetDoubleClickTime() &&
-                        std::abs(pt.x - _lastClickAt.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
-                        std::abs(pt.y - _lastClickAt.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
-    _clicks           = again ? _clicks + 1 : 1;
-    _lastClickTime    = t;
-    _lastClickAt      = pt;
-    _lastClickButton  = b;
-    return _clicks;
+    return _clicks.press(
+        int(b),
+        pt.x,
+        pt.y,
+        t,
+        GetDoubleClickTime(),
+        GetSystemMetrics(SM_CXDOUBLECLK) / 2,
+        GetSystemMetrics(SM_CYDOUBLECLK) / 2
+    );
 }
 
 bool Win32Window::onButton(Button b, bool down, POINT p) {
@@ -1282,7 +1282,7 @@ LRESULT Win32Window::handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (wp == HTCAPTION && b == Button::Left && !up) {
             if (countClick(b) == 2 && _resizable) {
-                _clicks = 0; // the toggle consumed the double click
+                _clicks.reset(); // the toggle consumed the double click
                 ShowWindow(h, IsZoomed(h) ? SW_RESTORE : SW_MAXIMIZE);
                 return 0;
             }

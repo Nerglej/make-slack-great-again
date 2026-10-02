@@ -28,8 +28,6 @@ private:
 
 // msga's plain file chip (the message list's, the forward preview's).
 ui::Clickable *addFileChip(ui::View *parent, const model::File &f, MessageList *list, Ts ts);
-// msga's formatFileSize: "512 B", "79 KB", "4.2 MB"; "" for 0.
-std::string    fileSizeText(int64_t bytes);
 
 class RichLabel;
 
@@ -143,8 +141,5 @@ public:
 private:
     ui::Label *_label;
 };
-
-// Human sizes for file chips: "812 B", "12 KB", "1.4 MB".
-std::string formatBytes(int64_t n);
 
 } // namespace screens

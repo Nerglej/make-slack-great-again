@@ -1,6 +1,7 @@
 // Wayland seat: pointer (buttons, hit test, scroll frames), keyboard (xkb
 // keymap fd, client-side repeat), text-input-v3 and cursors.
 #include "wayland/wl_internal.h"
+#include "linux/cursor_names.h"
 
 #include <algorithm>
 #include <cmath>
@@ -180,44 +181,6 @@ uint32_t shapeFor(Cursor c) {
     return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
 }
 
-// Theme names: the CSS/freedesktop name first, then the legacy X11 names
-// older themes (and Adwaita's fallbacks) still use.
-std::vector<const char *> themeNamesFor(Cursor c) {
-    switch (c) {
-    case Cursor::Arrow:
-        return {"default", "left_ptr"};
-    case Cursor::IBeam:
-        return {"text", "xterm", "ibeam"};
-    case Cursor::Hand:
-        return {"pointer", "hand2", "hand1", "pointing_hand"};
-    case Cursor::Wait:
-        return {"wait", "watch"};
-    case Cursor::Progress:
-        return {"progress", "left_ptr_watch", "half-busy"};
-    case Cursor::Crosshair:
-        return {"crosshair", "cross"};
-    case Cursor::NotAllowed:
-        return {"not-allowed", "crossed_circle", "forbidden"};
-    case Cursor::Move:
-        return {"move", "fleur", "all-scroll"};
-    case Cursor::Grab:
-        return {"grab", "openhand", "hand1"};
-    case Cursor::Grabbing:
-        return {"grabbing", "closedhand", "fleur"};
-    case Cursor::ResizeH:
-        return {"ew-resize", "sb_h_double_arrow", "h_double_arrow"};
-    case Cursor::ResizeV:
-        return {"ns-resize", "sb_v_double_arrow", "v_double_arrow"};
-    case Cursor::ResizeNWSE:
-        return {"nwse-resize", "bd_double_arrow", "size_fdiag"};
-    case Cursor::ResizeNESW:
-        return {"nesw-resize", "fd_double_arrow", "size_bdiag"};
-    case Cursor::Hidden:
-        break;
-    }
-    return {"default", "left_ptr"};
-}
-
 } // namespace
 
 // ── seat ────────────────────────────────────────────────────────────────────
@@ -338,15 +301,9 @@ void WlApp::onPointerButton(uint32_t serial, uint32_t code, uint32_t state) {
         return;
     }
 
-    const auto now     = std::chrono::steady_clock::now();
-    const bool closeBy = std::abs(_pointerPos.x - _lastPressPos.x) <= 4 &&
-                         std::abs(_pointerPos.y - _lastPressPos.y) <= 4;
-    const bool again   = code == _lastPressButton && closeBy &&
-                         now - _lastPress < std::chrono::milliseconds(doubleClickMs());
-    _clicks            = again ? _clicks + 1 : 1;
-    _lastPress         = now;
-    _lastPressButton   = code;
-    _lastPressPos      = _pointerPos;
+    const int clicks = _clicks.press(
+        int(code), _pointerPos.x, _pointerPos.y, core::monotonicMs(), doubleClickMs(), 4, 4
+    );
 
     if (b == Button::Left || b == Button::Right) {
         const HitArea area = w->hitTestAt(_pointerPos);
@@ -358,7 +315,7 @@ void WlApp::onPointerButton(uint32_t serial, uint32_t code, uint32_t state) {
             } else if (area == HitArea::Caption) {
                 // Client-side title bars own the double-click-to-maximise
                 // gesture on Wayland (GTK and Qt do the same).
-                if (_clicks == 2)
+                if (clicks == 2)
                     w->setMaximized(!w->isMaximized());
                 else
                     w->startMove(serial);
@@ -375,7 +332,7 @@ void WlApp::onPointerButton(uint32_t serial, uint32_t code, uint32_t state) {
         {.type   = EventType::PointerDown,
          .pos    = _pointerPos,
          .button = b,
-         .clicks = _clicks,
+         .clicks = clicks,
          .mods   = _xkb.mods()}
     );
 }
@@ -548,8 +505,8 @@ void WlApp::applyCursor(bool force) {
         _cursorThemeScale = scale;
     }
     wl_cursor *cur = nullptr;
-    for (const char *name : themeNamesFor(c))
-        if (_cursorTheme && (cur = wl_cursor_theme_get_cursor(_cursorTheme, name)))
+    for (const char *const *n = linux_cursor::themeNames(c); _cursorTheme && *n; ++n)
+        if ((cur = wl_cursor_theme_get_cursor(_cursorTheme, *n)))
             break;
     if (!cur || cur->image_count == 0)
         return; // no theme installed: the compositor keeps whatever it shows

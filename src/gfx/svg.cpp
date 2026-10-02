@@ -19,6 +19,8 @@
 // 100k element visits. Never recurses on its own input beyond those.
 #include "gfx/internal.h"
 
+#include "base/str.h"
+
 #include <cmath>
 #include <cstdlib>
 #include <memory>
@@ -164,66 +166,14 @@ inline bool isSpace(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-sv trim(sv s) {
-    while (!s.empty() && isSpace(s.front()))
-        s.remove_prefix(1);
-    while (!s.empty() && isSpace(s.back()))
-        s.remove_suffix(1);
-    return s;
-}
+using str::trim;
 
-void putUtf8(std::string &o, uint32_t c) {
-    if (c < 0x80) {
-        o += char(c);
-    } else if (c < 0x800) {
-        o += char(0xc0 | (c >> 6)), o += char(0x80 | (c & 63));
-    } else if (c < 0x10000) {
-        o += char(0xe0 | (c >> 12)), o += char(0x80 | ((c >> 6) & 63)), o += char(0x80 | (c & 63));
-    } else if (c < 0x110000) {
-        o += char(0xf0 | (c >> 18)), o += char(0x80 | ((c >> 12) & 63));
-        o += char(0x80 | ((c >> 6) & 63)), o += char(0x80 | (c & 63));
-    }
-}
-
+// Entity-decoded copy of v, owned by the document (views into it stay valid).
 sv decode(Doc &d, sv v) {
     if (v.find('&') == sv::npos)
         return v;
-    std::string o;
-    for (size_t i = 0; i < v.size(); ++i) {
-        const size_t semi = v[i] == '&' ? v.find(';', i) : sv::npos;
-        if (semi == sv::npos || semi - i > 10) {
-            o += v[i];
-            continue;
-        }
-        const sv e = v.substr(i + 1, semi - i - 1);
-        if (e == "amp")
-            o += '&';
-        else if (e == "lt")
-            o += '<';
-        else if (e == "gt")
-            o += '>';
-        else if (e == "quot")
-            o += '"';
-        else if (e == "apos")
-            o += '\'';
-        else if (e.size() > 1 && e[0] == '#')
-            putUtf8(
-                o,
-                uint32_t(
-                    std::strtoul(
-                        std::string(e.substr(e[1] == 'x' ? 2 : 1)).c_str(),
-                        nullptr,
-                        e[1] == 'x' ? 16 : 10
-                    )
-                )
-            );
-        else {
-            o += v[i];
-            continue;
-        }
-        i = semi;
-    }
-    auto buf = std::make_unique<char[]>(o.size() + 1);
+    const std::string o   = str::decodeEntities(v);
+    auto              buf = std::make_unique<char[]>(o.size() + 1);
     std::memcpy(buf.get(), o.data(), o.size());
     const sv r(buf.get(), o.size());
     d.store.push_back(std::move(buf));
