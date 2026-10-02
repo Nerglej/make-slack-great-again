@@ -92,6 +92,9 @@ private:
     void     addSessionWorkspaces(std::vector<slack::Credentials> creds);
     void     refreshRail(); // the store's workspaces to the shell
     void     activate(const std::string &key);
+    // msga's restoreLastConv: the open workspace's last chat, once its
+    // Store lists it; false when it doesn't (yet).
+    bool     restoreLast(Running &r);
     void     showSignedOut();
     void     imageAuth(); // RemoteImages' per-URL workspace credentials
     Running *find(const std::string &key) const;

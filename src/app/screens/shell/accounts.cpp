@@ -520,12 +520,17 @@ void Accounts::activate(const std::string &key) {
     _shell.setSignedIn(true);
     _shell.setLive(r->live);
     _shell.workspaceChanged();
-    // msga's restoreLastConv: the chat that was open last time.
-    model::ConvRef last = r->lastOpen;
+    restoreLast(*r);
+}
+
+bool Accounts::restoreLast(Running &r) {
+    model::ConvRef last = r.lastOpen;
     if (last == model::kNoConv)
-        last = r->slack ? r->slack->lastConversation() : r->claude->lastConversation();
-    if (last < r->store.conversationCount() && r->store.conversation(last).member)
-        _shell.open(last);
+        last = r.slack ? r.slack->lastConversation() : r.claude->lastConversation();
+    if (last >= r.store.conversationCount() || !r.store.conversation(last).member)
+        return false;
+    _shell.open(last);
+    return true;
 }
 
 void Accounts::connect(uint64_t serial) {
@@ -551,11 +556,17 @@ void Accounts::connect(uint64_t serial) {
                 }
             }
             fetchIcon(*r);
-            r->live = true;
+            const bool first = !r->live;
+            r->live          = true;
             _shell.setWorkspaceLive(r->key, true);
             if (r == _active) {
                 _shell.workspaceChanged();
                 _shell.setLive(true);
+                // A backend that lists its chats only once connected (Claude
+                // Code's first scan runs on a worker) had nothing to restore
+                // when the workspace opened; nothing open yet means do it now.
+                if (first && _shell.current() == model::kNoConv)
+                    restoreLast(*r);
             }
             return;
         }

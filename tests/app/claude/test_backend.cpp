@@ -1967,9 +1967,11 @@ TEST("backend: a session's answers carry the files it made, until it's removed")
     // renders no messages: Backend::seenOf).
     CHECK_FALSE(file::exists(outputsDir("S1")));
     CHECK(rig.store.conversation(rig.ref("S1")).unread == 0);
-    const auto &msgs = rig.load(rig.ref("S1"));
-    REQUIRE(!msgs.empty());
-    const auto &files = msgs.back().files();
+    const ConvRef conv = rig.ref("S1");
+    REQUIRE(!rig.load(conv).empty());
+    // Copied on a worker: the answer shows them once they are.
+    CHECK(rig.wait([&] { return rig.messages(conv).back().files().size() == 1; }));
+    const auto &files = rig.messages(conv).back().files();
     REQUIRE(files.size() == 1);
     CHECK_STR(files[0].name, "chart.png");
     CHECK(files[0].isImage());
@@ -1978,6 +1980,129 @@ TEST("backend: a session's answers carry the files it made, until it's removed")
 
     rig.backend->leave(rig.ref("S1")); // "Remove from msga"
     CHECK_FALSE(file::exists(outputsDir("S1")));
+}
+
+TEST("backend: a live transcript is read as it grows, only what was appended") {
+    FakeClaudeHome home;
+    home.writeSession("busy");
+    home.append(
+        prompt("hi", "2026-09-25T10:00:00.000Z") +
+        assistantText("Hello!", "2026-09-25T10:00:01.000Z") + turnEnd("2026-09-25T10:00:02.000Z")
+    );
+
+    Rig           rig;
+    const ConvRef conv = rig.ref("S1");
+    REQUIRE(conv != kNoConv);
+    // The first scan read the transcript on a worker, not on the UI thread.
+    const auto &n = rig.backend->counters();
+    CHECK(n.bytesRead == 0);
+    REQUIRE(rig.load(conv).size() == 2);
+    CHECK(n.bytesRead == 0);
+
+    // Nothing new: a refresh (the session's status file touched) renders
+    // nothing again and copies nothing into the Store.
+    const uint64_t read0 = n.bytesRead, renders0 = n.renders, copies0 = n.copies;
+    home.writeSession("idle");
+    rig.pump(1500);
+    home.writeSession("busy");
+    rig.pump(1500);
+    CHECK(n.bytesRead == read0);
+    CHECK(n.renders == renders0);
+    CHECK(n.copies == copies0);
+
+    // Half a record, then the rest: only those bytes are read, and the
+    // record shows once it's whole.
+    const std::string next =
+        prompt("again", "2026-09-25T10:01:00.000Z") + turnEnd("2026-09-25T10:01:01.000Z");
+    const size_t half = next.size() / 2;
+    home.append(std::string_view(next).substr(0, half));
+    rig.pump(1500);
+    CHECK(n.bytesRead == read0 + half);
+    CHECK(rig.messages(conv).size() == 2);
+    home.append(std::string_view(next).substr(half));
+    CHECK(rig.wait([&] { return rig.messages(conv).size() == 3; }));
+    CHECK(n.bytesRead == read0 + next.size());
+    CHECK(n.renders == renders0 + 1); // the new prompt alone
+    CHECK_STR(plain(rig.messages(conv).back()), "again");
+
+    // Rewritten shorter (truncated, or written anew): read again from the start.
+    writeFile(home.transcript, prompt("fresh start", "2026-09-25T11:00:00.000Z"));
+    CHECK(rig.wait([&] {
+        const auto &m = rig.messages(conv);
+        return m.size() == 1 && plain(m[0]) == "fresh start";
+    }));
+}
+
+TEST("backend: a subagent's thread follows its transcript, reading what it appends") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    home.append(
+        prompt("research it", "2026-09-25T10:00:00.000Z") +
+        toolUse("a1", "Agent", R"({"description":"Read the docs"})", "2026-09-25T10:00:01.000Z") +
+        toolResult("a1", "2026-09-25T10:00:09.000Z", false, "agent42") +
+        assistantText("Done.", "2026-09-25T10:00:10.000Z") + turnEnd("2026-09-25T10:00:11.000Z")
+    );
+    const std::string sub = home.dir + "/projects/-src-app/S1/subagents/agent-agent42.jsonl";
+    writeFile(
+        sub,
+        prompt("Read the docs and report", "2026-09-25T10:00:02.000Z", false) +
+            assistantText("The docs say X.", "2026-09-25T10:00:08.000Z")
+    );
+
+    Rig           rig;
+    const ConvRef conv = rig.ref("S1");
+    const auto   &msgs = rig.load(conv);
+    const auto    root =
+        std::find_if(msgs.begin(), msgs.end(), [](const auto &m) { return m.replyCount > 0; });
+    REQUIRE(root != msgs.end());
+    CHECK(root->replyCount == 2);
+    const Ts rootTs = root->ts;
+    REQUIRE(rig.loadThread(conv, rootTs).size() == 2);
+
+    // The subagent goes on: its thread follows, and only the appended record
+    // is read.
+    const auto       &n     = rig.backend->counters();
+    const uint64_t    read0 = n.bytesRead;
+    const std::string more  = assistantText("And Y.", "2026-09-25T10:00:08.500Z");
+    appendFile(sub, more);
+    home.writeSession("idle"); // a refresh (the subagent's file isn't watched)
+    CHECK(rig.wait([&] {
+        const auto r = rig.replies(conv, rootTs);
+        return r.size() == 3 && plain(*r[2]) == "And Y.";
+    }));
+    CHECK(n.bytesRead == read0 + more.size());
+}
+
+TEST("backend: known-sessions.json is written only when what it says changes") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    home.append(
+        prompt("hi", "2026-09-25T10:00:00.000Z") +
+        assistantText("Hello!", "2026-09-25T10:00:01.000Z") + turnEnd("2026-09-25T10:00:02.000Z")
+    );
+    const std::string known = home.msga + "/data/known-sessions.json";
+
+    Rig           rig;
+    const ConvRef conv = rig.ref("S1");
+    REQUIRE(conv != kNoConv);
+    CHECK(rig.wait([&] { return file::exists(known); }));
+    rig.pump(2500); // the first scan's save, if one is still to come
+    const int64_t written = modifiedMicros(known);
+    REQUIRE(written > 0);
+
+    // Refreshes that change nothing msga keeps write nothing.
+    for (int i = 0; i < 2; ++i) {
+        home.writeSession(i % 2 ? "idle" : "busy");
+        rig.pump(1500);
+    }
+    home.writeSession("idle");
+    rig.pump(3000); // past the save timer
+    CHECK(modifiedMicros(known) == written);
+
+    // Something it keeps changes: written.
+    rig.backend->setStarred(conv, true);
+    CHECK(rig.wait([&] { return modifiedMicros(known) != written; }));
+    CHECK(contains(readText(known), "\"starred\":true"));
 }
 
 // POSIX only from here: these cases drive a fake `claude` written as a

@@ -9,8 +9,10 @@
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace claude {
 
@@ -59,12 +61,67 @@ bool        awaitsApproval(const SessionInfo &s);
 // A background session whose turn failed for want of a login reads "blocked"
 // + "login required — run /login" (verified 2.1.283): not a question for the user.
 bool        needsLogin(const SessionInfo &s);
-// What a message looks like, for telling a changed one from the same.
-uint64_t    fingerprint(const model::Message &m);
+
+// FNV-1a over `bytes`, going on from `h` (kFnvBasis to start).
+inline constexpr uint64_t kFnvBasis = 1469598103934665603ull;
+uint64_t                  fnv1a(uint64_t h, std::string_view bytes);
+// What a message looks like, for telling a changed one from the same: what
+// it says (who, its text, files, buttons…), hashed once per rendered
+// message, then where it sits and what it gathered (ts, thread, replies,
+// reactions) mixed in. fingerprint(m) = fingerprint(contentFingerprint(m), m's).
+uint64_t                  contentFingerprint(const model::Message &m);
+uint64_t                  fingerprint(
+    uint64_t                            content,
+    model::Ts                           ts,
+    model::Ts                           threadTs,
+    uint32_t                            replyCount,
+    model::Ts                           latestReply,
+    const std::vector<model::Reaction> &reactions
+);
+uint64_t fingerprint(const model::Message &m);
+
 // How many items two transcripts start with in common (a fork's copy).
 size_t      sharedStart(const std::vector<TranscriptItem> &a, const std::vector<TranscriptItem> &b);
 std::string knownSessionsPath();
 std::string profilePath();
+
+// A transcript item as a message: made again only when the item's revision
+// (TranscriptParser::revision) moves on — 0 = to be made again.
+struct Backend::Rendered {
+    uint64_t       rev       = 0;
+    uint64_t       contentFp = 0; // contentFingerprint(msg)
+    model::Message msg;
+};
+
+// One message a list shows, as a recipe: a rendered message (src[index]) or
+// one of its own, with where it sits and what it gathered on top. Taken
+// apart so a sync tells what changed by `fp` alone and copies only that
+// (make). Valid until the next render of its source.
+struct Backend::Visible {
+    model::Ts                             ts = 0, threadTs = 0, latestReply = 0;
+    uint32_t                              replyCount = 0;
+    model::UserRef                        user       = model::kNoUser;
+    bool                                  progress   = false; // subtype kProgressSubtype
+    const std::vector<Rendered>          *src        = nullptr;
+    size_t                                index      = 0;
+    std::shared_ptr<const model::Message> own;
+    const std::vector<model::Reaction>   *reactions = nullptr;
+    uint64_t                              contentFp = 0;
+    uint64_t                              fp        = 0; // fingerprint(make()): applyReactions
+
+    const model::Message &base() const { return own ? *own : (*src)[index].msg; }
+};
+
+// A subagent's own transcript, read as it grows (like a session's, tail):
+// its items, and its thread's messages as rendered last.
+struct Backend::SubagentFeed {
+    TranscriptParser      parser;
+    int64_t               offset     = 0;
+    int                   zenCount   = 0; // items but the tool-call cards
+    uint64_t              counted    = 0; // the parser revision zenCount is of
+    model::UserRef        renderedMe = model::kNoUser, renderedAuthor = model::kNoUser;
+    std::vector<Rendered> rendered; // parallel to parser.items()
+};
 
 struct Backend::Tracked {
     std::string        convId;
@@ -87,7 +144,7 @@ struct Backend::Tracked {
     model::UserRef renderedAuthor = model::kNoUser; // who `rendered` has Claude's messages from
     // Rendered messages, parallel to parser.items(): re-rendered only when the
     // item changed, so a growing transcript doesn't re-parse all its markdown.
-    std::vector<std::pair<TranscriptItem, model::Message>> rendered;
+    std::vector<Rendered> rendered;
     // What was last taken as shown (all of it, whether the Store has its
     // history or not): by ts, whose and what kind — new ones are news (its
     // own prompt landing), and the unread counts are made of them.

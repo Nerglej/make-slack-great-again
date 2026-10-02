@@ -147,6 +147,23 @@ TEST("outputs: an answer's files are copied, and only the ones made in its turn"
     CHECK_FALSE(file::exists(outputsDir(other.convId)));
     file::remove(d + "/new.png");
     CHECK(outputFiles(text, ctx).empty()); // gone, and not there to copy again
+    // …and that is written down: the answer isn't looked through again,
+    // even once a file it names turns up.
+    std::vector<model::File> cached;
+    CHECK(cachedOutputs(ctx, &cached));
+    CHECK(cached.empty());
+    writeFile(d + "/new.png", pngBytes(30, 20));
+    CHECK(outputFiles(text, ctx).empty());
+
+    // Not looked for yet: nothing cached until makeOutputs ran.
+    OutputContext fresh = ctx;
+    fresh.messageKey    = "u9";
+    CHECK_FALSE(cachedOutputs(fresh, &cached));
+    makeOutputs(text, fresh);
+    CHECK(cachedOutputs(fresh, &cached));
+    REQUIRE(cached.size() == 1);
+    CHECK_STR(cached[0].name, "new.png");
+    CHECK(str::startsWith(cached[0].path, outputsFolder(fresh) + "/"));
 }
 
 TEST("outputs: a picture this build can't decode is a file card") {

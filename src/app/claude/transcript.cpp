@@ -252,11 +252,24 @@ void TranscriptParser::feed(std::string_view bytes) {
         if (nl == std::string_view::npos)
             break;
         const std::string_view line = trim(all.substr(start, nl - start));
-        if (!line.empty())
+        if (!line.empty()) {
             handleLine(line);
+            while (_revs.size() < _items.size())
+                _revs.push_back(++_rev);
+        }
         start = nl + 1;
     }
     _partial.erase(0, start);
+}
+
+uint64_t TranscriptParser::revision(size_t index) const {
+    return index < _revs.size() ? _revs[index] : 0;
+}
+
+void TranscriptParser::touch(size_t index) {
+    // An item added by this line gets its revision when the line is done.
+    if (index < _revs.size())
+        _revs[index] = ++_rev;
 }
 
 void TranscriptParser::reserveTs(int64_t micros) {
@@ -285,7 +298,8 @@ void TranscriptParser::resolvePendingText(TranscriptItem::State state) {
     if (_pendingText < 0)
         return;
     _items[size_t(_pendingText)].state = state;
-    _pendingText                       = -1;
+    touch(size_t(_pendingText));
+    _pendingText = -1;
 }
 
 void TranscriptParser::endTurn() {
@@ -512,8 +526,10 @@ void TranscriptParser::handleUser(
         // after the terminal drawing: that reads far better here.
         const std::string_view md = trim(content.str());
         if (_commandOutput >= 0 && _commandOutput == int(_items.size()) - 1 && !md.empty() &&
-            md[0] != '<')
+            md[0] != '<') {
             _items[size_t(_commandOutput)].text = md;
+            touch(size_t(_commandOutput));
+        }
         _commandOutput = -1;
         return;
     }
@@ -549,6 +565,7 @@ void TranscriptParser::handleUser(
                     if (call == it->tools.end())
                         continue;
                     call->error = failed;
+                    touch(size_t(std::distance(it, _items.rend()) - 1));
                     if (it->kind == TranscriptItem::Kind::Subagent && !agentId.empty()) {
                         it->agentId = agentId;
                         // A foreground subagent's result comes when it's
@@ -696,6 +713,7 @@ void TranscriptParser::handleAssistant(
                 _openToolGroup = int(_items.size()) - 1;
             }
             _items[size_t(_openToolGroup)].tools.push_back(std::move(call));
+            touch(size_t(_openToolGroup));
         }
         // thinking, redacted_thinking, …: not shown
     }

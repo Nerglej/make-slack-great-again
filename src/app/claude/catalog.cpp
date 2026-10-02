@@ -2,6 +2,7 @@
 
 #include "app/claude/outputs.h"
 #include "app/claude/roles.h"
+#include "app/claude/roster.h"
 #include "base/file.h"
 #include "base/json.h"
 #include "base/str.h"
@@ -144,13 +145,10 @@ bool readCatalogEntry(const std::string &transcriptPath, CatalogEntry &e) {
             !file::readRange(transcriptPath, size - kEndBytes, size_t(kEndBytes), &tail))
             return false;
     }
-    const std::string abs  = cleanPath(file::absolute(transcriptPath));
-    std::string_view  base = file::baseName(abs);
-    if (const size_t dot = base.rfind('.'); dot != std::string_view::npos && dot > 0)
-        base = base.substr(0, dot);
-    e.sessionId      = base;
-    e.transcriptPath = abs;
-    e.modifiedMs     = modifiedMicros(abs) / 1000;
+    const std::string abs = cleanPath(file::absolute(transcriptPath));
+    e.sessionId           = Paths::transcriptSessionId(abs);
+    e.transcriptPath      = abs;
+    e.modifiedMs          = modifiedMicros(abs) / 1000;
     return catalogEntryFrom(head, tail, e);
 }
 

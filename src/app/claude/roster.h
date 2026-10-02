@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace claude {
@@ -31,6 +32,11 @@ struct Paths {
     // A session's subagent transcript: <transcript dir>/<sessionId>/subagents/agent-<id>.jsonl.
     static std::string
     subagentTranscript(std::string_view transcriptPath, std::string_view agentId);
+    // …the folder they're in: <transcript dir>/<sessionId>/subagents.
+    static std::string      subagentsDir(std::string_view transcriptPath);
+    // The session id a transcript is named after: its file name without the
+    // last extension.
+    static std::string_view transcriptSessionId(std::string_view transcriptPath);
 };
 
 struct SessionInfo {
@@ -122,9 +128,24 @@ strandedWorker(const Paths &paths, std::string_view sessionId, std::string_view 
 // SIGTERM, or SIGKILL when `force`. Not on Windows.
 void signalProcess(int64_t pid, bool force);
 
+// Each job's state.json as parsed when it last changed (size and mtime), so a
+// scan that runs every few seconds reads only the jobs that did.
+struct JobStateCache {
+    struct Entry {
+        int64_t                    size = -1, mtimeMicros = -1;
+        std::optional<SessionInfo> job; // parseBackgroundJob's
+    };
+    std::unordered_map<std::string, Entry> byJob; // by job folder name
+};
+
 // Every session currently listed by the two directories. Interactive sessions
-// whose process is gone are left out (their pid file is stale).
-std::vector<SessionInfo> scanSessions(const Paths &paths);
+// whose process is gone are left out (their pid file is stale). `live`: also
+// every live process's own entry (sessions/<pid>.json, interactive sessions
+// and background workers alike). `jobs`: state.json files read before, kept
+// (and pruned) there.
+std::vector<SessionInfo> scanSessions(
+    const Paths &paths, std::vector<SessionInfo> *live = nullptr, JobStateCache *jobs = nullptr
+);
 
 // Whether Claude Code trusts `dir` (it or a parent folder was accepted in its
 // trust prompt) — background sessions refuse untrusted folders. Reads the

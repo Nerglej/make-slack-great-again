@@ -575,7 +575,7 @@ model::Message toMessage(const TranscriptItem &item, model::UserRef me, model::U
     case TranscriptItem::Kind::PeerMessage: {
         // Said to the session, not by the user: shown as what it is. A report
         // from a subagent with a thread here is a pointer to that thread
-        // instead (Backend::visibleMessages).
+        // instead (Backend::visibleList).
         m.user             = claude;
         m.extras().subtype = kProgressSubtype; // what the session says next notifies
         std::string header;

@@ -159,9 +159,21 @@ public:
     void setReminder(model::ConvRef, model::Ts, int64_t) override {}
     void userTyping(model::ConvRef, model::Ts) override {}
 
+    // What the reading side did so far, for tests and profiling: transcript
+    // bytes read on the UI thread (sessions' and subagents'; not the first
+    // scan's, read on a worker), items rendered into messages, and messages
+    // copied out of the render cache (into the Store or a page).
+    struct Counters {
+        uint64_t bytesRead = 0, renders = 0, copies = 0;
+    };
+    const Counters &counters() const { return _counters; }
+
     // Each part keeps its private helpers on this struct (one per session).
     struct Tracked;
     struct Cleanup;
+    struct Rendered;
+    struct Visible;
+    struct SubagentFeed;
 
 private:
     // ── backend.cpp ─────────────────────────────────────────────────────────
@@ -175,17 +187,23 @@ private:
     const Tracked *findRef(model::ConvRef conv) const;
     std::string    convIdFor(const std::string &sessionId) const;
     void           tail(Tracked &t);
+    // The transcript of a session that has none yet, looked for at most once
+    // per refresh while it isn't there ("" = none).
+    std::string    lookForTranscript(const std::string &sessionId);
+    void           firstScan(Done done); // connect(): transcripts parsed on a worker
     void           refresh();
     void           refreshScan(); // refresh()'s body
     void           scheduleRefresh();
     void           watchTick();
-    void           pumpTyping();
+    // `looked`: findSubagentRuns has just run (the refresh's own look).
+    void           pumpTyping(bool looked = false);
     void           announceRoles();
     // Puts what the session shows into the Store: its messages (where its
     // history was loaded), its conversation and its user.
     void           sync(Tracked &t);
     void           syncMeta(Tracked &t);
     void           syncThreads(Tracked &t);
+    void           syncList(model::ConvRef conv, model::Ts root, const std::vector<Visible> &want);
     void           syncUsers();
     // Puts a user into the Store and tells its observers (Store::addUser
     // alone fires nothing: a dot or a name would change unseen). Inside a
@@ -226,41 +244,58 @@ private:
     const Tracked                  *forkFor(const std::string &parentConv, model::Ts root) const;
     std::string                     subagentOf(const Tracked &t, model::Ts root) const;
 
-    // What a session shows, rendered.
-    const model::Message       &renderedAt(Tracked &t, size_t i);
-    std::vector<model::Message> visibleMessages(Tracked &t);
-    std::vector<model::Message> threadMessages(Tracked &fork);
+    // What a session shows, rendered (each message as a Visible recipe:
+    // make() builds it, `fp` tells it changed).
+    const Rendered      &renderedAt(Tracked &t, size_t i);
+    std::vector<Visible> visibleList(Tracked &t);
+    std::vector<Visible> threadList(Tracked &fork);
+    // …a subagent thread: the replies `shown` (visibleList(t)) relays to it,
+    // then the subagent's own transcript.
+    std::vector<Visible>
+                   subagentList(Tracked &t, model::Ts root, const std::vector<Visible> &shown);
+    model::Message make(const Visible &v) const;
+    // A Visible over `m` (its own), or over a rendered message.
+    static Visible ownVisible(model::Message m);
+    static Visible renderedVisible(const std::vector<Rendered> &src, size_t index);
     // A terminal session stopped at its prompt for the user.
-    bool                        terminalWaits(const Tracked &t) const;
+    bool           terminalWaits(const Tracked &t) const;
     // The ts of the session's "Waiting for you…" message, 0 when it shows none.
-    model::Ts                   waitingTs(const Tracked &t, model::Ts lastTs) const;
-    model::Message              waitingMessage(const Tracked &t, model::Ts ts);
+    model::Ts      waitingTs(const Tracked &t, model::Ts lastTs) const;
+    model::Message waitingMessage(const Tracked &t, model::Ts ts);
     // The message at ts in a list the Store doesn't hold, built for its
     // notification alone (no output files); false when nothing shows there.
-    bool                        newsAt(Tracked &t, bool thread, model::Ts ts, model::Message *out);
+    bool           newsAt(Tracked &t, bool thread, model::Ts ts, model::Message *out);
     // A message as sync() takes it: whose and what kind, its thread.
     struct Seen {
         bool      mine = false, progress = false;
         model::Ts thread = 0;
     };
-    // What visibleMessages / threadMessages show, without rendering any of
+    // What visibleList / threadList show, without rendering any of
     // it — for the lists the Store doesn't hold (sync).
-    std::map<model::Ts, Seen>   seenOf(Tracked &t, bool thread);
-    std::vector<model::Message> subagentThread(Tracked &t, model::Ts root);
-    void
-    appendOutgoing(const Tracked &t, std::vector<model::Message> &out, model::Ts threadRoot) const;
+    std::map<model::Ts, Seen> seenOf(Tracked &t, bool thread);
+    void appendOutgoing(const Tracked &t, std::vector<Visible> &out, model::Ts threadRoot) const;
     bool isOutgoingCopy(const Tracked &t, model::Ts ts) const;
+    // An answer's output files (outputs.h): the copies made before, else
+    // made on a worker — the answer is rendered again once they are.
     void attachOutputs(
         model::Message                    &m,
         const std::vector<TranscriptItem> &items,
         size_t                             i,
         const std::string                 &convId,
         const std::string                 &cwd,
-        const std::string                 &keyPrefix = {}
-    ) const;
-    void applyReactions(const std::string &convId, std::vector<model::Message> &msgs) const;
-    struct SubagentCount;
-    const SubagentCount &subagentStats(const Tracked &t, const std::string &agentId) const;
+        const std::string                 &agentId = {}
+    );
+    void outputsMade(const std::string &convId, const std::string &agentId, const std::string &key);
+    // Reactions on, and each message's fingerprint taken (Visible::fp).
+    void applyReactions(const std::string &convId, std::vector<Visible> &list) const;
+    // A subagent's transcript, read up to its end (only what was appended).
+    SubagentFeed &subagentFeed(const Tracked &t, const std::string &agentId) const;
+    // What msga keeps of a session it no longer tracks: its subagents'
+    // transcripts, the answers known to have no output files.
+    void          forgetCaches(const Tracked &t);
+    // The background subagents running now (pumpTyping, roleSubagentRunning):
+    // looked for once per tick.
+    void          findSubagentRuns();
     int subagentReplyCount(const Tracked &t, const std::string &agentId, model::Ts *latest) const;
     // When the subagent's run under way began (epoch ms); 0 = it isn't running.
     int64_t subagentRunSinceMs(const Tracked &t, const std::string &agentId) const;
@@ -371,15 +406,39 @@ private:
     std::string                            _myName;       // "" = the login name
     std::string                            _myAvatarPath; // a copy in msga's data; "" = initials
     std::string                            _lastConv;     // the conversation open last
-    // Subagent transcripts are only re-parsed when they grow.
-    struct SubagentCount {
-        int64_t              size     = -1;
-        int                  count    = 0;
-        int                  zenCount = 0; // without the tool-call cards
-        model::Ts            latest   = 0;
-        std::vector<int64_t> activity; // every record's epoch micros (TranscriptParser::activity)
+    mutable std::unordered_map<std::string, std::unique_ptr<SubagentFeed>>
+                                    _subagents; // by transcript path
+    // Answers whose output files are being copied (by their copies' folder),
+    // and those known to have none.
+    std::unordered_set<std::string> _outputsPending, _noOutputs;
+    // The background subagents found running (findSubagentRuns): who thinks
+    // where since when, and the roles they run as.
+    struct SubagentRun {
+        model::ConvRef ref    = model::kNoConv;
+        model::UserRef author = model::kNoUser;
+        model::Ts      root   = 0;
+        int64_t        since  = 0;
     };
-    mutable std::unordered_map<std::string, SubagentCount> _subagentCounts; // by transcript path
+    std::vector<SubagentRun>        _subagentRuns;
+    std::unordered_set<std::string> _subagentRoles;
+    uint64_t                        _savedHash = 0; // of known-sessions.json as last written
+    // Each job's state.json as last read (scanSessions).
+    JobStateCache                   _jobStates;
+    // Sessions whose transcript wasn't found, by session id → the refresh
+    // that looked (_scanGen): not looked for again in the same one.
+    std::unordered_map<std::string, uint64_t> _transcriptMiss;
+    uint64_t                                  _scanGen = 0;
+    // The first scan's transcripts, parsed on a worker (connect): taken by
+    // tail() instead of reading them again. By transcript path.
+    struct Preparsed {
+        TranscriptParser parser;
+        int64_t          offset = 0;
+    };
+    std::unordered_map<std::string, std::shared_ptr<Preparsed>> _preparsed;
+    std::unordered_map<std::string, std::string> _preFound; // session id → transcript
+    bool                                         _connecting = false;
+    mutable Counters                             _counters;
+    std::vector<Done> _connectDone; // connect()s waiting for the first scan
     struct CommandList {
         std::vector<SlashCommand> commands;
         int64_t                   fetchedMs = 0;

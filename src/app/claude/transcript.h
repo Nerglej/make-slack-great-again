@@ -90,6 +90,14 @@ public:
     void feed(std::string_view bytes);
 
     const std::vector<TranscriptItem> &items() const { return _items; }
+    // A revision per item, parallel to items(): it changes whenever that item
+    // does (added, or changed by a later record: a tool's result, a pending
+    // text resolved, a call joining its group), never otherwise — what was
+    // made of an item is still good while its revision is the same. Unique
+    // within the parser, never 0.
+    uint64_t                           revision(size_t index) const;
+    // The newest revision handed out: unchanged = no item changed.
+    uint64_t                           revision() const { return _rev; }
 
     // True while the last turn has not ended (no turn_duration record after the
     // latest prompt) — the session is, or was when it stopped, mid-turn.
@@ -133,6 +141,7 @@ public:
 
 private:
     void    handleLine(std::string_view line);
+    void    touch(size_t index); // _items[index] changed (see revision)
     void    handleUser(const json::Value &o, const json::Value &content, int64_t micros);
     void    handleAssistant(const json::Value &o, const json::Value &message, int64_t micros);
     int64_t nextTs(int64_t micros);
@@ -158,6 +167,8 @@ private:
 
     std::string                              _partial;
     std::vector<TranscriptItem>              _items;
+    std::vector<uint64_t>                    _revs; // parallel to _items, caught up after each line
+    uint64_t                                 _rev          = 0;
     int64_t                                  _lastMicros   = 0;
     int64_t                                  _lastActivity = 0;
     std::vector<int64_t>                     _activity;

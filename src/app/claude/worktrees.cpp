@@ -274,12 +274,7 @@ std::vector<WorktreeRef> worktreesOfTranscript(const std::string &transcriptPath
             addWorktree(out, refFrom(o["worktreeSession"], "originalCwd"));
         }
     }
-    std::string_view base = file::baseName(transcriptPath);
-    if (const size_t dot = base.rfind('.'); dot != std::string_view::npos && dot > 0)
-        base = base.substr(0, dot);
-    const std::string subagents = str::concat(
-        {file::dirName(cleanPath(file::absolute(transcriptPath))), "/", base, "/subagents"}
-    );
+    const std::string subagents = Paths::subagentsDir(cleanPath(file::absolute(transcriptPath)));
     std::vector<file::DirEntry> metas;
     file::listDir(subagents, &metas);
     std::sort(metas.begin(), metas.end(), [](const file::DirEntry &a, const file::DirEntry &b) {
@@ -313,20 +308,14 @@ bool pathWithin(std::string_view path, std::string_view dir) {
 }
 
 bool worktreeInUse(const Paths &paths, std::string_view path) {
-    const std::string           dir = paths.sessionsDir();
-    std::vector<file::DirEntry> entries;
-    file::listDir(dir, &entries);
-    for (const file::DirEntry &f : entries) {
-        if (f.isDir || !str::endsWith(f.name, ".json") || f.size > 256 * 1024)
-            continue;
-        std::string text;
-        if (!file::readAll(file::join(dir, f.name), &text))
-            continue;
-        const auto s = parseInteractiveSession(text);
-        if (s && isProcessAlive(s->pid) && pathWithin(s->cwd, path))
+    // One scan: every live process's own entry (a session, a background
+    // worker) by its folder, and the sessions it makes up by theirs.
+    std::vector<SessionInfo>       live;
+    const std::vector<SessionInfo> sessions = scanSessions(paths, &live);
+    for (const SessionInfo &s : live)
+        if (pathWithin(s.cwd, path))
             return true;
-    }
-    for (const SessionInfo &s : scanSessions(paths))
+    for (const SessionInfo &s : sessions)
         if (s.running && (pathWithin(s.cwd, path) || pathWithin(s.worktreePath, path)))
             return true;
     return false;

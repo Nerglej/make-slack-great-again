@@ -263,6 +263,60 @@ TEST("transcript: feeding byte by byte yields the same items as one piece") {
     CHECK(pieces.items().size() == 4);
 }
 
+TEST("transcript: an item's revision moves on only when that item changes") {
+    TranscriptParser p;
+    CHECK(p.revision() == 0);
+    p.feed(
+        prompt("look around", "2026-09-25T10:00:00.000Z") +
+        assistantText("Let me look.", "2026-09-25T10:00:01.000Z") +
+        toolUse("t1", "Bash", R"({"command":"ls"})", "2026-09-25T10:00:02.000Z")
+    );
+    REQUIRE(p.items().size() == 3);
+    const uint64_t prompt0 = p.revision(0), text1 = p.revision(1), group2 = p.revision(2);
+    CHECK(prompt0 != 0);
+    CHECK(text1 != 0);
+    CHECK(group2 != 0);
+    CHECK(prompt0 != text1);
+    CHECK(text1 != group2);
+    CHECK(p.revision(3) == 0); // no such item
+    const uint64_t before = p.revision();
+
+    // A record about nothing shown changes no item.
+    p.feed(
+        R"({"type":"ai-title","aiTitle":"Looking","timestamp":"2026-09-25T10:00:02.500Z"})"
+        "\n"
+    );
+    CHECK(p.revision() == before);
+
+    // A call joining the group and a result arriving change the group alone.
+    p.feed(toolUse("t2", "Read", R"({"file_path":"/x/a.cpp"})", "2026-09-25T10:00:03.000Z"));
+    CHECK(p.revision(2) != group2);
+    const uint64_t grown = p.revision(2);
+    p.feed(toolResult("t1", "2026-09-25T10:00:04.000Z", true));
+    CHECK(p.revision(2) != grown);
+    CHECK(p.revision(0) == prompt0);
+    CHECK(p.revision(1) == text1);
+
+    // The pending answer resolved at the turn's end: that item, nothing older.
+    p.feed(assistantText("Done.", "2026-09-25T10:00:05.000Z"));
+    REQUIRE(p.items().size() == 4);
+    const uint64_t answer = p.revision(3), group = p.revision(2);
+    p.feed(turnEnd("2026-09-25T10:00:06.000Z"));
+    CHECK(p.items()[3].state == State::Final);
+    CHECK(p.revision(3) != answer);
+    CHECK(p.revision(2) == group);
+    CHECK(p.revision(0) == prompt0);
+
+    // Fed in pieces, every item has a revision all the same.
+    TranscriptParser  pieces;
+    const std::string all = sampleTurn();
+    for (size_t i = 0; i < all.size(); i += 5)
+        pieces.feed(std::string_view(all).substr(i, 5));
+    REQUIRE(pieces.items().size() == 4);
+    for (size_t i = 0; i < pieces.items().size(); ++i)
+        CHECK(pieces.revision(i) != 0);
+}
+
 TEST("transcript: system text recorded as user turns is hidden") {
     TranscriptParser p;
     p.feed(

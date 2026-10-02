@@ -205,6 +205,58 @@ TEST("roster: a background job's suggested reply is offered only while it asks")
     CHECK(choosing->suggestedReply.empty());
 }
 
+TEST("roster: a scan reads only the job states that changed since the last") {
+    Paths paths;
+    paths.home              = tempDir();
+    const std::string state = paths.jobsDir() + "/aaaa1111/state.json";
+    REQUIRE(file::writeAtomic(state, R"({"state":"working","sessionId":"aaaa1111-x","cwd":"/a"})"));
+    REQUIRE(
+        file::writeAtomic(
+            paths.jobsDir() + "/bbbb2222/state.json", R"({"state":"done","sessionId":"bbbb2222-y"})"
+        )
+    );
+    const int64_t me = int64_t(getpid()); // alive
+    REQUIRE(
+        file::writeAtomic(
+            paths.sessionsDir() + "/7.json",
+            str::concat(
+                {R"({"pid":)",
+                 str::number(me),
+                 R"(,"sessionId":"live-1","cwd":"/src/live","kind":"interactive","status":"busy"})"}
+            )
+        )
+    );
+    const auto statusOf = [](const std::vector<SessionInfo> &all, std::string_view id) {
+        for (const auto &s : all)
+            if (s.sessionId == id)
+                return s.status;
+        return std::string("(missing)");
+    };
+
+    JobStateCache            cache;
+    std::vector<SessionInfo> live;
+    const auto               first = scanSessions(paths, &live, &cache);
+    CHECK(first == scanSessions(paths)); // the same as an uncached scan
+    CHECK(cache.byJob.size() == 2);
+    REQUIRE(live.size() == 1); // every live process's own entry
+    CHECK_STR(live[0].cwd, "/src/live");
+    CHECK_STR(statusOf(first, "aaaa1111-x"), "working");
+
+    // Unchanged: the parse kept is taken, the file isn't read. (Shown here by
+    // a cached entry edited behind the scan's back: it's what comes out.)
+    cache.byJob["aaaa1111"].job->status = "kept";
+    CHECK_STR(statusOf(scanSessions(paths, nullptr, &cache), "aaaa1111-x"), "kept");
+
+    // Rewritten: read again. Gone: dropped from the cache too.
+    REQUIRE(file::writeAtomic(state, R"({"state":"blocked","sessionId":"aaaa1111-x","cwd":"/a"})"));
+    file::remove(paths.jobsDir() + "/bbbb2222/state.json");
+    file::remove(paths.jobsDir() + "/bbbb2222");
+    const auto again = scanSessions(paths, nullptr, &cache);
+    CHECK_STR(statusOf(again, "aaaa1111-x"), "blocked");
+    CHECK_STR(statusOf(again, "bbbb2222-y"), "(missing)");
+    CHECK(cache.byJob.size() == 1);
+}
+
 TEST("roster: transcripts are found by session id") {
     Paths paths;
     paths.home = tempDir();
@@ -216,6 +268,9 @@ TEST("roster: transcripts are found by session id") {
         Paths::subagentTranscript("/p/-src-app/S1.jsonl", "a42"),
         "/p/-src-app/S1/subagents/agent-a42.jsonl"
     );
+    CHECK_STR(Paths::subagentsDir("/p/-src-app/S1.jsonl"), "/p/-src-app/S1/subagents");
+    CHECK_STR(std::string(Paths::transcriptSessionId("/p/-src-app/S1.jsonl")), "S1");
+    CHECK_STR(std::string(Paths::transcriptSessionId("/p/x/.hidden")), ".hidden");
 }
 
 TEST("roster: process liveness and leftovers") {

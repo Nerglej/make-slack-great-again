@@ -202,8 +202,8 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
         sync(*target); // what's there already isn't news
     // msga's copy of it, from now on: after everything shown, uniquely timed.
     Ts micros = nowMs() * 1000;
-    for (const auto &m : asThread(*target) ? threadMessages(*target) : visibleMessages(*target))
-        micros = std::max(micros, m.ts + 1);
+    for (const auto &v : asThread(*target) ? threadList(*target) : visibleList(*target))
+        micros = std::max(micros, v.ts + 1);
     // How to spawn the teammates it mentions, which the session may not know
     // as subagent types; the chat shows the message without it. Those it
     // doesn't offer (a session started without --agents: in a terminal, or

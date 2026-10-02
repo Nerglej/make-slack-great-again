@@ -37,7 +37,8 @@ constexpr int64_t kMaxFileBytes = 50LL * 1024 * 1024;
 // stamped once written).
 constexpr int64_t kSlackMicros  = 2'000'000;
 
-constexpr std::string_view kIndex = "index.json";
+constexpr std::string_view kIndex         = "index.json";
+constexpr size_t           kMaxIndexBytes = 1024 * 1024; // ten entries are a few hundred bytes
 
 // The kinds shown as attachments, by extension.
 struct Kind {
@@ -326,6 +327,31 @@ int64_t modifiedMicros(std::string_view path) {
 #endif
 }
 
+bool fileStat(std::string_view path, int64_t *size, int64_t *mtimeMicros) {
+    *size        = -1;
+    *mtimeMicros = -1;
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(wide(path).c_str(), GetFileExInfoStandard, &d))
+        return false;
+    const uint64_t ft =
+        (uint64_t(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime;
+    *mtimeMicros = int64_t(ft / 10) - 11644473600LL * 1000000;
+    *size        = int64_t((uint64_t(d.nFileSizeHigh) << 32) | d.nFileSizeLow);
+#else
+    struct stat st;
+    if (::stat(std::string(path).c_str(), &st) != 0)
+        return false;
+    *size = int64_t(st.st_size);
+#ifdef __APPLE__
+    *mtimeMicros = int64_t(st.st_mtimespec.tv_sec) * 1000000 + st.st_mtimespec.tv_nsec / 1000;
+#else
+    *mtimeMicros = int64_t(st.st_mtim.tv_sec) * 1000000 + st.st_mtim.tv_nsec / 1000;
+#endif
+#endif
+    return true;
+}
+
 std::string simplified(std::string_view s) {
     std::string out;
     bool        gap = false;
@@ -429,52 +455,62 @@ std::vector<std::string> mentionedFiles(std::string_view text, std::string_view 
     return out;
 }
 
-std::vector<model::File> outputFiles(std::string_view text, const OutputContext &ctx) {
-    if (ctx.convId.empty() || ctx.messageKey.empty() || dirs().cache.empty())
-        return {};
-    const std::string dir       = messageDir(ctx);
-    const std::string idPrefix  = str::concat({"out-", ctx.messageKey, "-"});
-    const std::string indexPath = file::join(dir, kIndex);
+std::string outputsFolder(const OutputContext &ctx) {
+    return messageDir(ctx);
+}
 
-    // Copied before: the answer keeps what it had then.
-    std::string indexJson;
-    if (!file::readAll(indexPath, &indexJson)) {
-        std::vector<std::string> made;
-        for (const std::string &path : mentionedFiles(text, ctx.cwd)) {
-            const int64_t mtime = modifiedMicros(path);
-            if (mtime < ctx.turnStart - kSlackMicros || mtime > ctx.date + kSlackMicros)
-                continue; // made before this turn, or changed since the answer
-            if (file::size(path) > kMaxFileBytes)
-                continue;
-            made.push_back(path);
-            if (int(made.size()) == kMaxFiles)
-                break;
-        }
-        if (made.empty())
-            return {};
-        file::makeDirs(dir);
-        json::Writer w;
-        w.beginArray();
-        for (size_t i = 0; i < made.size(); ++i)
-            copyInto(
-                made[i],
-                dir,
-                str::concat({str::number(int64_t(i)), "-", file::baseName(made[i])}),
-                w
-            );
-        w.endArray();
-        indexJson = w.take();
-        file::writeAtomic(indexPath, indexJson);
-    }
+bool cachedOutputs(const OutputContext &ctx, std::vector<model::File> *files) {
+    files->clear();
+    if (ctx.convId.empty() || ctx.messageKey.empty() || dirs().cache.empty())
+        return true; // nowhere to keep copies: none to make either
+    const std::string dir = messageDir(ctx);
+    std::string       indexJson;
+    if (!file::readRange(file::join(dir, kIndex), 0, kMaxIndexBytes, &indexJson))
+        return false;
     json::Document doc;
     if (!doc.parse(std::move(indexJson)))
-        return {};
-    std::vector<model::File> files;
-    int                      i = 0;
+        return true;
+    const std::string idPrefix = str::concat({"out-", ctx.messageKey, "-"});
+    int               i        = 0;
     for (json::Value e : doc.root()) {
         if (file::exists(file::join(dir, e["file"].str())))
-            files.push_back(fileFor(e, dir, idPrefix, i));
+            files->push_back(fileFor(e, dir, idPrefix, i));
         ++i;
+    }
+    return true;
+}
+
+void makeOutputs(std::string_view text, const OutputContext &ctx) {
+    if (ctx.convId.empty() || ctx.messageKey.empty() || dirs().cache.empty())
+        return;
+    const std::string        dir = messageDir(ctx);
+    std::vector<std::string> made;
+    for (const std::string &path : mentionedFiles(text, ctx.cwd)) {
+        const int64_t mtime = modifiedMicros(path);
+        if (mtime < ctx.turnStart - kSlackMicros || mtime > ctx.date + kSlackMicros)
+            continue; // made before this turn, or changed since the answer
+        if (file::size(path) > kMaxFileBytes)
+            continue;
+        made.push_back(path);
+        if (int(made.size()) == kMaxFiles)
+            break;
+    }
+    file::makeDirs(dir);
+    json::Writer w;
+    w.beginArray();
+    for (size_t i = 0; i < made.size(); ++i)
+        copyInto(
+            made[i], dir, str::concat({str::number(int64_t(i)), "-", file::baseName(made[i])}), w
+        );
+    w.endArray();
+    file::writeAtomic(file::join(dir, kIndex), w.take());
+}
+
+std::vector<model::File> outputFiles(std::string_view text, const OutputContext &ctx) {
+    std::vector<model::File> files;
+    if (!cachedOutputs(ctx, &files)) {
+        makeOutputs(text, ctx);
+        cachedOutputs(ctx, &files);
     }
     return files;
 }

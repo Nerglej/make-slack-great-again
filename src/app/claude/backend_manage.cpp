@@ -93,6 +93,7 @@ void Backend::hideSession(const std::string &convId, const std::shared_ptr<Clean
             );
     }
     clearOutputs(convId); // the copies of the files it made
+    forgetCaches(t);
     _reactions.erase(convId);
     if (t.ref != kNoConv) {
         for (auto s = _shown.begin(); s != _shown.end();)
@@ -124,11 +125,8 @@ namespace {
 bool transcriptHas(const std::string &path, std::string_view needle) {
     if (path.empty())
         return false;
-    std::vector<std::string> files{path};
-    std::string              base(path);
-    if (str::endsWith(base, ".jsonl"))
-        base.resize(base.size() - 6);
-    const std::string           subagents = base + "/subagents";
+    std::vector<std::string>    files{path};
+    const std::string           subagents = Paths::subagentsDir(path);
     std::vector<file::DirEntry> entries;
     if (file::listDir(subagents, &entries))
         for (const auto &e : entries)
@@ -801,14 +799,15 @@ void Backend::search(std::string query, std::function<void(std::vector<SearchHit
             const Tracked *owner  = thread ? find(t.forkOf) : &t;
             if (!owner || owner->ref == kNoConv)
                 continue;
-            for (const auto &m : thread ? threadMessages(t) : visibleMessages(t))
-                if (str::asciiLower(m.text).find(q) != std::string::npos) {
+            for (const auto &v : thread ? threadList(t) : visibleList(t))
+                if (const std::string &text = v.base().text;
+                    str::asciiLower(text).find(q) != std::string::npos) {
                     SearchHit h;
                     h.conv   = owner->ref;
-                    h.ts     = m.ts;
-                    h.thread = m.threadTs;
-                    h.text   = m.text;
-                    hits.emplace_back(m.ts, h);
+                    h.ts     = v.ts;
+                    h.thread = v.threadTs;
+                    h.text   = text;
+                    hits.emplace_back(v.ts, h);
                 }
         }
         std::sort(hits.begin(), hits.end(), [](const auto &a, const auto &b) {

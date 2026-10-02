@@ -1,5 +1,6 @@
 #include "app/claude/roster.h"
 
+#include "app/claude/outputs.h"
 #include "base/file.h"
 #include "base/json.h"
 #include "base/process.h"
@@ -108,14 +109,22 @@ std::string Paths::findTranscript(std::string_view sessionId) const {
     return {};
 }
 
-std::string Paths::subagentTranscript(std::string_view transcriptPath, std::string_view agentId) {
-    // <dir>/<base name without its last extension>/subagents/agent-<id>.jsonl
+std::string_view Paths::transcriptSessionId(std::string_view transcriptPath) {
     std::string_view base = file::baseName(transcriptPath);
     if (const size_t dot = base.rfind('.'); dot != std::string_view::npos && dot > 0)
         base = base.substr(0, dot);
+    return base;
+}
+
+std::string Paths::subagentsDir(std::string_view transcriptPath) {
+    // <dir>/<base name without its last extension>/subagents
     return str::concat(
-        {file::dirName(transcriptPath), "/", base, "/subagents/agent-", agentId, ".jsonl"}
+        {file::dirName(transcriptPath), "/", transcriptSessionId(transcriptPath), "/subagents"}
     );
+}
+
+std::string Paths::subagentTranscript(std::string_view transcriptPath, std::string_view agentId) {
+    return str::concat({subagentsDir(transcriptPath), "/agent-", agentId, ".jsonl"});
 }
 
 bool statusIsBusy(std::string_view s) {
@@ -404,7 +413,8 @@ void applyWorker(SessionInfo &job, const SessionInfo &worker) {
         job.name = worker.name;
 }
 
-std::vector<SessionInfo> scanSessions(const Paths &paths) {
+std::vector<SessionInfo>
+scanSessions(const Paths &paths, std::vector<SessionInfo> *live, JobStateCache *cache) {
     std::vector<SessionInfo>                     out;
     std::unordered_map<std::string, SessionInfo> workers;      // background workers, by session id
     std::unordered_map<std::string, SessionInfo> workersOfJob; // …and by job, when they name it
@@ -412,6 +422,8 @@ std::vector<SessionInfo> scanSessions(const Paths &paths) {
         auto s = parseInteractiveSession(readSmallFile(f));
         if (!s || !isProcessAlive(s->pid))
             continue;
+        if (live)
+            live->push_back(*s);
         if (s->kind == SessionInfo::Kind::Background) {
             if (!s->jobId.empty())
                 workersOfJob[s->jobId] = *s;
@@ -424,11 +436,26 @@ std::vector<SessionInfo> scanSessions(const Paths &paths) {
     const std::string           jobsDir = paths.jobsDir();
     std::vector<file::DirEntry> jobs;
     file::listDir(jobsDir, &jobs);
+    JobStateCache seen; // what the cache keeps: the jobs still there
     for (const auto &d : jobs) {
         if (!d.isDir)
             continue;
-        auto s =
-            parseBackgroundJob(readSmallFile(str::concat({jobsDir, "/", d.name, "/state.json"})));
+        const std::string          state = str::concat({jobsDir, "/", d.name, "/state.json"});
+        std::optional<SessionInfo> s;
+        if (cache) {
+            JobStateCache::Entry e;
+            fileStat(state, &e.size, &e.mtimeMicros);
+            const auto old = cache->byJob.find(d.name);
+            if (old != cache->byJob.end() && e.size >= 0 && old->second.size == e.size &&
+                old->second.mtimeMicros == e.mtimeMicros)
+                e.job = old->second.job;
+            else
+                e.job = parseBackgroundJob(readSmallFile(state));
+            s = e.job;
+            seen.byJob.emplace(d.name, std::move(e));
+        } else {
+            s = parseBackgroundJob(readSmallFile(state));
+        }
         if (!s)
             continue;
         // A session both listed as interactive and as a job (a job attached in a
@@ -448,6 +475,8 @@ std::vector<SessionInfo> scanSessions(const Paths &paths) {
         s->jobId = d.name; // the job itself, whatever session it now holds
         out.push_back(std::move(*s));
     }
+    if (cache)
+        *cache = std::move(seen);
     return out;
 }
 

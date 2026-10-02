@@ -7,6 +7,7 @@
 #include "app/claude/common.h"
 #include "app/claude/outputs.h"
 #include "app/claude/render.h"
+#include "app/model/jobs.h"
 #include "app/mrkdwn/mrkdwn.h"
 #include "base/file.h"
 #include "base/i18n.h"
@@ -121,30 +122,52 @@ bool needsLogin(const SessionInfo &s) {
     return str::startsWith(s.needs, "login required");
 }
 
+uint64_t fnv1a(uint64_t h, std::string_view bytes) {
+    for (unsigned char c : bytes)
+        h = (h ^ c) * 1099511628211ull;
+    return h;
+}
+
 namespace {
 uint64_t mix(uint64_t h, std::string_view s) {
-    for (unsigned char c : s)
-        h = (h ^ c) * 1099511628211ull;
-    return (h ^ 0xff) * 1099511628211ull;
+    return (fnv1a(h, s) ^ 0xff) * 1099511628211ull; // a field's end: "ab"+"c" ≠ "a"+"bc"
 }
 uint64_t mix(uint64_t h, int64_t v) {
     return mix(h, std::string_view(reinterpret_cast<const char *>(&v), sizeof v));
 }
 } // namespace
 
-uint64_t fingerprint(const Message &m) {
-    uint64_t h = 1469598103934665603ull;
-    h          = mix(h, m.ts);
-    h          = mix(h, int64_t(m.user));
-    h          = mix(h, m.threadTs);
-    h          = mix(h, m.text);
-    h          = mix(h, int64_t(m.replyCount));
-    h          = mix(h, m.latestReply);
-    h          = mix(h, int64_t(m.pending));
-    for (const auto &r : m.reactions) {
+uint64_t fingerprint(
+    uint64_t                            content,
+    Ts                                  ts,
+    Ts                                  threadTs,
+    uint32_t                            replyCount,
+    Ts                                  latestReply,
+    const std::vector<model::Reaction> &reactions
+) {
+    uint64_t h = content;
+    h          = mix(h, ts);
+    h          = mix(h, threadTs);
+    h          = mix(h, int64_t(replyCount));
+    h          = mix(h, latestReply);
+    for (const auto &r : reactions) {
         h = mix(h, r.name);
         h = mix(h, int64_t(r.count));
     }
+    return h;
+}
+
+uint64_t fingerprint(const Message &m) {
+    return fingerprint(
+        contentFingerprint(m), m.ts, m.threadTs, m.replyCount, m.latestReply, m.reactions
+    );
+}
+
+uint64_t contentFingerprint(const Message &m) {
+    uint64_t h = kFnvBasis;
+    h          = mix(h, int64_t(m.user));
+    h          = mix(h, m.text);
+    h          = mix(h, int64_t(m.pending));
     if (m.extra) {
         h = mix(h, m.extra->subtype);
         for (const auto &f : m.extra->files)
@@ -354,8 +377,15 @@ void Backend::saveKnown() {
     if (!_lastConv.empty())
         w.key("open").value(_lastConv);
     w.endObject();
-    if (!dirs().data.empty())
-        file::writeAtomic(knownSessionsPath(), w.str(), 0600);
+    if (dirs().data.empty())
+        return;
+    // Saved after every refresh: written (and synced to disk) only when it
+    // says something new.
+    const uint64_t h = fnv1a(kFnvBasis, w.str());
+    if (h == _savedHash)
+        return;
+    if (file::writeAtomic(knownSessionsPath(), w.str(), 0600))
+        _savedHash = h;
 }
 
 void Backend::scheduleSaveKnown() {
@@ -593,25 +623,41 @@ bool Backend::roleBusy(const std::string &role) const {
 
 // A subagent started as the teammate running in a live session — the same
 // one pumpTyping has thinking in its thread. A plain one ("claude",
-// "Explore") speaks as the Generalist, yet isn't one: it lights no dot.
+// "Explore") speaks as the Generalist, yet isn't one: it lights no dot. As
+// of the last look (findSubagentRuns, every refresh and typing tick).
 bool Backend::roleSubagentRunning(const std::string &role) const {
     if (role.empty() || role == kGeneralist)
         return false;
-    for (const auto &[id, tp] : _sessions) {
-        const Tracked &t = *tp;
+    return _subagentRoles.count(role) > 0;
+}
+
+// The one walk over every live session's subagents a tick makes: each one
+// running thinks in its thread (pumpTyping), and lights its teammate's dot
+// when started as one (roleSubagentRunning). Only a live worker runs one: a
+// killed session never sends the notification that it stopped.
+void Backend::findSubagentRuns() {
+    _subagentRuns.clear();
+    _subagentRoles.clear();
+    for (auto &[id, tp] : _sessions) {
+        Tracked &t = *tp;
         if (!t.info.running || t.stopping || asThread(t))
             continue;
+        tail(t); // the notification that it stopped lands in the session's transcript
+        const UserRef assistant = roleUser(roleOf(t));
         for (const auto &item : t.parser.items()) {
             if (item.kind != TranscriptItem::Kind::Subagent || item.agentId.empty())
                 continue;
-            const bool asRole = _team.find(item.agentType)
-                                    ? item.agentType == role
-                                    : _team.find(item.agentRole) && item.agentRole == role;
-            if (asRole && subagentRunSinceMs(t, item.agentId))
-                return true;
+            const int64_t since = subagentRunSinceMs(t, item.agentId);
+            if (!since)
+                continue;
+            if (_team.find(item.agentType))
+                _subagentRoles.insert(item.agentType);
+            else if (_team.find(item.agentRole))
+                _subagentRoles.insert(item.agentRole);
+            if (t.ref != kNoConv)
+                _subagentRuns.push_back({t.ref, subagentAuthor(item, assistant), item.ts, since});
         }
     }
-    return false;
 }
 
 // A teammate is yellow while none of its sessions works and one of them is
@@ -671,68 +717,114 @@ model::User Backend::teammateUser(const Role &r) const {
 
 // ── Transcripts ─────────────────────────────────────────────────────────────
 
+std::string Backend::lookForTranscript(const std::string &sessionId) {
+    if (const auto pre = _preFound.find(sessionId); pre != _preFound.end())
+        return pre->second; // the first scan found it on its worker
+    // Not written yet (a session nobody typed to): one look per refresh, not
+    // one per tail.
+    const auto miss = _transcriptMiss.find(sessionId);
+    if (miss != _transcriptMiss.end() && miss->second == _scanGen)
+        return {};
+    std::string found = _paths.findTranscript(sessionId);
+    if (found.empty())
+        _transcriptMiss[sessionId] = _scanGen;
+    else
+        _transcriptMiss.erase(sessionId);
+    return found;
+}
+
 void Backend::tail(Tracked &t) {
     if (t.info.sessionId.empty())
         return;
-    if (t.transcriptPath.empty() || !file::exists(t.transcriptPath)) {
-        const std::string found = _paths.findTranscript(t.info.sessionId);
+    int64_t size = t.transcriptPath.empty() ? -1 : sizeOf(t.transcriptPath);
+    if (size < 0) {
+        const std::string found = lookForTranscript(t.info.sessionId);
         if (found.empty())
             return;
         t.transcriptPath = found;
+        size             = sizeOf(t.transcriptPath);
+        if (size < 0)
+            return;
     }
-    const int64_t size = sizeOf(t.transcriptPath);
-    if (size < 0)
-        return;
     if (size < t.offset) {
         // Rewritten or truncated: start over.
         t.parser = {};
         t.offset = 0;
         t.rendered.clear();
     }
-    if (size == t.offset)
-        return;
-    std::string all;
-    if (!file::readAll(t.transcriptPath, &all) || int64_t(all.size()) <= t.offset)
-        return;
-    t.parser.feed(std::string_view(all).substr(size_t(t.offset)));
-    t.offset = int64_t(all.size());
+    if (t.offset == 0 && !_preparsed.empty()) {
+        // Parsed on the first scan's worker: only what came since is read.
+        if (const auto pre = _preparsed.find(t.transcriptPath); pre != _preparsed.end()) {
+            if (pre->second->offset <= size) {
+                t.parser = std::move(pre->second->parser);
+                t.offset = pre->second->offset;
+                t.rendered.clear();
+            }
+            _preparsed.erase(pre);
+        }
+    }
+    if (size > t.offset) {
+        // Only the bytes appended since the last look: a long session's
+        // transcript runs to tens of MB, and a streamed answer grows it
+        // several times a second.
+        std::string chunk;
+        if (file::readRange(t.transcriptPath, t.offset, size_t(size - t.offset), &chunk) &&
+            !chunk.empty()) {
+            t.parser.feed(chunk);
+            t.offset += int64_t(chunk.size());
+            _counters.bytesRead += chunk.size();
+        }
+    }
     // A role this machine doesn't know (another machine's teammate, a deleted
     // file) keeps the name its sessions give it.
     if (_team.noteFormer(t.parser.role(), t.parser.roleName()))
         putUser(teammateUser(_team.resolve(t.parser.role())));
 }
 
-const Backend::SubagentCount &
-Backend::subagentStats(const Tracked &t, const std::string &agentId) const {
+Backend::SubagentFeed &Backend::subagentFeed(const Tracked &t, const std::string &agentId) const {
     const std::string path = Paths::subagentTranscript(t.transcriptPath, agentId);
-    const int64_t     size = sizeOf(path);
-    auto             &c    = _subagentCounts[path];
-    if (c.size != size) {
-        c.size = size;
-        std::string bytes;
-        if (size >= 0 && file::readAll(path, &bytes)) {
-            TranscriptParser p;
-            p.feed(bytes);
-            c.count    = int(p.items().size());
-            c.zenCount = int(std::count_if(p.items().begin(), p.items().end(), [](const auto &i) {
-                return i.kind != TranscriptItem::Kind::ToolGroup;
-            }));
-            c.latest   = p.items().empty() ? 0 : p.items().back().ts;
-            c.activity = p.activity();
-        } else {
-            c.count    = 0;
-            c.zenCount = 0;
-            c.latest   = 0;
-            c.activity.clear();
+    auto             &slot = _subagents[path];
+    if (!slot)
+        slot = std::make_unique<SubagentFeed>();
+    SubagentFeed &f    = *slot;
+    const int64_t size = sizeOf(path);
+    if (size < f.offset)
+        f = SubagentFeed{}; // gone, rewritten or truncated: start over
+    if (size > f.offset) {
+        // Only what was appended since the last look, as tail().
+        std::string chunk;
+        if (file::readRange(path, f.offset, size_t(size - f.offset), &chunk) && !chunk.empty()) {
+            f.parser.feed(chunk);
+            f.offset += int64_t(chunk.size());
+            _counters.bytesRead += chunk.size();
         }
     }
-    return c;
+    if (f.counted != f.parser.revision()) {
+        f.counted = f.parser.revision();
+        f.zenCount =
+            int(std::count_if(f.parser.items().begin(), f.parser.items().end(), [](const auto &i) {
+                return i.kind != TranscriptItem::Kind::ToolGroup;
+            }));
+    }
+    return f;
+}
+
+void Backend::forgetCaches(const Tracked &t) {
+    if (!t.transcriptPath.empty()) {
+        const std::string dir = Paths::subagentsDir(t.transcriptPath) + "/";
+        std::erase_if(_subagents, [&](const auto &e) { return str::startsWith(e.first, dir); });
+    }
+    const std::string outputs = outputsDir(t.convId) + "/";
+    std::erase_if(_noOutputs, [&](const std::string &k) { return str::startsWith(k, outputs); });
+    if (!t.info.sessionId.empty())
+        _transcriptMiss.erase(t.info.sessionId);
 }
 
 int Backend::subagentReplyCount(const Tracked &t, const std::string &agentId, Ts *latest) const {
-    const SubagentCount &c = subagentStats(t, agentId);
-    *latest                = c.latest;
-    return _zen ? c.zenCount : c.count;
+    const SubagentFeed &f     = subagentFeed(t, agentId);
+    const auto         &items = f.parser.items();
+    *latest                   = items.empty() ? 0 : items.back().ts;
+    return _zen ? f.zenCount : int(items.size());
 }
 
 // A background subagent runs from its first record after it last stopped:
@@ -740,7 +832,7 @@ int Backend::subagentReplyCount(const Tracked &t, const std::string &agentId, Ts
 // and it may start again (a reply relayed to it, or on its own when work of
 // its own ends) — then its file grows past that notification.
 int64_t Backend::subagentRunSinceMs(const Tracked &t, const std::string &agentId) const {
-    const auto   &activity = subagentStats(t, agentId).activity;
+    const auto   &activity = subagentFeed(t, agentId).parser.activity();
     const int64_t stopped  = t.parser.taskStoppedAt(agentId);
     if (activity.empty() || activity.back() <= stopped)
         return 0;
@@ -750,20 +842,28 @@ int64_t Backend::subagentRunSinceMs(const Tracked &t, const std::string &agentId
     return *it / 1000;
 }
 
+namespace {
+// The key an answer's output files are kept under (OutputContext::messageKey).
+std::string outputKey(const TranscriptItem &item, const std::string &agentId) {
+    return (agentId.empty() ? std::string() : agentId + "-") +
+           (item.uuid.empty() ? model::formatTs(item.ts) : item.uuid);
+}
+} // namespace
+
 void Backend::attachOutputs(
     Message                           &m,
     const std::vector<TranscriptItem> &items,
     size_t                             i,
     const std::string                 &convId,
     const std::string                 &cwd,
-    const std::string                 &keyPrefix
-) const {
+    const std::string                 &agentId
+) {
     const TranscriptItem &item = items[i];
     if (item.kind != TranscriptItem::Kind::AssistantText)
         return;
     OutputContext ctx;
     ctx.convId     = convId;
-    ctx.messageKey = keyPrefix + (item.uuid.empty() ? model::formatTs(item.ts) : item.uuid);
+    ctx.messageKey = outputKey(item, agentId);
     ctx.cwd        = cwd;
     ctx.date       = item.date;
     ctx.turnStart  = items.front().date;
@@ -772,11 +872,69 @@ void Backend::attachOutputs(
             ctx.turnStart = items[j].date;
             break;
         }
-    for (model::File &f : outputFiles(item.text, ctx))
-        m.extras().files.push_back(std::move(f));
+    std::string folder = outputsFolder(ctx);
+    if (_noOutputs.count(folder))
+        return; // looked for before: it made none
+    std::vector<model::File> files;
+    if (cachedOutputs(ctx, &files)) {
+        if (files.empty())
+            _noOutputs.insert(std::move(folder));
+        for (model::File &f : files)
+            m.extras().files.push_back(std::move(f));
+        return;
+    }
+    // Not looked for yet: found and copied on a worker (up to 10 files of
+    // 50 MB each), then the answer is rendered again with them.
+    if (!_outputsPending.insert(folder).second)
+        return;
+    model::runInBackground(
+        _app,
+        [text = item.text, ctx] { makeOutputs(text, ctx); },
+        [this, alive = _alive, folder, ctx, agentId] {
+            if (!*alive)
+                return;
+            _outputsPending.erase(folder);
+            if (!find(ctx.convId)) {
+                clearOutputs(ctx.convId); // removed from msga meanwhile: its copies go too
+                return;
+            }
+            // None made (most answers): nothing to show, nothing to render again.
+            std::vector<model::File> made;
+            if (cachedOutputs(ctx, &made) && made.empty()) {
+                _noOutputs.insert(folder);
+                return;
+            }
+            outputsMade(ctx.convId, agentId, ctx.messageKey);
+        }
+    );
 }
 
-const Message &Backend::renderedAt(Tracked &t, size_t i) {
+// An answer's output files are copied: it's rendered again, with them, and
+// whatever list shows it takes the change.
+void Backend::outputsMade(
+    const std::string &convId, const std::string &agentId, const std::string &key
+) {
+    Tracked *t = find(convId);
+    if (!t)
+        return;
+    const auto stale = [&](const std::vector<TranscriptItem> &items,
+                           std::vector<Rendered>             &rendered) {
+        for (size_t i = 0; i < rendered.size() && i < items.size(); ++i)
+            if (items[i].kind == TranscriptItem::Kind::AssistantText &&
+                outputKey(items[i], agentId) == key)
+                rendered[i].rev = 0;
+    };
+    if (agentId.empty()) {
+        stale(t->parser.items(), t->rendered);
+        sync(*t);
+    } else {
+        SubagentFeed &f = subagentFeed(*t, agentId);
+        stale(f.parser.items(), f.rendered);
+        syncThreads(*t);
+    }
+}
+
+const Backend::Rendered &Backend::renderedAt(Tracked &t, size_t i) {
     const auto   &items  = t.parser.items();
     const UserRef author = roleUser(roleOf(t));
     if (author != t.renderedAuthor) {
@@ -789,17 +947,60 @@ const Message &Backend::renderedAt(Tracked &t, size_t i) {
     // carries the files it made.
     const UserRef me     = _store.me;
     const auto    render = [&](size_t j) {
-        Message m = toMessage(items[j], me, subagentAuthor(items[j], author));
-        attachOutputs(m, items, j, t.convId, t.info.cwd);
-        return m;
+        ++_counters.renders;
+        Rendered r;
+        r.msg = toMessage(items[j], me, subagentAuthor(items[j], author));
+        attachOutputs(r.msg, items, j, t.convId, t.info.cwd);
+        r.rev       = t.parser.revision(j);
+        r.contentFp = contentFingerprint(r.msg);
+        return r;
     };
-    while (t.rendered.size() <= i) {
-        const size_t j = t.rendered.size();
-        t.rendered.emplace_back(items[j], render(j));
-    }
-    if (!(t.rendered[i].first == items[i]))
-        t.rendered[i] = {items[i], render(i)};
-    return t.rendered[i].second;
+    while (t.rendered.size() <= i)
+        t.rendered.push_back(render(t.rendered.size()));
+    // Only an item that changed since (its revision) is rendered again.
+    if (t.rendered[i].rev != t.parser.revision(i))
+        t.rendered[i] = render(i);
+    return t.rendered[i];
+}
+
+Backend::Visible Backend::ownVisible(Message m) {
+    Visible v;
+    v.ts          = m.ts;
+    v.threadTs    = m.threadTs;
+    v.latestReply = m.latestReply;
+    v.replyCount  = m.replyCount;
+    v.user        = m.user;
+    v.progress    = m.subtype() == kProgressSubtype;
+    v.contentFp   = contentFingerprint(m);
+    v.own         = std::make_shared<const Message>(std::move(m));
+    return v;
+}
+
+Backend::Visible Backend::renderedVisible(const std::vector<Rendered> &src, size_t index) {
+    const Rendered &r = src[index];
+    Visible         v;
+    v.ts          = r.msg.ts;
+    v.threadTs    = r.msg.threadTs;
+    v.latestReply = r.msg.latestReply;
+    v.replyCount  = r.msg.replyCount;
+    v.user        = r.msg.user;
+    v.progress    = r.msg.subtype() == kProgressSubtype;
+    v.contentFp   = r.contentFp;
+    v.src         = &src;
+    v.index       = index;
+    return v;
+}
+
+Message Backend::make(const Visible &v) const {
+    ++_counters.copies;
+    Message m     = v.base().clone();
+    m.ts          = v.ts;
+    m.threadTs    = v.threadTs;
+    m.replyCount  = v.replyCount;
+    m.latestReply = v.latestReply;
+    if (v.reactions)
+        m.reactions = *v.reactions;
+    return m;
 }
 
 // A subagent's report, handed back to the session: its thread already ends
@@ -827,7 +1028,7 @@ Backend::handbackPointer(const Tracked &t, const TranscriptItem &subagent, Ts ts
     return m;
 }
 
-std::vector<Message> Backend::visibleMessages(Tracked &t) {
+std::vector<Backend::Visible> Backend::visibleList(Tracked &t) {
     tail(t);
     const auto                             &items     = t.parser.items();
     const UserRef                           assistant = roleUser(roleOf(t));
@@ -856,28 +1057,31 @@ std::vector<Message> Backend::visibleMessages(Tracked &t) {
     for (const auto &o : t.outbox)
         if (o.threadRoot)
             noteRelay(o.threadRoot, o.ts);
-    std::vector<Message> out;
+    std::vector<Visible> out;
     out.reserve(items.size() + 1);
     for (size_t i = 0; i < items.size(); ++i) {
         const auto &item = items[i];
         if (!isVisible(item, isBusy) || (_zen && item.kind == TranscriptItem::Kind::ToolGroup))
             continue;
-        Message m = renderedAt(t, i).clone();
+        if (item.kind == TranscriptItem::Kind::PeerMessage)
+            if (const auto r = subagentItem.find(item.agentId); r != subagentItem.end()) {
+                out.push_back(ownVisible(handbackPointer(t, items[r->second], item.ts, assistant)));
+                continue;
+            }
+        renderedAt(t, i);
+        Visible v = renderedVisible(t.rendered, i);
         if (item.kind == TranscriptItem::Kind::Subagent && !item.agentId.empty()) {
             Ts latest = 0;
-            m.replyCount =
+            v.replyCount =
                 uint32_t(subagentReplyCount(t, item.agentId, &latest) + relayed[item.ts]);
             latest = std::max(latest, relayedLatest[item.ts]);
             if (latest)
-                m.latestReply = latest;
+                v.latestReply = latest;
         }
         if (!item.relayTo.empty())
             if (const auto r = subagentRoot.find(item.relayTo); r != subagentRoot.end())
-                m.threadTs = r->second;
-        if (item.kind == TranscriptItem::Kind::PeerMessage)
-            if (const auto r = subagentItem.find(item.agentId); r != subagentItem.end())
-                m = handbackPointer(t, items[r->second], m.ts, assistant);
-        out.push_back(std::move(m));
+                v.threadTs = r->second;
+        out.push_back(std::move(v));
     }
 
     // A session stopped for the user where the transcript doesn't show it — a
@@ -887,7 +1091,7 @@ std::vector<Message> Backend::visibleMessages(Tracked &t) {
     // question as its last answer.) Its ts is pinned to when the status
     // changed, so it stays the same message while the session waits.
     if (const Ts waitTs = waitingTs(t, out.empty() ? 0 : out.back().ts))
-        out.push_back(waitingMessage(t, waitTs));
+        out.push_back(ownVisible(waitingMessage(t, waitTs)));
 
     appendOutgoing(t, out, 0);
 
@@ -898,10 +1102,11 @@ std::vector<Message> Backend::visibleMessages(Tracked &t) {
         Tracked &f = *fp;
         if (f.forkOf != t.convId || !asThread(f))
             continue;
-        const auto replies = threadMessages(f);
+        const auto replies = threadList(f);
         if (f.forkAt < 0)
             continue;
-        Message root    = renderedAt(f, size_t(f.forkAt)).clone();
+        renderedAt(f, size_t(f.forkAt));
+        Visible root    = renderedVisible(f.rendered, size_t(f.forkAt));
         root.replyCount = uint32_t(replies.size());
         if (!replies.empty())
             root.latestReply = replies.back().ts;
@@ -909,7 +1114,7 @@ std::vector<Message> Backend::visibleMessages(Tracked &t) {
         branched = true;
     }
     if (branched)
-        std::stable_sort(out.begin(), out.end(), [](const Message &a, const Message &b) {
+        std::stable_sort(out.begin(), out.end(), [](const Visible &a, const Visible &b) {
             return a.ts < b.ts;
         });
     applyReactions(t.convId, out);
@@ -978,7 +1183,7 @@ bool Backend::terminalWaits(const Tracked &t) const {
     return t.info.running && t.info.kind == SessionInfo::Kind::Interactive && needsUser(t);
 }
 
-// The ts of "Waiting for you…" (visibleMessages), 0 when it doesn't wait:
+// The ts of "Waiting for you…" (visibleList), 0 when it doesn't wait:
 // pinned to when the status changed, after everything before it (lastTs).
 Ts Backend::waitingTs(const Tracked &t, Ts lastTs) const {
     if (!terminalWaits(t) && !awaitsApproval(t.info))
@@ -987,7 +1192,7 @@ Ts Backend::waitingTs(const Tracked &t, Ts lastTs) const {
     return micros <= lastTs ? lastTs + 1 : micros;
 }
 
-// What visibleMessages (thread: threadMessages) shows, as sync() takes it —
+// What visibleList (thread: threadList) shows, as sync() takes it —
 // each message's ts, whose and what kind — read off the parser's items alone.
 // It must keep in step with those two, item for item.
 std::map<Ts, Backend::Seen> Backend::seenOf(Tracked &t, bool thread) {
@@ -1058,9 +1263,9 @@ std::map<Ts, Backend::Seen> Backend::seenOf(Tracked &t, bool thread) {
     return out;
 }
 
-std::vector<Message> Backend::threadMessages(Tracked &f) {
+std::vector<Backend::Visible> Backend::threadList(Tracked &f) {
     tail(f);
-    std::vector<Message> out;
+    std::vector<Visible> out;
     if (f.forkAt < 0)
         return out;
     const auto &items  = f.parser.items();
@@ -1069,9 +1274,10 @@ std::vector<Message> Backend::threadMessages(Tracked &f) {
         const auto &item = items[i];
         if (!isVisible(item, isBusy) || (_zen && item.kind == TranscriptItem::Kind::ToolGroup))
             continue;
-        Message m  = renderedAt(f, i).clone();
-        m.threadTs = f.forkRoot;
-        out.push_back(std::move(m));
+        renderedAt(f, i);
+        Visible v  = renderedVisible(f.rendered, i);
+        v.threadTs = f.forkRoot;
+        out.push_back(std::move(v));
     }
     appendOutgoing(f, out, f.forkRoot);
     applyReactions(f.forkOf, out);
@@ -1081,10 +1287,10 @@ std::vector<Message> Backend::threadMessages(Tracked &f) {
 // The root is the Subagent message; the replies are its own transcript: the
 // prompt written by the session's assistant, the rest said by the subagent
 // (the teammate it was started as, else the assistant too), and the user's
-// replies relayed to it through the session.
-std::vector<Message> Backend::subagentThread(Tracked &t, Ts root) {
-    std::vector<Message> out;
-    const auto           msgs      = visibleMessages(t);
+// replies relayed to it through the session (in `shown`, visibleList(t)).
+std::vector<Backend::Visible>
+Backend::subagentList(Tracked &t, Ts root, const std::vector<Visible> &shown) {
+    std::vector<Visible> out;
     const UserRef        assistant = roleUser(roleOf(t));
     std::string          agentId;
     UserRef              subagent = assistant;
@@ -1093,26 +1299,37 @@ std::vector<Message> Backend::subagentThread(Tracked &t, Ts root) {
             agentId  = item.agentId;
             subagent = subagentAuthor(item, assistant);
         }
-    for (const auto &m : msgs)
-        if (m.threadTs == root)
-            out.push_back(m.clone());
-    std::string bytes;
-    if (!agentId.empty() &&
-        file::readAll(Paths::subagentTranscript(t.transcriptPath, agentId), &bytes)) {
-        TranscriptParser p;
-        p.feed(bytes);
-        const auto &items = p.items();
+    for (const auto &v : shown)
+        if (v.threadTs == root)
+            out.push_back(v);
+    if (!agentId.empty()) {
+        // Read as it grows, rendered as it changes (like the session's own).
+        SubagentFeed &f     = subagentFeed(t, agentId);
+        const auto   &items = f.parser.items();
+        if (f.renderedMe != assistant || f.renderedAuthor != subagent) {
+            f.rendered.clear();
+            f.renderedMe     = assistant;
+            f.renderedAuthor = subagent;
+        }
+        f.rendered.resize(items.size()); // new ones are made below (rev 0)
         for (size_t i = 0; i < items.size(); ++i) {
             const auto &item = items[i];
             if (_zen && item.kind == TranscriptItem::Kind::ToolGroup)
                 continue;
-            Message m = toMessage(item, assistant, subagent);
-            attachOutputs(m, items, i, t.convId, t.info.cwd, agentId + "-");
-            m.threadTs = root;
-            out.push_back(std::move(m));
+            Rendered &r = f.rendered[i];
+            if (r.rev != f.parser.revision(i)) {
+                ++_counters.renders;
+                r.msg = toMessage(item, assistant, subagent);
+                attachOutputs(r.msg, items, i, t.convId, t.info.cwd, agentId);
+                r.rev       = f.parser.revision(i);
+                r.contentFp = contentFingerprint(r.msg);
+            }
+            Visible v  = renderedVisible(f.rendered, i);
+            v.threadTs = root;
+            out.push_back(std::move(v));
         }
     }
-    std::stable_sort(out.begin(), out.end(), [](const Message &a, const Message &b) {
+    std::stable_sort(out.begin(), out.end(), [](const Visible &a, const Visible &b) {
         return a.ts < b.ts;
     });
     // Two transcripts, one list: a relayed reply and a subagent record in the
@@ -1124,7 +1341,7 @@ std::vector<Message> Backend::subagentThread(Tracked &t, Ts root) {
     return out;
 }
 
-void Backend::appendOutgoing(const Tracked &t, std::vector<Message> &out, Ts threadRoot) const {
+void Backend::appendOutgoing(const Tracked &t, std::vector<Visible> &out, Ts threadRoot) const {
     const auto add = [&](const Tracked::Outgoing &o) {
         TranscriptItem item;
         item.kind  = TranscriptItem::Kind::UserPrompt;
@@ -1133,7 +1350,7 @@ void Backend::appendOutgoing(const Tracked &t, std::vector<Message> &out, Ts thr
         item.text  = takeAttachments(o.shown.empty() ? o.text : o.shown, &item.images);
         Message m  = toMessage(item, _store.me, _store.me);
         m.threadTs = o.threadRoot ? o.threadRoot : threadRoot;
-        out.push_back(std::move(m));
+        out.push_back(ownVisible(std::move(m)));
     };
     if (t.flying)
         add(*t.flying);
@@ -1148,13 +1365,23 @@ bool Backend::isOutgoingCopy(const Tracked &t, Ts ts) const {
            });
 }
 
-void Backend::applyReactions(const std::string &convId, std::vector<Message> &msgs) const {
+void Backend::applyReactions(const std::string &convId, std::vector<Visible> &list) const {
     const auto byTs = _reactions.find(convId);
-    if (byTs == _reactions.end())
-        return;
-    for (auto &m : msgs)
-        if (const auto r = byTs->second.find(m.ts); r != byTs->second.end())
-            m.reactions = r->second;
+    for (auto &v : list) {
+        v.reactions = nullptr;
+        if (byTs != _reactions.end())
+            if (const auto r = byTs->second.find(v.ts); r != byTs->second.end())
+                v.reactions = &r->second;
+        // What make() returns, hashed without making it.
+        v.fp = fingerprint(
+            v.contentFp,
+            v.ts,
+            v.threadTs,
+            v.replyCount,
+            v.latestReply,
+            v.reactions ? *v.reactions : v.base().reactions
+        );
+    }
 }
 
 // ── Branched sessions (/btw threads) ────────────────────────────────────────
@@ -1291,17 +1518,17 @@ void Backend::sync(Tracked &t) {
     // (seenOf): no markdown rendered, no answer's files copied — the first
     // scan looks at every session, the UI opens a few.
     const bool    loaded = target != kNoConv && _shown.count({target, thread ? t.forkRoot : 0});
-    std::vector<Message>        msgs;
+    std::vector<Visible>        list;
     std::map<Ts, Tracked::Seen> now;
     const auto                  take = [&] {
         if (!loaded) {
             now = seenOf(t, thread);
             return;
         }
-        msgs = thread ? threadMessages(t) : visibleMessages(t);
+        list = thread ? threadList(t) : visibleList(t);
         now.clear();
-        for (const auto &m : msgs)
-            now[m.ts] = {m.user == _store.me, m.subtype() == kProgressSubtype, m.threadTs};
+        for (const auto &v : list)
+            now[v.ts] = {v.user == _store.me, v.progress, v.threadTs};
     };
     take();
     // The message on its way is delivered once its prompt is in the
@@ -1364,48 +1591,47 @@ void Backend::sync(Tracked &t) {
         }
         return;
     }
-    const auto syncList = [&](Ts list, std::vector<Message> want) {
-        const auto key = std::make_pair(target, list);
-        const auto it  = _shown.find(key);
-        if (it == _shown.end())
-            return; // not loaded: the Store doesn't hold it
-        Shown                        &s = it->second;
-        std::map<Ts, const Message *> byTs;
-        for (const auto &m : want)
-            if (m.ts >= s.from)
-                byTs[m.ts] = &m;
-        for (auto f = s.fp.begin(); f != s.fp.end();) {
-            if (byTs.count(f->first)) {
-                ++f;
-                continue;
-            }
-            _store.removeMessage(target, f->first);
-            f = s.fp.erase(f);
-        }
-        for (const auto &[ts, m] : byTs) {
-            const uint64_t fp  = fingerprint(*m);
-            const auto     old = s.fp.find(ts);
-            if (old == s.fp.end()) {
-                s.fp[ts] = fp;
-                _store.addMessage(target, m->clone());
-            } else if (old->second != fp) {
-                old->second  = fp;
-                Message copy = m->clone();
-                _store.updateMessage(target, ts, [&](Message &x) { x = std::move(copy); });
-            }
-        }
-    };
     if (thread) {
-        syncList(t.forkRoot, std::move(msgs));
+        syncList(target, t.forkRoot, list);
         return;
     }
-    // Replies relayed to a subagent belong to its thread (subagentThread).
-    std::vector<Message> top;
-    top.reserve(msgs.size());
-    for (auto &m : msgs)
-        if (!m.threadTs)
-            top.push_back(std::move(m));
-    syncList(0, std::move(top));
+    // Replies relayed to a subagent belong to its thread (subagentList).
+    std::erase_if(list, [](const Visible &v) { return v.threadTs != 0; });
+    syncList(target, 0, list);
+}
+
+// What the Store holds of a loaded list (conversation `conv`, thread `root`;
+// 0 = the conversation's own) made what `want` says: what went is removed,
+// what's new added, what changed (its fingerprint) updated — the rest is
+// left alone, never copied.
+void Backend::syncList(ConvRef conv, Ts root, const std::vector<Visible> &want) {
+    const auto it = _shown.find({conv, root});
+    if (it == _shown.end())
+        return; // not loaded: the Store doesn't hold it
+    Shown                        &s = it->second;
+    std::map<Ts, const Visible *> byTs;
+    for (const auto &v : want)
+        if (root || v.ts >= s.from)
+            byTs[v.ts] = &v;
+    for (auto f = s.fp.begin(); f != s.fp.end();) {
+        if (byTs.count(f->first)) {
+            ++f;
+            continue;
+        }
+        _store.removeMessage(conv, f->first);
+        f = s.fp.erase(f);
+    }
+    for (const auto &[ts, v] : byTs) {
+        const auto old = s.fp.find(ts);
+        if (old == s.fp.end()) {
+            s.fp[ts] = v->fp;
+            _store.addMessage(conv, make(*v));
+        } else if (old->second != v->fp) {
+            old->second  = v->fp;
+            Message copy = make(*v);
+            _store.updateMessage(conv, ts, [&](Message &x) { x = std::move(copy); });
+        }
+    }
 }
 
 // A loaded subagent thread follows its transcript: rebuilt whenever its root
@@ -1413,34 +1639,13 @@ void Backend::sync(Tracked &t) {
 void Backend::syncThreads(Tracked &t) {
     if (t.ref == kNoConv || asThread(t))
         return;
-    for (auto &[key, shown] : _shown) {
+    std::optional<std::vector<Visible>> shown; // what the session shows, taken once
+    for (const auto &[key, s] : _shown) {
         if (key.first != t.ref || key.second == 0 || forkFor(t.convId, key.second))
             continue;
-        const Ts                      root = key.second;
-        const auto                    want = subagentThread(t, root);
-        std::map<Ts, const Message *> byTs;
-        for (const auto &m : want)
-            byTs[m.ts] = &m;
-        for (auto f = shown.fp.begin(); f != shown.fp.end();) {
-            if (byTs.count(f->first)) {
-                ++f;
-                continue;
-            }
-            _store.removeMessage(t.ref, f->first);
-            f = shown.fp.erase(f);
-        }
-        for (const auto &[ts, m] : byTs) {
-            const uint64_t fp  = fingerprint(*m);
-            const auto     old = shown.fp.find(ts);
-            if (old == shown.fp.end()) {
-                shown.fp[ts] = fp;
-                _store.addMessage(t.ref, m->clone());
-            } else if (old->second != fp) {
-                old->second  = fp;
-                Message copy = m->clone();
-                _store.updateMessage(t.ref, ts, [&](Message &x) { x = std::move(copy); });
-            }
-        }
+        if (!shown)
+            shown = visibleList(t);
+        syncList(t.ref, key.second, subagentList(t, key.second, *shown));
     }
 }
 
@@ -1562,7 +1767,9 @@ void Backend::refresh() {
 }
 
 void Backend::refreshScan() {
-    const auto                      scanned = scanSessions(_paths);
+    ++_scanGen; // a transcript not found is looked for again from here on
+    // Only the jobs whose state.json changed are read again.
+    const auto                      scanned = scanSessions(_paths, nullptr, &_jobStates);
     // A "+" session being started shows up in the roster a moment before the
     // launcher reports its id — don't list it twice meanwhile.
     std::unordered_set<std::string> startingIn;
@@ -1646,7 +1853,7 @@ void Backend::refreshScan() {
         // session lives on in its transcript until Claude Code cleans that up.
         const bool jobGone = t.info.kind == SessionInfo::Kind::Background;
         if (jobGone || (!t.transcriptPath.empty() && !file::exists(t.transcriptPath)) ||
-            (t.transcriptPath.empty() && _paths.findTranscript(t.info.sessionId).empty()))
+            (t.transcriptPath.empty() && lookForTranscript(t.info.sessionId).empty()))
             dropped.push_back(id);
     }
     for (const auto &id : dropped) {
@@ -1656,6 +1863,7 @@ void Backend::refreshScan() {
             _store.updateConversation(t.ref, [](model::Conversation &c) { c.member = false; });
         for (auto it = _shown.begin(); it != _shown.end();)
             it = it->first.first == t.ref ? _shown.erase(it) : std::next(it);
+        forgetCaches(t);
         _sessions.erase(id);
         clearOutputs(id);
     }
@@ -1712,6 +1920,7 @@ void Backend::refreshScan() {
     for (auto &[id, tp] : _sessions)
         if (tp->listed || tp->wasLive)
             syncThreads(*tp);
+    findSubagentRuns(); // this refresh's one look, for the roles and the typing alike
     announceRoles();
     if (!_firstScanDone) {
         // Copies of sessions gone while msga wasn't looking.
@@ -1721,8 +1930,22 @@ void Backend::refreshScan() {
         pruneOutputs(keep);
     }
     _firstScanDone = true;
+    // What the first scan's worker parsed was taken by now (tail).
+    _preparsed.clear();
+    _preFound.clear();
     scheduleSaveKnown();
-    pumpTyping();
+    pumpTyping(true);
+    // Subagent transcripts are kept read only for the sessions that look at
+    // them: a live one (its subagents' runs) and one whose list is loaded
+    // (their threads and reply counts).
+    std::unordered_set<std::string> keep;
+    for (const auto &[id, tp] : _sessions)
+        if (!tp->transcriptPath.empty() &&
+            (tp->info.running || (tp->ref != kNoConv && _shown.count({tp->ref, 0}))))
+            keep.insert(Paths::subagentsDir(tp->transcriptPath));
+    std::erase_if(_subagents, [&](const auto &e) {
+        return !keep.count(std::string(file::dirName(e.first)));
+    });
 }
 
 // A teammate shows as working while any of its sessions does, or a subagent
@@ -1742,7 +1965,7 @@ void Backend::announceRoles() {
 // Claude working on a turn shows as the session "thinking (8m 58s)" — the
 // terminal's spinner. Re-evaluated every 3 s while any session is busy (a
 // background subagent's run shows in no roster file).
-void Backend::pumpTyping() {
+void Backend::pumpTyping(bool looked) {
     using Key = std::tuple<ConvRef, UserRef, Ts>;
     std::map<Key, int64_t> want;
     for (auto &[id, tp] : _sessions) {
@@ -1768,22 +1991,11 @@ void Backend::pumpTyping() {
             continue;
         want[{t.ref, roleUser(roleOf(t)), 0}] = t.busySinceMs;
     }
-    // A background subagent working "thinks" in its thread. Only a live
-    // worker runs one: a killed session never sends the notification that it
-    // stopped.
-    for (auto &[id, tp] : _sessions) {
-        Tracked &t = *tp;
-        if (!t.info.running || t.stopping || asThread(t) || t.ref == kNoConv)
-            continue;
-        tail(t); // the notification that it stopped lands in the session's transcript
-        const UserRef assistant = roleUser(roleOf(t));
-        for (const auto &item : t.parser.items()) {
-            if (item.kind != TranscriptItem::Kind::Subagent || item.agentId.empty())
-                continue;
-            if (const int64_t since = subagentRunSinceMs(t, item.agentId))
-                want[{t.ref, subagentAuthor(item, assistant), item.ts}] = since;
-        }
-    }
+    // A background subagent working "thinks" in its thread (findSubagentRuns).
+    if (!looked)
+        findSubagentRuns();
+    for (const SubagentRun &r : _subagentRuns)
+        want[{r.ref, r.author, r.root}] = r.since;
     for (const auto &[key, since] : _typing)
         if (!want.count(key))
             _store.setTyping(std::get<0>(key), std::get<1>(key), std::get<2>(key), false);
@@ -1810,12 +2022,21 @@ void Backend::pumpTyping() {
 // messages). What changed since the last look schedules a refresh. Faster
 // while something works, so a streamed answer shows as it comes.
 void Backend::watchTick() {
-    std::vector<std::string>    want = {_paths.sessionsDir(), _paths.jobsDir()};
+    const std::string sessionsDir = _paths.sessionsDir(), jobsDir = _paths.jobsDir();
+    // A directory's entries' names say what came and went; the sessions
+    // folder's one listing serves for that and for its files alike.
+    const auto        names = [](const std::vector<file::DirEntry> &list) {
+        uint64_t h = kFnvBasis;
+        for (const auto &e : list)
+            h ^= fnv1a(kFnvBasis, e.name); // whatever order the OS lists them in
+        return int64_t(h);
+    };
     std::vector<file::DirEntry> entries;
-    if (file::listDir(_paths.sessionsDir(), &entries))
-        for (const auto &e : entries)
-            if (!e.isDir && str::endsWith(e.name, ".json"))
-                want.push_back(_paths.sessionsDir() + "/" + e.name);
+    file::listDir(sessionsDir, &entries);
+    std::vector<std::string> want;
+    for (const auto &e : entries)
+        if (!e.isDir && str::endsWith(e.name, ".json"))
+            want.push_back(sessionsDir + "/" + e.name);
     bool anyBusy = false;
     for (const auto &[id, tp] : _sessions) {
         const Tracked &t = *tp;
@@ -1823,24 +2044,25 @@ void Backend::watchTick() {
         if ((!t.listed && !t.sending) || t.info.sessionId.empty())
             continue;
         if (t.info.kind == SessionInfo::Kind::Background)
-            want.push_back(_paths.jobsDir() + "/" + t.info.sessionId.substr(0, 8) + "/state.json");
+            want.push_back(jobsDir + "/" + t.info.sessionId.substr(0, 8) + "/state.json");
         if (!t.transcriptPath.empty())
             want.push_back(t.transcriptPath);
     }
     std::unordered_map<std::string, std::pair<int64_t, int64_t>> seen;
+    if (const Stat s = statPath(sessionsDir); s.ok)
+        seen[sessionsDir] = {names(entries), s.mtimeMs};
+    else
+        seen[sessionsDir] = {-1, s.mtimeMs};
+    if (const Stat s = statPath(jobsDir); s.ok) {
+        std::vector<file::DirEntry> jobs;
+        file::listDir(jobsDir, &jobs);
+        seen[jobsDir] = {names(jobs), s.mtimeMs};
+    } else {
+        seen[jobsDir] = {-1, s.mtimeMs};
+    }
     for (const auto &p : want) {
         const Stat s = statPath(p);
-        int64_t    n = s.size;
-        if (s.ok && (p == _paths.sessionsDir() || p == _paths.jobsDir())) {
-            // A directory: its entries' names say what came and went.
-            std::vector<file::DirEntry> list;
-            uint64_t                    h = 1469598103934665603ull;
-            if (file::listDir(p, &list))
-                for (const auto &e : list)
-                    h ^= std::hash<std::string>{}(e.name);
-            n = int64_t(h);
-        }
-        seen[p] = {s.ok ? n : -1, s.mtimeMs};
+        seen[p]      = {s.ok ? s.size : -1, s.mtimeMs};
     }
     const bool changed = seen != _watched;
     _watched           = std::move(seen);
@@ -1864,20 +2086,83 @@ void Backend::connect(Done done) {
     _store.answersAreMentions = true;
     syncUsers();
     if (!_started) {
-        _started = true;
-        refresh();
-        // File watching can miss what a look in between saw already; a slow
-        // sweep catches whatever it missed.
-        _safetyPoll = _app.addTimer(10'000, true, [this, alive = _alive] {
-            if (*alive)
-                refresh();
-        });
-        watchTick();
+        firstScan(std::move(done));
+        return;
     }
     post([done = std::move(done)] {
         if (done)
             done(true, {});
     });
+}
+
+// The first scan reads every session msga remembers or the roster lists —
+// whole transcripts, tens of MB in all — so it reads and parses them on a
+// worker, and the refresh that lists them (on the UI thread) takes what the
+// worker made (tail: _preparsed) and reads only what came since.
+void Backend::firstScan(Done done) {
+    _connectDone.push_back(std::move(done));
+    if (_connecting)
+        return; // under way: done with it
+    _connecting = true;
+    struct Want {
+        std::string sessionId, transcript;
+    };
+    struct Job {
+        std::vector<Want>                                               want;
+        std::vector<std::pair<std::string, std::string>>                found;  // id → transcript
+        std::vector<std::pair<std::string, std::shared_ptr<Preparsed>>> parsed; // by transcript
+    };
+    auto job = std::make_shared<Job>();
+    for (const auto &[id, tp] : _sessions)
+        if (!tp->info.sessionId.empty())
+            job->want.push_back({tp->info.sessionId, tp->transcriptPath});
+    model::runInBackground(
+        _app,
+        [job, paths = _paths] {
+            for (const SessionInfo &s : scanSessions(paths))
+                job->want.push_back({s.sessionId, s.transcriptPath});
+            std::unordered_set<std::string> read;
+            for (const Want &w : job->want) {
+                std::string path = w.transcript;
+                if (path.empty() || !file::exists(path)) {
+                    path = paths.findTranscript(w.sessionId);
+                    if (path.empty())
+                        continue;
+                    job->found.emplace_back(w.sessionId, path);
+                }
+                if (!read.insert(path).second)
+                    continue;
+                std::string bytes;
+                if (!file::readAll(path, &bytes))
+                    continue;
+                auto p = std::make_shared<Preparsed>();
+                p->parser.feed(bytes);
+                p->offset = int64_t(bytes.size());
+                job->parsed.emplace_back(path, std::move(p));
+            }
+        },
+        [this, alive = _alive, job] {
+            if (!*alive)
+                return;
+            for (auto &[id, path] : job->found)
+                _preFound[id] = path;
+            for (auto &[path, p] : job->parsed)
+                _preparsed[path] = std::move(p);
+            _connecting = false;
+            _started    = true;
+            refresh();
+            // File watching can miss what a look in between saw already; a
+            // slow sweep catches whatever it missed.
+            _safetyPoll = _app.addTimer(10'000, true, [this, alive = _alive] {
+                if (*alive)
+                    refresh();
+            });
+            watchTick();
+            for (Done &d : std::exchange(_connectDone, {}))
+                if (d)
+                    d(true, {});
+        }
+    );
 }
 
 void Backend::loadHistory(ConvRef conv, Ts before, Done done) {
@@ -1889,20 +2174,20 @@ void Backend::loadHistory(ConvRef conv, Ts before, Done done) {
         });
         return;
     }
-    auto msgs = visibleMessages(*t);
     if (!t->announcedInit)
         sync(*t);
+    auto list = visibleList(*t);
     // Replies in subagent threads are in the threads (loadThread).
-    std::erase_if(msgs, [](const Message &m) { return m.threadTs != 0; });
+    std::erase_if(list, [](const Visible &v) { return v.threadTs != 0; });
     // Newest page first, then the 200 before `before`.
     constexpr size_t kPage = 200;
-    size_t           end   = msgs.size();
+    size_t           end   = list.size();
     if (before)
         end = size_t(
             std::lower_bound(
-                msgs.begin(), msgs.end(), before, [](const Message &m, Ts b) { return m.ts < b; }
+                list.begin(), list.end(), before, [](const Visible &v, Ts b) { return v.ts < b; }
             ) -
-            msgs.begin()
+            list.begin()
         );
     const size_t begin = end > kPage ? end - kPage : 0;
     Shown       &s     = _shown[{conv, 0}];
@@ -1911,11 +2196,11 @@ void Backend::loadHistory(ConvRef conv, Ts before, Done done) {
     std::vector<Message> page;
     page.reserve(end - begin);
     for (size_t i = begin; i < end; ++i) {
-        s.fp[msgs[i].ts] = fingerprint(msgs[i]);
-        page.push_back(std::move(msgs[i]));
+        s.fp[list[i].ts] = list[i].fp;
+        page.push_back(make(list[i]));
     }
     s.from =
-        begin < end ? page.front().ts : (before ? before : (msgs.empty() ? 0 : msgs.back().ts + 1));
+        begin < end ? list[begin].ts : (before ? before : (list.empty() ? 0 : list.back().ts + 1));
     if (!before && begin == end)
         s.from = 0;
     _store.addPage(conv, std::move(page));
@@ -1928,17 +2213,21 @@ void Backend::loadHistory(ConvRef conv, Ts before, Done done) {
 
 void Backend::loadThread(ConvRef conv, Ts root, Done done) {
     Tracked             *t = findRef(conv);
-    std::vector<Message> replies;
+    std::vector<Visible> list;
     if (t) {
         if (Tracked *f = forkFor(t->convId, root))
-            replies = threadMessages(*f); // a /btw thread: the rest of the branch
+            list = threadList(*f); // a /btw thread: the rest of the branch
         else
-            replies = subagentThread(*t, root);
+            list = subagentList(*t, root, visibleList(*t));
     }
     Shown &s = _shown[{conv, root}];
     s        = {};
-    for (const auto &m : replies)
-        s.fp[m.ts] = fingerprint(m);
+    std::vector<Message> replies;
+    replies.reserve(list.size());
+    for (const auto &v : list) {
+        s.fp[v.ts] = v.fp;
+        replies.push_back(make(v));
+    }
     _store.addPage(conv, std::move(replies));
     post([ok = t != nullptr, done = std::move(done)] {
         if (done)
