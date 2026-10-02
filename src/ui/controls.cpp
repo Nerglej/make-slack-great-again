@@ -682,6 +682,12 @@ void TextField::paint(gfx::Painter &p) {
 
 // ── FormButton ──────────────────────────────────────────────────────────────
 
+static Font formButtonFont(FormButton::Kind k, bool small) {
+    const bool filled = k == FormButton::Kind::Primary || k == FormButton::Kind::Danger;
+    return small ? (filled ? Font::ControlBold : Font::Control)
+                 : (filled ? Font::Heading : Font::Field);
+}
+
 FormButton::FormButton(std::string label, Kind k, bool small)
     : _label(std::move(label)), _kind(k), _small(small) {
     const float r = metric(M::RadiusM);
@@ -724,8 +730,7 @@ SizeF FormButton::measureContent(float, float) {
     if (!_l || _lEnabled != enabled()) {
         _lEnabled         = enabled();
         const bool filled = _kind == Kind::Primary || _kind == Kind::Danger;
-        const Font f      = _small ? (filled ? Font::ControlBold : Font::Control)
-                                   : (filled ? Font::Heading : Font::Field);
+        const Font f      = formButtonFont(_kind, _small);
         const C    c      = !_lEnabled ? C::FormTextFaint : filled ? C::AccentText : C::FormText;
         _l                = layoutText(_label, f, c, scaleOf(this));
     }
@@ -741,11 +746,14 @@ void FormButton::paint(gfx::Painter &p) {
     if (_kind == Kind::Secondary)
         innerStroke(p, bounds(), metric(M::RadiusM), color(C::FormDividerStrong));
     measureContent(0, 0); // (re)builds the label for the enabled state
+    // Centre the capitals, not the line box: the font's ascent leaves more
+    // room above the caps than its descent does below the baseline, so a
+    // box-centred label sits visibly low.
+    const float cap = text::metrics(font(formButtonFont(_kind, _small)), scaleOf(this)).capHeight;
     p.save();
     p.clipRect(bounds());
     _l->paint(
-        p,
-        snapPx({std::floor((width() - _l->width()) / 2), std::floor((height() - _l->height()) / 2)})
+        p, snapPx({std::floor((width() - _l->width()) / 2), (height() + cap) / 2 - _l->baseline(0)})
     );
     p.restore();
 }

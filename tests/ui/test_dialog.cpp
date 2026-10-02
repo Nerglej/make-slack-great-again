@@ -11,6 +11,10 @@
 
 using namespace uitest;
 
+namespace plat::testing_internal {
+void setHeadlessScale(Window &w, double s);
+}
+
 namespace {
 
 struct Tipped : ui::Clickable {
@@ -226,4 +230,42 @@ TEST("controls: StyledLineEdit's sizes, leading icon and length counter") {
     name->edit().focus();
     w.type("abcdefgh");
     CHECK(name->text() == "abcde");
+}
+
+// The label's capitals sit in the middle of the button: centring the line
+// box instead put "Save" a couple of pixels low (the ascent above the caps
+// is larger than the descent below the baseline).
+TEST("controls: a FormButton's label is vertically centred on its capitals") {
+    for (double scale : {1.0, 1.5}) {
+        Win w(300, 120);
+        plat::testing_internal::setHeadlessScale(w.native(), scale);
+        auto *col = w.root().add<ui::View>();
+        col->style().padding(20).spacing(10).items(ui::Align::Start);
+        auto *normal = col->add<ui::FormButton>("SHE", ui::FormButton::Kind::Primary, false);
+        auto *small  = col->add<ui::FormButton>("SHE", ui::FormButton::Kind::Primary);
+        w.frame();
+        const float sc = w.w->scale();
+        for (ui::FormButton *b : {normal, small}) {
+            const ui::RectF r  = b->windowRect();
+            const int       x0 = int(std::ceil(r.x * sc)), x1 = int((r.x + r.w) * sc);
+            const int       y0 = int(std::ceil(r.y * sc)), y1 = int((r.y + r.h) * sc);
+            uint32_t        bg = 0;
+            hooks().readPixel(w.native(), (x0 + x1) / 2, y0 + 2, &bg);
+            int top = -1, bottom = -1;
+            for (int y = y0 + 2; y < y1 - 2; ++y)
+                for (int x = x0 + 4; x < x1 - 4; ++x) {
+                    uint32_t px = 0;
+                    hooks().readPixel(w.native(), x, y, &px);
+                    if ((px & 0xffffff) != (bg & 0xffffff)) {
+                        if (top < 0)
+                            top = y;
+                        bottom = y;
+                        break;
+                    }
+                }
+            REQUIRE(top >= 0);
+            const float above = float(top - y0), below = float(y1 - 1 - bottom);
+            CHECK(std::abs(above - below) <= 1); // at most a device pixel of rounding
+        }
+    }
 }
