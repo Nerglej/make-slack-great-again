@@ -1,6 +1,7 @@
 #include "app/claude/render.h"
 
 #include "app/claude/cli.h"
+#include "app/claude/common.h"
 #include "app/claude/transcript.h"
 #include "app/mrkdwn/markdown.h"
 #include "app/model/image_size.h"
@@ -513,7 +514,8 @@ model::Message toMessage(const TranscriptItem &item, model::UserRef me, model::U
             f.path       = path;
             f.size       = std::max<int64_t>(0, file::size(path));
             // A file sent along that isn't a picture is a download.
-            if (str::startsWith(f.mime, "image/") && !model::imageSize(path, &f.width, &f.height)) {
+            if (str::startsWith(f.mime, "image/") &&
+                (!showsAsPicture(path, f.mime) || !model::imageSize(path, &f.width, &f.height))) {
                 f.width  = 0;
                 f.height = 0;
             }

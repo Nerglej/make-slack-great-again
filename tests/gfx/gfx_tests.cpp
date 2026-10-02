@@ -706,6 +706,27 @@ void testDecode() {
     CHECK(!decodeImage("not an image at all", &junk));
     CHECK(!decodeImage("", &junk));
     CHECK(!decodeImage(std::string_view("\x89PNG\r\n\x1a\n\0\0\0\rIHDR", 16), &junk));
+
+    // What callers show as a picture: only formats this build decodes.
+    CHECK(canDecodeImage(std::string_view("\x89PNG\r\n\x1a\n", 8)));
+    CHECK(canDecodeImage("GIF89a"));
+    CHECK(canDecodeImage(std::string_view(reinterpret_cast<const char *>(kJpeg), 16)));
+    CHECK(!canDecodeImage(std::string_view("BM\x36\0\0\0", 6))); // BMP: not in stb's subset
+    CHECK(!canDecodeImage(""));
+    CHECK(!canDecodeImage("<svg xmlns='http://www.w3.org/2000/svg'/>"));
+    // A still lossless WebP header (VP8L, 4x4) and an animated one (VP8X with
+    // the animation flag): neither decodes without libwebp, the animated one
+    // never (decodeImage has no frames for it).
+    const std::string_view webpStill("RIFF\x1a\0\0\0WEBPVP8L\x0d\0\0\0\x2f\x03\xc0\0\0", 25);
+    const std::string_view webpAnim(
+        "RIFF\x1e\0\0\0WEBPVP8X\x0a\0\0\0\x02\0\0\0\x03\0\0\x03\0\0", 30
+    );
+#ifdef MSGA_GFX_WEBP
+    CHECK(canDecodeImage(webpStill));
+#else
+    CHECK(!canDecodeImage(webpStill));
+#endif
+    CHECK(!canDecodeImage(webpAnim));
 }
 
 void testAnim() {

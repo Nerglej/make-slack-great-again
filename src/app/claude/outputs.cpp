@@ -151,8 +151,12 @@ model::File fileFor(json::Value e, const std::string &dir, const std::string &id
     f.prettyType = prettyTypeOf(f.name, f.mime);
     f.path       = file::join(dir, e["file"].str());
     f.size       = std::max<int64_t>(0, file::size(f.path));
-    f.width      = int32_t(e["w"].integer());
-    f.height     = int32_t(e["h"].integer());
+    // Decided here, not at copy time, so a build that decodes more (WebP)
+    // shows the copies made before as pictures too.
+    if (showsAsPicture(f.path, f.mime)) {
+        f.width  = int32_t(e["w"].integer());
+        f.height = int32_t(e["h"].integer());
+    }
     return f;
 }
 

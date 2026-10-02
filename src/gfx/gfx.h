@@ -225,6 +225,11 @@ private:
 // Decode PNG / JPEG / GIF (first frame) / WebP (when compiled in) into a
 // premultiplied Bitmap. False on unsupported or corrupt data.
 bool decodeImage(std::string_view bytes, Bitmap *out);
+// Whether decodeImage takes a file that starts with `head` (its first bytes,
+// 64 are plenty): the format is one this build decodes. Callers show anything
+// else as a file, not as a picture that never appears — WebP without libwebp,
+// an animated WebP, a BMP.
+bool canDecodeImage(std::string_view head);
 
 struct AnimFrame {
     Bitmap frame; // full canvas-sized frame, already composited

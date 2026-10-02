@@ -149,6 +149,35 @@ TEST("outputs: an answer's files are copied, and only the ones made in its turn"
     CHECK(outputFiles(text, ctx).empty()); // gone, and not there to copy again
 }
 
+TEST("outputs: a picture this build can't decode is a file card") {
+    TempDirs          tmp;
+    const std::string d   = tmp.root + "/work";
+    const int64_t     now = base::nowMicros();
+    // An animated WebP's header (VP8X, animation flag, 4x4): a size, but no
+    // frame decodeImage could draw. Seen 2026-10-02 as two empty previews.
+    writeFile(
+        d + "/rec.webp",
+        std::string_view("RIFF\x1e\0\0\0WEBPVP8X\x0a\0\0\0\x02\0\0\0\x03\0\0\x03\0\0", 30)
+    );
+    writeFile(d + "/shot.png", pngBytes(5, 3));
+    OutputContext ctx;
+    ctx.convId     = "outputs-test";
+    ctx.messageKey = "u2";
+    ctx.turnStart  = now - 60'000'000;
+    ctx.date       = now;
+
+    const auto files =
+        outputFiles(str::concat({"Recorded ", d, "/rec.webp and ", d, "/shot.png."}), ctx);
+    REQUIRE(files.size() == 2);
+    CHECK_STR(files[0].name, "rec.webp");
+    CHECK_STR(files[0].prettyType, "WebP");
+    CHECK_FALSE(files[0].isImage());
+    CHECK_FALSE(files[0].hasPreview());
+    CHECK(files[0].size == 30);
+    CHECK(files[1].isImage());
+    CHECK(files[1].width == 5 && files[1].height == 3);
+}
+
 TEST("outputs: paths are cleaned as QDir::cleanPath does") {
     CHECK_STR(cleanPath("/r/w/b/"), "/r/w/b");
     CHECK_STR(cleanPath("/r//w/./b/../c"), "/r/w/c");

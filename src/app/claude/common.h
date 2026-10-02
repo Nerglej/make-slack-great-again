@@ -27,6 +27,11 @@ const Dirs &dirs();
 // "~/src/x" for a path under $HOME (native separators elsewhere).
 std::string homeRelative(std::string_view path);
 
+// Whether the image file at `path` (of type `mime`) shows as a picture: an
+// SVG, or a format this build decodes. Anything else is a file card, never an
+// empty preview.
+bool showsAsPicture(std::string_view path, std::string_view mime);
+
 // A slash command a session offers (Claude Code's own, a skill's, a project
 // command), or one msga runs itself (source "msga").
 struct SlashCommand {

@@ -1,6 +1,9 @@
 #include "app/claude/common.h"
 
+#include "base/file.h"
 #include "base/process.h"
+#include "base/str.h"
+#include "gfx/gfx.h"
 
 namespace claude {
 
@@ -35,6 +38,14 @@ std::string homeRelative(std::string_view path) {
             c = '\\';
 #endif
     return out;
+}
+
+bool showsAsPicture(std::string_view path, std::string_view mime) {
+    if (mime == "image/svg+xml")
+        return true;
+    std::string head;
+    return str::startsWith(mime, "image/") && file::readRange(path, 0, 64, &head) &&
+           gfx::canDecodeImage(head);
 }
 
 } // namespace claude
