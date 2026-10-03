@@ -116,7 +116,7 @@ TEST("update: a newer manifest downloads, verifies and replaces the binary") {
     REQUIRE(run.done(Kind::Ready));
     CHECK(run.events[1].kind == Kind::Available);
     CHECK(run.events[1].version == 37);
-    // msga's downloadProgress: the percentage, all of it before Ready.
+    // Download progress: the percentage, all of it before Ready.
     REQUIRE(run.events.size() >= 4);
     CHECK(run.events[run.events.size() - 2].kind == Kind::Progress);
     CHECK(run.events[run.events.size() - 2].percent == 100);

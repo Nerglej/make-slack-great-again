@@ -12,7 +12,7 @@ using ui::C;
 
 namespace {
 
-// msga's paintTagBadge: a 14-px pill, 4 px around the text, radius 2, the
+// The tag badge: a 14-px pill, 4 px around the text, radius 2, the
 // app font at 0.62 in bold.
 class TagBadge final : public ui::View {
 public:

@@ -13,8 +13,8 @@ add_library(msga_base STATIC
     process.cpp
     old_settings.cpp
 )
-# The keychain (secret.h): macOS has one; elsewhere the old app's settings
-# store holds the credentials, as it did (old_settings.h: an INI file on
+# The keychain (secret.h): macOS has one; elsewhere the settings store of
+# earlier versions holds the credentials, as it always did (old_settings.h: an INI file on
 # Linux, the registry on Windows).
 if(APPLE)
     # Objective-C++ only by file type (it uses the C API); OBJCXX sources do

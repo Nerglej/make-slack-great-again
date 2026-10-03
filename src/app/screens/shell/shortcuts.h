@@ -1,10 +1,10 @@
-// Every keyboard binding of the app in one table (msga's src/ui/shortcuts.h
-// is the spec: the same actions, keys, labels and order). Three consumers read
+// Every keyboard binding of the app in one table (actions, keys, labels and
+// order). Three consumers read
 // it, so they can never drift apart: the code that reacts to the key, the
 // tooltips that advertise it ("Bold (Ctrl+B)"), and the "Keyboard shortcuts"
 // panel shown while no conversation is open.
 //
-// Scopes, as in msga:
+// Scopes:
 //  - Window: installed on the window (install()), fire unless the focused
 //    view consumed the key first.
 //  - Composer: matched by the composer's own key handler (matches()): they
@@ -13,7 +13,7 @@
 //    Escape, Shift+Del), listed so the help panel and tooltips read one table.
 //
 // "Ctrl" in the table means the platform's command key: Cmd on macOS,
-// Control elsewhere (Qt's portable Ctrl).
+// Control elsewhere (a portable Ctrl).
 #pragma once
 
 #include "ui/ui.h"
@@ -98,7 +98,7 @@ bool matches(Id id, const ui::Event &e);
 // nativeKeys: one string for a tooltip ("⌘⇧X" / "Ctrl+Shift+X").
 std::vector<std::string> keyChips(Id id);
 std::string              nativeKeys(Id id);
-// "Bold (Ctrl+B)", msga's tooltip form; label is already translated.
+// "Bold (Ctrl+B)", the tooltip form; label is already translated.
 std::string              tip(const char *label, Id id);
 
 // The composer's send key (Settings "send with Ctrl+Enter"). The shell sets

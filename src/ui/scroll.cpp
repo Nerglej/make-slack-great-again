@@ -22,8 +22,7 @@ constexpr float kThinMin   = 20; // … and its minimum thumb height
 constexpr float kMinFling = 0.08f;
 #endif
 
-// +1/-1 when (key, mods) is a page step as Qt's MoveToNextPage /
-// MoveToPreviousPage bind it, 0 otherwise.
+// +1/-1 when (key, mods) is a page step (next / previous page), 0 otherwise.
 int pageStep(plat::Key k, uint32_t mods) {
     using plat::Key;
     const uint32_t m    = mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper);
@@ -31,7 +30,7 @@ int pageStep(plat::Key k, uint32_t mods) {
     if (m == 0 && page)
         return k == Key::PageDown ? 1 : -1;
 #ifdef __APPLE__
-    // Qt's Meta is the physical Control key there.
+    // On macOS Control (or Option) + PageUp/PageDown pages too.
     if ((m == plat::ModCtrl || m == plat::ModAlt) && page)
         return k == Key::PageDown ? 1 : -1;
     if (m == plat::ModCtrl && (k == Key::Down || k == Key::Up || k == Key::V))
@@ -284,8 +283,8 @@ bool ScrollArea::onEvent(Event &e) {
         }
         return false;
     case EventType::KeyDown: {
-        // QAbstractScrollArea's keys, which msga's lists had: a page for
-        // PageUp/PageDown (plus Qt's macOS alternates), a line for Up/Down
+        // The usual scroll-area keys: a page for PageUp/PageDown (plus the
+        // macOS alternates), a line for Up/Down
         // whatever the modifiers; Home/End are not handled.
         if (const int dir = pageStep(e.key, e.mods)) {
             scrollBy(float(dir) * height() * 0.9f, true);

@@ -1,4 +1,4 @@
-// The sidebar's footer, msga's ConvFooterWidget: my avatar (40 px rounded
+// The sidebar's footer: my avatar (40 px rounded
 // square with the presence dot; a click or right click opens "Manage
 // profile" / "Manage status"), and on the right the presence toggle —
 // visible (circle-user-round) or hidden (hat-glasses), flipped at once and

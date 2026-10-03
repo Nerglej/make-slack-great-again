@@ -1,4 +1,4 @@
-// Files the screens fetch for the user (msga's downloadFile callers): the
+// Files the screens fetch for the user: the
 // file bar's Download, "Copy full image", the CSV preview, Forward.
 //
 //   fetchFile(ctx, file.source(), path, [](bool ok, const std::string &err) {…});

@@ -20,7 +20,7 @@ namespace screens {
 
 namespace {
 
-// msga's EmojiPickerPopup / EmojiGrid metrics.
+// The picker's and its grid's metrics.
 constexpr float kWidth = 354, kHeight = 460, kCell = 36, kGlyph = 22, kMargin = 6, kHeaderH = 30;
 constexpr int   kCols = 9, kRecentMax = 27; // 3 rows of 9
 
@@ -474,7 +474,7 @@ void EmojiPicker::setSkinTone(int tone) {
     _grid->resetGlyphs();
 }
 
-// msga's picker keys on its search field: Escape closes, Enter picks the
+// The picker's keys on its search field: Escape closes, Enter picks the
 // selected cell, Up/Down move a row keeping the column, Left/Right step
 // through the cells once the caret is at that end of the text.
 bool EmojiPicker::searchKey(const Event &e) {
@@ -507,7 +507,7 @@ bool EmojiPicker::searchKey(const Event &e) {
 }
 
 bool EmojiPicker::onEvent(Event &e) {
-    // msga's picker is its own popup window: while it is up, no key reaches
+    // The picker acts as its own popup window: while it is up, no key reaches
     // the window behind it (Tab still moves focus inside).
     if (e.type == EventType::KeyDown && e.key != plat::Key::Escape && e.key != plat::Key::Tab)
         return true;

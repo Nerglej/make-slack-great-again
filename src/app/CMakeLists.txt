@@ -150,9 +150,9 @@ foreach(group common messages settings shell)
 endforeach()
 # ────────────────────────────────────────────────────────────────────────────
 
-# The upgrade from the old Qt msga (legacy/legacy.h): delete this block and the
+# The upgrade from earlier versions' data (legacy/legacy.h): delete this block and the
 # directory to drop it.
-option(MSGA_LEGACY_IMPORT "Import the old Qt msga's settings and caches" ON)
+option(MSGA_LEGACY_IMPORT "Import the settings and caches of earlier versions" ON)
 if(MSGA_LEGACY_IMPORT)
     add_subdirectory(legacy)
 endif()

@@ -1,5 +1,5 @@
-// The composer's voice input pieces (msga's VoiceRecordingStrip and
-// VoiceContext).
+// The composer's voice input pieces (the recording strip and the context
+// sent along for vocabulary).
 //
 // VoiceStrip — the status row between the editor and the bottom bar while a
 // dictation started from that composer is in flight:

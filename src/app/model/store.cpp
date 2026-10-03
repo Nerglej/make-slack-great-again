@@ -62,7 +62,7 @@ Message &Message::operator=(Message &&) noexcept    = default;
 Message::~Message()                                 = default;
 
 bool File::isHtml() const {
-    // msga's fileIsHtml: the type, else the extension.
+    // An HTML file by its type, else by its extension.
     auto ieq = [](std::string_view a, std::string_view b) {
         if (a.size() != b.size())
             return false;
@@ -786,7 +786,7 @@ void takePreview(Store::SavedItem &s, const Message &m) {
 std::vector<Store::SavedItem> Store::savedItems() const {
     std::vector<SavedItem> out = _saved;
     std::sort(out.begin(), out.end(), [](const SavedItem &a, const SavedItem &b) {
-        // msga's messageReminders: reminders (soonest first) ahead of plain
+        // Reminders (soonest first) ahead of plain
         // bookmarks (newest first).
         if ((a.due > 0) != (b.due > 0))
             return a.due > 0;
@@ -932,7 +932,7 @@ std::string Store::permalink(ConvRef c, Ts ts, Ts thread) const {
 }
 
 bool Store::mentionsMe(std::string_view text) const {
-    // Port of msga's mrkdwnMentions(): a direct mention, a broadcast keyword,
+    // A direct mention, a broadcast keyword,
     // or a user group I belong to — the one predicate every badge uses.
     if (me != kNoUser) {
         const std::string tag = "<@" + user(me).id;

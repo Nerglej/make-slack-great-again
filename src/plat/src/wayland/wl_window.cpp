@@ -287,7 +287,7 @@ void WlWindow::hide() {
     }
     // Unmap, then drop the role objects; show() builds fresh ones. xdg-shell
     // allows re-mapping the same toplevel after a null buffer, but compositors
-    // handle that path poorly (cage 0.2 segfaults), and GTK/Qt recreate too.
+    // handle that path poorly (cage 0.2 segfaults), and GTK recreates too.
     wl_surface_attach(_surface, nullptr, 0, 0);
     wl_surface_commit(_surface);
     destroyRole();
@@ -318,7 +318,7 @@ void WlWindow::setFullscreen(bool on) {
 void WlWindow::activate() {
     // xdg-shell has set_minimized but no way back, and a compositor may have
     // minimised or hidden us without saying so; either way only a freshly
-    // mapped toplevel is reliably shown again (GTK/Qt apps restoring from a
+    // mapped toplevel is reliably shown again (GTK apps restoring from a
     // tray do the same). Skipped while unconfigured: show() just mapped us.
     if (_visible && _configured && !_activated) {
         const bool max = _maximized, full = _fullscreen;

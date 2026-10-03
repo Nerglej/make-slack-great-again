@@ -1,7 +1,7 @@
 // Minimal read-only reader for the SQLite 3 file format — just enough to pull
 // the rows of one table out of Chromium's cookie store, so the local import
-// does not have to link SQLite (Qt's QSQLITE plugin was 1.4 MB of the old
-// static Linux binary; we have no SQLite at all).
+// does not have to link SQLite (a full SQLite is over a megabyte; we have
+// none at all).
 //
 // Scope: rowid tables only (no WITHOUT ROWID, no indexes, no SQL — the caller
 // filters rows itself). The file is read into memory once and every access is

@@ -86,8 +86,8 @@ void collect(Export &x) {
         for (const auto &m : *rs)
             if (!m.pending)
                 msgs.push_back(&m);
-    // Bulletproof against pagination quirks (msga deduplicated the root,
-    // repeated on every page, and re-sorted by time).
+    // Bulletproof against pagination quirks: the root, repeated on every
+    // page, is deduplicated, and all is re-sorted by time.
     std::stable_sort(msgs.begin(), msgs.end(), [](auto *a, auto *b) { return a->ts < b->ts; });
     msgs.erase(
         std::unique(msgs.begin(), msgs.end(), [](auto *a, auto *b) { return a->ts == b->ts; }),

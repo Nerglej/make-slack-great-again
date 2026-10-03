@@ -1,13 +1,11 @@
-// WorkspaceCache — one workspace's Store on disk, so a start opens at once
-// (the old app's WorkspaceCache, old-msga/src/cache/workspace_cache.h, and
-// the Session code that fed it).
+// WorkspaceCache — one workspace's Store on disk, so a start opens at once.
 //
-// What is kept, per workspace, in <cacheDir>/workspaces/<key>/ (app/identity.h; the old app
-// kept its own format in <dataDir>/cache/<key>, left alone):
+// What is kept, per workspace, in <cacheDir>/workspaces/<key>/ (app/identity.h; earlier
+// versions kept their own format in <dataDir>/cache/<key>, left alone):
 //   roster.json          conversations: kind, names, members, read cursors,
 //                        unread/mention badges, star, mute, notify level,
-//                        local name (the old conversations.json)
-//   users.json           every known user and bot (users.json + bots.json)
+//                        local name
+//   users.json           every known user and bot
 //   emoji.json           custom emoji, aliases included
 //   meta.json            me, the last open conversation, my user groups,
 //                        muted threads, reminders, and the backend's own
@@ -18,19 +16,17 @@
 //
 // Reading: load() fills an empty Store synchronously at activation; the
 // backend then merges the network's answers into it with its usual rules.
-// Messages load per conversation when it is first opened (loadMessages),
-// as the old message list did.
+// Messages load per conversation when it is first opened (loadMessages).
 //
 // Writing: the cache observes the Store and writes what changed at most
-// once per kWriteDelayMs (the old Session's 1 s save timers), on close(),
+// once per kWriteDelayMs (1 s), on close(),
 // and only when a file's bytes differ from what it last wrote. Files are
-// written atomically and owner-only (0600). The old app wrote on the UI
-// thread too; the files are small (users.json is the big one).
+// written atomically and owner-only (0600), on the UI thread: the files are
+// small (users.json is the big one).
 //
 // Wiping: remove() on sign-out of that workspace, clearAll() for Settings →
 // "Clear cache" — after which caches still open write nothing more this
-// run (the old app's writes failed into the deleted directory alike), so
-// the next start is a cold one.
+// run, so the next start is a cold one.
 //
 // Format: JSON, every record a positional array in the order of its field
 // list (workspace_cache.cpp) — no key per field. A file whose "v" is not

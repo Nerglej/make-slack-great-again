@@ -1,7 +1,6 @@
-// Language names for the Settings language grid, as msga's languageName gave
-// them through QLocale: with a territory, the language's own name for itself,
-// capitalised ("Español", "Русский"), regional where CLDR has a name of its
-// own for the variant ("American English"); without one, its English name
+// Language names for the Settings language grid: with a territory, the language's own name for
+// itself, capitalised ("Español", "Русский"), regional where CLDR has a name of its own for the
+// variant ("American English"); without one, its English name
 // ("German"); then the code. A table rather than a locale
 // library: the binary carries no CLDR, and a dictionary's code is all the
 // OS gives on Linux.
@@ -200,8 +199,8 @@ std::string languageName(std::string_view code) {
             if (lt == v.code)
                 name = v.name;
     }
-    // Without a territory msga named the language itself, in English
-    // (QLocale::languageToString): a bare "en" is no one's regional English.
+    // Without a territory the language itself is named, in English: a bare
+    // "en" is no one's regional English.
     if (!name)
         for (const auto &l : kLanguages)
             if (lang == l.code)

@@ -49,20 +49,20 @@ struct Context {
     std::function<void()>                          closeThread;
     std::function<void(UserRef)>                   openProfile; // may be a no-op for now
     std::function<void(const std::string &)>       openUrl;     // links in messages
-    // msga's openMessageTarget (a message link's chip): the conversation (or
+    // A message link's chip: the conversation (or
     // the thread, for a reply) with the message scrolled to and flashed.
     std::function<void(ConvRef, Ts ts, Ts thread)> openMessage;
 
-    // msga's hover profile card: the pointer entered (1) or left (0) an
+    // The hover profile card: the pointer entered (1) or left (0) an
     // avatar, name or mention standing for the user, or clicked it (2);
     // the rect is its window rect.
     std::function<void(UserRef, ui::RectF, int mode)>             profileHover;
-    // msga's openDmWith (a profile card's "Message", the member list): the
+    // A profile card's "Message", the member list: the
     // user's DM, opened (or created) and shown — or, for a teammate (an
     // agent's avatar in a Claude Code session, which has no DM), its page.
     std::function<void(UserRef)>                                  messageUser;
-    // msga's Forward dialog for a message, or for one of its files (msga's
-    // "Forward this file", from the file bar's Share).
+    // The Forward dialog for a message, or for one of its files ("Forward
+    // this file", from the file bar's Share).
     std::function<void(ConvRef, Ts, const std::string &filePath)> forwardMessage;
 
     // The main window: parent of file dialogs, host of the in-app file
@@ -76,8 +76,8 @@ struct Context {
     // Settings → Threads "Inline": a thread's replies open under its message
     // in the list instead of the side panel (the shell rebuilds the rows).
     bool                                                             threadsInline = false;
-    // A canvas file shared in a message (msga's CanvasViewerOverlay: the
-    // canvas page in a popup). Set by the shell; unset = the file's page.
+    // A canvas file shared in a message (the canvas page in a popup over
+    // the window). Set by the shell; unset = the file's page.
     std::function<void(ConvRef, const model::File &)>                openCanvas;
     // http(s) pictures (avatars, files, emoji, previews): main's; null in
     // tests that only show local files.

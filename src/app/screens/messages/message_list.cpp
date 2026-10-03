@@ -39,7 +39,7 @@ using Kind = MessageList::ItemKind;
 namespace {
 
 constexpr float   kTypingH     = 22;
-constexpr int64_t kGroupMicros = 300LL * 1000000; // Qt: collapse if within 5 minutes
+constexpr int64_t kGroupMicros = 300LL * 1000000; // collapse if within 5 minutes
 constexpr int     kEdgeDelayMs = 60;
 
 bool isSystem(const model::Message &m) {
@@ -78,7 +78,7 @@ uint64_t keyOf(const MessageList::Item &it) {
 }
 
 // The hover toolbar card.
-// msga's floating action card (Paint::toolbarCard): four stacked shadow
+// A floating action card: four stacked shadow
 // halos biased a pixel down, surface.raised, a divider.def hairline, radius 8;
 // 28-px buttons, 8/6 padding, 4 apart. The message toolbar and the file bar.
 class ToolbarCard final : public ui::View {
@@ -124,7 +124,7 @@ public:
             path.size() > 4 ? std::string_view(path).substr(path.size() - 4) : std::string_view();
         img->setAnimated(ext == ".gif");
         img->setPlaceholder(C::None);
-        // msga's ImageViewerOverlay: text.onDarkDim, centred, until it loads.
+        // text.onDarkDim, centred, until it loads.
         img->setLoadingText(tr("Loading image\xE2\x80\xA6"), C::OnDarkDim);
         auto *name = add<ui::Label>(
             std::string(path.substr(path.find_last_of('/') + 1)), Font::SmallBold, C::TooltipText
@@ -143,7 +143,7 @@ public:
     }
 };
 
-// msga's ImageViewerOverlay: the near-opaque viewer backdrop over the whole
+// The file viewer: the near-opaque viewer backdrop over the whole
 // window, a 56-px bar with the file's name (1.05×, onDark) and round 36-px
 // icon buttons, the picture centred below it, scaled to fit, never up.
 class FileViewer final : public ui::Popup {
@@ -375,7 +375,7 @@ private:
 
 // ── Empty-list states ───────────────────────────────────────────────────────
 
-// msga's empty-viewport paint (message_list_paint.cpp doPaint): while loading,
+// The empty viewport: while loading,
 // the ring centred in the list and, after 1 / 5 / 15 s, a hint whose top is
 // 26 + 24 px under the centre (the app font at 1.15x, text.secondary,
 // wrapped, centred between 32-px margins); loaded and empty, "No messages
@@ -416,7 +416,7 @@ public:
     }
     void layout() override {
         const float w = width(), h = height();
-        // Qt::AlignTop: the text starts there (a Label centres in its frame).
+        // Top-aligned: the text starts there (a Label centres in its frame).
         const float hw = std::max(0.f, w - 64);
         _hint->setFrame(
             {32,
@@ -471,8 +471,8 @@ private:
 };
 
 // A toolbar button: a 16-px icon in icon.strong, the message.hover wash
-// (radius 5, inset 1) under the pointer, its tooltip at once (msga shows
-// toolbar tips on mouse move, without the usual delay).
+// (radius 5, inset 1) under the pointer, its tooltip at once (toolbar tips
+// show on mouse move, without the usual delay).
 class ActionButton final : public ui::Clickable {
 public:
     ActionButton(gfx::Icon icon, std::string tip) : _icon(icon) {
@@ -505,7 +505,7 @@ MessageList::MessageList(Context &ctx)
     setLayoutBoundary(true);
     style().dir = ui::Dir::None;
     _list       = add<ui::VirtualList>(_adapter.get());
-    // msga's list takes focus on click (Qt::ClickFocus), so PageUp/PageDown
+    // The list takes focus on click, so PageUp/PageDown
     // and the arrows scroll it from then on.
     _list->setClickFocus(true);
     _list->setStickToBottom(true);
@@ -521,8 +521,8 @@ MessageList::MessageList(Context &ctx)
     };
     _typing = add<ui::Label>("", Font::Small, C::TextMuted);
     _typing->setMaxLines(1);
-    // msga's hover toolbar: Add reaction, Forward message, Save for later,
-    // More actions (message_list_paint.cpp toolbarButtons).
+    // The hover toolbar: Add reaction, Forward message, Save for later,
+    // More actions.
     _toolbar          = add<ToolbarCard>();
     _tbEmoji          = _toolbar->add<ActionButton>(gfx::Icon::Smile, tr("Add reaction"));
     _tbEmoji->onClick = [this] {
@@ -549,7 +549,7 @@ MessageList::MessageList(Context &ctx)
         }
     };
     _toolbar->setVisible(false);
-    // msga's file action bar: Download, Share, More actions.
+    // The file action bar: Download, Share, More actions.
     _fileBar          = add<ToolbarCard>();
     auto *download    = _fileBar->add<ActionButton>(gfx::Icon::Download, tr("Download"));
     download->onClick = [this] { downloadFile(_fileTs, _filePath); };
@@ -567,7 +567,7 @@ MessageList::MessageList(Context &ctx)
 }
 
 void MessageList::toggleSaved(Ts ts) {
-    // msga's Save button: a toggle. Saved (a bookmark or a reminder) →
+    // The Save button: a toggle. Saved (a bookmark or a reminder) →
     // removeMessageReminder drops the whole saved item; else a bookmark.
     const model::Message *m = message(ts);
     if (!m || isSystem(*m))
@@ -580,7 +580,7 @@ void MessageList::toggleSaved(Ts ts) {
 }
 
 void MessageList::downloadFile(Ts ts, const std::string &path) {
-    // msga's downloadFileToUser: "Save file" at $HOME/<name>, then the
+    // "Save file" at $HOME/<name>, then the
     // original (source(): for audio, path is Slack's transcode) to it, the
     // footer's cog running from the choice until the bytes are on disk.
     const model::Message *m = message(ts);
@@ -647,7 +647,7 @@ void MessageList::placeFileBar() {
         return;
     }
     // cardTop = file top − 20 (straddling it); right edge on the file's
-    // last pixel column (QRect::right()).
+    // last pixel column.
     const ui::SizeF  sz = _fileBar->measure(ui::kInf, ui::kInf);
     const ui::RectF  r  = _fileView->windowRect();
     const ui::PointF o  = mapFromWindow({r.x, r.y});
@@ -705,8 +705,8 @@ void MessageList::showConversation(ConvRef conv) {
     _markedTs     = 0;
     _jumpTs       = 0;
     _loadingOlder = false;
-    // Where to land: where it was left, else its first unread (msga's
-    // openConversation: switching away and back never jumps the view).
+    // Where to land: where it was left, else its first unread
+    // (switching away and back never jumps the view).
     _openPending  = conv != model::kNoConv;
     _openAnchor   = {};
     _openLastRead = 0;
@@ -744,7 +744,7 @@ void MessageList::showThread(ConvRef conv, Ts root) {
     subscribe();
     updateTyping();
     if (conv != model::kNoConv && !_ctx.store().replies(conv, root)) {
-        // msga shows the ring, not the root, until the thread's page is in.
+        // The ring shows, not the root, until the thread's page is in.
         _loadingThread = true;
         rebuild(false);
         _list->reset();
@@ -796,7 +796,7 @@ void MessageList::rebuild(bool notify) {
         } else if (_loadingThread) {
             // Nothing until the replies are in (the loading state).
         } else if (const model::Message *root = _ctx.store().findMessage(_conv, _root)) {
-            // msga's thread view: the root and its replies as one run with day
+            // The thread view: the root and its replies as one run with day
             // dividers ("Yesterday" above the root), no reply-count row.
             std::vector<const model::Message *> run{root};
             if (const auto *replies = _ctx.store().replies(_conv, _root))
@@ -1096,7 +1096,7 @@ void MessageList::checkEdges() {
     if (_conv == model::kNoConv)
         return;
     if (_root != 0) {
-        // msga: an open thread reads itself — on load and on each new reply
+        // An open thread reads itself — on load and on each new reply
         // (markThreadRead: its cursor, the Threads entry).
         const auto *replies = _ctx.store().replies(_conv, _root);
         if (!_loadingThread && replies && !replies->empty() && !replies->back().pending &&
@@ -1159,7 +1159,7 @@ void MessageList::placeToolbar() {
         return;
     }
     const model::Message *m = message(_toolbarRow->ts());
-    // msga: no toolbar on pending sends and system rows.
+    // No toolbar on pending sends and system rows.
     if (!m || m->pending || isSystem(*m)) {
         _toolbar->setVisible(false);
         return;
@@ -1176,7 +1176,7 @@ void MessageList::placeToolbar() {
     const ui::RectF  rr = _toolbarRow->windowRect();
     const ui::PointF o  = mapFromWindow({rr.x, rr.y});
     // cardTop = message top − cardH/2 (straddling the row's top edge),
-    // 12 px from the right; msga clips it at the viewport's top.
+    // 12 px from the right; clipped at the viewport's top.
     _toolbar->setFrame({std::floor(width() - 12 - sz.w), std::floor(o.y - sz.h / 2), sz.w, sz.h});
     _toolbar->setVisible(o.y < height() - _typingH);
 }
@@ -1213,7 +1213,7 @@ void MessageList::rowHovered(MessageRow *row, bool on) {
 
 bool MessageList::onEvent(ui::Event &e) {
     switch (e.type) {
-    // msga's text selection: a press on message text starts a drag (a
+    // Text selection: a press on message text starts a drag (a
     // press anywhere else here clears it); two clicks take a word, three a
     // line; Ctrl/Cmd+C copies it, Escape drops it.
     case ui::EventType::PointerDown: {
@@ -1326,7 +1326,7 @@ void MessageList::openReactionPicker(Ts ts, ui::RectF anchor) {
 
 namespace {
 
-// msga's PopupTooltip::showToast: the tooltip chip (near-black, medium white
+// The tooltip chip (near-black, medium white
 // text, 10/5 padding, radius 6, the arrow at the point) above a click.
 class ClickToast final : public ui::Popup {
 public:
@@ -1397,7 +1397,7 @@ void MessageList::showToast(const std::string &text, int ms, ui::PointF at) {
 }
 
 void MessageList::pressButton(Ts ts, const std::string &buttonId, ui::PointF at) {
-    // A link button opens its URL (msga's url: anchors) instead.
+    // A link button opens its URL instead.
     if (const model::Message *m = message(ts); m && m->extra)
         for (const model::Button &b : m->extra->buttons)
             if (b.id == buttonId && !b.url.empty()) {
@@ -1430,9 +1430,9 @@ void MessageList::openImage(const std::string &path, int w, int h) {
 }
 
 // ── The message menu ────────────────────────────────────────────────────────
-// msga's Qt menus (message_list.cpp): showContextMenu (the hover toolbar's
-// "…", also right click on the row here), showRemindMenu, the link menu
-// (right click on a link) and showFileContextMenu (an image or a file).
+// The menus: the message menu (the hover toolbar's "…", also right click on
+// the row), the reminder presets, the link menu (right click on a link) and
+// the file menu (an image or a file).
 
 namespace {
 
@@ -1440,7 +1440,7 @@ struct ItemDef {
     uint8_t     id;
     gfx::Icon   icon;
     const char *label;
-    const char *hint; // msga's shortcut (the key chooses it while the menu is open)
+    const char *hint; // the shortcut (the key chooses it while the menu is open)
 };
 constexpr ItemDef kItemDefs[] = {
     {MessageList::kReply, gfx::Icon::MessageSquareReply, N_("Reply in thread"), "T"},
@@ -1470,7 +1470,7 @@ constexpr ItemDef kItemDefs[] = {
     {MessageList::kDeleteFile, gfx::Icon::Trash2, N_("Delete file…"), nullptr},
 };
 
-// Reminder presets (msga's showRemindMenu), no icons.
+// Reminder presets, no icons.
 constexpr const char *kRemindLabels[] = {
     N_("In 20 minutes"), N_("In 1 hour"), N_("In 3 hours"), N_("Tomorrow"), N_("Next week")
 };
@@ -1493,7 +1493,7 @@ ui::MenuItem &addItem(std::vector<ui::MenuItem> &out, int id, bool enabled = tru
 }
 
 void addSeparator(std::vector<ui::MenuItem> &out) {
-    // msga's collapseSeparators(): never leading or doubled.
+    // Separators: never leading or doubled.
     if (!out.empty() && !out.back().separator)
         out.push_back(ui::MenuItem::separatorItem());
 }
@@ -1507,7 +1507,7 @@ std::string imageMime(std::string_view path) {
     return "image/" + (e.empty() ? std::string("png") : e);
 }
 
-// msga's File::isCsv.
+// A CSV file, by name or type.
 bool isCsv(const model::File &f) {
     const size_t n = f.name.size();
     return f.mime == "text/csv" || (n > 4 && (f.name.compare(n - 4, 4, ".csv") == 0 ||
@@ -1526,7 +1526,7 @@ int64_t remindDue(int preset, int64_t now) {
         return now + 3 * 3600;
     default: {
         const base::CivilTime c  = base::localTime(now);
-        const int             wd = c.weekday == 0 ? 7 : c.weekday; // Mon=1…Sun=7, as Qt's dayOfWeek
+        const int             wd = c.weekday == 0 ? 7 : c.weekday; // Mon=1…Sun=7
         return base::fromLocal(c.year, c.month, c.day + (preset == 3 ? 1 : 8 - wd), 9, 0);
     }
     }
@@ -1545,7 +1545,7 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     // moves, and a thread only opens where one exists (a subagent run or a
     // /btw branch) — "Reply in thread" where it takes replies.
     const bool   agent     = _ctx.backend.isAgentSession(_conv);
-    // msga's canDelete: my own messages, or any as a workspace admin — any
+    // Deletable: my own messages, or any as a workspace admin — any
     // at all in an agent session (deleteAnyMessage) — and only when the
     // backend can take this one now (not while the session is working).
     const bool   canDelete = (agent || mine || (st.me != model::kNoUser && st.user(st.me).admin)) &&
@@ -1591,7 +1591,7 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     if (_root == 0 && canDelete && !agent && !m->isReply() && m->replyCount == 0 && !isSystem(*m))
         addItem(items, kMoveToThread);
     // Always offered where AI is wired: without a provider it says so (and
-    // links to Settings → AI assistance), as msga does.
+    // links to Settings → AI assistance).
     addItem(items, kSummarize, _ctx.ai != nullptr);
     if (canDelete) {
         addSeparator(items);
@@ -1603,7 +1603,6 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
 }
 
 std::vector<ui::MenuItem> MessageList::fileMenuItems(Ts ts, const std::string &path) const {
-    // msga's showFileContextMenu.
     std::vector<ui::MenuItem> items;
     const model::Message     *m = message(ts);
     const model::File        *f = nullptr;
@@ -1613,7 +1612,7 @@ std::vector<ui::MenuItem> MessageList::fileMenuItems(Ts ts, const std::string &p
                 f = &x;
     const bool image = !f || f->isImage();
     if (f && isCsv(*f))
-        addItem(items, kPreview); // msga's table viewer
+        addItem(items, kPreview); // the table viewer
     addItem(items, image ? kCopyImageLink : kCopyFileLink);
     if (image)
         addItem(items, kCopyImage);
@@ -1637,7 +1636,7 @@ std::vector<ui::MenuItem> MessageList::remindItems() {
         items.push_back(std::move(m));
     }
     addSeparator(items);
-    ui::MenuItem custom; // msga's ReminderDialog
+    ui::MenuItem custom; // the reminder dialog
     custom.id    = kRemindCustom;
     custom.label = tr("Custom…");
     items.push_back(std::move(custom));
@@ -1652,7 +1651,7 @@ std::vector<ui::MenuItem> MessageList::linkMenuItems() {
 }
 
 std::vector<Ts> MessageList::threadRoots(Ts except) const {
-    // msga's threadRoots(): loaded roots with replies, not pending, newest first.
+    // Loaded roots with replies, not pending, newest first.
     std::vector<Ts> out;
     if (_conv == model::kNoConv)
         return out;
@@ -1745,7 +1744,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         _ctx.backend.setSaved(conv, ts, id == kSave);
         break;
     case kRemind: {
-        // msga replaces the menu with the presets at the same point.
+        // The presets replace the menu at the same point.
         if (!window())
             break;
         std::weak_ptr<char> alive = _alive;
@@ -1758,7 +1757,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
     case kRemoveReminder:
         _ctx.backend.setReminder(conv, ts, 0);
         break;
-    case kDelete: // msga's DeleteMessageDialog first
+    case kDelete: // the delete dialog first
         if (window())
             showDeleteMessageDialog(_ctx, *window(), conv, ts);
         break;
@@ -1770,7 +1769,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         if (window())
             showMoveToThreadDialog(_ctx, *window(), conv, ts, threadRoots(ts));
         break;
-    case kSummarize: { // msga's startSummarizeDown
+    case kSummarize: {
         // From the chosen message down to the newest loaded one (the pages
         // below a visible message are always loaded).
         std::vector<Ts> span;
@@ -1789,7 +1788,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
             }
         break;
     case kCopyImageLink:
-    case kCopyFileLink: // msga: the file's permalink, else the original (never a thumbnail)
+    case kCopyFileLink: // the file's permalink, else the original (never a thumbnail)
         copy = fileUrl(path);
         for (const model::File &f : msg->files())
             if (f.path == path)
@@ -1816,7 +1815,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         _ctx.app.platform().setClipboardText(std::move(copy));
 }
 
-// msga's copyFullImageToClipboard: the full image (source(), not the
+// The full image (source(), not the
 // thumbnail the list shows) as its bytes, as they are (a PNG stays a PNG; no
 // re-encode). A local file (a pending upload, the demo) also goes as itself
 // for file managers; a remote one comes from the image disk cache when the
@@ -1885,7 +1884,7 @@ void MessageList::copyImage(const model::File &f) {
     });
 }
 
-// msga's openCsvPreview: the file fetched to a temporary copy (a local one
+// The file fetched to a temporary copy (a local one
 // read in place), read and parsed on a worker, then the table viewer; the
 // footer's cog runs from the click until it opens (or the download fails).
 void MessageList::openCsvPreview(const model::File &f) {
@@ -1978,7 +1977,7 @@ void MessageList::scrollToMessage(Ts ts, bool animated, bool flash) {
 }
 
 // ── Selection ───────────────────────────────────────────────────────────────
-// msga's text selection over the message bodies: a drag from one message's
+// Text selection over the message bodies: a drag from one message's
 // text to another's, a double click on a word, a triple click on a line.
 // Positions are (message, offset into its selectableTexts joined by '\n'), so
 // a selection outlives the rows that show it.
@@ -2089,7 +2088,7 @@ void MessageList::copySelection() {
 }
 
 // ── Opening position ────────────────────────────────────────────────────────
-// msga's saveScrollAnchor / applyPendingScroll: a conversation shown before
+// A conversation shown before
 // opens where it was left (the bottom, or a message at its offset); a first
 // open lands on the first message after the read cursor, a third down the
 // viewport (the bottom when everything is read).
@@ -2329,7 +2328,7 @@ const std::string *MessageList::canvasPreview(const std::string &id, ui::View *w
 }
 
 void MessageList::openHtmlFile(const model::File &f) {
-    // msga's openHtmlFile: the page itself in the browser, not Slack's file
+    // The page itself in the browser, not Slack's file
     // page (which only offers a download). url_private needs credentials:
     // fetched once to the cache, the browser gets the local copy.
     auto url = [](const std::string &p) {

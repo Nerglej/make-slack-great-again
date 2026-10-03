@@ -17,9 +17,9 @@ namespace shell {
 
 namespace {
 constexpr float kHeight = 64, kPad = 12, kBtn = 40, kBottomPad = 14;
-constexpr int   kConfirmMs  = 5000; // msga reverts the optimistic icon after this
+constexpr int   kConfirmMs  = 5000; // the optimistic icon reverts after this
 constexpr float kTaskGap    = 8;    // between the task spinner and the toggle
-// msga's spinner timer: kSpinDegStep per kSpinTickMs, a full turn in ~2 s.
+// The spinner's pace: kSpinDegStep per kSpinTickMs, a full turn in ~2 s.
 // Here the frame clock paces it; the angle follows the elapsed time.
 constexpr float kSpinTickMs = 16, kSpinDegStep = 3;
 constexpr float kTipPadH = 10, kTipPadV = 5, kTipRadius = 6, kTipArrowW = 7, kTipArrowH = 6;
@@ -29,7 +29,7 @@ std::string tasksHeader(size_t n) {
     return i18n::trn("%n background task running", "%n background tasks running", int64_t(n));
 }
 
-// msga's PopupTooltip::showTaskList: the tooltip chip above the spinner, a
+// The task list: the tooltip chip above the spinner, a
 // small dimmed count header, then one running job per line (elided at 320).
 class TaskListPopup final : public Popup {
 public:
@@ -126,7 +126,7 @@ private:
 
 } // namespace
 
-// msga's background-task spinner: the ghost chrome with a turning cog. A
+// The background-task spinner: the ghost chrome with a turning cog. A
 // status indicator, not a button (the arrow cursor, no focus); it turns only
 // while jobs run.
 class TaskSpinner final : public GhostButton {
@@ -173,7 +173,7 @@ private:
     bool   _running = false;
 };
 
-// The ghost button with msga's ~100 ms cross-fade between the two icons.
+// The ghost button with a ~100 ms cross-fade between the two icons.
 class PresenceToggle final : public GhostButton {
 public:
     PresenceToggle() : GhostButton(Icon::CircleUserRound, {}) {}
@@ -341,7 +341,7 @@ void SidebarFooter::refresh() {
     const auto  caps  = _ctx.backend.capabilities();
     const auto  sp    = _ctx.backend.selfPresence();
     const auto &me    = store.user(store.me);
-    // msga's presenceSupported = presence && selfPresence: a zen-mode service
+    // Presence is supported with presence && self presence: a zen-mode service
     // (Claude Code) has presence dots but no self presence to toggle.
     const bool  self  = caps.presence && !caps.zenMode;
     _avatar->setBitmap(_avatars.get(me.avatar, 80));
@@ -350,7 +350,7 @@ void SidebarFooter::refresh() {
     // phantomAway() is false while manually away: an explicit "hidden" shows
     // the hollow ring rather than the amber tint.
     const bool active = sp.loaded ? sp.active : me.active;
-    // msga's footer never drew my own DND.
+    // The footer never draws my own DND.
     _avatar->setPresence(
         !self              ? P::None
         : active           ? P::Active
@@ -364,7 +364,7 @@ void SidebarFooter::refresh() {
     _tasks->style().margins(0, 0, self || caps.zenMode ? kTaskGap : 0, 0);
     if (!_confirm)
         _toggle->show(sp.manualAway, false);
-    // msga's presenceTooltip: while away only for want of a connected client,
+    // The presence tooltip: while away only for want of a connected client,
     // it says why the presence link isn't (yet) fixing that.
     using L          = model::Backend::PresenceLink;
     const L     link = _ctx.backend.presenceLink();
@@ -419,7 +419,7 @@ void SidebarFooter::togglePresence() {
         refresh();
     });
     _ctx.backend.setPresence(target, [this](bool ok, const std::string &err) {
-        // msga's Session::setPresence: a failure says so (with the re-sign-in
+        // A failure says so (with the re-sign-in
         // hint a missing scope needs).
         if (!ok && onError)
             onError(

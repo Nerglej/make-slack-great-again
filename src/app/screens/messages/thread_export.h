@@ -1,4 +1,4 @@
-// exportThread — msga's ThreadExportJob, behind the thread panel's
+// exportThread — behind the thread panel's
 // "Download thread as text": fetches the WHOLE thread from the service
 // (Backend::loadThread reads every replies page; the open panel may hold only
 // part of a long thread), then writes a plain-text transcript to `path`.
@@ -11,7 +11,7 @@
 // written on a worker (model::runInBackground). The job belongs to nobody:
 // it survives the thread panel switching threads or closing. A failed page
 // aborts it (no silently truncated file), as does the workspace going away
-// before the replies arrive; the reason is logged, as msga did.
+// before the replies arrive; the reason is logged.
 #pragma once
 
 #include "screens/common/context.h"
@@ -33,8 +33,8 @@ void exportThread(
     std::function<void(bool)> done = {}
 );
 
-// The header label exportThread takes for conv (msga's downloadThread:
-// the peer for a DM, "#name" for a channel).
+// The header label exportThread takes for conv (the
+// peer for a DM, "#name" for a channel).
 std::string threadExportTitle(const Store &store, ConvRef conv);
 
 } // namespace screens

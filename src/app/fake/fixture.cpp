@@ -201,7 +201,7 @@ bool parseTimeSpec(std::string_view spec, int64_t now, int64_t prev, int64_t *ou
         !parseInt(clock.substr(0, colon), &h) || !parseInt(clock.substr(colon + 1), &m))
         return false;
     if (h > 23 || m > 59)
-        return false; // QTime(25, 99) is invalid in msga too
+        return false; // "25:99" is no time of day
     const base::CivilTime today = base::localTime(now);
     *out = base::fromLocal(today.year, today.month, today.day + int(days), int(h), int(m));
     return true;

@@ -92,8 +92,8 @@ endif()
 set_target_properties(msga PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 msga_size_map(msga)
 
-# The old app's packaging identities (app/identity.h): the same bundle and
-# executable resources, so the OS and the Homebrew cask see the same app.
+# The packaging identities (app/identity.h): the bundle and executable
+# resources every release has used, so the OS and the Homebrew cask see one app.
 get_filename_component(_res "${CMAKE_CURRENT_SOURCE_DIR}/../../resources" ABSOLUTE)
 get_filename_component(_gfx "${CMAKE_CURRENT_SOURCE_DIR}/../../../../gfx" ABSOLUTE)
 if(APPLE)

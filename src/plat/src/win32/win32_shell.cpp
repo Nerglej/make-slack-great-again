@@ -9,8 +9,8 @@
 // + icon), which is what the Windows App SDK and the Community Toolkit do for
 // unpackaged apps on 1903+ and needs no Start-menu shortcut; builds before
 // that only honour an AUMID carried by a Start-menu shortcut, which we then
-// create the way msga's Qt notifier does (an app that asks for it,
-// AppInfo::startMenuShortcut, gets that shortcut on every build). Toast events arrive on a WinRT
+// create (an app that asks for it, AppInfo::startMenuShortcut, gets that
+// shortcut on every build). Toast events arrive on a WinRT
 // worker thread and are posted to the loop; a click on a toast that is only
 // left in the Action Centre after the app exited is not delivered (that needs
 // a registered COM activator, which a library cannot own).
@@ -776,7 +776,7 @@ const PROPERTYKEY kPkeyAumid = {
 };
 
 // Pre-1903 Windows only accepts toasts from an AUMID carried by a Start-menu
-// shortcut (this is what msga's Qt notifier does everywhere). Idempotent: an
+// shortcut. Idempotent: an
 // existing one is left alone.
 bool writeStartMenuShortcut(const std::wstring &aumid, const std::wstring &name) {
     PWSTR programs = nullptr;

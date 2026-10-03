@@ -4,12 +4,10 @@
 // through fake `claude` shell scripts (the real CLI never runs). Also the
 // transcript item → message rendering (render.h).
 //
-// Ported from the old app's test_claude_code.cpp, its event assertions mapped
-// onto the Store: EvMessageNew → a message appears in the loaded conversation,
-// EvTyping → Store::typing, EvChannelCreated with readOnlyReason →
-// Conversation::readOnly, EvPresenceChanged → User::active,
-// EvConversationRemoved → member == false, EvSendFailed / EvNotice →
-// Backend::onError.
+// The assertions are on the Store: a new message appears in the loaded
+// conversation, typing shows in Store::typing, a read-only session sets
+// Conversation::readOnly, presence is User::active, a removed conversation
+// has member == false, and failed sends and notices reach Backend::onError.
 #include "app/claude/backend.h"
 
 #include "app/claude/attach.h"
@@ -766,7 +764,7 @@ TEST("render: bare URLs in Claude's text are links") {
     CHECK(links("<https://auto.example/x>") == V{"https://auto.example/x"});
     CHECK(links("[the docs](https://docs.example/p)") == V{"https://docs.example/p"});
     // Code stays as written: no <url> token (mrkdwn::parse may still link a
-    // URL inside `code` — the old renderer did — but the text holds none).
+    // URL inside `code`, but the text holds none).
     CHECK_STR(
         renderMarkdown("run `curl https://code.example/`"), "run `curl https://code.example/`"
     );
@@ -986,7 +984,10 @@ TEST("backend: a session title names the teammates it mentions") {
     CHECK_STR(u->name, "Ask @Engineer and @Generalist");
 }
 
-TEST("backend: a session removed by an older msga stays away through an idle-worker retire") {
+TEST(
+    "backend: a removal recorded without the transcript's size stays away through an idle-worker "
+    "retire"
+) {
     FakeClaudeHome home;
     home.writeSession("idle");
     home.append(
@@ -2435,7 +2436,7 @@ TEST("backend: files sent to a session go with its prompt") {
 
     // A file that can't be read fails the send — through done, and once to
     // the user (the composer gives sendWithFiles no done: onError is how it
-    // hears of it; the old Session said "Upload failed" from done instead).
+    // hears of it).
     rig.errors.clear();
     std::optional<bool> failed;
     rig.backend->sendWithFiles(

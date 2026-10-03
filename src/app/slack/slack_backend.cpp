@@ -2,15 +2,11 @@
 // users, emoji, user groups, stars, saved items), history and threads, and
 // the polling that stands in for realtime.
 //
-// A port of msga's PublicBackend read calls plus the Slack half of its
-// Session (old-msga/src/backend/slack/public_backend.cpp,
-// old-msga/src/session/session.cpp): the same endpoints, parameters, merge
-// rules and poll cadences. A workspace with Socket Mode push (app keys:
-// slack_realtime.cpp) polls only as msga's safety net (hasRealtimePush):
+// A workspace with Socket Mode push (app keys: slack_realtime.cpp) polls
+// only as a safety net (hasRealtimePush):
 // no roster/counts/threads polls, and a poll that finds a message the
 // socket should have pushed re-establishes it. The open-chat cadence is
-// 5 s / 60 s (session / app keys, msga's foregroundPollGapMs —
-// conversations.history is 1/min for unlisted apps).
+// 5 s / 60 s (session / app keys — conversations.history is 1/min for unlisted apps).
 #include "app/slack/slack_backend.h"
 
 #include "app/cache/workspace_cache.h"
@@ -40,7 +36,7 @@ using model::UserRef;
 
 namespace {
 
-// Session::checkRealtimeHealth's cadences (old-msga/src/session/session.h).
+// The realtime health check's cadences.
 constexpr int64_t     kRosterReloadGapMs      = 60'000;
 constexpr int64_t     kCountsPollGapMs        = 10'000;
 constexpr int64_t     kThreadsPollGapMs       = 20'000;
@@ -58,16 +54,15 @@ constexpr int         kPresenceHot = 12, kPresenceRotate = 8;
 constexpr int         kMaxDiffPolls = 8, kCountsFailureLimit = 3;
 constexpr int         kMaxThreadInjects = 12, kMaxThreadBacklog = 3;
 // Lost connections and gateway pages: 10 tries back off 0, 1, 2 … 60 s, about
-// four minutes in all (msga's HttpQueue retried idempotent calls with the
-// same backoff and no end; a bound lets a long outage surface as an error).
+// four minutes in all (bounded, so a long outage surfaces as an error).
 constexpr int         kMaxUserReprobes = 20, kMaxTransientRetries = 6, kMaxTransportRetries = 10;
 constexpr const char *kHistoryLimit            = "50";
-constexpr int64_t     kRateLimitNoticeGapMs    = 15'000; // msga's kRateLimitNoticeGapMs
-// A reminder more than a week overdue is marked fired without a notification
-// (msga's kMaxReminderLatenessSecs); the alarm sleeps at most 6 h at a time.
+constexpr int64_t     kRateLimitNoticeGapMs    = 15'000;
+// A reminder more than a week overdue is marked fired without a
+// notification; the alarm sleeps at most 6 h at a time.
 constexpr int64_t     kMaxReminderLatenessSecs = 7 * 24 * 3600;
 constexpr int64_t     kMaxReminderSleepSecs    = 6 * 3600;
-// msga's ThreadExportJob backstop: 400 pages × 50 replies is far beyond any
+// The thread export's backstop: 400 pages × 50 replies is far beyond any
 // real thread; past it the cursor is looping.
 constexpr int         kMaxThreadPages          = 400;
 
@@ -139,7 +134,7 @@ struct SlackBackend::Read {
     std::unordered_map<std::string, Call *>  pacedByKey;
     bool                                     pacedBusy     = false;
     // Normal-lane calls not yet answered (in flight, backing off or waiting
-    // out a 429): the paced lane holds while any is (msga's tryNext).
+    // out a 429): the paced lane holds while any is.
     int                                      normalPending = 0;
     std::unordered_map<std::string, int64_t> readyAt; // per-method 429 cooldown
 
@@ -220,24 +215,24 @@ struct SlackBackend::Read {
     void                                     refreshStarred();
     void                                     refreshSaved();
 
-    // ── Message reminders (msga's armReminderTimer / fireDueReminders) ──────
+    // ── Message reminders ───────────────────────────────────────────────────
     plat::TimerId reminderTimer = 0;
     void          armReminders();
     void          fireDueReminders();
     void          announceReminder(ConvRef c, Ts ts);
 
-    // ── Dead conversations (msga's _deadConvIds): channel_not_found for us —
+    // ── Dead conversations: channel_not_found for us —
     // another workspace's over the shared socket, a dead DM. Persisted.
     std::unordered_set<std::string> dead;
     void                            markDead(const std::string &id);
     void                            markAlive(const std::string &id);
     void                            reconcileDead();
 
-    // ── Mentioned channels the roster lacks (msga's fetchChannelIfNeeded) ───
+    // ── Mentioned channels the roster lacks ─────────────────────────────────
     std::unordered_set<std::string> pendingChannels;
 
     // ── Huddles ─────────────────────────────────────────────────────────────
-    // A head page's newest huddle_thread room (msga's first-page check):
+    // A head page's newest huddle_thread room (the first page's check):
     // never clears a live huddle (an older page may hold a long-ended one).
     void applyHuddleRoom(ConvRef c, const json::Value &messages);
 
@@ -245,7 +240,7 @@ struct SlackBackend::Read {
     std::vector<model::Message> mapPage(ConvRef c, const json::Value &arr, bool topLevel);
     void                        loadThreadPages(ConvRef c, Ts root, bool live, Backend::Done done);
 
-    // ── Polling (msga's checkRealtimeHealth) ────────────────────────────────
+    // ── Polling (the realtime health check) ─────────────────────────────────
     ConvRef openConv   = kNoConv;
     Ts      openThread = 0;
     int64_t lastRoster = 0, lastCounts = 0, lastThreads = 0, lastFg = 0, lastBg = 0;
@@ -262,7 +257,7 @@ struct SlackBackend::Read {
     bool                                threadsUnavailable = false, threadsPrimed = false;
     std::unordered_map<std::string, Ts> threadBaseline;
     std::unordered_set<std::string>     followed; // threads I started, replied in, or follow
-    // msga's _unreadThreads / _threadReadFloor: followed threads with an
+    // Followed threads with an
     // unread reply (key → its newest), and how far I read each one.
     std::unordered_map<std::string, Ts> unreadThreads, threadReadFloor;
     void                                noteUnreadThreadReply(ConvRef c, Ts root, Ts ts);
@@ -296,8 +291,8 @@ struct SlackBackend::Read {
 SlackBackend::Read::Read(SlackBackend &b) : b(b), s(b.store()), session(b._creds.sessionAuth()) {
     if (const char *v = std::getenv("MSGA_SLACK_TEST_SPEEDUP"); v && std::atoi(v) > 1)
         speed = std::atoi(v);
-    // OAuth workspaces have no client.counts (msga's loadUnreadCounts
-    // answered "no snapshot" for them): the roster diff is the activity source.
+    // OAuth workspaces have no client.counts (no activity
+    // snapshot for them): the roster diff is the activity source.
     countsDisabled = !session;
     applyApiBase(b._creds.workspaceUrl);
 }
@@ -384,8 +379,8 @@ void SlackBackend::Read::issue(Call c) {
                 return;
             }
             // Transient Slack errors and lost connections: a bounded backoff
-            // (msga's HttpQueue / WebApiClient), then the caller hears it.
-            // Reads retry a lost answer too (msga retried 5xx on idempotent calls).
+            // then the caller hears it. Reads retry a lost answer too (5xx on
+            // idempotent calls).
             const bool transient = isTransientSlackError(err) && c.attempt < kMaxTransientRetries;
             const bool transport = isTransportError(err) && c.attempt < kMaxTransportRetries;
             if (transient || transport) {
@@ -404,7 +399,7 @@ void SlackBackend::Read::issue(Call c) {
     );
 }
 
-// msga's EvRateLimited: the error banner names the first method that
+// Rate limited: the error banner names the first method that
 // tripped, at most once per 15 s.
 void SlackBackend::Read::noteRateLimited(const std::string &method, int64_t secs) {
     const int64_t t = now();
@@ -463,7 +458,7 @@ void SlackBackend::Read::pageFrom(std::shared_ptr<Pager> p, std::string cursor) 
 }
 
 // team_id is required for an org-level (Enterprise Grid) token and ignored
-// for a workspace one, so msga always sent it on the listing methods.
+// for a workspace one, so it always goes with the listing methods.
 std::string SlackBackend::Read::teamForm(
     std::initializer_list<std::pair<std::string_view, std::string_view>> kv
 ) {
@@ -501,7 +496,7 @@ void SlackBackend::connect(Done done) {
             _store.workspaceId   = std::string(o["team_id"].str(_creds.teamId));
             _store.workspaceName = std::string(o["team"].str(_creds.teamName));
             _store.workspaceUrl  = std::string(o["url"].str(_creds.workspaceUrl));
-            // The icon is the one sign-in stored (team.info, image_88), as in msga.
+            // The icon is the one sign-in stored (team.info, image_88).
             if (_store.workspaceIcon.empty())
                 _store.workspaceIcon = _creds.iconUrl;
             // auth.test's url is the authoritative host (stored credentials may
@@ -532,8 +527,8 @@ void SlackBackend::Read::startLoads() {
         if (!err.empty()) {
             connectError = err;
         } else if (connectDone) {
-            // The conversation list is what the window waits for (msga showed
-            // its column the moment it arrived); users.list may take many
+            // The conversation list is what the window waits for (its column
+            // shows the moment it arrives); users.list may take many
             // pages more, and names fill in as it lands.
             Backend::Done done = std::move(connectDone);
             connectDone        = nullptr;
@@ -567,13 +562,13 @@ void SlackBackend::Read::connectSettled(const std::string &) {
     const int64_t t = now();
     lastRoster = lastUsers = lastStarred = lastSaved = lastSelf = lastPresence = t;
     lastBg                                                                     = t;
-    // The first activity snapshot seeds the unread badges at once (msga
-    // also had them from its cache); presence starts with the hot set.
+    // The first activity snapshot seeds the unread badges at once (the
+    // cache may already have them); presence starts with the hot set.
     pollUnreadCounts();
     lastCounts = t;
     pollDmPresence();
     loadEmoji();
-    // msga's safety timer: min(15 s, the open-chat cadence).
+    // The safety timer: min(15 s, the open-chat cadence).
     const int tickMs = int((session ? 5'000 : 15'000) / speed);
     tickTimer        = b._app.addTimer(std::max(tickMs, 1), true, [this] { tick(); });
 }
@@ -608,7 +603,7 @@ void SlackBackend::Read::loadUsers(std::function<void(const std::string &)> done
     );
 }
 
-// msga's mergeUserSnapshot: snapshot rows win, known enrichment fills their
+// A user snapshot merges: snapshot rows win, known enrichment fills their
 // gaps, and users the snapshot omits are kept (Slack Connect peers are never
 // in users.list; departed members come back as deleted rows, not absences).
 void SlackBackend::Read::mergeUsers(std::vector<model::User> users) {
@@ -741,7 +736,7 @@ void SlackBackend::Read::loadViaWebClient(std::function<void(const std::string &
     );
 }
 
-// msga's reloadConversations + carryLocalConvState: what the API cannot
+// A roster reload: what the API cannot
 // tell (local badges, mute, notify level, cursors, members, local name)
 // survives a reload.
 void SlackBackend::Read::applyRoster(std::vector<model::Conversation> convs) {
@@ -762,7 +757,7 @@ void SlackBackend::Read::applyRoster(std::vector<model::Conversation> convs) {
         }
         s.addConversation(std::move(fresh));
     }
-    // msga replaced its list: what is no longer listed (left, archived) is
+    // The list is replaced: what is no longer listed (left, archived) is
     // no longer a member conversation.
     for (ConvRef r = 0; r < s.conversationCount(); ++r)
         if (s.conversation(r).member && !listed.count(s.conversation(r).id))
@@ -798,7 +793,7 @@ void SlackBackend::Read::carryLocal(
     if (fresh.memberCount == 0)
         fresh.memberCount = old.memberCount;
     // The list carries no room: a live huddle stays until its end is seen
-    // (msga's reloadConversations merge).
+    // (the reload's merge).
     if (old.huddleActive && !fresh.huddleActive) {
         fresh.huddleActive       = true;
         fresh.huddleLink         = old.huddleLink;
@@ -806,8 +801,8 @@ void SlackBackend::Read::carryLocal(
     }
 }
 
-// conversations.list leaves a group DM's members out; msga's sidebar read
-// them from the "mpdm-alice--bob-1" name. The Store names groups by members.
+// conversations.list leaves a group DM's members out; they are read
+// from the "mpdm-alice--bob-1" name. The Store names groups by members.
 void SlackBackend::Read::fixGroupMembers() {
     if (!usersLoaded)
         return;
@@ -845,15 +840,14 @@ void SlackBackend::Read::fixGroupMembers() {
     }
 }
 
-// msga's enrichDmActivity: conversations.list carries no last_read / latest,
-// so DMs and MPDMs get them from conversations.info on the paced lane. Only
-// needed without client.counts (which reports them for everything); msga ran
-// it once per 12 h across restarts, here once per run.
+// conversations.list carries no last_read / latest, so DMs and MPDMs get them
+// from conversations.info on the paced lane. Only needed without
+// client.counts (which reports them for everything); once per run at most.
 void SlackBackend::Read::enrichDmActivity() {
     if (!countsDisabled || dmActivitySwept)
         return;
     dmActivitySwept = true;
-    // msga: one sweep per 12 h across restarts (the cache keeps the stamp
+    // One sweep per 12 h across restarts (the cache keeps the stamp
     // and the cursors it found).
     if (base::nowSecs() - sweepAt < kDmSweepGapSecs)
         return;
@@ -907,7 +901,7 @@ void SlackBackend::Read::loadEmoji() {
 }
 
 void SlackBackend::Read::loadUsergroups() {
-    // msga's loadUsergroupsFromBackend: every group with its handle and name
+    // Every group with its handle and name
     // (mentions show "@handle"); include_users: a mention of a group I
     // belong to counts as a mention.
     call(
@@ -927,7 +921,7 @@ void SlackBackend::Read::loadUsergroups() {
                 if (!x.id.empty())
                     groups.push_back(std::move(x));
             }
-            // An empty snapshot says nothing (msga kept its cache).
+            // An empty snapshot says nothing (the cache stays).
             if (groups.empty() || groups == s.usergroups())
                 return;
             s.setUsergroups(std::move(groups));
@@ -936,7 +930,7 @@ void SlackBackend::Read::loadUsergroups() {
     );
 }
 
-// msga's loadCommands: the workspace's slash commands (an array, or an
+// The workspace's slash commands (an array, or an
 // object keyed by name); session tokens only (OAuth answers
 // not_allowed_token_type).
 void SlackBackend::Read::loadCommands() {
@@ -962,7 +956,7 @@ void SlackBackend::Read::loadCommands() {
             x.desc  = std::string(c["desc"].str());
             x.usage = std::string(c["usage"].str());
             x.local = true; // run by runLocalCommand (chat.command), never sent as text
-            // msga's row label: "App · <name>" for an app's, "Slack" else.
+            // The row label: "App · <name>" for an app's, "Slack" else.
             x.app   = c["type"].str() == "app";
             if (x.app) {
                 const std::string_view appName = c["app_name"].str();
@@ -985,7 +979,7 @@ void SlackBackend::Read::loadCommands() {
 // ── Users ───────────────────────────────────────────────────────────────────
 
 // users.info for someone users.list never lists (Slack Connect peers, USLACK,
-// deactivated accounts) — msga's fetchUserIfNeeded.
+// deactivated accounts).
 void SlackBackend::Read::fetchUserIfNeeded(UserRef ref) {
     if (ref == kNoUser || !s.user(ref).placeholder)
         return;
@@ -1056,19 +1050,19 @@ void SlackBackend::Read::fetchMissingDmUsers() {
     }
 }
 
-// Authors the roster doesn't know (msga's message list asked as it painted).
+// Authors the roster doesn't know.
 void SlackBackend::Read::resolveAuthors(const std::vector<model::Message> &page) {
     if (!usersLoaded)
         return;
     for (const model::Message &m : page) {
         fetchUserIfNeeded(m.user);
-        if (m.isHuddle()) // msga fetched a huddle row's attendees as it painted
+        if (m.isHuddle()) // a huddle row's attendees too
             for (UserRef u : m.extra->huddle.attendees)
                 fetchUserIfNeeded(u);
     }
 }
 
-// msga's reprobeOffRosterUsers: users known only through users.info get a
+// Users known only through users.info get a
 // daily refresh, oldest first, capped per pass, on the paced lane.
 void SlackBackend::Read::reprobeOffRoster() {
     const int64_t                                t = now();
@@ -1109,7 +1103,7 @@ void SlackBackend::Read::reprobeOffRoster() {
     }
 }
 
-// msga's requestPresence: users.getPresence answers internal_error for bots,
+// users.getPresence answers internal_error for bots,
 // system accounts and users not presence-visible to us — skip those, and
 // stop sweeping someone after a failed sweep probe.
 void SlackBackend::Read::requestPresence(UserRef ref, bool background) {
@@ -1140,7 +1134,7 @@ void SlackBackend::Read::requestPresence(UserRef ref, bool background) {
     );
 }
 
-// msga's pollDmPresence: the 12 most recently active DM partners every
+// The 12 most recently active DM partners every
 // round, plus a rotating window of 8 over the rest.
 void SlackBackend::Read::pollDmPresence() {
     std::vector<std::pair<Ts, UserRef>> dms;
@@ -1188,7 +1182,7 @@ void SlackBackend::Read::refreshSelfPresence(std::function<void()> then) {
                     s.user(s.me).active = self.active;
                     changed             = true;
                 }
-                // msga's selfPresence() is a value the footer follows: a new
+                // My presence is a value the footer follows: a new
                 // manual_away alone must reach it too.
                 if (changed && s.me != kNoUser)
                     s.usersChanged();
@@ -1201,9 +1195,8 @@ void SlackBackend::Read::refreshSelfPresence(std::function<void()> then) {
 
 // ── Stars and saved items ───────────────────────────────────────────────────
 
-// msga's refreshStarred: stars.list is the only read path for conversation
-// stars. msga skipped rows toggled locally in the last minute; here only
-// rows whose SERVER state moved since the previous snapshot change, which
+// stars.list is the only read path for conversation stars. Only rows whose
+// SERVER state moved since the previous snapshot change, which
 // never fights a local toggle still on its way.
 void SlackBackend::Read::refreshStarred() {
     lastStarred = now();
@@ -1236,7 +1229,7 @@ void SlackBackend::Read::refreshStarred() {
     );
 }
 
-// msga's refreshReminders (saved.list, session tokens only): "save for later"
+// saved.list (session tokens only): "save for later"
 // items and their due times, diffed against the previous snapshot as above.
 void SlackBackend::Read::refreshSaved() {
     lastSaved = now();
@@ -1288,7 +1281,7 @@ void SlackBackend::Read::refreshSaved() {
 
 // ── Message reminders ───────────────────────────────────────────────────────
 
-// msga's armReminderTimer: wake at the nearest due reminder not fired yet
+// Wake at the nearest due reminder not fired yet
 // (at least 1 s out, so firing never runs inside a Store change; at most
 // 6 h, then look again).
 void SlackBackend::Read::armReminders() {
@@ -1308,7 +1301,7 @@ void SlackBackend::Read::armReminders() {
     });
 }
 
-// msga's fireDueReminders: each due reminder is marked fired (and saved)
+// Each due reminder is marked fired (and saved)
 // first, then announced — unless it is over a week late (a machine that was
 // off), which goes quietly. The item stays listed.
 void SlackBackend::Read::fireDueReminders() {
@@ -1328,7 +1321,7 @@ void SlackBackend::Read::fireDueReminders() {
         announceReminder(c, ts);
 }
 
-// msga's announceReminderDue: the notification wants the message's text; a
+// The notification wants the message's text; a
 // reminder whose preview isn't known looks it up first (once).
 void SlackBackend::Read::announceReminder(ConvRef c, Ts ts) {
     const model::Store::SavedItem *it = s.findSaved(c, ts);
@@ -1367,7 +1360,7 @@ void SlackBackend::Read::markAlive(const std::string &id) {
         extrasChanged();
 }
 
-// msga's reconcileDeadConvIds: a fresh roster revives what it lists — a DM
+// A fresh roster revives what it lists — a DM
 // only once its peer is known and not deactivated.
 void SlackBackend::Read::reconcileDead() {
     if (dead.empty())
@@ -1409,7 +1402,7 @@ void SlackBackend::setHuddle(
     });
 }
 
-// msga's isThreadFollowed + isFollowedThreadReply: a thread I follow, or
+// A thread I follow, or
 // one I started.
 bool SlackBackend::threadFollowed(ConvRef c, Ts root) const {
     if (_read->followed.count(threadKey(c, root)))
@@ -1487,7 +1480,7 @@ void SlackBackend::loadHistory(ConvRef conv, Ts before, Done done) {
         });
         return;
     }
-    // msga paged with next_cursor; `latest` (exclusive) is the same page.
+    // Paging with next_cursor or `latest` (exclusive) gives the same page.
     std::string form = net::formEncode({{"channel", id}, {"limit", kHistoryLimit}});
     if (before)
         form.append(str::concat({"&latest=", model::formatTs(before), "&inclusive=false"}));
@@ -1525,7 +1518,7 @@ void SlackBackend::loadThread(ConvRef conv, Ts root, Done done) {
 
 // conversations.replies, every page (oldest first; the first row is the
 // root). live: a refresh of the open thread — replies that are new to us are
-// delivered as live messages (badges, reply counters), as msga's poll did.
+// delivered as live messages (badges, reply counters).
 void SlackBackend::Read::loadThreadPages(ConvRef c, Ts root, bool live, Backend::Done done) {
     const std::string &id = b.convId(c);
     if (id.empty() || !root) {
@@ -1616,8 +1609,8 @@ void SlackBackend::setActiveConversation(ConvRef conv, Ts thread) {
     Read &r = *_read;
     if (r.openConv != conv) {
         // The deletion baseline belongs to the chat that was open; and the
-        // newly opened one is polled on the next tick (msga reset the shared
-        // cooldown so hopping between chats can't starve one).
+        // newly opened one is polled on the next tick (the shared
+        // cooldown resets, so hopping between chats can't starve one).
         r.snapshotConv = kNoConv;
         r.snapshotTs.clear();
         r.lastFg = 0;
@@ -1626,7 +1619,7 @@ void SlackBackend::setActiveConversation(ConvRef conv, Ts thread) {
     r.openThread = thread;
     if (!r.cache || conv == kNoConv || conv >= _store.conversationCount())
         return;
-    // msga's openConversation: the cached messages show at once, the network
+    // Opening a conversation: the cached messages show at once, the network
     // page is merged in when it comes; and this is the chat to reopen.
     r.cache->setLastConversation(conv);
     if (const Ts newest = r.cache->loadMessages(conv))
@@ -1683,7 +1676,7 @@ std::string previewText(const std::string &text) {
 } // namespace
 
 // What only this backend knows, kept in meta.json's "x": the saved items
-// (msga's reminders list: the saved flag of a message not loaded yet, and
+// (the saved flag of a message not loaded yet, and
 // what to unsave when the server's list drops it), the threads I follow
 // (a reply right after a start still badges as a followed-thread one), when
 // each off-roster user was last re-probed, and the DM activity sweep.
@@ -1697,7 +1690,7 @@ void SlackBackend::Read::saveExtras(json::Writer &w) {
             const model::Store::SavedItem *it = s.findSaved(keyConv(k), keyTs(k));
             w.beginArray().value(conv(k)).value(int64_t(keyTs(k))).value(due);
             w.value(it ? it->savedAt : int64_t(0)).value(it && it->fired);
-            // msga's reminderPreviews: what the message said, so the Saved
+            // Reminder previews: what the message said, so the Saved
             // page and a due reminder show it without fetching it again.
             if (it && it->previewed &&
                 (!it->text.empty() || it->author != kNoUser || !it->botName.empty())) {
@@ -1722,7 +1715,7 @@ void SlackBackend::Read::saveExtras(json::Writer &w) {
     w.key("dead").beginArray();
     for (const std::string &id : dead)
         w.value(id);
-    // msga's usergroups.json: the groups as last listed.
+    // The groups as last listed.
     w.endArray().key("ug").beginArray();
     for (const model::Store::Usergroup &g : s.usergroups()) {
         w.beginArray().value(g.id).value(g.handle).value(g.name).beginArray();
@@ -1783,13 +1776,11 @@ void SlackBackend::Read::loadExtras(const json::Value &x) {
     armReminders();
 }
 
-// The head page of a conversation shown from the cache (the old message
-// list's mergeHeadPage): what the server no longer has inside the page's
-// span was deleted while we were away, and a cached run that doesn't reach
-// the page is cut loose — kept, it would leave a hole that paging from its
-// oldest message could never fill, so it goes and paging starts from the
-// head. Only messages that came from the cache are judged (ts at most
-// cachedNewest); anything that arrived live since is left alone.
+// The head page of a conversation shown from the cache: what the server no longer has inside the
+// page's span was deleted while we were away, and a cached run that doesn't reach the page is cut
+// loose — kept, it would leave a hole that paging from its oldest message could never fill, so it
+// goes and paging starts from the head. Only messages that came from the cache are judged (ts at
+// most cachedNewest); anything that arrived live since is left alone.
 void SlackBackend::Read::refreshCachedHead(ConvRef c, Ts cachedNewest) {
     call(
         "conversations.history",
@@ -1936,7 +1927,7 @@ void SlackBackend::Read::pollUnreadCounts() {
     });
 }
 
-// msga's applyActivitySnapshot: fold the cursors in (upward only), seed the
+// An activity snapshot: fold the cursors in (upward only), seed the
 // badges of conversations seen for the first time, and poll the ones that
 // moved since the previous snapshot.
 void SlackBackend::Read::applyActivity(const std::vector<mapjson::Counts> &snapshot) {
@@ -2002,7 +1993,7 @@ void SlackBackend::Read::applyActivity(const std::vector<mapjson::Counts> &snaps
     }
 }
 
-// msga's pollConversationForMissed: the head page of a conversation; what is
+// The head page of a conversation; what is
 // newer than the baseline arrives as live messages. Foreground (the open
 // chat) also merges the whole page (edits, reactions, reply counts, a buried
 // gap), detects deletions and refreshes an open thread whose root moved.
@@ -2046,8 +2037,8 @@ void SlackBackend::Read::pollConversation(ConvRef c, bool foreground, Ts hint) {
                 for (const model::Message &m : page)
                     if (m.ts > lastKnown)
                         missed = inject(c, m.clone(), false) || missed;
-            // The socket should have pushed that: it is compromised (msga's
-            // reestablishRealtime, throttled there). On a poll-only workspace
+            // The socket should have pushed that: it is compromised and
+            // re-established (throttled). On a poll-only workspace
             // this poll IS the delivery, not a miss.
             if (missed && b.hasRealtimePush())
                 b.realtimeMissed();
@@ -2089,7 +2080,7 @@ void SlackBackend::Read::pollConversation(ConvRef c, bool foreground, Ts hint) {
     );
 }
 
-// msga's pollThreadReplies (subscriptions.thread.getView, session tokens):
+// Thread replies (subscriptions.thread.getView, session tokens):
 // the one endpoint that reports thread replies workspace-wide.
 void SlackBackend::Read::pollThreadReplies() {
     call(
@@ -2138,7 +2129,7 @@ void SlackBackend::Read::pollThreadReplies() {
                     return a.m.ts < b2.m.ts;
                 });
                 const Ts newest = replies.empty() ? 0 : replies.back().m.ts;
-                // The Threads entry (msga's _unreadThreads): the feed's own
+                // The Threads entry: the feed's own
                 // read cursor or mine, whichever is further; the first page
                 // after a start restores it.
                 const Ts floor =
@@ -2189,7 +2180,7 @@ void SlackBackend::Read::pollThreadReplies() {
     );
 }
 
-// msga's noteUnreadThreadReply: a live reply in a thread I follow (or one
+// A live reply in a thread I follow (or one
 // that mentions me) lights the Threads entry until I read up to it.
 void SlackBackend::Read::noteUnreadThreadReply(ConvRef c, Ts root, Ts ts) {
     const std::string key = threadKey(c, root);
@@ -2200,7 +2191,7 @@ void SlackBackend::Read::noteUnreadThreadReply(ConvRef c, Ts root, Ts ts) {
     publishUnreadThreads();
 }
 
-// msga's markThreadRead: the floor (and the poll's baseline) move up to
+// The floor (and the poll's baseline) move up to
 // upTo; the thread is read once its newest unread reply is.
 void SlackBackend::Read::threadRead(ConvRef c, Ts root, Ts upTo) {
     const std::string key = threadKey(c, root);
@@ -2220,7 +2211,7 @@ void SlackBackend::Read::publishUnreadThreads() {
     s.setUnreadThreads(n);
 }
 
-// msga's loadThreadsView + JsonMappers::toThreadsViewPage: one page of the
+// One page of the
 // Threads page's feed (the endpoint the poll above reads).
 void SlackBackend::loadThreadsView(std::string cursor, ThreadsViewDone done) {
     Read *r = _read;
@@ -2292,7 +2283,7 @@ void SlackBackend::loadThreadsView(std::string cursor, ThreadsViewDone done) {
     );
 }
 
-// msga's loadMessageAt: conversations.replies answers for any ts in the
+// conversations.replies answers for any ts in the
 // conversation — a plain message and a thread root come back as
 // messages[0] (limit 1 cuts the rest of the thread), and a reply's own ts
 // returns just that reply, which conversations.history never lists.
@@ -2328,8 +2319,8 @@ void SlackBackend::loadMessage(ConvRef conv, Ts ts, MessageDone done) {
     );
 }
 
-// A message that arrived (msga's handleNewMessage): into the Store as a live
-// message, then the badge by msga's rules — every DM message is a red badge,
+// A message that arrived: into the Store as a live message, then the badge
+// by these rules — every DM message is a red badge,
 // a muted conversation badges only mentions and followed-thread replies,
 // plain channel thread replies don't badge the channel.
 bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
@@ -2375,11 +2366,11 @@ bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
                 std::find(r.replyUsers.begin(), r.replyUsers.end(), author) == r.replyUsers.end())
                 r.replyUsers.push_back(author);
         });
-        // Still news (msga fired EvMessageNew for it): what notifies.
+        // Still news: what notifies.
         s.announceReply(c, m);
     } else {
         s.addMessage(c, std::move(m));
-        // msga's _readingConv: the open, focused chat marks it read as it
+        // The open, focused chat marks it read as it
         // lands (the shell's observer, inside addMessage). The Store has
         // recounted; count on top of that, and not this message.
         if (const model::Conversation &x = s.conversation(c); x.lastRead != lastRead) {
@@ -2389,7 +2380,7 @@ bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
         }
     }
 
-    // msga's handleNewMessage: a reply in a thread I follow, or one that
+    // A reply in a thread I follow, or one that
     // mentions me, makes the Threads entry unread.
     if (!own && root && !s.threadMuted(c, root) && (parentIsMe || followed.count(key) || mention))
         noteUnreadThreadReply(c, root, ts);
@@ -2496,7 +2487,7 @@ void SlackBackend::deleteRead(Read *r) {
     delete r;
 }
 
-// msga's PublicBackend::capabilities() for the fields the shell gates on.
+// The capabilities, for the fields the shell gates on.
 model::Backend::Capabilities SlackBackend::capabilities() const {
     Capabilities c;
     c.huddles          = true;

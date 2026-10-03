@@ -62,11 +62,11 @@ namespace shell {
 namespace {
 
 #ifdef __APPLE__
-// msga's unified header (NSWindowToolbarStyleUnifiedCompact), where AppKit
+// The unified header (NSWindowToolbarStyleUnifiedCompact), where AppKit
 // does not say how tall its title bar is.
 constexpr float kMacTitleBarH = 38;
 #else
-constexpr float kTitleBarH = 22; // msga's compact title strip (Linux/Windows)
+constexpr float kTitleBarH = 22; // the compact title strip (Linux/Windows)
 #endif
 constexpr float kRailW = 64;
 constexpr float kListW = 240, kListMinW = 160, kListMaxW = 400;
@@ -88,7 +88,7 @@ struct Shell::Running {
 
 // ── Small views ─────────────────────────────────────────────────────────────
 
-// The workspace bubble on the rail (msga's paintWorkspaceBubble): the icon in
+// The workspace bubble on the rail: the icon in
 // a 40 px rounded square (the name's first letter until there is one), a
 // white ring while active or hovered, the attention dot at the corner — red
 // for mentions and DMs, blue for other unread.
@@ -142,7 +142,7 @@ public:
         }
         return Clickable::onEvent(e);
     }
-    // msga's workspace bubble without its icon (not there yet, or none): the
+    // The workspace bubble without its icon (not there yet, or none): the
     // name's first letter, white bold 17 px.
     void setName(std::string_view name) {
         std::string l = screens::avatarInitial(name.empty() ? std::string_view("?") : name);
@@ -205,7 +205,7 @@ public:
     std::unique_ptr<text::Layout>      layout;
 };
 
-// msga's WorkspaceSwitcher: the workspaces' bubbles kGap apart, the white
+// The workspace switcher: the workspaces' bubbles kGap apart, the white
 // bar left of the active one. A press that moves picks a bubble up (a
 // little larger, with a shadow); the others glide out of its way, and the
 // drop reports the new order.
@@ -213,8 +213,8 @@ class WorkspaceStack final : public View {
 public:
     static constexpr float kGap        = 8;
     static constexpr float kStep       = RailTile::kSize + kGap;
-    static constexpr float kDragStart  = 10;    // Qt's startDragDistance
-    static constexpr float kLiftScale  = 1.06f; // msga's kDragLiftScale
+    static constexpr float kDragStart  = 10;    // px of travel before a press becomes a drag
+    static constexpr float kLiftScale  = 1.06f; // the picked-up bubble's scale
     static constexpr float kAnimFactor = 0.35f; // per 16 ms: ~95% of the way in ~130 ms
 
     std::function<void(const std::string &key)>               onClick;
@@ -446,13 +446,13 @@ private:
     double                   _lastTick = 0;
 };
 
-// The rail: msga's nav gradient behind the workspaces, "+" and the gear.
+// The rail: the nav gradient behind the workspaces, "+" and the gear.
 class Rail final : public View {
 public:
     void paint(gfx::Painter &p) override { paintNavGradient(*this, p, C::Rail); }
 };
 
-// msga's ConvResizeHandle: 4 px right of the list, in the list's gradient at
+// The list's resize handle: 4 px right of the list, in the list's gradient at
 // rest and the link blue under the pointer; a drag resizes the list.
 class ListHandle final : public View {
 public:
@@ -489,9 +489,9 @@ private:
     float _startX = 0, _startW = 0;
 };
 
-// msga's windowed frame (updateRoundedMask): the right panel keeps 4 px off
-// the window's right and bottom edges unless maximized or full screen, and
-// the rail colour shows there (the old app's nav-coloured wrapper margin).
+// The windowed frame: the right panel keeps 4 px off the window's right and
+// bottom edges unless maximized or full screen, and the rail colour shows
+// there (a nav-coloured margin).
 class InsetPane final : public View {
 public:
     void paint(gfx::Painter &p) override {
@@ -512,8 +512,8 @@ public:
     }
 };
 
-// The splitter handle between the messages and the thread panel: 1 px (msga's
-// setHandleWidth(1)), with the panel's soft shadow cast 6 px onto the chat.
+// The splitter handle between the messages and the thread panel: 1 px, with the panel's soft shadow
+// cast 6 px onto the chat.
 class Splitter final : public View {
 public:
     explicit Splitter(std::function<void(float dx)> onDrag) : _onDrag(std::move(onDrag)) {
@@ -628,7 +628,7 @@ public:
     Ts              root     = 0;
 };
 
-// msga's welcome screen: "Keyboard shortcuts", generated from the table
+// The welcome screen: "Keyboard shortcuts", generated from the table
 // (shortcuts.h inHelp rows, in table order), each row an action name and its
 // keys as chips. Rows that do not fit drop from the bottom (the table lists
 // them in descending usefulness) instead of being clipped.
@@ -692,7 +692,7 @@ private:
     std::vector<View *> _rows;
 };
 
-// msga's logged-out page (buildLoggedOutPage): no workspace signed in — the
+// The logged-out page: no workspace signed in — the
 // logo, "MSGA", the tagline with its initials picked out, and "Log in to
 // workspace" in a 300 px column centred on the content surface.
 class SignedOutPage final : public View {
@@ -750,7 +750,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
     ctx.closeThread      = [this] { closeThread(); };
     ctx.openProfile      = [this](model::UserRef u) { showProfile(u); };
     ctx.openUrl          = [this](const std::string &url) { _ctx.app.platform().openUrl(url); };
-    // msga's openMessageTarget: a channel we never joined is joined first.
+    // A channel we never joined is joined first.
     ctx.openMessage      = [this](ConvRef c, Ts ts, Ts thread) {
         const model::Conversation *cv =
             c < _ctx.store().conversationCount() ? &_ctx.store().conversation(c) : nullptr;
@@ -786,8 +786,8 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
     buildRail(body);
     _sidebar = body->add<Sidebar>(ctx, _avatars);
     _sidebar->style().width(kListW).noShrink();
-    // msga's conv/visitedAt: the visit stamps come back from the settings and
-    // go there again 1.5 s after the last change (coalesced, like msga).
+    // The visit stamps come back from the settings and go there again 1.5 s
+    // after the last change (coalesced).
     _sidebar->setVisited({_settings.visitedAt.begin(), _settings.visitedAt.end()});
     _sidebar->onVisitedChanged = [this] {
         _ctx.app.cancelTimer(_visitedTimer);
@@ -806,7 +806,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
     auto *page = _signedOut->add<SignedOutPage>();
     page->style().flex(1);
     page->login->onClick = [this, b = page->login] {
-        const RectF r = b->windowRect(); // msga: the button's bottom-left
+        const RectF r = b->windowRect(); // the button's bottom-left
         addWorkspace({r.x, r.y + r.h});
     };
     _signedOut->setVisible(false);
@@ -830,7 +830,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
     _sidebar->onBrowsePeople           = [this] { openBrowseDialog(1); };
     _sidebar->onCreateChannel          = [this] { openCreateChannel(); };
     ctx.forwardMessage                 = [this](ConvRef c, Ts ts, const std::string &file) {
-        // msga: with two or more workspaces signed in, a picker chooses
+        // With two or more workspaces signed in, a picker chooses
         // where it goes (starting on this one).
         std::vector<ForwardWorkspace> targets;
         for (const LiveWorkspace &w : liveWorkspaces())
@@ -878,14 +878,14 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         ctx.backend.onError = [this](const std::string &message) { showError(message); };
         _ownsBackendError   = true;
     }
-    // A canvas file in a message: msga's canvas viewer over the window.
+    // A canvas file in a message: the canvas viewer over the window.
     ctx.openCanvas = [this](ConvRef c, const model::File &f) {
         showCanvasViewer(_ctx, _win, c, f, [this](const std::string &message) {
             showError(message);
         });
     };
     ctx.messageUser = [this](model::UserRef u) {
-        // msga's openDmWith: a teammate has no DM of its own; its page is
+        // A teammate has no DM of its own; its page is
         // where writing to it starts a session.
         if (_ctx.backend.capabilities().agentSessions)
             for (const model::Backend::AgentRole &r : _ctx.backend.agentRoles())
@@ -922,7 +922,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         onChange(ch);
     });
 
-    // Keyboard: msga's window-scope shortcuts (shortcuts.h), and its
+    // Keyboard: the window-scope shortcuts (shortcuts.h), and the
     // app-wide Shift+Del filter.
     using shortcuts::Id;
     shortcuts::install(win, Id::OpenSettings, [this] { openSettings(); });
@@ -949,7 +949,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         rebuildTrayMenu();
     }
 #ifdef MSGA_HAVE_MESSAGES
-    // The emoji picker's "Frequently used" and skin tone (msga's emoji/*).
+    // The emoji picker's "Frequently used" and skin tone.
     screens::EmojiPicker::restoreState(_settings.emojiRecent, _settings.emojiSkinTone);
     screens::EmojiPicker::setStateObserver(
         [this](const std::vector<std::string> &recent, int tone) {
@@ -973,7 +973,7 @@ void Shell::saveSettings() {
 
 void Shell::wireAgentUi() {
     // ↑ in a Claude Code session: its prompt history, as in Claude Code
-    // itself (msga's setPromptHistorySource; the thread composer has none).
+    // itself (the thread composer has none).
     // On a teammate's page, before any session: the prompts of the folder
     // the new session starts in. (A command typed there is the new
     // session's first prompt: the page's onSendRequest takes the send.)
@@ -986,8 +986,8 @@ void Shell::wireAgentUi() {
     _composer->onCommand = [this](const std::string &name, const std::string &args) {
         runCommand(_current, 0, name, args);
     };
-    // Zen mode: remembered per workspace in Settings (msga's
-    // zenMode/<teamId>); the open chat reloads to match.
+    // Zen mode: remembered per workspace in Settings; the open chat reloads
+    // to match.
     SidebarFooter &footer = _sidebar->footer();
     footer.setZenOn(_settings.zenMode(_activeKey));
     footer.onZenToggled = [this](bool on) {
@@ -1006,7 +1006,7 @@ void Shell::wireAgentUi() {
     _thread->composer->onCommand = [this](const std::string &name, const std::string &args) {
         runCommand(_thread->composer->conv(), _thread->composer->thread(), name, args);
     };
-    _thread->composer->setPopupArea(_thread->panel); // msga: the panel is its parent
+    _thread->composer->setPopupArea(_thread->panel); // its popups stay inside the panel
     // "Open as session": a branched agent thread moves to the list.
     _thread->panel->onOpenAsSession = [this](ConvRef conv, Ts root) {
         const ConvRef session = _ctx.backend.openThreadAsSession(conv, root);
@@ -1018,7 +1018,7 @@ void Shell::wireAgentUi() {
 #endif
 }
 
-// msga's applyComposerAccess: a conversation nobody can post to from here
+// A conversation nobody can post to from here
 // (Conversation::readOnly, e.g. a session a terminal drives) locks the
 // composer and says why; re-run on every change, since it flips while the
 // chat is open. The suggested reply is handed on only when it changes: a
@@ -1039,7 +1039,7 @@ void Shell::applyComposerAccess() {
     _composer->setLockReason(reason);
 }
 
-// msga's commandRequested: a command msga runs itself (an agent session's
+// A command msga runs itself (an agent session's
 // /status, /clear) — nothing is sent.
 void Shell::runCommand(ConvRef conv, Ts thread, const std::string &name, const std::string &args) {
     if (conv == kNoConv)
@@ -1086,10 +1086,10 @@ Shell::~Shell() {
 }
 
 // The title strip. It continues the rail's window-wide nav gradient, so the
-// two meet without a seam. On macOS it is msga's unified header instead: the
+// two meet without a seam. On macOS it is the unified header instead: the
 // content surface over a subtle rule, as tall as AppKit's title bar, with
 // the conversation header (or the workspace's name) in it and the native
-// traffic lights over its left end; its context menu holds msga's "Pin
+// traffic lights over its left end; its context menu holds "Pin
 // window on top" (no pin button beside the traffic lights).
 class TitleStrip final : public View {
 public:
@@ -1098,7 +1098,7 @@ public:
         p.fillRect(bounds(), color(C::Surface));
         p.fillRect({0, height() - 1, width(), 1}, color(C::DividerSubtle));
 #else
-        // A custom theme's pinned top_nav_bg is msga's flat titleBar.bg.
+        // A custom theme's pinned top_nav_bg is a flat title bar colour.
         if (palette(app() && app()->dark()) == Palette::Custom && customPalette().titleBarBg)
             p.fillRect(bounds(), color(C::TitleBar));
         else
@@ -1125,12 +1125,12 @@ void Shell::buildTitleBar(View *parent) {
     _titleBar   = strip;
 #ifdef __APPLE__
     // As tall as the title bar AppKit lays the traffic lights out in (the
-    // compact unified toolbar's: 38 pt in msga's day, 40 on macOS 26), so
+    // compact unified toolbar's: 38 pt before macOS 26, 40 on it), so
     // they sit centred in the header whatever the OS version makes of it.
     const double native = _win.native().titleBarHeight();
     _titleBarH          = native > 0 ? float(std::round(native)) : kMacTitleBarH;
     _titleBar->style().stack().height(_titleBarH).noShrink();
-    // msga's fallback title while no conversation header shows: the
+    // The fallback title while no conversation header shows: the
     // workspace, centred in the window, clear of the traffic lights.
     _titleLabel = _titleBar->add<Label>(tr("msga"), Font::UnifiedTitle);
     _titleLabel->setMaxLines(1);
@@ -1160,7 +1160,7 @@ void Shell::buildTitleBar(View *parent) {
         b->setFocusable(false);
         return b;
     };
-    // msga's pin: not on Wayland, where a client can't keep itself on top.
+    // The pin: not on Wayland, where a client can't keep itself on top.
     if (_win.native().supportsAlwaysOnTop()) {
         _pinBtn          = chrome(Icon::PinOff, tr("Pin window on top"), false);
         _pinBtn->onClick = [this] { togglePin(); };
@@ -1194,7 +1194,7 @@ void Shell::buildTitleBar(View *parent) {
             updateTitleButtons();
         else if (e.type == plat::EventType::FocusIn || e.type == plat::EventType::FocusOut)
             updateReading();
-        // msga: dragged onto another monitor (QWindow::screenChanged): re-fit.
+        // Dragged onto another monitor: re-fit.
         if (e.type == plat::EventType::Moved) {
             const uint64_t on = _win.native().monitor();
             if (on && on != _fitMonitor)
@@ -1203,14 +1203,14 @@ void Shell::buildTitleBar(View *parent) {
     };
 }
 
-// msga's configureMacTitleBar: the native chrome (macOS's title-bar rim and
+// The native chrome (macOS's title-bar rim and
 // traffic lights) dark when the content surface is, whatever the system's
 // own appearance — a dark theme on a light-mode Mac would otherwise get a
 // bright rim along the top edge. Custom palettes included.
 void Shell::syncChrome() {
     const Color c = color(C::Surface);
     const int   r = int((c >> 16) & 0xff), g = int((c >> 8) & 0xff), b = int(c & 0xff);
-    const int   hsl = std::max({r, g, b}) + std::min({r, g, b}); // QColor::lightness() * 2
+    const int   hsl = std::max({r, g, b}) + std::min({r, g, b}); // HSL lightness * 2
     _win.native().setDarkChrome(hsl < 255);
 }
 
@@ -1220,7 +1220,7 @@ void Shell::togglePin() {
     updateTitleButtons();
 }
 
-// msga's updatePinButton/updateMaxButton: the pin red while pinned, its
+// The pin red while pinned, its
 // tooltip the action a click takes; the restore glyph while maximized.
 void Shell::updateTitleButtons() {
     if (_maxBtn)
@@ -1233,7 +1233,7 @@ void Shell::updateTitleButtons() {
     }
 }
 
-// msga's WorkspaceSwitcher: the bubble 16 px from the top, the ghost "+" 16
+// The workspace switcher: the bubble 16 px from the top, the ghost "+" 16
 // under it, the gear 14 px above the bottom; tooltips to the right.
 void Shell::buildRail(View *parent) {
     _rail = parent->add<Rail>();
@@ -1259,7 +1259,7 @@ void Shell::buildRail(View *parent) {
     auto *add    = _rail->add<GhostButton>(Icon::Plus, tr("Add workspace"), true);
     _addBtn      = add; // its top margin: setWorkspaces
     add->onClick = [this, add] {
-        const RectF r = add->windowRect(); // msga: addButtonGlobalRect().topRight()
+        const RectF r = add->windowRect(); // the menu opens at its top-right
         addWorkspace({r.x + r.w, r.y});
     };
     _rail->add<View>()->style().flex(1);
@@ -1268,7 +1268,7 @@ void Shell::buildRail(View *parent) {
     prefs->onClick = [this] { openSettings(); };
 }
 
-// msga's buildRightPanel: the header and the tab strip span the pane; below
+// The right panel: the header and the tab strip span the pane; below
 // them the messages (list, typing indicator, composer) and the thread panel
 // sit on a 1 px splitter.
 void Shell::buildMain(View *parent) {
@@ -1277,7 +1277,7 @@ void Shell::buildMain(View *parent) {
     _mainPane->style().minW = 360;
 
 #ifdef __APPLE__
-    // msga's TitleBar::setContent: the header is the unified title bar's.
+    // The header is the unified title bar's.
     _header = _titleBar->add<ConvHeader>(_ctx, _avatars);
 #else
     _header = _mainPane->add<ConvHeader>(_ctx, _avatars);
@@ -1285,13 +1285,13 @@ void Shell::buildMain(View *parent) {
     _header->onSearch     = [this] { openSearch(); };
     _tabs                 = _mainPane->add<ConvTabs>();
     _tabs->onSelect       = [this](int tab) { showCanvas(tab == 1); };
-    // msga's HuddleBanner: under the tabs, over the messages.
+    // The huddle banner: under the tabs, over the messages.
     _huddleBanner         = _mainPane->add<HuddleBanner>();
     _huddleBanner->onJoin = [this] {
         if (_current != kNoConv && _ctx.openUrl)
             _ctx.openUrl(huddleJoinUrl(_ctx.store, _current));
     };
-    // msga's _errorBanner: under the tabs, across the pane, danger.icon on
+    // The error banner: under the tabs, across the pane, danger.icon on
     // surface.raised text, 6/12 padding, fonts.md, centred; hidden after 5 s.
     _errorBanner = _mainPane->add<Label>("", Font::Control, C::FormBg);
     _errorBanner->setBackground(C::FormError);
@@ -1299,7 +1299,7 @@ void Shell::buildMain(View *parent) {
     _errorBanner->setMaxLines(1);
     _errorBanner->style().padding(12, 6).noShrink();
     _errorBanner->setVisible(false);
-    // msga's ParallelUsageBanner: right under it, the same danger bar with
+    // The parallel-usage banner: right under it, the same danger bar with
     // light text, a "How to solve this?" link to the setup docs and a close
     // button (xl/xs/sm/xs margins, md spacing); hidden until raised.
     _parallelBanner = _mainPane->add<View>();
@@ -1335,7 +1335,7 @@ void Shell::buildMain(View *parent) {
 
     auto *body = _mainPane->add<View>();
     body->style().row().flex(1);
-    // msga's msgArea, with the search overlay over all of it.
+    // The message area, with the search overlay over all of it.
     auto *areaHost = body->add<View>();
     areaHost->style().stack().flex(1);
     areaHost->style().minW = 360;
@@ -1364,9 +1364,9 @@ void Shell::buildMain(View *parent) {
     _swipeBadge = stack->add<SwipeIndicator>(); // above the list, the panel and the canvas
     _typing     = area->add<TypingIndicator>(_ctx);
     _composer   = area->add<Composer>(_ctx, _drafts);
-    _composer->setEnabled(false); // msga main_window: until a conversation is open
+    _composer->setEnabled(false); // until a conversation is open
     _search           = areaHost->add<MessageSearch>(_ctx);
-    // msga's resultSelected: the conversation opened the usual way, then the
+    // A result: the conversation opened the usual way, then the
     // jump (it waits for the first page if that is still loading).
     _search->onResult = [this](ConvRef conv, Ts ts) { jumpToMessage(conv, ts, 0); };
     _search->onHidden = [this] {
@@ -1375,7 +1375,7 @@ void Shell::buildMain(View *parent) {
     };
 
     _splitter = body->add<Splitter>([this](float dx) {
-        // msga's QSplitter: the panel at least 100 px, the messages 200.
+        // The splitter: the panel at least 100 px, the messages 200.
         const float total = _thread->parent()->width();
         _settings.threadWidth =
             int(std::clamp(_thread->width() - dx, 100.f, std::max(100.f, total - 200)));
@@ -1395,12 +1395,12 @@ void Shell::buildMain(View *parent) {
 
 void Shell::setSignedIn(bool on) {
     _signedIn = on;
-    refreshRail(); // msga: signed out, the rail stays, no workspace selected
+    refreshRail(); // signed out, the rail stays, no workspace selected
     _sidebar->setVisible(on);
     _listHandle->setVisible(on);
     _mainPane->setVisible(on);
     _signedOut->setVisible(!on);
-    // A workspace opening with nothing loaded yet: msga's waiting state.
+    // A workspace opening with nothing loaded yet: the waiting state.
     setWaiting(on && _ctx.store().conversationCount() == 0);
 }
 
@@ -1410,7 +1410,7 @@ void Shell::setLive(bool on) {
         setWaiting(false); // connected: whatever arrived is all there is
 }
 
-// msga's activateWorkspace (no cache) and the conversations' first arrival:
+// A workspace opening with no cache, until the conversations' first arrival:
 // the conversation column (sidebar, its resize handle) hidden, header, tabs
 // and composer hidden, and the message list in its loading state; then the
 // column back, and the welcome panel unless a conversation was opened.
@@ -1442,19 +1442,19 @@ void Shell::setWaiting(bool on) {
 }
 
 void Shell::addWorkspace(PointF anchor) {
-    // msga's promptAddWorkspace: the services to sign in to (the accounts
+    // The services to sign in to (the accounts
     // controller shows them).
     if (onAddWorkspace)
         onAddWorkspace(anchor);
 }
 
-// msga's notifySessionExpired: only when the signed-out page that follows is
+// Only when the signed-out page that follows is
 // out of sight (hidden to the tray; plat cannot tell "minimized" on every
 // OS, so a minimized window is not nudged) — the app telling the user
 // it stopped working, so not gated on the notification settings. A click
 // raises the window (an id we don't track).
 void Shell::showError(const std::string &message) {
-    // msga's showNetworkError: the banner shows the latest message for 5 s.
+    // The banner shows the latest message for 5 s.
     LOG_WARN("shell", "%s", message.c_str());
     _errorBanner->setText(message);
     _errorBanner->setVisible(true);
@@ -1469,7 +1469,7 @@ void Shell::showParallelUsage() {
     _parallelBanner->setVisible(true);
 }
 
-// msga's MainWindow::eventFilter: real input anywhere (a press, a key, a
+// Real input anywhere (a press, a key, a
 // wheel) feeds the presence link, at most once per 20 s here (the link
 // throttles its tickles further; the WhileUsing clock is 30 min).
 void Shell::noteActivity() {
@@ -1478,15 +1478,14 @@ void Shell::noteActivity() {
     if (_lastActivityNote && now - _lastActivityNote < kActivityNoteGapMs)
         return;
     _lastActivityNote = now;
-    // Every running workspace's link (msga's Session::noteUserActivity on
-    // each): presence is per workspace, the user is the same.
+    // Every running workspace's link: presence is per workspace, the user is the same.
     if (_running.empty())
         _ctx.backend.noteUserActivity();
     for (const auto &r : _running)
         r->backend->noteUserActivity();
 }
 
-// msga's showSampleNotification: the dialog's sample with the workspace
+// The Settings dialog's sample notification with the workspace
 // icon (illustrative only); the outcome goes back to the dialog.
 void Shell::showSampleNotification(
     plat::Notification n, std::function<void(const std::string &)> result
@@ -1571,7 +1570,7 @@ void Shell::open(ConvRef conv) {
     _tabs->setVisible(true);
     updateHuddleBanner();
     _composer->setTarget(conv, 0);
-    _composer->setEnabled(conv != model::kNoConv); // msga: disabled until one is open
+    _composer->setEnabled(conv != model::kNoConv); // disabled until one is open
     _composerLock.clear();
     _composerSuggestion = _ctx.backend.promptSuggestion(conv); // setTarget gave it
     applyComposerAccess();
@@ -1579,7 +1578,7 @@ void Shell::open(ConvRef conv) {
     _sidebar->select(conv);
     showCanvas(false);
     updateHeader();
-    // msga's updateHeaderForConv: the peer's presence now, not on the
+    // The peer's presence now, not on the
     // poll's next round.
     if (const auto &c = _ctx.store().conversation(conv);
         c.kind == model::ConvKind::Dm && c.dmUser != model::kNoUser)
@@ -1607,14 +1606,14 @@ void Shell::leaveWorkspace() {
         _threadsPage->clear(); // its cards point into the old workspace
     if (_savedPage)
         _savedPage->clear();
-    _search->reset(); // msga's setSession: the query and results go
+    _search->reset(); // another workspace: the query and results go
     if (threadOpen())
         closeThread(); // a leave path: the thread composer stashes its draft
     if (_thread)
         _thread->clear();
     _current = kNoConv;
     if (!_navSwitching)
-        _pendingNav = {}; // msga's switchToWorkspace: a manual switch cancels a jump
+        _pendingNav = {}; // a manual switch cancels a jump
     _composer->setTarget(kNoConv, 0);
     _composer->setEnabled(false);
     _composerLock.clear();
@@ -1652,7 +1651,7 @@ NavLocation Shell::here(ConvRef conv) const {
 bool Shell::navigateHistory(bool back) {
     // The open workspace's entries must still be listed (left since?); another
     // workspace must still be running, its entry is checked when its
-    // conversations are there (msga's navigateHistory).
+    // conversations are there.
     const auto valid = [this](const NavLocation &l) {
         if (l.key == _activeKey && _signedIn) {
             const ConvRef c = _ctx.store().findConversation(l.conv);
@@ -1665,7 +1664,7 @@ bool Shell::navigateHistory(bool back) {
         return false;
     _pendingNav = target;
     if (target.key != _activeKey || !_signedIn) {
-        // msga's applyNavLocation: the workspace first; its last chat must not
+        // The workspace first; its last chat must not
         // count as a direct open, the jump's target replaces it.
         _navSwitching = _navApplying = true;
         onSwitchWorkspace(target.key);
@@ -1694,7 +1693,7 @@ void Shell::applyPendingNav() {
     _navApplying = outer;
 }
 
-// msga's MainWindow::eventFilter: side buttons anywhere in the window
+// Side buttons anywhere in the window
 // navigate; a swipe that navigates flashes the arrow badge over the chat.
 bool Shell::navInput(const plat::Event &e) {
     using T = plat::EventType;
@@ -1719,9 +1718,8 @@ bool Shell::navInput(const plat::Event &e) {
     return false;
 }
 
-// msga's AppDialog::topmostVisible: a modal dialog (next's Dialog covers the
-// window) or the quick switcher; not the Settings panel, which msga keeps
-// apart.
+// The topmost dialog: a modal dialog (a Dialog covers the window) or the
+// quick switcher; not the Settings panel, which is kept apart.
 Popup *Shell::topDialog() const {
     return _win.topPopup([this](const Popup &p) {
         return &p == _switcher || (p.place() == Popup::Place::Fill && &p != _settingsDlg);
@@ -1779,7 +1777,7 @@ void Shell::openThread(ConvRef conv, Ts root) {
     // Its reply bar in the list says "Close thread".
     static_cast<screens::MessageList *>(_messages)->setOpenThreadRoot(root);
 #endif
-    if (!_thread->visible()) { // msga: the saved width, clamped to what fits
+    if (!_thread->visible()) { // the saved width, clamped to what fits
         const float total = _thread->parent()->width();
         _thread->style().width(
             std::clamp(float(_settings.threadWidth), 100.f, std::max(100.f, total - 200))
@@ -1789,7 +1787,7 @@ void Shell::openThread(ConvRef conv, Ts root) {
     _splitter->setVisible(true);
     _ctx.backend.loadThread(conv, root, nullptr);
     _ctx.backend.setActiveConversation(conv, root);
-    // msga leaves the focus where it was (the reply bar that opened it).
+    // The focus stays where it was (the reply bar that opened it).
 }
 
 void Shell::closeThread() {
@@ -1812,8 +1810,7 @@ void Shell::setupComposer(Composer &c) {
         _settings.giphyKey = k;
         saveSettings();
     };
-    // The paperclip's chooser starts where the last attach was picked
-    // (msga's composer/lastAttachDir).
+    // The paperclip's chooser starts where the last attach was picked.
     c.attachDir    = [this] { return _settings.lastAttachDir; };
     c.setAttachDir = [this](const std::string &dir) {
         if (dir == _settings.lastAttachDir)
@@ -1830,7 +1827,7 @@ void Shell::buildThreadsPage(View *stack) {
     _threadsPage =
         stack->add<ThreadsPage>(_ctx, _avatars, _drafts, [this](Composer &c) { setupComposer(c); });
     _threadsPage->setVisible(false);
-    // msga's openThreadRequested / openChannelRequested: the channel (and
+    // A thread or channel: the channel (and
     // the thread panel) the usual way.
     _threadsPage->onOpenThread  = [this](ConvRef c, Ts root) { openThread(c, root); };
     _threadsPage->onOpenChannel = [this](ConvRef c) { open(c); };
@@ -1841,7 +1838,7 @@ bool Shell::threadsOpen() const {
     return _threadsPage && _threadsPage->visible();
 }
 
-// msga's openThreadsView after leaveConversationForOverview: the
+// Leaving the conversation for the overview: the
 // conversation's chrome and the composer go (the cards bring their own
 // reply boxes), the open chat's draft is stashed.
 void Shell::openThreads() {
@@ -1875,7 +1872,7 @@ void Shell::openThreads() {
 void Shell::buildSavedPage(View *stack) {
     _savedPage = stack->add<SavedPage>(_ctx, _avatars);
     _savedPage->setVisible(false);
-    // msga's openMessageTarget: the conversation opened the usual way, then
+    // The conversation opened the usual way, then
     // the jump — inside its thread for a reply (history never lists those).
     _savedPage->onOpenMessage = [this](ConvRef c, Ts ts, Ts thread) {
         jumpToMessage(c, ts, thread);
@@ -1888,7 +1885,7 @@ bool Shell::savedOpen() const {
     return _savedPage && _savedPage->visible();
 }
 
-// msga's openSavedMessagesView: like the Threads page, no conversation
+// Like the Threads page, no conversation
 // chrome and no composer.
 void Shell::openSaved() {
     if (!_savedPage || !_signedIn || !_ctx.backend.capabilities().messageReminders)
@@ -1983,7 +1980,7 @@ Composer *Shell::threadComposer() {
 void Shell::showCanvas(bool on) {
     on = on && _current != kNoConv;
     if (!on)
-        _canvas->flushPendingSave(); // msga: on every tab / conversation switch
+        _canvas->flushPendingSave(); // on every tab / conversation switch
     _canvas->setVisible(on);
     _messages->setVisible(!on && _current != kNoConv);
     _composer->setVisible(!on);
@@ -1993,7 +1990,7 @@ void Shell::showCanvas(bool on) {
         _canvas->open(_current);
 }
 
-// msga's updateHuddleBanner: while the open conversation (its header on
+// While the open conversation (its header on
 // screen) has a live huddle, where the service has huddles.
 void Shell::updateHuddleBanner() {
     const bool on = _current != kNoConv && _header->visible() &&
@@ -2009,7 +2006,7 @@ void Shell::updateHeader() {
     updateHuddleBanner();
     const auto &c = _ctx.store().conversation(_current);
     _header->show(_current);
-    // Canvases on every conversation but an app's DM (msga hides the tab for
+    // Canvases on every conversation but an app's DM (the tab is hidden for
     // bots, whose canvases are app-owned), where the service has them.
     const bool app = c.kind == model::ConvKind::Dm && _ctx.store().user(c.dmUser).bot;
     _tabs->setCanvas(
@@ -2019,7 +2016,7 @@ void Shell::updateHeader() {
     );
 }
 
-// msga's openConversation: the roster may not say whether a channel has a
+// The roster may not say whether a channel has a
 // canvas (conversations.list carries no properties), so look it up, and its
 // title for the tab, each time a conversation opens.
 void Shell::lookUpCanvas(ConvRef conv) {
@@ -2040,7 +2037,7 @@ void Shell::onChange(const model::Change &ch) {
         refreshWorkspaceIcon();
         rebuildTrayMenu();
         if (_waiting && _ctx.store().conversationCount() > 0)
-            setWaiting(false); // msga: the column shows the moment real data arrives
+            setWaiting(false); // the column shows the moment real data arrives
         if (teammateOpen())    // another workspace: the page follows (or goes)
             refreshTeammates();
         applyPendingNav(); // a back/forward jump waiting for these conversations
@@ -2049,8 +2046,7 @@ void Shell::onChange(const model::Change &ch) {
     for (const auto &r : _running)
         attached = attached || r->store == &_ctx.store();
     if (ch.kind == K::Users && _current != kNoConv) {
-        // msga's users() / EvPresenceChanged / EvDndChanged / selfPresence:
-        // a name resolved later, a presence or DND flip, my phantom state —
+        // A name resolved later, a presence or DND flip, my phantom state —
         // the open chat's header and "Message …" follow.
         _header->refresh();
         _composer->refreshPlaceholder();
@@ -2087,7 +2083,7 @@ void Shell::onChange(const model::Change &ch) {
         messagesArrived(st, {}, ch);
 }
 
-// The old app's tray menu: one item per workspace, Settings, Reset window
+// The tray menu: one item per workspace, Settings, Reset window
 // size (a frameless window pushed off-screen has no other way back), Quit.
 void Shell::rebuildTrayMenu() {
     if (!_tray)
@@ -2117,10 +2113,10 @@ void Shell::rebuildTrayMenu() {
     _tray->setMenu(std::move(items));
 }
 
-// The old app's default size, centred on the window's monitor's work area.
+// The default size, centred on the window's monitor's work area.
 namespace {
 
-// msga's screenForRect: the monitor the window overlaps most, else the one
+// The monitor the window overlaps most, else the one
 // the platform names (no positions on Wayland), else the primary.
 const plat::Monitor *monitorFor(const plat::Window &w, const std::vector<plat::Monitor> &ms) {
     const plat::Monitor *best = nullptr;
@@ -2195,7 +2191,7 @@ void Shell::fitToScreen() {
 }
 
 bool Shell::hideToTray() {
-    // Like the old app: closing the window keeps msga running in the tray
+    // Closing the window keeps msga running in the tray
     // for badges and notifications — but only while a tray host actually
     // shows our icon, or there would be no way back.
     return _settings.closeToTray && hideWindow();
@@ -2204,7 +2200,7 @@ bool Shell::hideToTray() {
 void Shell::minimize() {
     // Settings → Minimize to tray: the window leaves the taskbar too. Only our
     // own title bar's button can do this — the OS minimizes (a compositor
-    // shortcut, the taskbar) without telling us, as on Wayland in the old app.
+    // shortcut, the taskbar) without telling us, as on Wayland.
     if (!(_settings.minimizeToTray && hideWindow()))
         _win.native().minimize();
 }
@@ -2224,7 +2220,7 @@ bool Shell::reading() const {
     return _win.isActive() && !_hidden;
 }
 
-// msga's changeEvent(ActivationChange): in the background the open chat
+// In the background the open chat
 // accrues unreads and notifies; back in front it is marked read.
 void Shell::updateReading() {
 #ifdef MSGA_HAVE_MESSAGES
@@ -2245,13 +2241,13 @@ void Shell::setUpdater(update::Updater *u) {
         if (e.kind == K::Ready)
             _updateBar->showUpdateReady();
         else if (e.kind == K::Failed)
-            showError(e.message); // msga's showNetworkError
+            showError(e.message); // the error banner
     });
     u->onChecked    = [this](int64_t when) {
-        _settings.lastUpdateCheck = when; // msga's updates/lastChecked
+        _settings.lastUpdateCheck = when; // when the last check ran
         saveSettingsNow();
     };
-    // msga: a silent check 5 s after the start (none with auto-checks off).
+    // A silent check 5 s after the start (none with auto-checks off).
     _ctx.app.cancelTimer(_updateTimer);
     _updateTimer = _ctx.app.addTimer(5000, false, [this] {
         _updateTimer = 0;
@@ -2260,7 +2256,7 @@ void Shell::setUpdater(update::Updater *u) {
     });
 }
 
-// msga's applyUpdateAndRestart: the replaced binary starts again; on macOS
+// The replaced binary starts again; on macOS
 // the DMG opens instead.
 void Shell::applyUpdate() {
 #ifdef __APPLE__
@@ -2290,7 +2286,7 @@ void Shell::restore(const std::string &token) {
         if (_hiddenMaximized)
             w.setMaximized(true);
         updateReading();
-        fitToScreen(); // msga's showEvent: monitors may have changed meanwhile
+        fitToScreen(); // on show: monitors may have changed meanwhile
     }
     // Un-minimising is the backend's job (Wayland remaps the window).
     if (!token.empty())
@@ -2310,7 +2306,7 @@ void Shell::handleAppEvent(const plat::Event &e) {
         quit();
         break;
     case T::TrayActivated:
-        // Like the old app (and Telegram): restore the window when it is
+        // Like Telegram: restore the window when it is
         // tucked away in the tray or minimised; otherwise do nothing.
         if (_hidden || !_win.native().isActive())
             raise();
@@ -2329,7 +2325,7 @@ void Shell::handleAppEvent(const plat::Event &e) {
             quit();
             break;
         default:
-            // A workspace: restore, then switch to it (msga's tray menu).
+            // A workspace: restore, then switch to it.
             if (e.id >= kTrayWorkspace) {
                 raise();
                 const size_t i = e.id - kTrayWorkspace;
@@ -2366,8 +2362,7 @@ void Shell::handleAppEvent(const plat::Event &e) {
                     _ctx.app.platform().openUrl(to.join);
                 break;
             }
-            // Another workspace's: switch to it first (msga's
-            // openConversationIn), then the chat if it is the one shown —
+            // Another workspace's: switch to it first, then the chat if it is the one shown —
             // a reply's thread with it, a reminder's message flashed.
             if (!to.key.empty() && !(to.key == _activeKey && _signedIn) && onSwitchWorkspace)
                 onSwitchWorkspace(to.key);
@@ -2397,7 +2392,7 @@ void Shell::handleAppEvent(const plat::Event &e) {
     }
 }
 
-// msga's updateUnreadBadges + updateTrayIcon: each workspace's own dot on
+// Unread badges and the tray icon: each workspace's own dot on
 // its rail tile; the launcher badge and the tray dot sum every workspace
 // except the muted ones (their tiles still show).
 void Shell::updateAttention() {
@@ -2448,8 +2443,8 @@ void Shell::updateAttention() {
 void Shell::refreshTrayIcon(int mentions, bool unread) {
     if (!_tray)
         return;
-    // msga's paper plane (gfx/icon_tray.svg, compiled as Icon::Tray), with a
-    // dot in the corner like the old app: red while a DM or mention waits,
+    // The paper plane (gfx/icon_tray.svg, compiled as Icon::Tray), with a
+    // dot in the corner: red while a DM or mention waits,
     // blue for plain unread activity. Muted conversations count for neither.
 #ifdef __APPLE__
     const gfx::Color plane = 0xff000000U; // a template's alpha is all that counts
@@ -2460,7 +2455,7 @@ void Shell::refreshTrayIcon(int mentions, bool unread) {
 #endif
     // Settings → Tray icon: the user's own picture instead of the plane.
     // Fitted into a square and, by default, a white silhouette like the
-    // built-in plane (msga's CustomTrayIcon::current).
+    // built-in plane.
     const std::string custom =
         _settings.customTrayIcon && !_settings.trayIconPath.empty()
             ? _settings.trayIconPath + (_settings.trayMonochrome ? "\x01m" : "")
@@ -2475,7 +2470,7 @@ void Shell::refreshTrayIcon(int mentions, bool unread) {
             _trayImage = std::make_shared<gfx::Bitmap>(trayPicture(bmp, _settings.trayMonochrome));
     }
 #ifdef __APPLE__
-    // msga: an NSImage template, so the menu bar tints it — the plane, or a
+    // An NSImage template, so the menu bar tints it — the plane, or a
     // monochrome custom picture; a colour picture keeps its colours. In a
     // template the dot is a white mask too, with a clear halo cut around it.
     const bool templ = !_trayImage || _settings.trayMonochrome;
@@ -2496,7 +2491,7 @@ void Shell::refreshTrayIcon(int mentions, bool unread) {
             const float d = std::max(6.f, float(n) * 0.3f);
             const float c = float(n) - d / 2;
 #ifdef __APPLE__
-            if (templ) // msga's clear halo, so the dot stays apart from the plane's wing
+            if (templ) // a clear halo, so the dot stays apart from the plane's wing
                 gfx::clearDisc(b, c, c, d / 2 + float(n) * 4 / 128);
 #endif
             gfx::Painter p(b.view(), 1.f);
@@ -2519,7 +2514,7 @@ void Shell::openSettings() {
 }
 
 void Shell::openAiSettings() {
-    // msga's openAt(Page::Ai): an open dialog turns to the page.
+    // An open dialog turns to the page.
     if (_settingsDlg)
         _settingsDlg->showPage(settings::SettingsDialog::Page::Ai);
     else
@@ -2560,7 +2555,7 @@ void Shell::openSettingsAt(uint8_t page) {
         d->onClosed = after;
     };
     hooks.clearState = [this] {
-        // msga's resetVisitedAt: re-seeded from what is known now.
+        // Re-seeded from what is known now.
         _sidebar->clearVisited();
         storeVisited();
         saveSettingsNow();
@@ -2568,7 +2563,7 @@ void Shell::openSettingsAt(uint8_t page) {
     hooks.importSlackSession   = onImportSlackSession;
     hooks.convertToSession     = onConvertToSession;
     hooks.oauthSlackWorkspaces = oauthSlackWorkspaces ? oauthSlackWorkspaces() : 0;
-    // msga's themeSession: the open workspace if it can read the account's
+    // The theme's source: the open workspace if it can read the account's
     // Slack theme, else the first running one that can (by key: it may stop
     // while the dialog is open).
     std::string themeKey;
@@ -2602,7 +2597,7 @@ void Shell::openSettingsAt(uint8_t page) {
     _settingsDlg = dlg;
 #ifdef __APPLE__
     // Settings covers the body, but the unified header is in the title bar:
-    // its actions are blocked while Settings is open (msga).
+    // its actions are blocked while Settings is open.
     _header->setEnabled(false);
 #endif
     _win.showPopup(std::unique_ptr<Popup>(dlg));
@@ -2610,7 +2605,7 @@ void Shell::openSettingsAt(uint8_t page) {
 }
 
 std::string Shell::workspaceIconPath() const {
-    // msga's TokenStore::displayIconUrl: the chosen picture, else the server's.
+    // The chosen picture, else the server's.
     const std::string custom =
         customWorkspaceIconPath(_ctx.app.platform(), _ctx.store().workspaceId);
     return custom.empty() ? _ctx.store().workspaceIcon : custom;
@@ -2661,7 +2656,7 @@ void Shell::refreshRail() {
         for (const Workspace &x : _workspaces)
             if (x.key == t->key)
                 w = &x;
-        // msga's TokenStore::displayIconUrl: the chosen picture, else the server's.
+        // The chosen picture, else the server's.
         std::string name, icon;
         if (active || !w) {
             name = _ctx.store().workspaceName;
@@ -2678,12 +2673,12 @@ void Shell::refreshRail() {
         if (!active && !findRunning(t->key))
             t->setDot(0); // not running: nothing is known (updateAttention sets the rest)
     }
-    // msga's addButtonRect: kGap under the last bubble; with none the "+"
+    // kGap under the last bubble; with none the "+"
     // takes the first bubble's slot right under the top pad.
     _addBtn->style().margins(0, _wsStack->count() ? 16 : 0, 0, 0);
     _wsStack->update();
     updateAttention();
-    // msga's TitleBar::setTitle: the open workspace's name, "msga" without one.
+    // The title: the open workspace's name, "msga" without one.
     if (_titleLabel) {
         const std::string &name = _ctx.store().workspaceName;
         _titleLabel->setText(_signedIn && !name.empty() ? name : std::string(tr("msga")));
@@ -2723,7 +2718,7 @@ void Shell::detachWorkspace(const std::string &key) {
     (*it)->store->unobserve((*it)->observer);
     _running.erase(it);
     std::erase_if(_notified, [&](const auto &n) { return n.second.key == key; });
-    // msga's dropSession: dialogs that reach every workspace let it go.
+    // Dialogs that reach every workspace let it go.
     if (_forward)
         _forward->close();
     if (_switcher)
@@ -2821,7 +2816,7 @@ void Shell::showProfile(model::UserRef u, RectF anchor) {
 }
 
 void Shell::renameConversation(ConvRef c) {
-    showRenameDialog(_ctx, _win, c); // msga's RenameConversationDialog
+    showRenameDialog(_ctx, _win, c);
 }
 
 void Shell::openBrowseDialog(int tab) {
@@ -2866,7 +2861,7 @@ void Shell::openCreateChannel() {
     std::weak_ptr<int> alive = _agentAlive;
     showCreateChannel(
         _win, _ctx.store().workspaceName, [this, alive](const std::string &name, bool priv) {
-            // msga created it and let the list show it; nothing opens.
+            // Created, and the list shows it; nothing opens.
             _ctx.backend.createChannel(name, priv, [this, alive](ConvRef, const std::string &err) {
                 if (!alive.expired() && !err.empty())
                     showError(err);
@@ -2931,7 +2926,7 @@ void Shell::applySettings() {
     _ctx.images.setAnimateEmoji(_settings.animateEmoji);
     static_cast<screens::MessageList *>(_messages)->setThreadsInline(_settings.threadsInline);
 #endif
-    // …and the downloaded pictures on disk (msga's CacheEvictor cap).
+    // …and the downloaded pictures on disk (the cache cap).
     if (_ctx.remote)
         _ctx.remote->setLimitMb(_settings.cacheLimitMb);
     // Rows bake the time format and link previews in: rebuild what is shown.
@@ -2973,9 +2968,8 @@ void Shell::showQuickSwitcher() {
     // window behind the backdrop.
     if (topDialog())
         return;
-    // One tab per running workspace, in the rail's order (msga's
-    // openQuickSwitcher), each listing its member conversations by msga's
-    // namedConversations rules (the visit stamps are app-wide).
+    // One tab per running workspace, in the rail's order, each listing its
+    // member conversations by name (the visit stamps are app-wide).
     std::vector<QuickSwitchTab> tabs;
     for (const LiveWorkspace &w : liveWorkspaces()) {
         tabs.push_back({w.key, w.name, w.icon, w.store, {}});
@@ -3012,7 +3006,7 @@ plat::HitArea Shell::hitTest(plat::Point p) const {
 #ifdef __APPLE__
     // AppKit resizes from its own edge zone (on and just outside the frame);
     // ours would only leave a dead band along the unified header's edges,
-    // where msga's whole title bar dragged.
+    // where the whole title bar drags.
     const bool resizable = p.y >= _titleBarH;
 #else
     const bool resizable = true;
@@ -3043,7 +3037,7 @@ plat::HitArea Shell::hitTest(plat::Point p) const {
 #ifdef __APPLE__
     // The unified header: its controls (and whatever a popup puts over it)
     // take their presses; the title, the empty space and a dialog's backdrop
-    // drag the window, as msga's TitleBar did. The traffic lights never get
+    // drag the window. The traffic lights never get
     // here: AppKit keeps their presses (PlatNSWindow).
     View *v = _win.viewAt(pt);
     if (!v || _win.topPopup([v](const Popup &d) {
@@ -3070,7 +3064,7 @@ plat::HitArea Shell::hitTest(plat::Point p) const {
 }
 
 // The sidebar's stamps into the settings, without those older than twice the
-// relevance window (msga's saveVisitedAt prune: the store never grows).
+// relevance window (pruned, so the store never grows).
 void Shell::storeVisited() {
     const int64_t horizon =
         _ctx.backend.nowSecs() - int64_t(std::max(1, _settings.relevantDays)) * 86400 * 2;

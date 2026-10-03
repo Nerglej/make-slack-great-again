@@ -27,7 +27,7 @@ namespace shell {
 namespace {
 
 // The list card: surface.raised, a divider.strong hairline, radius 6, no
-// shadow (msga's plain child frame).
+// shadow.
 void card(View *v, float radius) {
     v->setBackground(C::FormBg, radius);
     v->setBorder(C::FormDividerStrong);
@@ -44,12 +44,12 @@ View *enterBadge(View *row) {
 }
 
 constexpr float kMentionRowH = 38, kChannelRowH = 38, kPlainRowH = 30, kCommandRowH = 56;
-// msga's MentionCompleter: five command rows show before the list scrolls,
+// Five command rows show before the list scrolls,
 // eight of the others; a command row is 460 wide (+ the 4 px margins).
 constexpr int   kCmdVisible = 5, kPlainVisible = 8;
 constexpr float kCommandW = 460;
 
-// msga's CommandRow: the 36 px icon, a bold "/name" with the dimmed usage
+// A command row: the 36 px icon, a bold "/name" with the dimmed usage
 // hint, then the bold source and the dimmed description. Hover paints the
 // accent (link blue) with light text; keyboard selection (checked) the
 // subtle gray with the "Enter" chip on the right.
@@ -59,7 +59,7 @@ public:
         style().row().height(kCommandRowH).padding(14, 0, 14, 0).items(Align::Center).noShrink();
         setLook({C::None, C::None, C::None, C::None, 6});
         if (it.avatar.empty() && it.source == "Slack") {
-            // msga's built-in Slack commands: the Slack mark, inset 1 px.
+            // Slack's built-in commands: the Slack mark, inset 1 px.
             auto *mark = add<IconView>(gfx::Icon::SlackMark, 34, C::Text); // its own colours
             mark->style().margins(1, 1, 1, 1);
             mark->setHitTransparent(true);
@@ -129,7 +129,7 @@ public:
                 );
             _lines[1] = text::Layout::build(s2, o, k);
         }
-        // Qt's AlignVCenter in the 20 px title box at y 10, the 18 px one at 30.
+        // Centred vertically in the 20 px title box at y 10, the 18 px one at 30.
         _lines[0]->paint(p, snapPx({left, std::floor(20 - _lines[0]->height() / 2)}));
         _lines[1]->paint(p, snapPx({left, std::floor(39 - _lines[1]->height() / 2)}));
     }
@@ -161,7 +161,7 @@ PickList::PickList(Avatars *avatars, std::vector<Item> items, bool wide, Pick on
 void PickList::applyWidth(bool wide) {
     _wide               = wide;
     const bool commands = !_items.empty() && _items[0].kind == Item::Kind::Command;
-    // msga sizes the command list to its rows (460) and the scroll bar's room.
+    // The command list is sized to its rows (460) and the scroll bar's room.
     style().width(
         commands ? kCommandW + 8 + (_items.size() > size_t(kCmdVisible) ? 10 : 0)
         : wide   ? 560
@@ -431,7 +431,7 @@ Popup *showSchedulePopup(Window &w, RectF anchor, std::function<void(int64_t)> d
     Popup *p = framedPopup();
     p->style().width(12 + 240 + 12);
     p->add<Label>(tr("Send at"), Font::Small, C::FormTextMuted);
-    // msga's QDateTimeEdit: calendar drop-down, the language's order and
+    // A date-time field: calendar drop-down, the language's order and
     // the 12/24-hour clock; an hour from now, never under a minute out.
     auto *when = p->add<DateTimeField>(DateTimeField::Kind::DateTime);
     when->setMinimumValue(base::nowSecs() + 60);
@@ -468,7 +468,7 @@ Popup *showSchedulePopup(Window &w, RectF anchor, std::function<void(int64_t)> d
 
 namespace {
 
-// msga's GifGrid: two masonry columns of rounded, cover-fit animated
+// The GIF grid: two masonry columns of rounded, cover-fit animated
 // previews on a sunken placeholder, the hovered or selected one ringed in
 // the accent.
 class GifGrid final : public View {
@@ -664,7 +664,7 @@ private:
         if (message)
             _msg->setText(message);
     }
-    void schedule() { // msga's 450 ms debounce, "Searching…" at once
+    void schedule() { // a 450 ms debounce, "Searching…" at once
         state(tr("Searching\xE2\x80\xA6"));
         auto &pa = _ctx.app.platform();
         if (_debounce)
@@ -765,7 +765,7 @@ Popup *showGifPicker(Window &w, RectF anchor, screens::Context &ctx, GifHooks ho
 }
 
 // ── Prompt history search ───────────────────────────────────────────────────
-// msga's HistorySearchPopup (ui/history_search).
+// Ctrl+R's search of earlier prompts.
 
 namespace {
 

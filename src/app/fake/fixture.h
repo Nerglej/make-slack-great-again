@@ -1,9 +1,8 @@
 // A fixture workspace (fixture.json: the tests' tests/assets/fixture.json,
 // or demo/fixture.json, format in demo/README.md) loaded into a Store: the
-// fake workspace the tests and `msga --demo demo` show. Port of msga's
-// demo::loadFixture — same format, same validation messages, same derived
-// read cursors. Times in the file are relative ("-2d 09:14", "+7m") so a
-// recording made on any day looks like this week.
+// fake workspace the tests and `msga --demo demo` show, with its
+// validation messages and derived read cursors. Times in the file are relative ("-2d 09:14", "+7m")
+// so a recording made on any day looks like this week.
 #pragma once
 
 #include "app/model/store.h"

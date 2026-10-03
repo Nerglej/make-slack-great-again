@@ -84,7 +84,7 @@ enum DropActions : uint32_t { ActCopy = 1, ActMove = 2, ActLink = 4 };
 // A Key is the *logical* key, resolved through the active layout, so
 // Ctrl+Z means "the key that types z". On a non-Latin layout (Russian,
 // Greek, …) letter keys resolve through the first Latin layout the user has
-// configured, falling back to the US position — the same rule Qt and GTK use,
+// configured, falling back to the US position — the same rule GTK uses,
 // so shortcuts keep working. `scancode` carries the raw physical code.
 enum class Key : uint16_t {
     Unknown = 0,
@@ -392,11 +392,10 @@ struct Event {
 
 // ── Pixels ──────────────────────────────────────────────────────────────────
 // A CPU framebuffer for one frame, physical pixels, premultiplied ARGB32 in
-// native endianness (0xAARRGGBB as a uint32_t) — the format of QImage's
-// Format_ARGB32_Premultiplied, wl_shm ARGB8888, X11 depth-32 visuals,
-// BGRA DIBs and kCGImageAlphaPremultipliedFirst|ByteOrder32Little.
-// Keep pixels opaque in Decorations::Custom windows: on Win32 the top row
-// sits over the DWM frame and translucent alpha shows it through.
+// native endianness (0xAARRGGBB as a uint32_t) — the format of wl_shm ARGB8888, X11 depth-32
+// visuals, BGRA DIBs and kCGImageAlphaPremultipliedFirst|ByteOrder32Little. Keep pixels opaque in
+// Decorations::Custom windows: on Win32 the top row sits over the DWM frame and translucent alpha
+// shows it through.
 struct Canvas {
     uint32_t *pixels = nullptr;
     int       width = 0, height = 0; // physical
@@ -412,8 +411,9 @@ enum class Decorations : uint8_t {
 struct WindowDesc {
     std::string          title = "plat";
     std::string          appId = "plat"; // Wayland app_id / X11 WM_CLASS / Win32 AppUserModelID
-    // X11 WM_CLASS res_class (res_name is appId); empty = appId. Qt sets it to
-    // the application name, so a .desktop StartupWMClass may name either.
+    // X11 WM_CLASS res_class (res_name is appId); empty = appId. Toolkits
+    // often set it to the application name, so a .desktop StartupWMClass may
+    // name either.
     std::string          wmClass;
     // The window's icon in several sizes (square, premultiplied): X11
     // _NET_WM_ICON, which shells show when no .desktop entry matches the
@@ -545,8 +545,7 @@ public:
     // fit for the host. macOS status icons are 18 pt: supply 18 and 36 px.
     virtual void setIcon(const std::vector<Image> &sizes) = 0;
     // macOS: the next setIcon is a template image — only its alpha counts and
-    // the menu bar tints it to suit a light or dark bar (Qt's
-    // QIcon::setIsMask). Ignored elsewhere.
+    // the menu bar tints it to suit a light or dark bar. Ignored elsewhere.
     virtual void setTemplate(bool on) { (void)on; }
     virtual void setTooltip(std::string_view utf8)    = 0;
     virtual void setMenu(std::vector<MenuItem> items) = 0;
@@ -599,7 +598,7 @@ using TimerId = uint64_t;
 // ── Monitors ────────────────────────────────────────────────────────────────
 // Virtual-desktop coordinates: one logical space on macOS (points), Wayland
 // (xdg-output logical layout) and X11 (one scale). Windows with mixed-DPI
-// monitors has no single logical space, so there — as in Qt — each monitor's
+// monitors has no single logical space, so there each monitor's
 // origin is its physical origin and sizes within it are logical; a point is
 // converted using the monitor that contains it.
 struct Monitor {
@@ -695,8 +694,8 @@ public:
     virtual void    cancelTimer(TimerId id)                                         = 0;
 
     // POSIX backends only (returns 0 elsewhere): call fn with the ready
-    // FdEvents whenever fd becomes readable/writable. The seam a socket layer
-    // will plug into once networking leaves Qt.
+    // FdEvents whenever fd becomes readable/writable. The seam the socket
+    // layer plugs into.
     virtual uint64_t watchFd(int fd, uint32_t events, std::function<void(uint32_t)> fn) = 0;
     virtual void     unwatchFd(uint64_t id)                                             = 0;
 

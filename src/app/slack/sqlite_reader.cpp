@@ -1,7 +1,7 @@
 // Read-only SQLite 3 file reader (see sqlite_reader.h).
 //
 // Format reference: https://www.sqlite.org/fileformat2.html (sections cited
-// below). Ported from the old Qt app's reader, Qt types replaced with std.
+// below).
 #include "app/slack/sqlite_reader.h"
 
 #include "base/file.h"

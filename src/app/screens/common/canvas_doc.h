@@ -1,4 +1,4 @@
-// Canvas documents (msga's CanvasPage / CanvasDiff / CanvasDisplay): the
+// Canvas documents: the
 // conversions between the HTML a Slack canvas file serves and the canvas
 // markdown it is written back as, and the section diff that turns an edit
 // into canvases.edit operations on the sections that changed.
@@ -7,14 +7,12 @@
 // ("## ", "- ", "1. ", "> ", "| a | b |") with inline formats; editorHtml
 // builds that from the served HTML, markdown() turns it back.
 //
-// The diff's structural knowledge is msga's (verified against a real
-// workspace): top-level <h1..h6 id>, <p id> (code: class="prettyprint"),
-// <div data-section-style><ul id>…</ul></div> lists, and <blockquote> /
-// <table> whose ids are only on their inner <p>s — those two are "fragile":
-// fine as unchanged context, but an edit touching them (or needing one as
-// an insert anchor) falls back to replacing the whole document. canvases.edit
-// takes one change per call; a section replace reissues the ids inside it, so
-// the base must be refetched after every save.
+// The diff's structural knowledge (verified against a real workspace): top-level <h1..h6 id>, <p
+// id> (code: class="prettyprint"), <div data-section-style><ul id>…</ul></div> lists, and
+// <blockquote> / <table> whose ids are only on their inner <p>s — those two are "fragile": fine as
+// unchanged context, but an edit touching them (or needing one as an insert anchor) falls back to
+// replacing the whole document. canvases.edit takes one change per call; a section replace reissues
+// the ids inside it, so the base must be refetched after every save.
 #pragma once
 
 #include "app/model/backend.h"

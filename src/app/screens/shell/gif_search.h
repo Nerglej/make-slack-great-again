@@ -1,5 +1,5 @@
-// GIPHY GIF search (https://developers.giphy.com/docs/api), msga's
-// net::GifSearch: the composer's GIF picker for every workspace whose
+// GIPHY GIF search (https://developers.giphy.com/docs/api): the
+// composer's GIF picker for every workspace whose
 // backend has no search of its own (Backend::gifSearchAvailable — only the
 // demo's stand-in has one). GIF search is not a Slack feature: it runs here,
 // over src/net, with the key from Settings → System (shell::Settings::giphyKey).

@@ -1,5 +1,4 @@
-// The shell parts as msga has them (the Qt app's src/ui is the spec): the
-// sidebar's sections, filters and footer, the conversation header and tabs,
+// The shell parts: the sidebar's sections, filters and footer, the conversation header and tabs,
 // the thread panel, and the composer's plain-text formatting, pickers,
 // pills, undo send and outgoing conversion.
 #include "app/fake/fake_backend.h"
@@ -184,7 +183,7 @@ std::string joined(const std::vector<std::string> &v) {
 
 // ── Sidebar ─────────────────────────────────────────────────────────────────
 
-TEST("sidebar: msga's entries and sections, and Saved messages while something is saved") {
+TEST("sidebar: the entries and sections, and Saved messages while something is saved") {
     Harness h;
     CHECK_STR(joined(h.sidebar().sectionTitles()), "Threads|Starred|Channels|Direct messages");
     const ConvRef design = h.conv("C0DESIGN");
@@ -205,7 +204,7 @@ TEST("sidebar: a collapsed section lists nothing; opening one of its chats expan
     const ConvRef eng = h.conv("C0ENG");
     REQUIRE(h.sidebar().toggleSection("Channels"));
     pump();
-    CHECK_FALSE(h.sidebar().rowState(eng).visible); // unread, still hidden: msga's rule
+    CHECK_FALSE(h.sidebar().rowState(eng).visible); // unread, still hidden
     h.sh->open(eng);
     pump();
     CHECK(h.sidebar().rowState(eng).visible);
@@ -273,7 +272,7 @@ TEST("sidebar: bot DMs live under Agents & apps, which Settings can hide") {
     CHECK_STR(joined(h.sidebar().sectionTitles()), "Threads|Starred|Channels|Direct messages");
 }
 
-TEST("sidebar: a DM whose peer was deactivated is not listed, as in msga") {
+TEST("sidebar: a DM whose peer was deactivated is not listed") {
     Harness    h;
     // A reinstalled app leaves its old, deactivated bot users behind, each
     // with a DM the service keeps returning.
@@ -426,7 +425,7 @@ TEST("sidebar footer: the background-task cog turns while jobs run and lists the
     pump();
     REQUIRE(cog->visible());
     CHECK(f.tasksTurning());
-    // Left of the presence toggle, msga's 8 px apart, the same 40 px square.
+    // Left of the presence toggle, 8 px apart, the same 40 px square.
     const ui::RectF c = cog->windowRect(), t = f.toggle()->windowRect();
     CHECK(std::abs(c.x + c.w + 8 - t.x) < 0.5f);
     CHECK(c.w == 40 && c.h == 40 && c.y == t.y);
@@ -483,7 +482,7 @@ TEST("status dialog: a suggestion fills it; Save sets the status, Clear status c
     CHECK_STR(d2->text().text(), "Vacationing");
     d2->clearStatus();
     REQUIRE(until([&] { return h.store.user(h.store.me).statusEmoji.empty(); }));
-    // A refusal says why, with msga's re-sign-in hint for a missing scope.
+    // A refusal says why, with a re-sign-in hint for a missing scope.
     h.backend.statusError = "missing_scope";
     auto       *d3        = shell::StatusDialog::show(*h.win, h.ctx);
     std::string banner;
@@ -541,7 +540,7 @@ TEST("tabs: the canvas's title, or \"Add canvas\"") {
     CHECK(h.sh->tabs().tab(1)->visible());
 }
 
-// The canvas tab (msga's CanvasPage): the fixture's canvas as editable
+// The canvas tab: the fixture's canvas as editable
 // markdown text, created on the first save, saved whole, deleted.
 TEST("canvas: the channel's canvas loads as a title over its markdown body") {
     Harness h;
@@ -646,7 +645,7 @@ bool hasText(ui::View *v, std::string_view s) {
 }
 } // namespace
 
-TEST("header: msga's clickable parts — members button, group avatars, star, huddle, search") {
+TEST("header: the clickable parts — members button, group avatars, star, huddle, search") {
     Harness            h;
     shell::ConvHeader &hd = h.sh->header();
     // The members button opens the member list under it.
@@ -664,7 +663,7 @@ TEST("header: msga's clickable parts — members button, group avatars, star, hu
     REQUIRE(until([&] { return !h.store.conversation(design).starred; }));
     CHECK_STR(hd.star()->tooltip(), "Star conversation");
     // The huddle button hands a channel off to its /huddle/ link, a DM to the
-    // conversation (msga's huddleJoinUrl).
+    // conversation.
     std::string opened;
     h.ctx.openUrl     = [&](const std::string &u) { opened = u; };
     h.backend.huddles = true;
@@ -690,7 +689,7 @@ TEST("header: msga's clickable parts — members button, group avatars, star, hu
     pump();
     hd.huddle()->onClick();
     CHECK_STR(opened, "https://app.slack.com/client/T0LUMEN/G0TRIO");
-    // A DM's single avatar is not a button (msga leaves it an arrow).
+    // A DM's single avatar is not a button (the pointer stays an arrow).
     h.sh->open(h.conv("D0JONAS"));
     pump();
     CHECK(hd.avatar()->cursorAt({1, 1}) == uint8_t(plat::Cursor::Arrow));
@@ -724,7 +723,7 @@ TEST("header: the members popup grows to its list when the count was unknown") {
     const float loading = p->frame().h; // one row while the count is unknown
     REQUIRE(until([&] { return hasText(p, "9 members"); }));
     pump();
-    // Six whole rows of 60 (msga's cap), still under the button and in the window.
+    // Six whole rows of 60 (the cap), still under the button and in the window.
     CHECK(std::fabs(p->frame().h - loading - 5 * 60) < 0.5f);
     CHECK(p->frame().y >= anchor.y + anchor.h);
     CHECK(p->frame().y + p->frame().h <= h.win->size().h);
@@ -734,7 +733,7 @@ TEST("header: the members popup grows to its list when the count was unknown") {
 // ── Thread panel ────────────────────────────────────────────────────────────
 
 #ifdef MSGA_HAVE_MESSAGES
-TEST("thread panel: msga's header buttons; the broadcast tick only where the service has it") {
+TEST("thread panel: the header buttons; the broadcast tick only where the service has it") {
     Harness       h;
     const ConvRef design = h.conv("C0DESIGN");
     const Ts      root   = h.backend.findTs(design, "Proposal B");
@@ -830,7 +829,7 @@ TEST("schedule send: the date-time picker, an hour out; a thread reply stays in 
     CHECK(h.backend.scheduled.thread == root);
     CHECK(h.backend.scheduled.at == at);
     CHECK_STR(h.backend.scheduledText, "later");
-    // Japanese: msga's editFormat "yyyy年M月d日 APh:mm" — year first, the day
+    // Japanese: "yyyy年M月d日 APh:mm" — year first, the day
     // period before the hour.
     // (The date language: it follows a language change at once.)
     base::setDateLanguage("ja");
@@ -938,7 +937,7 @@ TEST("schedule send: the picker's hour step, all day long") {
 
 // ── Composer ────────────────────────────────────────────────────────────────
 
-TEST("composer: the toolbar types msga's markers; the send button lights with text") {
+TEST("composer: the toolbar types the formatting markers; the send button lights with text") {
     Harness h;
     auto   &c = h.composer();
     auto   &e = c.edit();
@@ -1029,7 +1028,7 @@ TEST("composer: # lists channels, : completes emoji") {
     pump();
     REQUIRE(c.pickList() != nullptr);
     CHECK_STR(c.pickList()->item(0).display, emoji::toUnicode("tada") + "  :tada:");
-    // msga's ranking: the common emoji first, prefix → _-+ boundary →
+    // The ranking: the common emoji first, prefix → _-+ boundary →
     // anywhere, custom emoji as :name:, at most 8.
     auto r = shell::emojiCompletions(h.store, "ok");
     REQUIRE(!r.empty());
@@ -1125,7 +1124,7 @@ TEST("composer: the typing indicator names who types") {
 }
 
 #ifdef MSGA_HAVE_MESSAGES
-TEST("pickers: msga's emoji categories; the fake backend's GIFs go in as a pill") {
+TEST("pickers: the emoji categories; the fake backend's GIFs go in as a pill") {
     Harness h;
     auto   *ep = screens::EmojiPicker::show(*h.win, {400, 700, 20, 20}, h.ctx, nullptr);
     pump();
@@ -1152,7 +1151,7 @@ TEST("pickers: msga's emoji categories; the fake backend's GIFs go in as a pill"
 }
 #endif
 
-// ── GIPHY (msga's net::GifSearch; no network here) ──────────────────────────
+// ── GIPHY (no network here) ─────────────────────────────────────────────────
 
 TEST("giphy: the request URL carries the key, the trimmed query, limit, rating, bundle") {
     CHECK_STR(
@@ -1301,7 +1300,7 @@ TEST("composer: files copied in a file manager are attached, other URIs paste as
 
 #if defined(__linux__)
 TEST("composer: a middle click attaches the primary selection's picture or files") {
-    // msga's insertFromMimeData covered the middle click too.
+    // A middle click inserts the primary selection like a paste.
     Harness           h;
     auto             &c           = h.composer();
     plat::App        &pa          = app().platform();
@@ -1372,7 +1371,7 @@ TEST("pickers: the emoji picks and skin tone are kept in Settings") {
 }
 #endif
 
-// ── Spelling (msga's SpellHighlighter + ComposerTextEdit menu) ──────────────
+// ── Spelling (highlighting and the composer's menu) ─────────────────────────
 
 namespace {
 

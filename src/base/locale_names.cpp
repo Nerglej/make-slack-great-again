@@ -59,8 +59,7 @@ std::string utf8(const wchar_t *w) {
     return s;
 }
 
-// The current user's value, their overrides included (what QLocale::system()
-// read on Windows).
+// The current user's value, their overrides included.
 std::string info(LCTYPE type) {
     wchar_t buf[128];
     return GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, type, buf, 128) > 0 ? utf8(buf)

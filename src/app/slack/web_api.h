@@ -1,7 +1,7 @@
 // A Slack Web API call: POST https://slack.com/api/<method> with a form
 // body, the token as a Bearer header and, for session workspaces, the `d`
-// cookie. Write methods must be POSTs anyway (a retransmitted GET was the
-// old app's duplicate-message bug), so every call is one.
+// cookie. Write methods must be POSTs anyway (a retransmitted GET posts a
+// message twice), so every call is one.
 #pragma once
 
 #include "base/json.h"
@@ -43,7 +43,7 @@ using ApiDone = std::function<void(const json::Document &doc, const std::string 
 bool isTransportError(const std::string &error);
 // Slack's own "likely a transient issue on our end" codes.
 bool isTransientSlackError(const std::string &error);
-// msga's retry backoff: 1 s, 2 s, 4 s … capped at 60 s, for retry `attempt`
+// The retry backoff: 1 s, 2 s, 4 s … capped at 60 s, for retry `attempt`
 // (0-based).
 int  retryBackoffMs(int attempt);
 
@@ -59,8 +59,7 @@ void addAuthHeaders(std::vector<net::Header> &headers, const Auth &auth);
 // "" for any other URL.
 std::string fileTeamId(std::string_view url);
 
-// The credentials a download of `url` carries (msga fetched through each
-// session's own downloadFile): none off Slack's own https hosts (its CDNs,
+// The credentials a download of `url` carries: none off Slack's own https hosts (its CDNs,
 // *.slack-edge.com, are public), else the file's own workspace when it is
 // one of `signedIn` (fileTeamId), else `onScreen` (may be null).
 struct TeamAuth {

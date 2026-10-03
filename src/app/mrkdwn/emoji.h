@@ -34,7 +34,7 @@ void complete(std::string_view prefix, size_t max, std::vector<std::string> &out
 void forEach(const std::function<bool(std::string_view name, const std::string &unicode)> &fn);
 int  count();
 
-// The picker's categories, as msga's (iamcal/emoji-data order: "Smileys &
+// The picker's categories (iamcal/emoji-data order: "Smileys &
 // People", "Animals & Nature", … "Flags"), and whether an emoji has
 // per-person skin-tone variants.
 int         categoryCount();

@@ -1,5 +1,4 @@
-// Transcript items → the messages the Store keeps (msga's toMessage and
-// renderMarkdown, cc_transcript).
+// Transcript items → the messages the Store keeps.
 //
 // Claude writes plain Markdown, never Slack tokens; the Store keeps mrkdwn.
 // So an answer is escaped (& < >), bare URLs and teammate mentions become
@@ -25,7 +24,7 @@ inline constexpr char kProgressSubtype[] = "progress";
 
 std::string renderMarkdown(std::string_view markdown);
 
-// msga's markdownBlocks: a text with a table ("| a | b |" over "|---|---|")
+// A text with a table ("| a | b |" over "|---|---|")
 // as blocks — the text around it rendered, the table a Table block of
 // rendered cells (row 0 the header). Empty when there is no table: `text`
 // says it all.

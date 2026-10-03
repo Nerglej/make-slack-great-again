@@ -1,9 +1,10 @@
-// The upgrade from the old Qt app (legacy.h), end to end on the Linux store:
-// a settings file Qt itself wrote (support/old_settings_fixture.h) and
-// cache files in the old WorkspaceCache's format, in this test's own
-// XDG_CONFIG_HOME / XDG_DATA_HOME, are imported into settings.json,
-// workspaces.json and the new caches; the credentials are read where the old
-// app keeps them, and the old files are left byte for byte as they were.
+// The upgrade from earlier versions' data (legacy.h), end to end on the Linux
+// store: a settings file as earlier versions wrote it
+// (support/old_settings_fixture.h) and cache files in the old cache format,
+// in this test's own XDG_CONFIG_HOME / XDG_DATA_HOME, are imported into
+// settings.json, workspaces.json and the new caches; the credentials are read
+// where earlier versions keep them, and the old files are left byte for byte
+// as they were.
 #include "app/auth/workspaces.h"
 #include "app/cache/workspace_cache.h"
 #include "app/identity.h"
@@ -53,7 +54,7 @@ void removeTree(const std::string &dir) {
     file::remove(dir);
 }
 
-// The old app's stores and the new app's files, gone.
+// The old stores and the current files, gone.
 void clean(plat::App &pa) {
     removeTree(file::join(identity::dataDir(pa), "cache"));
     removeTree(file::join(identity::dataDir(pa), "claude-code"));
@@ -74,7 +75,7 @@ void clean(plat::App &pa) {
 #endif
 
 #if !defined(_WIN32) && !defined(__APPLE__)
-TEST("old import: settings, workspaces and credentials from the old app") {
+TEST("old import: settings, workspaces and credentials from an earlier version") {
     plat::App &pa = app().platform();
     clean(pa);
     REQUIRE(file::writeAtomic(oldsettings::iniPath(), oldsettings_fixture::kIni));
@@ -83,7 +84,7 @@ TEST("old import: settings, workspaces and credentials from the old app") {
             oldsettings::iniPath("MSGA"), "[composer]\nlastAttachDir=/home/u/Downloads\n"
         )
     );
-    // The custom icons the old app installed in its data folder.
+    // The custom icons installed earlier in the data folder.
     const std::string data = identity::dataDir(pa);
     REQUIRE(file::writeAtomic(file::join(data, "tray_icon.png"), "PNG"));
     const std::string oldIcon = file::join(data, "workspace_icons/slack_T0123-1700000000000.png");
@@ -95,7 +96,7 @@ TEST("old import: settings, workspaces and credentials from the old app") {
 
     const std::string settingsPath = shell::Settings::defaultPath(pa);
     const std::string wsPath       = auth::WorkspaceStore::defaultPath(pa);
-    legacy::importOldApp(pa, settingsPath, wsPath);
+    legacy::importOldData(pa, settingsPath, wsPath);
     REQUIRE(file::exists(settingsPath));
     REQUIRE(file::exists(wsPath));
 
@@ -160,7 +161,7 @@ TEST("old import: settings, workspaces and credentials from the old app") {
     REQUIRE(s.visitedAt.size() == 1);
     CHECK_STR(s.visitedAt[0].first, "C1");
     CHECK(s.visitedAt[0].second == 1767225600);
-    // The window as QWidget::saveGeometry recorded it.
+    // The window geometry as it was saved.
     CHECK((s.width == 1300 && s.height == 820 && s.hasPosition && s.x == 100 && s.y == 100));
     CHECK_FALSE(s.maximized);
     // Composer.
@@ -200,13 +201,13 @@ TEST("old import: settings, workspaces and credentials from the old app") {
         CHECK(json.find(secret) == std::string::npos);
 
     // Saving again writes nothing into the old store: a rollback finds it
-    // exactly as the old app left it.
+    // exactly as it was left.
     REQUIRE(s.save(settingsPath));
     CHECK(read(oldsettings::iniPath()) == before);
 
     // A second start imports nothing again.
     auth::WorkspaceStore(wsPath).setActive("slack:T0123");
-    legacy::importOldApp(pa, settingsPath, wsPath);
+    legacy::importOldData(pa, settingsPath, wsPath);
     CHECK_STR(auth::WorkspaceStore(wsPath).active(), "slack:T0123");
     clean(pa);
 }
@@ -217,9 +218,9 @@ TEST("old import: changed credentials go to the old entries") {
     REQUIRE(file::writeAtomic(oldsettings::iniPath(), oldsettings_fixture::kIni));
     const std::string settingsPath = shell::Settings::defaultPath(pa);
     const std::string wsPath       = auth::WorkspaceStore::defaultPath(pa);
-    legacy::importOldApp(pa, settingsPath, wsPath);
+    legacy::importOldData(pa, settingsPath, wsPath);
 
-    // A token refresh: the old app (after a rollback) sees the new one.
+    // A token refresh: an earlier version (after a rollback) sees the new one.
     {
         auth::WorkspaceStore  ws(wsPath);
         auth::WorkspaceRecord r = *ws.find("slack:T0456");
@@ -249,10 +250,9 @@ TEST("old import: changed credentials go to the old entries") {
     clean(pa);
 }
 
-// Every kind of workspace record the old app stored, as its own code wrote
-// them (TokenStore::saveWorkspace with slack::toRecord, claude_code::toRecord
-// and the IMAP and Teams records, setWorkspaceOrder, setWorkspaceMuted) in a
-// throwaway Qt program: two session workspaces (one an Enterprise Grid one
+// Every kind of workspace record earlier versions stored, exactly as they
+// wrote them (Slack and Claude Code records, the IMAP and Teams ones, the
+// workspace order and mutes): two session workspaces (one an Enterprise Grid one
 // with its own host), an OAuth one with a rotating token, Claude Code, and
 // the services this app dropped in between.
 constexpr char kEveryWorkspaceIni[] = R"INI([General]
@@ -288,7 +288,7 @@ TEST("old import: every kind of old workspace comes back signed in") {
     REQUIRE(file::writeAtomic(oldsettings::iniPath(), kEveryWorkspaceIni));
     const std::string settingsPath = shell::Settings::defaultPath(pa);
     const std::string wsPath       = auth::WorkspaceStore::defaultPath(pa);
-    legacy::importOldApp(pa, settingsPath, wsPath);
+    legacy::importOldData(pa, settingsPath, wsPath);
 
     // The old order without IMAP and Teams, the one that was open, the mute.
     auth::WorkspaceStore ws(wsPath);
@@ -321,7 +321,7 @@ TEST("old import: every kind of old workspace comes back signed in") {
     CHECK(read(wsPath).find("xoxc-") == std::string::npos);
     CHECK(read(oldsettings::iniPath()) == kEveryWorkspaceIni);
     // Never chosen a connection mode, with an OAuth workspace: app keys, as
-    // the old app decided.
+    // before.
     CHECK_FALSE(shell::Settings::load(settingsPath).slackSession);
     clean(pa);
 }
@@ -330,13 +330,13 @@ TEST("old import: a fresh install has nothing to import") {
     plat::App &pa = app().platform();
     clean(pa);
     const std::string settingsPath = shell::Settings::defaultPath(pa);
-    legacy::importOldApp(pa, settingsPath, auth::WorkspaceStore::defaultPath(pa));
+    legacy::importOldData(pa, settingsPath, auth::WorkspaceStore::defaultPath(pa));
     CHECK_FALSE(file::exists(settingsPath));
     CHECK_FALSE(file::exists(oldsettings::iniPath()));
 }
 #endif
 
-TEST("old import: the layouts before TokenStore v2") {
+TEST("old import: the layouts before store version 2") {
     // v1: bare team ids, plain token fields.
     oldsettings::Map m = oldsettings::parseIni(
         "[General]\nworkspaces=T1, slack:T2\nactive=T1\nstoreVersion=1\n"
@@ -422,7 +422,7 @@ TEST("old import: the custom theme's JSON keeps its pins") {
 }
 
 TEST("old import: zen mode per workspace") {
-    // Qt's INI escapes the '%' of the old percent-encoded key once more.
+    // The INI file escapes the '%' of the old percent-encoded key once more.
     shell::Settings s;
     legacy::importOldSettings(
         oldsettings::parseIni(
@@ -441,7 +441,7 @@ TEST("old import: zen mode per workspace") {
 #if !defined(_WIN32) && !defined(__APPLE__)
 namespace {
 
-// The old WorkspaceCache's files, as its toJson wrote them (Qt's compact
+// The old cache files, as they were written (compact
 // JSON; "\t" is a tab inside the strings).
 constexpr char kOldConvs[] =
     R"([{"id":"D1","ki":2,"na":"","mb":true,"lr":"1767225000.000100","lt":"1767225600.000200","un":2,"dm":"U2","lm":true},)"
@@ -507,9 +507,9 @@ TEST("old cache: a first start brings the whole old cache along") {
 
     const std::string settingsPath = shell::Settings::defaultPath(pa);
     const std::string wsPath       = auth::WorkspaceStore::defaultPath(pa);
-    legacy::importOldApp(pa, settingsPath, wsPath);
+    legacy::importOldData(pa, settingsPath, wsPath);
 
-    // Slack: the roster, users, emoji, groups and msga's own state.
+    // Slack: the roster, users, emoji, groups and the app's own state.
     const std::string dir = cache::WorkspaceCache::dirFor(pa, "slack:T0123");
     model::Store      s;
     json::Document    meta;
@@ -603,11 +603,11 @@ TEST("old cache: a first start brings the whole old cache along") {
         cache::WorkspaceCache wc(pa, s3, dir);
         REQUIRE(wc.load(nullptr));
         s3.updateConversation(s3.findConversation("D1"), [](model::Conversation &c) {
-            c.muted = false; // unmuted in the new app
+            c.muted = false; // unmuted since the upgrade
         });
         wc.close(true);
     }
-    legacy::importOldApp(pa, settingsPath, wsPath);
+    legacy::importOldData(pa, settingsPath, wsPath);
     {
         model::Store          s4;
         cache::WorkspaceCache wc(pa, s4, dir);
@@ -618,12 +618,12 @@ TEST("old cache: a first start brings the whole old cache along") {
     clean(pa);
 }
 
-TEST("old cache: over an existing new cache, only msga's own state") {
+TEST("old cache: over an existing new cache, only the app's own state") {
     plat::App &pa = app().platform();
     clean(pa);
     const std::string from = file::join(identity::dataDir(pa), "cache/slack_T1");
     oldSlackCache(from);
-    // The new app already ran: its roster knows C1 and D1, its backend state
+    // The current version already ran: its roster knows C1 and D1, its backend state
     // has a sweep stamp and a followed thread of its own.
     const std::string dir = cache::WorkspaceCache::dirFor(pa, "slack:T1");
     {

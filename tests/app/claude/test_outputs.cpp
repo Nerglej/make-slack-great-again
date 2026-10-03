@@ -113,7 +113,7 @@ TEST("outputs: an answer's files are copied, and only the ones made in its turn"
     CHECK_STR(svg.name, "new.svg");
     CHECK_STR(svg.mime, "image/svg+xml");
     CHECK_STR(svg.prettyType, "SVG");
-    // A picture at its own size (msga showed it by a PNG preview).
+    // A picture at its own size.
     CHECK(svg.isImage());
     CHECK(svg.width == 240 && svg.height == 160);
     CHECK(str::endsWith(svg.path, ".svg"));
@@ -195,7 +195,7 @@ TEST("outputs: a picture this build can't decode is a file card") {
     CHECK(files[1].width == 5 && files[1].height == 3);
 }
 
-TEST("outputs: paths are cleaned as QDir::cleanPath does") {
+TEST("outputs: paths are cleaned (separators, empty parts, . and ..)") {
     CHECK_STR(cleanPath("/r/w/b/"), "/r/w/b");
     CHECK_STR(cleanPath("/r//w/./b/../c"), "/r/w/c");
     CHECK_STR(cleanPath("/"), "/");

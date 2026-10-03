@@ -17,7 +17,7 @@ Color scaled(Color c, float f) {
     return (c & 0xff000000u) | ch(16) | ch(8) | ch(0);
 }
 
-// msga's white-alpha overlays (NavGhostButton): not tokens, they read on any
+// White-alpha overlays for the ghost buttons: not tokens, they read on any
 // nav tint.
 constexpr Color kGhostIcon = 0xffb4a5b4, kGhostIconHover = 0xfff5f0f5;
 

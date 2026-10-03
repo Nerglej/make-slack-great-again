@@ -208,7 +208,7 @@ void setHeadlessScale(Window &w, double s);
 }
 
 TEST("layout: a label never re-wraps because its frame was snapped to the pixel grid") {
-    // Regression (msga-next at 1.25x): a link preview's "Figment" label got a
+    // Regression (at 1.25x): a link preview's "Figment" label got a
     // frame up to one physical pixel narrower than its measured width after
     // the flex edges were snapped to the grid, re-laid out at that width and
     // wrapped its last letter onto a second line, over the title below.

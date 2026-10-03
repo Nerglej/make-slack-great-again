@@ -318,7 +318,7 @@ TEST("store: typing indicators end with the author's message") {
     CHECK(r.log.back().kind == ChangeKind::Typing);
 }
 
-TEST("store: emoji resolution follows msga's resolveEmojiRich") {
+TEST("store: emoji resolution: skin tones, Unicode, raw glyphs, then custom aliases") {
     Store s;
     s.setCustomEmoji("partyparrot", "/img/parrot.gif");
     s.setCustomEmoji("myparrot", "alias:partyparrot");

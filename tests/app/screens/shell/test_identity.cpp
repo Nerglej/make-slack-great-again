@@ -1,6 +1,7 @@
-// The old Qt app's identity (app/identity.h): its directories, its launcher
-// entry, and handing a launch to a running old app. (The import of its
-// settings and caches is app/legacy, tested there.)
+// The app's identity, shared with earlier versions (app/identity.h): its
+// directories, its launcher entry, and handing a launch to a running earlier
+// version. (The import of earlier versions' settings and caches is
+// app/legacy, tested there.)
 #include "app/auth/workspaces.h"
 #include "app/identity.h"
 #include "base/file.h"
@@ -40,9 +41,9 @@ namespace {
 } // namespace
 
 #if !defined(_WIN32) && !defined(__APPLE__)
-TEST("identity: the old app's directories") {
-    // plat's own directories (the headless backend's in tests) + the old
-    // QStandardPaths names: organization "msga", application "MSGA".
+TEST("identity: the directories earlier versions used") {
+    // plat's own directories (the headless backend's in tests) + the
+    // organization "msga" and application "MSGA" names under them.
     plat::App        &pa     = app().platform();
     const std::string config = pa.standardDir(plat::StandardDir::Config);
     const std::string data   = pa.standardDir(plat::StandardDir::Data);
@@ -53,12 +54,12 @@ TEST("identity: the old app's directories") {
     CHECK_STR(identity::crashLogPath(pa), data + "/msga/MSGA/crash.log");
     CHECK_STR(shell::Settings::defaultPath(pa), config + "/msga/settings.json");
     CHECK_STR(auth::WorkspaceStore::defaultPath(pa), config + "/msga/workspaces.json");
-    // The old QSettings file is XDG_CONFIG_HOME/msga/msga.conf.
+    // Earlier versions' INI settings file is XDG_CONFIG_HOME/msga/msga.conf.
     CHECK_STR(oldsettings::iniPath(), base::env("XDG_CONFIG_HOME") + "/msga/msga.conf");
 }
 #endif
 
-TEST("desktop entry: the old app's launcher") {
+TEST("desktop entry: the launcher earlier versions installed") {
     const std::string e = shell::desktopEntry("/opt/my apps/msga", "/d/icons/msga.png");
     CHECK(e.find("Exec=\"/opt/my apps/msga\" %u\n") != std::string::npos);
     CHECK(e.find("Icon=/d/icons/msga.png\n") != std::string::npos);
@@ -86,11 +87,12 @@ TEST("desktop entry: the old app's launcher") {
 }
 
 #if !defined(_WIN32)
-TEST("identity: a running old app takes the launch") {
-    // No old app: nobody listens, the launch is ours.
-    CHECK_FALSE(identity::handOffToOldApp("msga://x"));
-    // The old app's QLocalServer: $TMPDIR/msga-<home folder name>, reading one
-    // QDataStream QString (checked against a real Qt QLocalServer by hand).
+TEST("identity: a running earlier version takes the launch") {
+    // No earlier version running: nobody listens, the launch is ours.
+    CHECK_FALSE(identity::handOffToEarlierVersion("msga://x"));
+    // An earlier version's local socket: $TMPDIR/msga-<home folder name>,
+    // reading one string (a big-endian byte length, then UTF-16BE; checked
+    // against a running earlier version by hand).
     std::string tmp = base::env("TMPDIR");
     if (tmp.empty())
         tmp = "/tmp";
@@ -112,7 +114,7 @@ TEST("identity: a running old app takes the launch") {
             got.append(buf, size_t(n));
         close(c);
     });
-    CHECK(identity::handOffToOldApp("msga://o?\xC3\xA9"));
+    CHECK(identity::handOffToEarlierVersion("msga://o?\xC3\xA9"));
     t.join();
     close(srv);
     ::unlink(path.c_str());

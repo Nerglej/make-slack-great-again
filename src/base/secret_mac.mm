@@ -2,17 +2,17 @@
 // default (login) keychain, account = key, under two services:
 //
 //   "com.nisdos.msga"  msga's own items, the ones it reads
-//   "app.msga.msga"    the old app's items (old secret_store_mac.mm), kept
-//                      up to date for a rollback to the old app
+//   "app.msga.msga"    earlier versions' items, kept up to date for a
+//                      rollback to an earlier version
 //
 // The legacy keychain ties an item's access list to the code requirement of
-// the binary that created it. The old releases were signed ad hoc, so their
+// the binary that created it. Earlier releases were signed ad hoc, so their
 // items admit only that one build (its cdhash): the first read of each from
 // this app asks the user once. What it reads is then copied into msga's own
 // item, created by this app; the release signature's designated requirement
 // is the bundle identifier alone (scripts/release.sh), so later builds read
 // their own items without asking. Writing an old item needs no permission (an
-// item's "encrypt" entry admits any app); deleting one the old app created
+// item's "encrypt" entry admits any app); deleting one an earlier version created
 // does, so a removed key leaves an empty own item behind (a tombstone) rather
 // than reading the old one back. Plain CoreFoundation + Security C API —
 // nothing here needs Foundation.
@@ -56,14 +56,14 @@ CFStringRef cfString(std::string_view s) {
 // Tests (base::testProcess(): base::test marks them) never use a keychain: a
 // keychain may prompt, over ssh it blocks for good, and the user's is no
 // place for test items. Their credentials go where Linux and Windows keep
-// them, the old app's settings store, which in tests is a temporary INI file
+// them, the settings store of earlier versions, which in tests is a temporary INI file
 // (old_settings.h). Only test_secret.cpp's throwaway keychain file
 // (detail::testKeychain) is a real one.
 bool testStore() {
     return !detail::testKeychain && base::testProcess();
 }
 
-// msga's own items, and the old app's (the top of this file). Tests' items in
+// msga's own items, and earlier versions' (the top of this file). Tests' items in
 // their throwaway keychain have services of their own.
 enum class Service { Own, Old };
 
@@ -114,11 +114,11 @@ bool keychainWrite(Service which, std::string_view key, std::string_view value) 
     OSStatus st = value.empty() ? errSecItemNotFound : SecItemUpdate(q, change);
     if (st == errSecItemNotFound) {
         CFDictionarySetValue(q, kSecValueData, data);
-        // Device-local, never synced to iCloud — as the old app added them.
+        // Device-local, never synced to iCloud — as earlier versions added them.
         CFDictionarySetValue(
             q, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         );
-        // An old-app item this app adds is marked: it may delete it again.
+        // An earlier-version item this app adds is marked: it may delete it again.
         if (which == Service::Old)
             CFDictionarySetValue(q, kSecAttrComment, CFSTR("msga"));
         if (detail::testKeychain) { // an add names its keychain differently
@@ -158,7 +158,7 @@ std::string keychainRead(Service which, std::string_view key, bool *found) {
     return value;
 }
 
-// Whose the old app's item for `key` is: the comment keychainWrite marks
+// Whose the earlier-version item for `key` is: the comment keychainWrite marks
 // ours with. Its attributes only: no permission needed.
 enum class OldItem { None, Ours, Theirs };
 
@@ -189,7 +189,7 @@ void keychainRemove(Service which, std::string_view key) {
     CFRelease(q);
 }
 
-// `value` into msga's own item and, for a rollback, the old app's.
+// `value` into msga's own item and, for a rollback, the earlier versions' one.
 bool keychainStore(std::string_view key, std::string_view value) {
     if (!keychainWrite(Service::Own, key, value))
         return false;
@@ -215,7 +215,7 @@ bool write(std::string_view key, std::string_view value) {
             oldsettings::remove(key); // in the keychain now: scrub the plaintext copy
         return true;
     }
-    // Refused: the plaintext copy where the old app kept it, rather than a
+    // Refused: the plaintext copy where earlier versions kept it, rather than a
     // workspace with no credentials. A later read moves it in.
     g_refused = true;
     return oldsettings::write(key, value);
@@ -235,7 +235,7 @@ std::string read(std::string_view key, bool *found) {
             *found = !value.empty(); // empty: a tombstone
         return value;
     }
-    // The old app's item: the first read may ask the user (the top of this
+    // The earlier versions' item: the first read may ask the user (the top of this
     // file); a copy in our own item makes it the only time.
     value = keychainRead(Service::Old, key, &have);
     if (have) {
@@ -271,7 +271,7 @@ void remove(std::string_view key) {
         return;
     }
     keychainRemove(Service::Own, key);
-    // An item the old app created can't be deleted without asking: a
+    // An item an earlier version created can't be deleted without asking: a
     // tombstone keeps it from being read back.
     switch (oldItem(key)) {
     case OldItem::Ours:

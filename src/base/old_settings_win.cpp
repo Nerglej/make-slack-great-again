@@ -1,7 +1,7 @@
-// old_settings.h on Windows: QSettings' registry tree,
-// HKEY_CURRENT_USER\Software\msga\<app>. A Qt key's '/' separates subkeys,
+// old_settings.h on Windows: the store's registry tree,
+// HKEY_CURRENT_USER\Software\msga\<app>. A key's '/' separates subkeys,
 // its last part is the value name, and a '\' in a key part is stored as '/'
-// (qsettings_win.cpp's escapedKey); "Default" and "." name the key's default
+// (as earlier versions escaped it); "Default" and "." name the key's default
 // value.
 #include "base/old_settings.h"
 
@@ -37,7 +37,7 @@ std::wstring root(std::string_view app) {
     return wide(str::concat({tests ? "Software\\msga-tests\\" : "Software\\msga\\", app}));
 }
 
-// Qt key → (subkey under the root, value name).
+// Store key → (subkey under the root, value name).
 void split(std::string_view key, std::wstring *sub, std::wstring *name) {
     std::string k(key);
     for (char &c : k)
@@ -92,7 +92,7 @@ void collect(HKEY parent, const std::wstring &name, const std::wstring &rel, Map
                 reinterpret_cast<BYTE *>(data.data()),
                 &size
             ) != ERROR_SUCCESS ||
-            !len) // the default value: QSettings has no key for it
+            !len) // the default value: no store key has it
             continue;
         out->insert_or_assign(
             qtKey(rel + std::wstring(value.data(), len)),
@@ -152,7 +152,7 @@ bool write(std::string_view key, std::string_view value, std::string_view app) {
             HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &h, nullptr
         ) != ERROR_SUCCESS)
         return false;
-    // As QSettings writes a QString: REG_SZ, NUL-terminated UTF-16.
+    // A string value as stored: REG_SZ, NUL-terminated UTF-16.
     const std::wstring w  = wide(encodeString(value));
     const bool         ok = RegSetValueExW(
                                 h,

@@ -1,5 +1,5 @@
-// Crash reports and the dev-only main-thread hang watchdog (the old app's
-// CrashHandler, same crash.log format).
+// Crash reports and the dev-only main-thread hang watchdog (crash.log keeps
+// the format earlier versions wrote).
 #pragma once
 
 #include <string>

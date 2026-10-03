@@ -53,10 +53,10 @@ void SlackBackend::api(std::string_view method, std::string form, ApiDone done) 
 // A rejected token (token_expired, or invalid_auth: revoked, or superseded by
 // a refresh made on another device) is refreshed and the call re-issued —
 // once: invalid_auth can outlive a "successful" refresh, and looping would
-// hammer oauth.v2.access (msga's kMaxAuthRefreshRetries). Without a refresh
+// hammer oauth.v2.access. Without a refresh
 // token (session auth, a non-rotating OAuth token) it is fatal, as before.
 //
-// While a refresh is out nothing else goes out (msga's pauseForTokenRefresh):
+// While a refresh is out nothing else goes out:
 // a call sent on the dying token would come back invalid_auth and spend the
 // next single-use refresh token. A call that was already out and comes back
 // rejected after a refresh landed is re-sent on the new token, unrefreshed.

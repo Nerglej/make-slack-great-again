@@ -1,11 +1,11 @@
-// The conversation sidebar, laid out as msga's ConvListWidget paints it:
+// The conversation sidebar:
 // uniform 30 px rows under a 6 px top inset — the "Threads" and "Saved
 // messages" entries, then the Starred / Channels / Direct messages / Agents &
 // apps sections (a click on a header collapses it, hiding every row; hovering
 // shows the chevron that says what a click does; the Direct messages header
 // has a "+" on hover), "N more channels" for the ones outside the
 // relevant-days window, "Add channels", and the footer (avatar + menu,
-// presence toggle). Over msga's nav gradient.
+// presence toggle). Over the nav gradient.
 //
 // An agent workspace (Capabilities::agentSessions, Claude Code) calls the
 // direct messages "Sessions" and ends them with "Add sessions" (its "+" and
@@ -32,7 +32,7 @@
 namespace shell {
 
 // A workspace's share of the tray dot, the launcher badge and its rail
-// tile's dot (msga's updateUnreadBadges): `important` = unread direct
+// tile's dot: `important` = unread direct
 // messages + mentions (an agent workspace: only what needs you, its
 // answers), `unread` = other unread activity in channels on "All new posts"
 // (`fallback`: the global level). Muted, "Nothing", left and closed
@@ -47,7 +47,7 @@ struct Attention {
 Attention
 workspaceAttention(const model::Store &store, model::NotifyLevel fallback, int64_t nowSecs);
 
-// msga's rebuildFilteredConvs liveness filter, shared by the sidebar and the
+// The liveness filter, shared by the sidebar and the
 // quick switcher: a DM outlives its peer (the service never prunes it), so
 // one whose peer was deactivated or never resolves to a name is not listed.
 // A peer not loaded yet (a placeholder) is let through.
@@ -73,7 +73,7 @@ public:
         bool               operator==(const Filters &) const = default;
     };
     void setFilters(const Filters &f);
-    // msga's conv/visitedAt: when each conversation was last opened here (or
+    // Visit stamps: when each conversation was last opened here (or
     // seen unread), which keeps it listed for the relevant days. The shell
     // persists it (Settings::visitedAt) whenever onVisitedChanged fires.
     using VisitStamps = std::unordered_map<std::string, int64_t>; // conv id → epoch secs
@@ -118,8 +118,8 @@ public:
     std::function<void()>                    onFindChannel;   // "Add channels" → Find a channel
     std::function<void()>                    onCreateChannel; // "Add channels" → Create a channel
     std::function<void()>                    onBrowsePeople;  // the Direct messages header's "+"
-    // Agent workspace: the Sessions "+" and "Add sessions" (msga's
-    // agentSessionMenuRequested), a teammate's row, the Team header's "+".
+    // Agent workspace: the Sessions "+" and "Add sessions", a
+    // teammate's row, the Team header's "+".
     std::function<void(ui::PointF at)>       onSessionMenu;
     std::function<void(const std::string &)> onTeammate;
     std::function<void()>                    onAddTeammate;
@@ -127,14 +127,14 @@ public:
     // conversation is highlighted meanwhile.
     void                                     selectTeammate(const std::string &role);
     const std::string                       &selectedTeammate() const { return _selectedTeammate; }
-    // Highlights the Threads entry as the open page (msga's
-    // _threadsSelected); opening a conversation or a teammate clears it.
+    // Highlights the Threads entry as the open page; opening a conversation or a teammate clears
+    // it.
     void                                     selectThreads(bool on);
     bool threadsUnread() const; // the Threads entry is bright (Store::unreadThreads)
     // A click on a row's huddle pill (tests): false when it shows none.
     bool joinHuddle(model::ConvRef conv);
     bool threadsSelected() const { return _threadsSelected; }
-    // The same for the Saved messages entry (msga's selectSavedMsgsRow).
+    // The same for the Saved messages entry.
     void selectSaved(bool on);
     bool savedSelected() const { return _savedSelected; }
     // The Team section's rows, top to bottom (tests): role ids.
@@ -162,7 +162,7 @@ private:
     void               refreshAll();
     void               refreshSections();
     ConvRow           *rowFor(model::ConvRef conv) const;
-    // msga's paintsUnread / effective level (Settings' default) / badge rules.
+    // The unread / effective level (Settings' default) / badge rules.
     bool               paintsUnread(const model::Conversation &c) const;
     model::NotifyLevel level(const model::Conversation &c) const;
     bool               muted(const model::Conversation &c) const;
@@ -191,7 +191,7 @@ private:
     std::vector<const char *>              _navTitles;
     ui::View                              *_savedRow = nullptr, *_threadsRow = nullptr;
     bool                                   _threadsSelected = false, _savedSelected = false;
-    VisitStamps                            _visited; // opened here (msga's visit stamps)
+    VisitStamps                            _visited; // opened here (visit stamps)
     std::function<int64_t()>               _now;
     Filters                                _filters;
     model::ConvRef                         _selected        = model::kNoConv;

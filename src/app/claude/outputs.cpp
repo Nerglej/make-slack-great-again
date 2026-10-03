@@ -75,7 +75,7 @@ std::string expandHome(std::string_view token) {
     return std::string(token);
 }
 
-// "file:///a/b%20c" → "/a/b c" (QUrl::toLocalFile, for the local form).
+// "file:///a/b%20c" → "/a/b c": the local path a file URL names.
 std::string localFileOf(std::string_view url) {
     return file::fromFileUrl(url);
 }

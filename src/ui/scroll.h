@@ -41,7 +41,7 @@ public:
     // After every offset change (load older history near the top, etc.).
     std::function<void()> onScroll;
 
-    // The Qt app's list overlay thumb instead of the default bar: a fixed
+    // An overlay thumb for lists instead of the default bar: a fixed
     // 4 px pill in one colour (no hover widening or darkening), full height,
     // 2 px from the edge; only the thumb itself grabs (a press beside it
     // goes to the row under it) and shows a resize cursor.

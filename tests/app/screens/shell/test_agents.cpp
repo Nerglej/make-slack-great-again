@@ -1,8 +1,6 @@
-// An agent workspace's sidebar and flows as msga has them (the Qt app's
-// conv_list_widget / main_window / teammate_page / session_finder_dialog are
-// the spec): the Sessions "+" menu, the Team section and its menus, presence
-// (the yellow dot), Shift+Del, the teammate page and its composer, the
-// session finder's rows, recent folders, SVG avatars.
+// An agent workspace's sidebar and flows: the Sessions "+" menu, the Team section and its menus,
+// presence (the yellow dot), Shift+Del, the teammate page and its composer, the session finder's
+// rows, recent folders, SVG avatars.
 #include "app/fake/fake_backend.h"
 #include "base/file.h"
 #include "support/test.h"
@@ -232,7 +230,7 @@ TEST("agents: a teammate is bright while one of its sessions is unread") {
 
 // ── Menus ───────────────────────────────────────────────────────────────────
 
-TEST("agents: the session menu, a session's and a teammate's, as msga words them") {
+TEST("agents: the session menu, a session's and a teammate's, and their wording") {
     Harness h;
     CHECK_STR(
         labels(h.sh->menus().sessionItems()),

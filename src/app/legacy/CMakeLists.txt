@@ -1,4 +1,4 @@
-# msga_app_legacy — the upgrade from the old Qt msga (legacy.h), linked into
+# msga_app_legacy — the upgrade from earlier versions' data (legacy.h), linked into
 # the msga executable only. Removable: see legacy.h.
 add_library(msga_app_legacy STATIC
     legacy.cpp

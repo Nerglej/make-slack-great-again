@@ -21,7 +21,7 @@ namespace settings {
 
 namespace {
 
-constexpr float kPanelW = 720, kPanelH = 540; // the Qt dialog's size
+constexpr float kPanelW = 720, kPanelH = 540;
 constexpr float kListW = 175;
 constexpr float kHeadH = 48;
 
@@ -98,7 +98,7 @@ public:
 };
 
 // The page's scroll area. While the page scrolls, its content stops 8 px
-// short of the right edge, where the Qt app's scroll bar takes its room.
+// short of the right edge, room for the scroll bar.
 class PageScroll final : public ScrollView {
 public:
     void layout() override {
@@ -116,7 +116,7 @@ private:
 
 // One theme preset as a miniature app: rail, conversation list with the
 // selection pill and a mention badge, message lines and an accent button —
-// the Qt app's ThemePreviewCard, in the palette's own colours for its row's mode.
+// in the palette's own colours for its row's mode.
 class ThemeCard final : public Clickable {
 public:
     static constexpr float kW = 90, kMockH = 64;
@@ -566,7 +566,7 @@ void SettingsDialog::buildThemeRow(bool dark) {
         card->setChecked(int(i) == (dark ? _s.paletteDark : _s.paletteLight));
         _p->cards.push_back(card);
         card->onClick = [this, card, dark, i] {
-            // Applies and persists at once, like the Qt app: cheap and
+            // Applies and persists at once: cheap and
             // trivially reversible. A pick for the other mode changes
             // nothing on screen until the mode flips.
             (dark ? _s.paletteDark : _s.paletteLight)         = int(i);
@@ -601,7 +601,7 @@ void SettingsDialog::styleChanged() {
     Dialog::styleChanged();
 }
 
-// msga's openTrayIconDialog: the shell's tray icon dialog saves the picture
+// The shell's tray icon dialog saves the picture
 // and the monochrome choice; then (or when it is cancelled) the switch shows
 // what the tray now shows.
 void SettingsDialog::pickTrayIcon() {
@@ -621,7 +621,7 @@ void SettingsDialog::pickTrayIcon() {
         sync();
 }
 
-// The language grid (msga's refreshSpellLanguages): two columns of
+// The language grid: two columns of
 // checkboxes, or the hint naming the dictionary package to install. Ticks
 // made since the dialog opened stay; the first time, the saved choice shows
 // (or what the checker picks when there is none).
@@ -700,7 +700,7 @@ bool lowContrast(bool dark) {
     return contrastRatio(pc.text, pc.sidebar) < 3.0;
 }
 
-// Slack's theme swatches by name (msga's swatchColor): what an ia_theme slot
+// Slack's theme swatches by name: what an ia_theme slot
 // names when it has no hex of its own.
 bool swatchColor(std::string_view name, Color *out) {
     static const struct {
@@ -730,7 +730,7 @@ bool swatchColor(std::string_view name, Color *out) {
     return false;
 }
 
-// One ia_theme slot (msga's parseSlot): {"hex":…} wins when valid, else its
+// One ia_theme slot: {"hex":…} wins when valid, else its
 // "palette" name; a bare string is a hex or a palette name.
 bool parseThemeSlot(const json::Value &v, Color *out) {
     if (v.isObject())
@@ -738,7 +738,7 @@ bool parseThemeSlot(const json::Value &v, Color *out) {
     return v.isString() && (parseHexColor(v.str(), out) || swatchColor(v.str(), out));
 }
 
-// The custom theme's pins by their JSON names (msga's serializeCustomTheme).
+// The custom theme's pins by their JSON names.
 const struct {
     const char *key;
     Color CustomPalette::*field;
@@ -752,8 +752,8 @@ const struct {
 
 } // namespace
 
-// msga's parseCustomTheme: the ia_theme JSON ({"primary":{"hex":…} or
-// {"palette":"aubergine"},…, plus msga's own "gradient" and "pins"), or the
+// A custom theme from text: the ia_theme JSON ({"primary":{"hex":…} or
+// {"palette":"aubergine"},…, plus the app's own "gradient" and "pins"), or the
 // legacy share string (8 or 10 hex colours, comma or space separated, in
 // Slack's slot order column_bg, menu_bg, active_item, active_item_text,
 // hover_item, text_color, active_presence, badge[, top_nav_bg,
@@ -834,7 +834,7 @@ void SettingsDialog::buildCustomEditor() {
     auto *box = group(sec);
 
     auto edited = [this] {
-        // A whole theme may have come in (msga's setTheme → syncControls).
+        // A whole theme may have come in: the controls follow it.
         if (_p->inverted)
             _p->inverted->setChecked(_s.custom.sidebarInverted);
         if (_p->gradient)
@@ -892,8 +892,8 @@ void SettingsDialog::buildCustomEditor() {
     _p->contrast->setVisible(lowContrast(_ctx.app.dark()));
     auto *btns = row(box);
     auto *copy = btns->add<FormButton>(tr("Copy theme"), FormButton::Kind::Secondary);
-    // As in the Qt app, offered only when a signed-in Slack workspace can
-    // provide its theme (msga's fetchSlackTheme): the redesign theme, else
+    // Offered only when a signed-in Slack workspace can provide its theme:
+    // the redesign theme, else
     // the legacy colours.
     auto *mine = btns->add<FormButton>(tr("Use my Slack theme"), FormButton::Kind::Secondary);
     mine->setVisible(bool(_hooks.fetchSlackTheme));
@@ -1040,8 +1040,8 @@ void SettingsDialog::buildNotifications() {
         n.body   = k == 0   ? std::string(tr("Hey \xE2\x80\x94 do you have a minute?"))
                    : k == 1 ? i18n::arg(tr("%1: Heads up, the deploy is going out at 3pm"), user)
                             : i18n::arg(tr("%1 started a huddle"), user);
-        n.silent = sounds::kSilentNotifications; // msga's sample: no chime of ours either
-        if (k == 2)                              // msga's sample huddle has the real one's "Join"
+        n.silent = sounds::kSilentNotifications; // the sample: no chime of ours either
+        if (k == 2)                              // the sample huddle has the real one's "Join"
             n.actions.push_back({"join", tr("Join")});
         _p->sampleResult->setText({});
         _p->sampleResult->setVisible(false);

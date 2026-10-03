@@ -20,7 +20,7 @@ std::string entityText(const model::Store &store, const mrkdwn::Entity &e, uint8
             return "#" + *n;
         break;
     case mrkdwn::Kind::Usergroup:
-        // msga's Usergroup::mentionLabel: the live handle (else name).
+        // A user group mention: the live handle (else name).
         if (const model::Store::Usergroup *g = store.findUsergroup(e.data))
             return "@" + (g->handle.empty() ? g->name : g->handle);
         break;

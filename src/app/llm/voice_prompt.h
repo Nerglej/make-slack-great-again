@@ -1,4 +1,4 @@
-// Prompt shaping for composer voice input (msga's VoicePrompt) — pure
+// Prompt shaping for composer voice input — pure
 // functions, no network, so what goes to speech-to-text and to the clean-up
 // pass is unit-tested.
 //
@@ -15,8 +15,8 @@
 
 namespace llm {
 
-// What the composer knows about where the dictated text will go (msga's
-// Voice::Context). Drives the speech-to-text prompt and keywords and the
+// What the composer knows about where the dictated text will go.
+// Drives the speech-to-text prompt and keywords and the
 // clean-up pass. Everything optional.
 struct VoiceContext {
     std::string              conversationName; // "#backend", or the DM peer's name

@@ -21,7 +21,7 @@ namespace {
 
 constexpr float kAvatar = 56, kAvatarRadius = 12;
 
-// Last activity of a conversation, epoch micros (msga's max(latestTs, lastRead)).
+// Last activity of a conversation, epoch micros: the later of the latest message and the last read.
 model::Ts activityOf(const model::Conversation &c) {
     return std::max(c.latest, c.lastRead);
 }

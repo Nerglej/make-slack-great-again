@@ -6,7 +6,7 @@
 // per-monitor rectangles as _GTK_WORKAREAS_D<desktop> (the GTK3 source), and
 // that is used when present; otherwise the one _NET_WORKAREA rectangle of the
 // current desktop is intersected with each monitor. That approximation is
-// what GTK and Qt do too: a panel on one monitor of a multi-monitor setup
+// what other toolkits (GTK) do too: a panel on one monitor of a multi-monitor setup
 // shrinks _NET_WORKAREA's bounding box only where it borders the edge of the
 // whole screen, so a panel between two monitors is invisible to it.
 #include "x11/x11_internal.h"

@@ -22,7 +22,7 @@ constexpr float kRowH        = 39; // SectionList rows (9 + text + 9) …
 constexpr float kRowPitch    = 41; // … 1 px margin above and below
 constexpr float kRowInsetX   = 6;
 constexpr float kScrimMargin = 24;
-// The backdrop: the same dim in both themes (the Qt app's rgba(0,0,0,150)).
+// The backdrop: the same dim in both themes, rgba(0,0,0,150).
 constexpr Color kScrim       = 0x96000000;
 
 using text::layoutPlain;
@@ -417,7 +417,7 @@ void SpinBox::paint(gfx::Painter &p) {
     gfx::drawIcon(
         p, gfx::Icon::SpinDown, {snapPx(ax + 3), snapPx(height() / 2 + 1), 10, 10}, color(tint)
     );
-    // "14" (selected right after focusing, like a Qt spin box) + " days".
+    // "14" (selected right after focusing, like a spin box) + " days".
     const float scale = windowScale();
     const C     tc    = en ? C::FormText : C::FormTextFaint;
     // Focus and enabled only recolour the shaped text; typing reshapes.
@@ -544,7 +544,7 @@ TextField::TextField(std::string placeholder, bool multiLine) : _multi(multiLine
     _edit->setPlaceholder(std::move(placeholder));
     if (multiLine) {
         // The glossary: caption-sized text, fixed height (two controls and
-        // an extra-small one tall, as in the Qt app), scrolling inside.
+        // an extra-small one tall), scrolling inside.
         style().h = 2 * kFormNormalH + 22;
         style().padding(9, 8, 9, 6);
         _edit->setFont(Font::Control);

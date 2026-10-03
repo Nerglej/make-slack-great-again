@@ -64,7 +64,7 @@ struct User {
 
 enum class ConvKind : uint8_t { Channel, Private, Dm, Group };
 
-// Which new messages notify (msga's "Notify you about…"); `muted` is separate
+// Which new messages notify ("Notify you about…"); `muted` is separate
 // and silences everything, the badge included. Default follows the global
 // setting; an explicit All overrides a global "Just mentions". The values are
 // persisted (workspace cache, Claude Code teammates): 0 is what caches written
@@ -104,7 +104,7 @@ struct File {
     bool isImage() const { return mime.compare(0, 6, "image/") == 0 && width > 0; }
     bool isAudio() const { return mime.compare(0, 6, "audio/") == 0 || subtype == "slack_audio"; }
     bool isPdf() const { return mime == "application/pdf"; }
-    // msga's File::hasPreview: a picture to show inline (an image, a PDF's page).
+    // A picture to show inline (an image, a PDF's page).
     bool hasPreview() const { return isImage() || (isPdf() && !thumb.empty() && width > 0); }
     // Slack canvases (quip docs): a preview card, opened in the canvas viewer.
     bool isCanvas() const { return mime == "application/vnd.slack-docs"; }
@@ -117,9 +117,9 @@ struct AttachmentField {
     std::string value; // mrkdwn
 };
 
-// A Block Kit block drawn as a structure rather than as text (msga drew the
-// blocks): kept only for messages and attachments whose blocks have a
-// header, divider, image or table; everything else is mrkdwn in `text`.
+// A Block Kit block drawn as a structure rather than as text: kept only for messages and
+// attachments whose blocks have a header, divider, image or table; everything else is mrkdwn in
+// `text`.
 struct Block {
     enum class Kind : uint8_t { Text, Header, Divider, Image, Table };
     Kind                                  kind = Kind::Text;
@@ -166,7 +166,7 @@ struct Button {
     std::string url, blockId, value;
 };
 
-// A huddle_thread message's summary (msga's HuddleInfo): who was in it and
+// A huddle_thread message's summary: who was in it and
 // for how long, from its room.
 struct Huddle {
     std::vector<UserRef> attendees; // live: the participants; ended: everyone who was
@@ -263,7 +263,7 @@ struct Conversation {
     bool                 hasMoreBefore = true; // older history exists on the server
 
     bool        isDirect() const { return kind == ConvKind::Dm || kind == ConvKind::Group; }
-    // msga's effectiveNotifLevel, the one rule for notifications and badge
+    // The one rule for notifications and badge
     // colours: muted is Nothing, Default is `fallback` (the global level).
     NotifyLevel effectiveNotify(NotifyLevel fallback) const {
         return muted ? NotifyLevel::Nothing : notify == NotifyLevel::Default ? fallback : notify;

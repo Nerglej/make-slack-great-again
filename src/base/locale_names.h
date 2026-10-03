@@ -10,7 +10,7 @@ struct OsDateNames {
     std::string month[12], monthShort[12];
     std::string weekday[7], weekdayShort[7]; // Sunday first
     std::string am, pm;
-    std::string shortDate;     // Qt-style ("dd.MM.yy"); "" = unknown
+    std::string shortDate;     // a formatCivil pattern ("dd.MM.yy"); "" = unknown
     int         firstDay = -1; // the week's first day, 0 = Sunday; -1 = unknown
 };
 

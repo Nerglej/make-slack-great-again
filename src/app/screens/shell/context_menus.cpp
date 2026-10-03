@@ -20,7 +20,7 @@ namespace shell {
 namespace {
 
 // One row per item: its label in a channel's menu and, where different, in
-// a direct conversation's, and its icon (msga shows icons only on the
+// a direct conversation's, and its icon (icons show only on the
 // notification levels).
 struct Def {
     uint8_t     id;
@@ -69,12 +69,12 @@ ui::MenuItem &add(std::vector<ui::MenuItem> &out, int id, bool direct = false, b
 }
 
 void separator(std::vector<ui::MenuItem> &out) {
-    // msga's collapseSeparators(): never leading or doubled.
+    // Separators are never leading or doubled.
     if (!out.empty() && !out.back().separator)
         out.push_back(ui::MenuItem::separatorItem());
 }
 
-// msga's buildNotifySection: a header and the three levels, the effective
+// The notification section: a header and the three levels, the effective
 // one checked (Default ticks Settings' level). "Mute and hide" is the
 // conversation's mute.
 void notifySection(std::vector<ui::MenuItem> &out, NotifyLevel effective) {
@@ -129,7 +129,7 @@ std::vector<ui::MenuItem> Menus::workspaceItems() const {
 std::vector<ui::MenuItem> Menus::workspaceItems(const Workspace &w) const {
     const model::Store       &st = _ctx.store;
     std::vector<ui::MenuItem> items;
-    // msga: when the workspace's live session knows you are an admin (any
+    // When the workspace's live session knows you are an admin (any
     // running workspace, open or in the background) and has its URL.
     if (const model::Store *ws = w.store    ? w.store
                                  : w.active ? &st
@@ -246,7 +246,7 @@ void Menus::run(int id, uint32_t target) {
         case kUnmuteWorkspace:
             if (ws.active && !hooks.muteWorkspace) // without accounts (the demo)
                 st.workspaceMuted = id == kMuteWorkspace;
-            if (hooks.muteWorkspace) // kept with the workspace, like msga's TokenStore
+            if (hooks.muteWorkspace) // kept with the workspace's record
                 hooks.muteWorkspace(ws.key, id == kMuteWorkspace);
             break;
         case kSignOut:
@@ -277,14 +277,14 @@ void Menus::showWorkspace(ui::PointF at) {
 void Menus::showWorkspace(const Workspace &w, ui::PointF at) {
     _ws = w;
     if (ui::Menu *m = show(workspaceItems(w), 0, at))
-        m->setMinWidth(140); // msga's WidthMode::MinWidth
+        m->setMinWidth(140); // at least 140 px, wider for longer labels
 }
 
 void Menus::showSessions(ui::PointF at) {
     if (!_ctx.backend.capabilities().agentSessions)
         return;
     if (ui::Menu *m = show(sessionItems(), 0, at))
-        m->setMinWidth(140); // msga's WidthMode::MinWidth
+        m->setMinWidth(140); // at least 140 px, wider for longer labels
 }
 
 void Menus::showTeammate(const std::string &role, ui::PointF at) {

@@ -1,4 +1,4 @@
-// msga's tag pill after a name (paintTagBadge): "APP" after a bot's name,
+// The tag pill after a name: "APP" after a bot's name,
 // "EXT" after a Slack Connect user's — in message headers, on shared-message
 // cards, and (sidebar = true, coloured for the rail) in the chats list.
 #pragma once

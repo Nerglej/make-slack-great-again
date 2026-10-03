@@ -253,7 +253,7 @@ void Updater::download(int version, std::string sha256) {
     req.url                   = _assetUrl;
     req.timeoutMs             = kDownloadTimeoutMs;
     std::weak_ptr<char> alive = _alive;
-    // msga's downloadProgress: only when the server says the size.
+    // Download progress: only when the server says the size.
     req.onProgress            = [this, alive, last = -1](int64_t got, int64_t total) mutable {
         if (alive.expired() || total <= 0)
             return;

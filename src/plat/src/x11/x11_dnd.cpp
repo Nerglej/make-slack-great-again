@@ -526,7 +526,7 @@ void X11App::sendXdnd(xcb_window_t to, xcb_window_t window, xcb_atom_t type, con
 }
 
 xcb_atom_t X11App::dragRequestedAction() const {
-    // The usual modifier convention (GTK, Qt, file managers): Shift moves,
+    // The usual modifier convention (toolkits, file managers): Shift moves,
     // Ctrl copies, both link — when the drag allows it.
     const uint32_t m    = _kbd.hasKeymap() ? _kbd.mods() : 0;
     DropAction     want = preferredOf(_drag.actions);

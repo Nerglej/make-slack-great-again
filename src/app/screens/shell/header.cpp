@@ -173,7 +173,7 @@ public:
         _loaded = true;
         filter();
     }
-    // msga's showError: the list failed to load.
+    // The list failed to load.
     void showError(const std::string &err) {
         _list->setVisible(false);
         _message->setVisible(true);
@@ -184,7 +184,7 @@ public:
 
 private:
     static constexpr float kRowH = 60;
-    // msga: whole rows, at most six; the message takes the list's place.
+    // Whole rows, at most six; the message takes the list's place.
     void                   fitRows(size_t n) {
         const float h = float(std::clamp<size_t>(n, 1, 6)) * kRowH;
         if (_list->currentStyle().h == h)
@@ -266,7 +266,7 @@ private:
     }
     void activate(model::UserRef u) {
         close();
-        if (_ctx.messageUser) // msga's openDmWith: the DM, or a teammate's page
+        if (_ctx.messageUser) // the DM, or a teammate's page
             _ctx.messageUser(u);
     }
     struct Row {
@@ -288,7 +288,7 @@ private:
 
 // ── ConvHeader ──────────────────────────────────────────────────────────────
 
-// msga's huddleJoinUrl: a web hand-off, as huddles can't start over the API.
+// A web hand-off, as huddles can't start over the API.
 // A channel's /huddle/ link starts (or joins) its huddle; for a DM that shape
 // server-errors, so a DM opens the conversation and the huddle starts there.
 // A live room's own huddle_link comes first.
@@ -303,10 +303,9 @@ std::string huddleJoinUrl(const model::Store &st, ConvRef conv) {
 
 ConvHeader::ConvHeader(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(avatars) {
 #ifdef __APPLE__
-    // msga's macOS unified header (main_window's headerGrid), which Shell
-    // puts in the title bar: the name centred in the window between a blank
-    // column and the actions, both 200 px wide (room for the members button
-    // beside the three icons), over the title bar's bottom rule.
+    // The macOS unified header, which Shell puts in the title bar: the name centred in the window
+    // between a blank column and the actions, both 200 px wide (room for the members button beside
+    // the three icons), over the title bar's bottom rule.
     constexpr float kActionsW = 200;
     style().row().margins(0, 0, 0, 1);
     setBackground(C::Surface);
@@ -420,16 +419,16 @@ void ConvHeader::refresh() {
         Avatar     *a = _avatar->single();
         a->setBitmap(_avatars.get(u.avatar, 56));
         a->setInitial(u.label());
-        // msga: phantom (yellow) for me while no official client is
+        // Phantom (yellow) for me while no official client is
         // connected, and for any peer that can't be reached (an agent
         // session that is gone: presenceOf).
         const bool self = c.dmUser == st.me;
         const auto sp   = _ctx.backend.selfPresence();
         a->setPresence(
             Avatar::presenceOf(&u, caps.presence, self && sp.phantomAway()),
-            C::BadgeText // msga rings the header dot in white
+            C::BadgeText // the header dot's ring is white
         );
-        // msga's selfPresenceTooltip: nothing until my presence is known.
+        // The presence tooltip: nothing until my presence is known.
         _avatar->setTooltip(
             !self ? std::string()
             : sp.phantomAway()

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generate emoji_categories.inc (the picker's categories) from msga's catalog.
+"""Generate emoji_categories.inc (the picker's categories) from the emoji catalog.
 
     python3 src/app/mrkdwn/gen_emoji_categories.py        # from the repo root
 
-msga's picker shows eight categories in iamcal/emoji-data's canonical order,
+The picker shows eight categories in iamcal/emoji-data's canonical order,
 generated into src/util/emoji_data.cpp by scripts/gen-emoji-catalog.py. This
 reads that file (its kEntries names, flags and kCat_* index arrays) and
-re-indexes every name into next's sorted shortcode table (emoji_table.inc,
+re-indexes every name into the sorted shortcode table (emoji_table.inc,
 same order as gen_emoji_table.py), so a category is a uint16 run and the
 skin-tone flag one bit per shortcode.
 """
@@ -17,13 +17,13 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..', '..'))
-OLD = os.path.join(ROOT, 'src', 'util', 'emoji_data.cpp')
+CATALOG = os.path.join(ROOT, 'src', 'util', 'emoji_data.cpp')
 TABLE = os.path.join(ROOT, 'scripts', 'emoji_table.json')
 OUT = os.path.join(HERE, 'emoji_categories.inc')
 
 
 def main():
-    src = open(OLD, encoding='utf-8').read()
+    src = open(CATALOG, encoding='utf-8').read()
     entries = re.findall(r'\{(\d+), (\d+), (\d+), (\d+)\}, // (\S+)', src)
     names = [e[4] for e in entries]
     flags = [int(e[3]) for e in entries]

@@ -9,9 +9,8 @@
 //       remote.fetch(url, [](const std::string &path) { /* "" = failed */ });
 //
 // Files live in <cacheDir>/images (app/identity.h)/<sha256(url)>, so the same URL is
-// downloaded once per machine and survives restarts (the old app's
-// WorkspaceCache::saveImage). The directory is bounded by Settings → Storage
-// → "Limit cache to" like the old CacheEvictor: least recently used first,
+// downloaded once per machine and survives restarts. The directory is
+// bounded by Settings → Storage → "Limit cache to": least recently used first,
 // "used" being the file's mtime (bumped on every cache hit), swept shortly
 // after start, every 30 minutes, after 32 MB of new downloads and when the
 // limit changes. The other folders the old evictor covered join through

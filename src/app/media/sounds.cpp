@@ -26,7 +26,7 @@ namespace {
 constexpr std::string_view kSystem = "system:";
 
 // Native audio APIs can't read from our binary, so the bundled WAV is written
-// to a real file under the old app's cache dir once and reused there. A size
+// to a real file under the cache dir once and reused there. A size
 // change (a release re-rendered the chime) rewrites it.
 // BLOCKING: run off the UI thread.
 std::string bundledPath(const std::string &dir) {

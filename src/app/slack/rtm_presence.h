@@ -1,4 +1,4 @@
-// The presence link (msga's RtmPresence): an RTM WebSocket on a session
+// The presence link: an RTM WebSocket on a session
 // (xoxc) workspace's own token, held only so Slack counts this app as a
 // connected client. Slack reports a user active only while one of its
 // clients holds a connection (users.getPresence's `online`); the public

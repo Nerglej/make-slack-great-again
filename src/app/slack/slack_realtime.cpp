@@ -2,11 +2,7 @@
 // into the Store, what a reconnect backfills, the presence link and the
 // OAuth token refresh.
 //
-// A port of the Slack parts of msga's Session event loop and
-// checkRealtimeHealth (old-msga/src/session/session.cpp), slack_events.cpp
-// (the event shapes) and PublicBackend's refresh / presence wiring
-// (old-msga/src/backend/slack/public_backend.cpp). Typing (user_typing is
-// RTM-only, dead over Socket Mode) is not here.
+// Typing (user_typing is RTM-only, dead over Socket Mode) is not here.
 #include "app/slack/rtm_presence.h"
 #include "app/model/timers.h"
 #include "app/slack/slack_backend.h"
@@ -32,7 +28,7 @@ using model::UserRef;
 
 namespace {
 
-// msga's Session throttles (session.h) and PublicBackend's refresh window.
+// The reconnect throttles and the token refresh window.
 constexpr int64_t kReconnectReloadGapMs = 2 * 60'000;
 constexpr int64_t kUnreadResyncGapMs    = 2 * 60'000;
 constexpr int64_t kReestablishGapMs     = 60'000;
@@ -43,7 +39,7 @@ constexpr int     kPresenceRefreshMs    = 2'000; // Slack registers the socket a
 constexpr int     kUsergroupsDebounceMs = 2'000;
 constexpr int     kUnreadPatchMs        = 300;
 
-// oauth.v2.access answers worth trying again later (msga's TransientError).
+// oauth.v2.access answers worth trying again later.
 bool transientRefreshError(const json::Document &doc, const std::string &e) {
     if (e == "internal_error" || e == "service_unavailable" || e == "fatal_error" ||
         e == "ratelimited")
@@ -185,8 +181,8 @@ void SlackBackend::Live::attach(std::shared_ptr<SocketMode> sock) {
         socket->removeSink(sink);
     socket.reset();
     sink = 0;
-    // Session mode is a hard off switch for Socket Mode (msga's
-    // SharedRealtime): a session workspace never takes the app's socket.
+    // Session mode is a hard off switch for Socket Mode: a session workspace never takes the app's
+    // socket.
     if (!sock || b._creds.sessionAuth())
         return;
     socket = std::move(sock);
@@ -362,7 +358,7 @@ void SlackBackend::Live::onMessage(const json::Value &ev, bool ours) {
             });
         return;
     }
-    // msga's huddleEventFor: a huddle_thread message starts one, its edit
+    // A huddle_thread message starts a huddle, its edit
     // (the room gaining date_end / has_ended) ends or changes it. The message
     // itself goes on as any other.
     if (c != kNoConv) {
@@ -490,7 +486,7 @@ void SlackBackend::Live::onContended() {
 
 // ── resyncUnreads ───────────────────────────────────────────────────────────
 
-// msga's Session::resyncUnreads: a stalled socket drops the messages of many
+// Unread resync: a stalled socket drops the messages of many
 // conversations at once, and only conversations.info reports my real unread
 // count. DMs and group DMs only (a channel's missed mention needs a history
 // scan), 1:1 first; upward merges only, so it composes with the roster
@@ -505,7 +501,7 @@ void SlackBackend::Live::resyncUnreads() {
             const model::Conversation &c = s.conversation(r);
             if (c.kind != (pass ? model::ConvKind::Group : model::ConvKind::Dm) || b.isDead(c.id))
                 continue;
-            // msga's isDeadDm: a deactivated peer's DM answers channel_not_found.
+            // A dead DM: a deactivated peer's DM answers channel_not_found.
             if (c.kind == model::ConvKind::Dm && s.user(c.dmUser).deleted)
                 continue;
             ids.push_back(c.id);

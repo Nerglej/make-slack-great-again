@@ -27,7 +27,7 @@ constexpr size_t kMaxThreads      = 20;
 // A thread fetch that never answers (a workspace switch drops it) must not
 // leave the job spinning: go on with what has arrived.
 constexpr int    kFetchDeadlineMs = 15000;
-// The report card: msga's SummaryDialog (840 wide at most, a 420-px body
+// The report card (840 wide at most, a 420-px body
 // that leaves room for the card's chrome in a short window).
 constexpr float  kCardW = 840, kBodyH = 420, kCardChromeH = 260;
 
@@ -137,7 +137,7 @@ void runLlm(const JobPtr &j) {
     });
 }
 
-// One thread after the other (msga's fetchNextThread), then the request.
+// One thread after the other, then the request.
 void fetchNext(const JobPtr &j) {
     if (j->asked)
         return;

@@ -165,7 +165,7 @@ std::wstring urlSchemeCommand(std::wstring_view exe); // "exe" "%1", quoted
 bool         validUrlScheme(std::string_view scheme);
 
 // ── Paths and settings (win32_system.cpp) ───────────────────────────────────
-// Paths leave plat with '/' separators (Qt's convention, and what makes
+// Paths leave plat with '/' separators (what makes
 // `standardDir(Temp) + "/name"` equal a path a dialog hands back); Windows
 // accepts them, but some shell parsers do not, so incoming paths are turned
 // back into '\' before they reach the OS.

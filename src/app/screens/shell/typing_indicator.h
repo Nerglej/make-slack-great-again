@@ -1,4 +1,4 @@
-// msga's TypingIndicatorWidget, between the message list and the composer:
+// The typing indicator, between the message list and the composer:
 // "<b>Mira</b> is typing…", "<b>Mira</b>, <b>Jonas</b> are typing…", or
 // "<b>You</b> are typing on another device…" — hidden (no height) while
 // nobody types. Follows Store typing for one conversation (and thread).
@@ -21,7 +21,7 @@ public:
 
 private:
     void refresh();
-    // msga's formatElapsed: "42s", "1m 5s", "2h 3m".
+    // Elapsed time: "42s", "1m 5s", "2h 3m".
 public:
     static std::string formatElapsed(int64_t ms);
 

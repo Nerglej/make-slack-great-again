@@ -1,7 +1,7 @@
-// SocketMode (see socket_mode.h): a port of msga's SocketModeRealtime over
-// net::WebSocket. QWebSocket::ping becomes net::WebSocket::ping (WinHTTP
-// sends its own keepalives instead), QNetworkInformation plat's
-// NetworkChanged, which the app hands to networkChanged().
+// SocketMode (see socket_mode.h), over net::WebSocket: pings are
+// net::WebSocket::ping (WinHTTP sends its own keepalives instead), and
+// reachability is plat's NetworkChanged, which the app hands to
+// networkChanged().
 #include "app/slack/socket_mode.h"
 
 #include "app/slack/web_api.h"

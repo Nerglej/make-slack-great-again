@@ -28,15 +28,15 @@ using ui::Font;
 
 namespace {
 
-// Qt message list metrics (src/ui/message_list/message_list.h).
+// Message list metrics.
 constexpr float kPadH = 16, kPadV = 8, kPadVBottom = 4, kPadVGrouped = 3;
 constexpr float kAvSize = 36, kAvGap = 10, kHdrH = 20, kReactGap = 6;
 constexpr float kThreadAv = 24, kImgMax = 360, kAttachBar = 4;
-// msga's kImgMaxW / kImgMaxH: inline images at most 400 × 300.
+// Inline images at most 400 × 300.
 constexpr int   kImgMaxW = 400, kImgMaxH = 300;
-constexpr float kBannerH = 18; // msga's mini-banner rows
+constexpr float kBannerH = 18; // the mini-banner rows
 
-// msga's message.pinnedBg / attachmentDismiss / reminderBg / reminderText.
+// Pinned background, dismiss icon, reminder background, reminder text.
 constexpr C kBannerColors[4] = {C::PinnedBg, C::FormIcon, C::ReminderBg, C::FormLink};
 gfx::Color  bannerColor(int i) {
     return ui::color(kBannerColors[i]);
@@ -71,8 +71,8 @@ public:
         setAnimated(animated);
         setCursor(plat::Cursor::Hand);
         style().noShrink();
-        // msga: text.tertiary, centred, until the pixels are there (failed
-        // downloads keep it too — the old sentinel stayed "loading"). A link
+        // Text in text.tertiary, centred, until the pixels are there (failed
+        // downloads keep it too). A link
         // preview's picture shows nothing until then.
         if (file)
             setLoadingText(tr("Loading image\xE2\x80\xA6"), C::FormTextFaint);
@@ -85,7 +85,7 @@ public:
         return {std::floor(_dw * s), std::floor(_dh * s)};
     }
     void setTs(Ts ts) { _ts = ts; }
-    // A gallery tile (msga): the placeholder is clipped to the rounded tile
+    // A gallery tile: the placeholder is clipped to the rounded tile
     // and has no "Loading image…" (a tile is too narrow for it).
     void setTile() {
         _tile = true;
@@ -114,12 +114,12 @@ public:
             _list.fileHovered(
                 this, _ts, key.empty() ? _path : key, e.type == ui::EventType::PointerEnter
             );
-        return false; // msga: nothing on right click
+        return false; // nothing on right click
     }
 
 protected:
-    // msga's single-image placeholder: message.imagePlaceholderBg under a
-    // 1-px imagePlaceholderBorder, square (paintFileImages).
+    // The single-image placeholder: message.imagePlaceholderBg under a
+    // 1-px imagePlaceholderBorder, square.
     void paintPlaceholder(gfx::Painter &p, ui::RectF r, float radius) override {
         if (!_file) {
             CachedImage::paintPlaceholder(p, r, radius);
@@ -143,12 +143,12 @@ private:
     bool         _tile = false;
 };
 
-// A picture shown inline (msga's File::hasPreview; a canvas is a card).
+// A picture shown inline (a canvas is a card).
 bool isInlinePreview(const model::File &f) {
     return f.hasPreview() && !(f.isCanvas() && !f.id.empty());
 }
 
-// msga's multi-image gallery (layoutFileImages, 2+ previews): equal
+// The multi-image gallery (2+ previews): equal
 // cover-cropped tiles 180 px high in rows of up to three (two for four
 // pictures), 8 px apart, at most 520 wide; each row fills the width (a short
 // last row's tiles get wider). No file names. The children are the tiles.
@@ -180,13 +180,13 @@ public:
     }
 
 private:
-    // msga's galleryColumns: 2 side by side, 4 as 2×2, else up to three.
+    // Columns: 2 side by side, 4 as 2×2, else up to three.
     static int   columns(int n) { return n == 4 ? 2 : std::min(n, 3); }
     static float regionW(float aw) { return aw > 0 ? std::min(aw, kMaxW) : kMaxW; }
 };
 
-// A file card: click opens the file; hovering shows msga's file bar.
-// msga's plain file chip (message_render.cpp paintPlainChip): 60 px high,
+// A file card: click opens the file; hovering shows the file bar.
+// The plain file chip: 60 px high,
 // radius 8, fileChipBorder / fileChipBg; a 36-px type square (radius 6) in
 // the type's colour with the extension (or a code glyph); the name in bold
 // (middle-elided), 2 px, then "type · size" at 0.82×. As wide as the text
@@ -216,7 +216,7 @@ public:
         if (_list &&
             (e.type == ui::EventType::PointerEnter || e.type == ui::EventType::PointerLeave))
             _list->fileHovered(this, _ts, _path, e.type == ui::EventType::PointerEnter);
-        return Clickable::onEvent(e); // msga: nothing on right click
+        return Clickable::onEvent(e); // nothing on right click
     }
     void styleChanged() override {
         _n.reset();
@@ -268,7 +268,7 @@ private:
         return false;
     }
     static gfx::Color typeColor(const model::File &f, bool code) {
-        // msga's fileTypeColor.
+        // The file type's colour.
         const std::string &m   = f.mime;
         auto               has = [&](const char *s) { return m.find(s) != std::string::npos; };
         if (code)
@@ -327,9 +327,9 @@ private:
     bool                          _code  = false;
 };
 
-// A message author's avatar: hovering it shows msga's profile card.
+// A message author's avatar: hovering it shows the profile card.
 // A message's avatar. Until the picture is there (downloading, or none):
-// msga's paintAvatarPhotoOrInitial tile — the name's first letter in white
+// a tile with the name's first letter in white
 // on that letter's hue.
 class LetterAvatar : public CachedImage {
 public:
@@ -367,7 +367,7 @@ private:
     model::UserRef _user;
 };
 
-// msga's paintHuddleTile: a huddle_thread row's avatar, the headphones on
+// A huddle_thread row's avatar, the headphones on
 // a rounded surface.highlightStrong square.
 class HuddleTile final : public ui::View {
 public:
@@ -381,7 +381,7 @@ public:
     }
 };
 
-// msga's huddleDurationLabel: "45m", "2h", "1h 30m" (at least a minute).
+// A huddle's duration: "45m", "2h", "1h 30m" (at least a minute).
 std::string huddleDuration(int64_t secs) {
     const int64_t mins = std::max<int64_t>(1, (secs + 30) / 60);
     if (mins < 60)
@@ -392,7 +392,7 @@ std::string huddleDuration(int64_t secs) {
 
 } // namespace
 
-// msga's huddleSummaryText: who is (or was) in the huddle and for how long —
+// Who is (or was) in the huddle and for how long —
 // "You" first, then the others in Slack's order, more than three cut to two
 // and "N others".
 std::string huddleSummaryText(const Store &st, const model::Huddle &h) {
@@ -446,7 +446,7 @@ text::AttributedText styled(std::string_view s, Font f, C c, uint32_t linkId = 0
     return t;
 }
 
-// msga's bot button (message_render buttonsHtml + paintBotButtonChrome): a
+// A bot button: a
 // 13-px semibold label in a radius-4 face; primary is message.botButtonFill,
 // danger danger.def (both with onDark text), the rest botButtonBg under a
 // botButtonBorder hairline. Pressing it is Backend::pressButton.
@@ -455,7 +455,7 @@ public:
     BotButton(MessageList &list, Ts ts, const model::Button &b)
         : _list(list), _ts(ts), _id(b.id), _style(b.style) {
         setLook({C::None, C::None, C::None, C::None, 4});
-        // msga's buttonPaddingCss for the 15-px body: 7 px over a 13-px
+        // Padding for the 15-px body: 7 px over a 13-px
         // label's line (two body lines tall), 12 px at the sides.
         style().padding(12, 7).noShrink();
         const bool filled = _style != model::Button::Style::Default;
@@ -521,7 +521,7 @@ private:
     int         _index;
 };
 
-// msga's MsgRender::attachIsImageOnly / attachIsTableOnly: an attachment that
+// An attachment that
 // is nothing but image blocks (the GIF picker's) or a table (table messages)
 // draws without the colour bar.
 bool onlyBlocks(const model::Attachment &a, model::Block::Kind kind) {
@@ -541,7 +541,7 @@ bool onlyBlocks(const model::Attachment &a, model::Block::Kind kind) {
 
 } // namespace
 
-// msga's CanvasDisplay::title: entities decoded, :codes: as emoji, <@U…>
+// A canvas title: entities decoded, :codes: as emoji, <@U…>
 // mentions as names.
 std::string canvasTitle(const Context &ctx, const model::File &f) {
     return f.title.empty() ? f.name : std::string(str::trim(plainText(ctx, f.title)));
@@ -550,7 +550,7 @@ std::string canvasTitle(const Context &ctx, const model::File &f) {
 text::AttributedText canvasPreviewText(
     Context &ctx, const std::string &raw, const model::File &f, std::vector<std::string> *images
 ) {
-    // msga's canvasPreviewHtml (via CanvasDisplay::prepareHtml): standard
+    // In a canvas preview's HTML, standard
     // emoji come as <img data-is-slack>:name:</img> — the code is what is
     // drawn —, member mentions as a bare <a>@U…</a>, shown as a chip with
     // the member's name.
@@ -594,8 +594,8 @@ text::AttributedText canvasPreviewText(
     const Store         &store = ctx.store;
     text::AttributedText out;
     const text::Style    body = ui::font(Font::Body, C::Text);
-    // Text with :codes: as Unicode emoji or custom emoji boxes (msga's
-    // CanvasEmoji::expandInHtml; never inside code).
+    // Text with :codes: as Unicode emoji or custom emoji boxes (never
+    // inside code).
     auto                 emit = [&](std::string_view s, const text::Style &st, bool code) {
         size_t from = 0;
         for (size_t i = 0; !code && i < s.size(); ++i) {
@@ -711,7 +711,7 @@ text::AttributedText canvasPreviewText(
 
 namespace {
 
-// msga's canvas preview card (paintCanvasCard): 300 px high, up to 600
+// The canvas preview card: 300 px high, up to 600
 // wide, the attachment card colours; a 60-px header with the blue canvas
 // tile, the title and "Canvas" over a hairline, then the start of the
 // document, cut by the card and fading out.
@@ -815,7 +815,7 @@ private:
     bool                          _bodyLoaded = false;
 };
 
-// msga's reply bar: participants, "N replies" and — by state — "Last reply
+// The reply bar: participants, "N replies" and — by state — "Last reply
 // …", "View thread ›" under the pointer, "Close thread ×" while the thread
 // is open (in the panel, or expanded inline). Half the text column wide; a
 // border and wash on hover.
@@ -853,7 +853,7 @@ public:
         refresh();
     }
     ui::SizeF measureContent(float aw, float ah) override {
-        // msga's bar is half the text column (the spacer makes the flex
+        // The bar is half the text column (the spacer makes the flex
         // measure take all of it); the "Last reply" text shrinks first.
         const ui::SizeF s = measureFlex(aw, ah);
         return {aw < ui::kInf ? std::floor(aw / 2) : s.w, s.h};
@@ -1083,7 +1083,7 @@ void MessageRow::buildHeader(ui::View *col, const model::Message &m, bool tight)
     }
     nameL->setContent(styled(name, Font::BodyBold, C::Text, link), std::move(targets), {});
     nameL->setMaxLines(1);
-    // msga's tags after the name: "APP" for bots, "EXT" for Slack Connect
+    // Tags after the name: "APP" for bots, "EXT" for Slack Connect
     // users; the time 8 px after the last.
     if (bot)
         addTagBadge(hdr, false)->style().margins(6, 0, 0, 0);
@@ -1099,7 +1099,7 @@ void MessageRow::buildMessage(const model::Message &m, bool grouped) {
     const Store &st  = ctx.store;
     const bool   bot = isBot(st, m);
     const auto  &x   = m.extra;
-    // msga's banners stack above the message, before its padding.
+    // The banners stack above the message, before its padding.
     _pinText.clear();
     _savedText.clear();
     if (m.pinned)
@@ -1165,7 +1165,7 @@ void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root)
     // The root's text is what the list selects across (not inline replies').
     std::vector<RichLabel *> *labels = root ? &_sel : nullptr;
     if (m.isHuddle()) {
-        // msga's huddle row: one sentence in text.secondary, never "(edited)"
+        // A huddle row: one sentence in text.secondary, never "(edited)"
         // (Slack edits every huddle message when it ends).
         body->add<ui::Label>(huddleSummaryText(ctx.store, x->huddle), Font::Body, C::TextMuted);
     } else if (x && !x->blocks.empty()) {
@@ -1177,14 +1177,14 @@ void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root)
         buildBody(ctx, body, m.text, o, this);
     }
     if (x && !x->buttons.empty()) {
-        // msga's button row: floats that wrap between buttons, 8 px apart,
+        // The button row: floats that wrap between buttons, 8 px apart,
         // 4 px between rows, 4 px above and 2 below.
         auto *row = col->add<FlowRow>(8);
         row->style().margins(0, 4 + 4, 0, 2 + 4);
         for (const model::Button &b : x->buttons)
             row->add<BotButton>(_list, m.ts, b);
     }
-    // msga: the pictures first (one with its name, 2+ as a gallery), then
+    // The pictures first (one with its name, 2+ as a gallery), then
     // the other files.
     std::vector<const model::File *> previews;
     for (const model::File &f : m.files())
@@ -1212,7 +1212,7 @@ void MessageRow::buildBlocks(
     bool                             edited,
     std::vector<RichLabel *>        *labels
 ) {
-    // msga's blockHtml: text blocks as paragraphs (2 px apart), a header
+    // Text blocks as paragraphs (2 px apart), a header
     // 1.1x bold, a divider hairline, an image under its title (the title
     // folds it away), a data table.
     Context &ctx = _list.ctx();
@@ -1342,7 +1342,7 @@ void MessageRow::buildFile(ui::View *col, const model::File &f, Ts ts) {
         return;
     }
     if (f.hasPreview()) {
-        // msga: the name in a 14-px band right above the picture, 0.82× in
+        // The name in a 14-px band right above the picture, 0.82× in
         // fileNameDim, nothing else (the file bar does the rest). A PDF
         // shows its first page; the viewer opens on the file either way.
         const text::Style st =
@@ -1360,7 +1360,7 @@ void MessageRow::buildFile(ui::View *col, const model::File &f, Ts ts) {
         img->onOpen = [this, msg, path] { _list.openFileViewer(msg, path); };
         return;
     }
-    if (f.isAudio()) { // msga's audio card: the player (and the transcript line)
+    if (f.isAudio()) { // the audio card: the player (and the transcript line)
         addAudioCard(col, _list.ctx(), ts ? &_list : nullptr, ts, f)
             ->style()
             .alignSelf(Align::Start)
@@ -1370,7 +1370,7 @@ void MessageRow::buildFile(ui::View *col, const model::File &f, Ts ts) {
     auto *chip = col->add<FileChip>(ts ? &_list : nullptr, ts, f);
     chip->style().alignSelf(Align::Start).margins(0, 6, 0, 0);
     const model::File file = f;
-    // msga's chip click: an HTML file renders in the browser (fetched to a
+    // A chip click: an HTML file renders in the browser (fetched to a
     // local copy), anything else opens its Slack page (else the file).
     chip->onClick          = [this, file] {
         if (file.isHtml() && !file.path.empty())
@@ -1386,7 +1386,7 @@ void MessageRow::buildFile(ui::View *col, const model::File &f, Ts ts) {
 }
 
 bool MessageRow::dismissable(int index) const {
-    // msga's attachIsDismissable: link previews (a shared message too), not
+    // Dismissable: link previews (a shared message too), not
     // table messages.
     const model::Message *m = _list.message(_ts);
     if (!m || index < 0 || size_t(index) >= m->attachments().size() || m->pending)
@@ -1452,7 +1452,7 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
         c->add<ui::Label>(fl.title, Font::SmallBold, C::Text)->style().margins(0, 4, 0, 0);
         buildBody(ctx, c, fl.value, {}, this);
     }
-    // msga drew an attachment's blocks when nothing above said anything.
+    // An attachment's blocks are drawn when nothing above said anything.
     if (a.title.empty() && a.text.empty() && a.fields.empty() && a.author.empty() &&
         !a.blocks.empty())
         buildBlocks(c, a.blocks, m.ts, int(index), false, nullptr);
@@ -1463,7 +1463,7 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
 }
 
 void MessageRow::buildUnfurl(ui::View *col, const model::Message &m, size_t index) {
-    // msga's shared-message card (paintUnfurlHeader + msgUnfurlHtml): the
+    // The shared-message card: the
     // quoted author's avatar, name, APP tag and time, "Posted in #channel",
     // the quoted text (400 characters / 6 lines until "Show more"), its
     // files as chips; framed in the attachment card colours.
@@ -1587,7 +1587,7 @@ void MessageRow::buildReactions(ui::View *col, const model::Message &m) {
         const std::string name = r.name;
         pill->onClick = [&ctx, conv, ts, name, mine] { ctx.backend.react(conv, ts, name, !mine); };
     }
-    // msga has no "+" pill after the chips: reactions are added from the
+    // No "+" pill after the chips: reactions are added from the
     // toolbar's Add reaction.
 }
 
@@ -1599,7 +1599,7 @@ void MessageRow::buildThreadSummary(ui::View *col, const model::Message &m) {
 }
 
 void MessageRow::buildInlineThread(ui::View *col, const model::Message &root) {
-    // msga's inline thread (Appearance → Threads: Inline): the replies under
+    // The inline thread (Appearance → Threads: Inline): the replies under
     // the bar, avatars in the root's text column; "Loading replies…" until
     // they are in; "Reply to thread" opens the panel.
     Context     &ctx = _list.ctx();
@@ -1617,7 +1617,7 @@ void MessageRow::buildInlineThread(ui::View *col, const model::Message &root) {
     } else {
         const model::Message *prev = nullptr;
         for (const model::Message &r : *replies) {
-            // msga's inlineReplyCollapsed: same author within five minutes.
+            // Collapsed: same author within five minutes.
             const bool grouped = prev && prev->user == r.user &&
                                  r.subtype().find("_join") == std::string::npos &&
                                  r.ts - prev->ts < 300LL * 1000000;
@@ -1684,7 +1684,7 @@ ui::RectF MessageRow::dismissRect() const {
         return {};
     const ui::RectF  r = _attachCard->windowRect();
     const ui::PointF o = mapFromWindow({r.x, r.y});
-    // msga's kDismissW / kDismissGap: 18 px, 4 px left of the card.
+    // The dismiss button: 18 px, 4 px left of the card.
     return {o.x - 4 - 18, o.y, 18, 18};
 }
 
@@ -1692,7 +1692,7 @@ void MessageRow::paint(gfx::Painter &p) {
     // Pending sends: everything in the row (children included) at half alpha.
     if (_pending)
         p.setOpacity(0.5f);
-    if (_reminded) // msga: a reminder tints the whole row
+    if (_reminded) // a reminder tints the whole row
         p.fillRect(bounds(), bannerColor(2));
     if (_list.flashing(_ts))
         p.fillRect(bounds(), ui::color(C::MentionBg));
@@ -1746,7 +1746,7 @@ void MessageRow::paint(gfx::Painter &p) {
 }
 
 void MessageRow::paintOver(gfx::Painter &p) {
-    // msga's dismiss "×" (1.15× the app font, message.attachmentDismiss).
+    // The dismiss "×" (1.15× the app font, message.attachmentDismiss).
     const ui::RectF r = dismissRect();
     if (r.w <= 0)
         return;
@@ -1825,7 +1825,7 @@ bool MessageRow::onEvent(ui::Event &e) {
         }
         return false;
     default:
-        return false; // msga: no menu on right click (the toolbar's "…" has it)
+        return false; // no menu on right click (the toolbar's "…" has it)
     }
 }
 

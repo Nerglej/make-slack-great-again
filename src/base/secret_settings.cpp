@@ -1,9 +1,9 @@
-// secret.h where the old app had no keychain backend (Linux, Windows): the
-// credentials live in its settings store, under the same keys, exactly as
-// its secret_store_qsettings.cpp kept them (old_settings.h) — so tokens the
-// old app wrote are read directly, and a rolled-back install finds the ones
-// this app refreshed. Not encryption at rest; the old app's documented
-// limitation, kept for compatibility.
+// secret.h where earlier versions had no keychain backend (Linux, Windows):
+// the credentials live in their settings store, under the same keys, exactly
+// as they kept them (old_settings.h) — so tokens an earlier version wrote are
+// read directly, and a rolled-back install finds the ones this version
+// refreshed. Not encryption at rest; a documented limitation, kept for
+// compatibility.
 #include "base/old_settings.h"
 #include "base/secret.h"
 

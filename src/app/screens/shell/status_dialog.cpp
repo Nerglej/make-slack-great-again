@@ -19,7 +19,7 @@ namespace shell {
 
 namespace {
 
-// "Clear after", in msga's order.
+// "Clear after", in menu order.
 enum ClearAfter { DontClear, Min30, Hour1, Hour4, Today, ThisWeek };
 const char *const kDurations[] = {
     N_("Don't clear"), N_("30 minutes"), N_("1 hour"), N_("4 hours"), N_("Today"), N_("This week")
@@ -40,7 +40,7 @@ constexpr float kCardW = 560;
 } // namespace
 
 StatusDialog::StatusDialog(screens::Context &ctx) : Dialog(tr("Set a status"), kCardW), _ctx(ctx) {
-    View *card = content(); // msga's AppDialog: the titled card
+    View *card = content(); // the titled card
 
     // The input: emoji button + one-line field in a bordered box.
     _inputBox = card->add<View>();

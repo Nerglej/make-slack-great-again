@@ -1,4 +1,4 @@
-// Windows audio, as the old Qt app did it:
+// Windows audio:
 //   playback  MFPlay (Media Foundation's ready-made player). Deprecated in the
 //             docs but shipped by every Windows 7+ install, and the only MF
 //             surface with play/pause/seek/position in a few calls. Decodes

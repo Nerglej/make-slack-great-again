@@ -3,8 +3,8 @@
 //
 // The icon resource is NAMED "IDI_ICON1", not numbered: plat's Win32 backend
 // (win32_app.cpp, win32_shell.cpp) loads exactly that name for the window
-// class, the tray and the toast registration — the name Qt's plugin used, so
-// the old app's resource and this one are the same — and falls back to the
+// class, the tray and the toast registration — the name earlier versions
+// used too, so the resource has not changed — and falls back to the
 // stock blank Windows icon when it is missing (GitHub issue #55).
 // windres keeps an undefined identifier as a string name, and named resources
 // sort before numeric ids, so Explorer still picks it as the .exe icon. The

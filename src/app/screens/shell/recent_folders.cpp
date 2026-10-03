@@ -6,7 +6,7 @@
 
 namespace shell::recent_folders {
 
-// QDir::cleanPath(QDir::fromNativeSeparators(path)), as msga stores them.
+// Forward slashes, no "." or empty segments, ".." resolved: the stored form.
 std::string normalized(std::string_view path) {
     if (path.empty())
         return {};

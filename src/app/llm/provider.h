@@ -1,4 +1,4 @@
-// One configured AI endpoint (msga's LlmProvider / LlmProviderConfig): a
+// One configured AI endpoint: a
 // wire format, a base URL, an API key and a model.
 //
 // Two kinds share the struct:

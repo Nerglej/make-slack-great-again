@@ -67,7 +67,7 @@ if(NOT APPLE AND NOT MINGW)
     endif()
 endif()
 if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    # No exceptions → nothing needs .eh_frame; it was ~9% of the Qt build. A
+    # No exceptions → nothing needs .eh_frame; it can be ~9% of a binary. A
     # future crash reporter walks frames itself (or we ship symbolised dumps).
     target_compile_options(msga_flags INTERFACE -fno-asynchronous-unwind-tables -fno-unwind-tables)
 endif()
@@ -114,7 +114,7 @@ elseif(MSGA_STATIC)
     target_link_options(msga_flags INTERFACE -static-pie
         # musl's default thread stack is 128 KiB (glibc: 8 MiB) and the only
         # knob for threads we don't create ourselves is PT_GNU_STACK's size,
-        # which musl adopts at startup. The old app segfaulted on it (issue
+        # which musl adopts at startup. Too small a stack segfaults (issue
         # #70); release-linux-static.sh checks the segment.
         -Wl,-z,stack-size=8388608)
 endif()

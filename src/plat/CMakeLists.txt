@@ -1,6 +1,5 @@
 # plat — msga's thin platform layer (see include/plat/plat.h and
-# docs/platform-layer-plan.md). Standalone for now: it does not touch the Qt
-# build. Configure on its own:
+# docs/platform-layer-plan.md). It also builds standalone:
 #   cmake -S src/plat -B build-plat -G Ninja && cmake --build build-plat && ctest --test-dir build-plat
 # Windows (cross, from Linux; the toolchain path is relative to src/plat/):
 #   cmake -S src/plat -B build-plat-win -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake

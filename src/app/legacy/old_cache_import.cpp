@@ -23,7 +23,7 @@ bool readJson(const std::string &path, json::Document *doc) {
     return file::readAll(path, &text) && !text.empty() && doc->parse(std::move(text));
 }
 
-// "C0123\t1712345678.000100" (old Session::threadKey / reminderKey).
+// "C0123\t1712345678.000100": a thread or reminder key.
 struct ConvTs {
     std::string conv;
     model::Ts   ts = 0;
@@ -56,10 +56,10 @@ model::User toUser(const json::Value &o) {
     return u;
 }
 
-// The old NotificationLevel { Default, All, Mentions, Mute }: Mute was the
-// conversation's mute (old Session::setNotificationLevel set isMuted with
-// it), Default and All both "All new posts" here. No unread counts: the old
-// app's may be weeks stale, and the backend keeps the larger of the cached
+// The stored levels { Default, All, Mentions, Mute }: Mute was the
+// conversation's mute (setting the level set the mute flag with it), Default
+// and All both "All new posts" here. No unread counts: the cached ones may
+// be weeks stale, and the backend keeps the larger of the cached
 // and the server's (SlackBackend::Read::carryLocal) — a badge that would
 // never clear. The server's answer brings them.
 model::Conversation toConversation(const json::Value &o, model::Store &s) {
@@ -75,7 +75,7 @@ model::Conversation toConversation(const json::Value &o, model::Store &s) {
     const int64_t level = o["nl"].integer();
     // "mute this person" (lm) is the DM's mute here.
     c.muted             = o["mu"].boolean() || o["lm"].boolean() || level == 3;
-    // msga's nl: 0 Default (follow the global level), 1 All, 2 Mentions, 3 Mute.
+    // nl: 0 Default (follow the global level), 1 All, 2 Mentions, 3 Mute.
     c.notify            = level == 1   ? model::NotifyLevel::All
                           : level == 2 ? model::NotifyLevel::Mentions
                                        : model::NotifyLevel::Default;
@@ -113,7 +113,7 @@ void writeSaved(json::Writer &w, const json::Value &meta) {
             const std::string key = str::concat({conv, "\t", r["ts"].str()});
             for (const auto &[k, shadow] : shadows)
                 if (k == key)
-                    p = shadow; // old applyReminderPreview
+                    p = shadow; // the preview kept beside the reminder
         }
         w.beginArray().value(conv).value(int64_t(ts)).value(r["due"].integer());
         w.value(r["saved"].integer()).value(r["fired"].boolean());
@@ -135,7 +135,7 @@ void writeFollowed(json::Writer &w, const std::vector<ConvTs> &followed) {
     w.endArray();
 }
 
-// The Slack backend's "x" of a cold import: everything the old app had.
+// The Slack backend's "x" of a cold import: everything the old cache had.
 void writeColdExtras(
     json::Writer              &w,
     const json::Value         &meta,
@@ -211,7 +211,7 @@ std::string oldCacheDir(plat::App &app, const std::string &key) {
     const std::string dir = file::join(data, "cache/" + safeName(key));
     if (file::isDir(dir))
         return dir;
-    // Before multi-service: the bare id (old WorkspaceCache's migration).
+    // Before multi-service: the bare team id.
     const size_t colon = key.find(':');
     if (colon == std::string::npos)
         return {};
@@ -281,7 +281,7 @@ bool importSlackCache(plat::App &app, const std::string &from, const std::string
         if (const ConvRef c = s.findConversation(m["conv"].str()); c != kNoConv)
             wc.setLastConversation(c);
     } else {
-        // Only msga's own state, where the new cache has none.
+        // Only the app's own state, where the new cache has none.
         for (const json::Value o : convs.root()) {
             const ConvRef c = s.findConversation(o["id"].str());
             if (c == kNoConv)

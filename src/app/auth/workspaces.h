@@ -1,12 +1,12 @@
-// The signed-in workspaces of every service (msga's TokenStore): one record
+// The signed-in workspaces of every service: one record
 // per workspace, keyed "service:id" ("slack:T0123"), in display order, plus
 // which one is active and which are muted. The store never interprets a
 // record's `auth` blob — each service encodes its own credentials there
 // (slack::Credentials).
 //
 // On disk: <configDir>/workspaces.json (app/identity.h), owner-only; the
-// first start imports the old app's list (app/legacy). The
-// auth blobs live where the old app kept them, under its keys
+// first start imports the list kept by earlier versions (app/legacy). The
+// auth blobs live where earlier versions kept them, under the keys
 // "workspace/<key>/auth" (base/secret.h: the macOS Keychain, the old
 // settings store elsewhere); only when that refuses do they stay in the file.
 #pragma once

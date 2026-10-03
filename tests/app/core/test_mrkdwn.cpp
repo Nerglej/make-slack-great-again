@@ -1,6 +1,5 @@
-// Ported from msga's tests/test_mrkdwn.cpp (every case, same inputs and
-// expectations; offsets are bytes now, which equals the UTF-16 offsets for
-// these inputs except where noted), plus the layout view and bare URLs.
+// The mrkdwn parser (offsets are bytes; they equal UTF-16 offsets for these
+// inputs except where noted), plus the layout view and bare URLs.
 #include "app/mrkdwn/link_labels.h"
 #include "app/mrkdwn/mrkdwn.h"
 #include "support/test.h"
@@ -314,9 +313,9 @@ TEST("mrkdwn: API-escaped &gt; at line start is a blockquote") {
 }
 
 TEST("mrkdwn: stacked blockquote marks don't nest (layout-hang guard)") {
-    // Real Slack renders one quote level. msga's Qt renderer turned each
-    // level into a nested table whose layout cost exploded; a message of many
-    // stacked '>' froze the UI. The parser caps quote nesting at one.
+    // Real Slack renders one quote level. A renderer that turns each level
+    // into a nested table has a layout cost that explodes: a message of many
+    // stacked '>' freezes the UI. The parser caps quote nesting at one.
     const std::string deep   = std::string(64, '>') + " hi";
     auto              r      = mrkdwn::parse(deep);
     int               quotes = 0;
@@ -375,7 +374,7 @@ TEST("mrkdwn: resolveTokens linkifies <url|label>") {
     REQUIRE(r.entities.size() == 1);
     CHECK(r.entities[0].kind == Kind::Link);
     CHECK(r.entities[0].start == 4);
-    CHECK(r.entities[0].length == 12); // bytes: "ä" is two (Qt counted 11 UTF-16 units)
+    CHECK(r.entities[0].length == 12); // bytes: "ä" is two (11 UTF-16 units)
     CHECK_STR(r.entities[0].data, "https://example.com/x?a=1");
 }
 

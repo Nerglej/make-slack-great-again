@@ -1,7 +1,6 @@
-// The request behind the "Summarize down" message action (msga's
-// DiscussionSummary): a brief, plain-language recap of a span of a
-// discussion, written in the user's own language. Pure — no network, no
-// Store — so the transcript and prompt shaping are unit-tested.
+// The request behind the "Summarize down" message action: a brief, plain-language recap of a span
+// of a discussion, written in the user's own language. Pure — no network, no Store — so the
+// transcript and prompt shaping are unit-tested.
 #pragma once
 
 #include "app/llm/types.h"

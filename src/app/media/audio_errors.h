@@ -1,5 +1,5 @@
-// The user-facing wording of a plat audio failure (plat/audio.h reports codes):
-// the old app's messages, translated.
+// The user-facing wording of a plat audio failure (plat/audio.h reports codes),
+// translated.
 #pragma once
 
 #include "plat/audio.h"

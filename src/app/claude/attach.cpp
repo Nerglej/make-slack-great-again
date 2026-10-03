@@ -21,7 +21,7 @@ constexpr int kCols = 200;
 
 // Pasted a few hundred characters at a time, a paste stays plain typing (see
 // the header); 400 is well under where it was seen turn into <pasted_content>.
-// Counted in UTF-16 units, as the old (Qt) client did.
+// Counted in UTF-16 units.
 constexpr size_t kChunk = 400;
 
 constexpr int kLookMs     = 300;    // how often the screen is looked at while it changes

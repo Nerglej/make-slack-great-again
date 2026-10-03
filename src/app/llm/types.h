@@ -1,7 +1,6 @@
-// Provider-neutral request / response types of the LLM layer (msga's
-// llm_types.h). Everything that asks a model something — summaries now,
-// voice clean-up and triage later — builds a Request and reads a Response;
-// which endpoint served it is the Service's business (service.h).
+// Provider-neutral request / response types of the LLM layer. Everything that asks a model
+// something — summaries now, voice clean-up and triage later — builds a Request and reads a
+// Response; which endpoint served it is the Service's business (service.h).
 #pragma once
 
 #include <cstdint>

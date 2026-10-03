@@ -1,4 +1,4 @@
-// The shell's pages and dialogs ported from msga's ui/: the Saved messages
+// The shell's pages and dialogs: the Saved messages
 // page, the quick switcher's fuzzy matching, the sidebar's persisted visit
 // stamps and Settings' "Clear state", the tray picture, restarts and the
 // sample notification's outcome.
@@ -111,7 +111,7 @@ std::string tempDir() {
 // ── Fuzzy matching ──────────────────────────────────────────────────────────
 
 TEST("fuzzy: subsequences match, in order, any case") {
-    CHECK(fuzzyScore("xdg", "xd-general").has_value()); // msga's issue #60
+    CHECK(fuzzyScore("xdg", "xd-general").has_value()); // issue #60
     CHECK(fuzzyScore("bb", "Bob Builder").has_value());
     CHECK(fuzzyScore("BOB", "bob builder").has_value());
     CHECK(fuzzyScore("ÅSA", "åsa lind").has_value());        // folded by code point
@@ -136,7 +136,7 @@ TEST("fuzzy: a substring beats a scattered match, word starts beat the middle") 
     CHECK(*fuzzyScore("des", "design-review") == *fuzzyScore("des", "design-backend"));
 }
 
-TEST("quick switcher: fuzzy, the placeholder and the empty state as msga") {
+TEST("quick switcher: fuzzy, the placeholder and the empty state") {
     Harness    h;
     const auto order = h.sh->sidebar().order();
     auto       r     = shell::quickSwitchFilter(h.store, "dsgn", order);
@@ -277,7 +277,7 @@ TEST("visited: the stamps round-trip through the settings file") {
     CHECK(l.visitedAt[0].second == 1758000000);
     CHECK(l.visitedAt[1].first == "D0MIRA");
     CHECK_FALSE(l.trayMonochrome);
-    CHECK(shell::Settings().trayMonochrome); // on by default, like msga
+    CHECK(shell::Settings().trayMonochrome); // on by default
     file::remove(path);
     file::remove(dir);
 }
@@ -338,7 +338,7 @@ TEST("settings: \"Save and restart\" restarts; the sample notification reports b
     pump();
     settings::SettingsDialog *d = h.sh->settingsDialog();
     REQUIRE(d);
-    // Without an updater: msga's state without a checker.
+    // Without an updater: the state without a checker.
     d->showPage(settings::SettingsDialog::Page::System);
     pump();
     CHECK(d->find("Update checks not available.") != nullptr);
@@ -362,7 +362,7 @@ TEST("settings: \"Save and restart\" restarts; the sample notification reports b
     CHECK_FALSE(quit);
 }
 
-TEST("update bar: hidden until an update is ready, then msga's wording") {
+TEST("update bar: hidden until an update is ready, then its wording") {
     Harness           h;
     shell::UpdateBar *bar = h.sh->updateBar();
     REQUIRE(bar);
@@ -433,7 +433,7 @@ struct TeamFake : fake::FakeBackend {
 
 } // namespace
 
-TEST("profile card \"Message\": a teammate's page, anyone else's DM (msga's openDmWith)") {
+TEST("profile card \"Message\": a teammate's page, anyone else's DM") {
     Store    store;
     TeamFake backend{store, app().platform()};
 #ifdef MSGA_HAVE_MESSAGES

@@ -243,7 +243,7 @@ Backend::Capabilities Backend::capabilities() const {
     c.agentSessions  = true;
     c.zenMode        = true; // hides the tool-call cards
     c.slashCommands  = true; // Claude Code's own, typed to it (commands())
-    // fileUpload stays off (msga's): Forward sends a message's files as links.
+    // fileUpload stays off: Forward sends a message's files as links.
     return c;
 }
 
@@ -1542,10 +1542,9 @@ void Backend::sync(Tracked &t) {
                 continue;
             if (seen.mine && !isOutgoingCopy(t, ts))
                 sawOwnPrompt = true;
-            // News in a list the Store doesn't hold (msga's EvMessageNew for
-            // every session): an answer, a "Waiting for…" — announced on
-            // its own, so it notifies. Opening the list later serves it as
-            // history (its fingerprint taken then), never again as news.
+            // News in a list the Store doesn't hold (any session's): an answer, a "Waiting for…" —
+            // announced on its own, so it notifies. Opening the list later serves it as history
+            // (its fingerprint taken then), never again as news.
             else if (!loaded && !seen.mine && !seen.progress && target != kNoConv)
                 fresh.push_back(ts);
         }

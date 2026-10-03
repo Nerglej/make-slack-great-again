@@ -1,4 +1,4 @@
-// Wire codecs for the two chat formats msga speaks (msga's llm_wire.h) — pure
+// Wire codecs for the two chat formats msga speaks — pure
 // functions, no network, so request shaping and response parsing are tested
 // against captured payloads.
 //

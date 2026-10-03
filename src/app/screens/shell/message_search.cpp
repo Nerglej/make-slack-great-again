@@ -21,11 +21,11 @@ namespace shell {
 
 namespace {
 
-constexpr double kFadeMs       = 350; // msga's _overlayAnim / _cardAnim
+constexpr double kFadeMs       = 350; // the dimming's and the card's fades
 constexpr float  kOverlayAlpha = 70;  // surface.overlay
 constexpr size_t kPreviewChars = 120;
 
-// msga's _searchIconLabel: the 16 px glyph in a 20 px box, a hover tooltip.
+// The search icon: the 16 px glyph in a 20 px box, a hover tooltip.
 class SearchIcon final : public View {
 public:
     SearchIcon() { style().size(20, 20).noShrink(); }
@@ -35,7 +35,7 @@ public:
     }
 };
 
-// msga's #searchHeader: surface.raised under a divider.def bottom rule.
+// The search header: surface.raised under a divider.def bottom rule.
 class SearchHeader final : public View {
 public:
     void paint(gfx::Painter &p) override {
@@ -44,7 +44,7 @@ public:
     }
 };
 
-// A QListWidget item of #searchResultList: 8/12 padding, a divider.subtle
+// A result row: 8/12 padding, a divider.subtle
 // rule under it, surface.highlight on hover, surface.highlightStrong when
 // selected from the keyboard.
 class ResultRow final : public Clickable {
@@ -72,7 +72,7 @@ public:
 
 } // namespace
 
-// The panel: header and results fade in as a unit (msga's cardOpacity),
+// The panel: header and results fade in as a unit,
 // over the dimming that MessageSearch paints.
 class MessageSearch::Card final : public View {
 public:
@@ -88,7 +88,7 @@ std::string searchConvLabel(const model::Store &store, ConvRef conv) {
 }
 
 std::string searchPreview(const model::Store &store, std::string_view text) {
-    // msga's resolvePreview: the rendered text with mentions resolved (the
+    // The rendered text with mentions resolved (the
     // parser's label is kept for anyone unknown).
     std::string out = screens::plainText(store, text);
     // The first 120 characters, newlines as spaces.
@@ -213,7 +213,7 @@ void MessageSearch::paint(gfx::Painter &p) {
 }
 
 bool MessageSearch::onEvent(Event &e) {
-    // msga's overlay covers the message area: nothing under it is reachable.
+    // The overlay covers the message area: nothing under it is reachable.
     return e.type == EventType::PointerDown || e.type == EventType::Scroll;
 }
 

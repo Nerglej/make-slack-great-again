@@ -1,5 +1,4 @@
-// Ctrl/Cmd+F and the header's search button: msga's SearchWidget
-// (src/ui/search) — an overlay over the message area (list, typing line,
+// Ctrl/Cmd+F and the header's search button: an overlay over the message area (list, typing line,
 // composer) that dims it and puts a card at its top: the search icon, the
 // "Search messages…" field and a close button, then the results once a
 // search ran. Enter searches (Backend::search); ↑ / ↓ move through the
@@ -28,13 +27,13 @@ public:
     explicit MessageSearch(screens::Context &ctx);
     ~MessageSearch() override;
 
-    // msga's openSearch: shown → hidden at once, hidden → shown (fading in,
+    // Shown → hidden at once, hidden → shown (fading in,
     // the field focused with its text selected).
     void toggle();
     void show();
     void hideNow();
     void close(); // fades out, then hides (Esc, the close button)
-    // A workspace switch (msga's setSession): the query and results go.
+    // A workspace switch: the query and results go.
     void reset();
     bool shown() const { return visible() && !_closing; }
 
@@ -78,7 +77,7 @@ private:
     uint32_t                               _generation = 0; // the search a reply belongs to
     model::Store::ObserverId               _observer   = 0;
     std::shared_ptr<int>                   _alive      = std::make_shared<int>(0);
-    // The fades (msga: 350 ms, OutCubic in, InCubic out): the dimming's
+    // The fades (350 ms, OutCubic in, InCubic out): the dimming's
     // alpha and the card's opacity, from where they are towards the target.
     float                                  _alpha = 0, _opacity = 0;
     float                                  _alphaFrom = 0, _opacityFrom = 0;

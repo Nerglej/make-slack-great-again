@@ -5,7 +5,7 @@
 //   list->style().flex(1);
 //   list->showConversation(conv);          // or showThread(conv, rootTs)
 //
-// Behaviour (msga's Qt message list is the spec):
+// Behaviour:
 //  - opens at the newest message and stays pinned there while new ones
 //    arrive; scrolled up, the viewport stays on the same message when
 //    messages are appended, prepended (older history) or change height;
@@ -21,7 +21,7 @@
 //    ("N replies · Last reply …" → Context::openThread), image files
 //    (thumbnails, GIFs animated, click → in-window viewer), file chips, link
 //    previews and legacy attachments, bot/app names;
-//  - a hover toolbar (react, reply in thread, more) whose "…" opens msga's
+//  - a hover toolbar (react, reply in thread, more) whose "…" opens the
 //    message menu (so do right click, long press and the Menu key on the
 //    row); right click on a link opens the link menu, on an image or a file
 //    the file menu;
@@ -34,7 +34,7 @@
 //  - Block Kit headers, dividers, images and tables (tables: at most ten
 //    rows, "Open full table"), shared-message cards, canvas cards, PDF
 //    previews; link previews' "×" (Remove preview / Hide preview);
-//  - msga's empty-list states: while the first page (a thread's replies, or
+//  - empty-list states: while the first page (a thread's replies, or
 //    — setWaiting — the workspace's conversations) loads, the loading ring
 //    with "Loading your stuff..." and its sequels after 1 / 5 / 15 s; a
 //    loaded conversation with nothing in it says "No messages yet".
@@ -53,10 +53,10 @@ namespace screens {
 class MessageRow;
 class MessageList;
 
-// msga's link menu (Open link, Copy link) at a window point.
+// The link menu (Open link, Copy link) at a window point.
 void showLinkMenu(Context &ctx, ui::Window &w, ui::PointF at, const std::string &url);
 
-// msga's file viewer (ImageViewerOverlay): the picture (an image, a PDF's
+// The file viewer: the picture (an image, a PDF's
 // page) on the viewer backdrop under a bar with the name and Download,
 // Forward, Open in browser, More actions and Close; Escape or a click on the
 // backdrop closes it. `list` gets the actions (null: Close only).
@@ -76,7 +76,7 @@ public:
     Ts      threadRoot() const { return _root; }
     bool    threadMode() const { return _root != 0; }
 
-    // msga's setWaiting: the workspace's first load (no conversations yet) —
+    // The workspace's first load (no conversations yet) —
     // the loading state even with no conversation shown.
     void setWaiting(bool on);
     bool waiting() const { return _waiting; }
@@ -87,14 +87,14 @@ public:
     // The thread shown in the side panel (0 = none): its reply bar says
     // "Close thread". The shell keeps it current.
     void setOpenThreadRoot(Ts root);
-    // msga's setReading: off while the window is unfocused, hidden or
+    // Reading: off while the window is unfocused, hidden or
     // minimized, so the open conversation builds up unreads; back on, its
     // newest message is marked read once on screen. A thread reads itself
     // either way.
     void setReading(bool on);
 
     // ── Selection ───────────────────────────────────────────────────────────
-    // msga's text selection: a range from one message's text to another's,
+    // The text selection: a range from one message's text to another's,
     // offsets into selectableTexts() joined with '\n'.
     struct TextPos {
         Ts       ts     = 0; // 0 = none
@@ -111,7 +111,7 @@ public:
     // Scroll so the message is visible (search hits, permalinks); `flash`
     // briefly highlights it.
     void scrollToMessage(Ts ts, bool animated = true, bool flash = true);
-    // msga's jumpToTs (a search result): scrollToMessage, or — while the
+    // A search result: scrollToMessage, or — while the
     // conversation's first page is still loading — once it is in. A target
     // that page doesn't have is dropped; so is one the loaded list lacks.
     void jumpTo(Ts ts);
@@ -140,8 +140,8 @@ public:
     State              state() const;
     std::string        stateText() const;
     const std::string &typingText() const;
-    // The shell shows typing in its own indicator above the composer (msga's
-    // TypingIndicatorWidget): off, the list keeps no typing row.
+    // The shell shows typing in its own indicator above the
+    // composer: off, the list keeps no typing row.
     void               setTypingRow(bool on);
 
     // ── Internal (rows) ─────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ public:
     bool        flashing(Ts ts) const { return ts == _flashTs; }
     void        openMenu(Ts ts, ui::PointF windowPos);
     // The menus as data, and what their items do (tests drive these). Items,
-    // order, wording and icons are msga's (see message_list.cpp).
+    // order, wording and icons are in message_list.cpp.
     enum MenuId : int {
         kReply = 1,
         kOpenThread,
@@ -174,9 +174,9 @@ public:
         kUnsave,
         kRemind, // opens the presets (remindItems) in its place
         kRemoveReminder,
-        kForward,      // shown disabled: not in msga-next yet
-        kMoveToThread, // shown disabled: not in msga-next yet
-        kSummarize,    // "Summarize down" (summary.h)
+        kForward, // shown disabled without Context::forwardMessage
+        kMoveToThread,
+        kSummarize, // "Summarize down" (summary.h)
         kDelete,
         kOpenLink, // the link menu
         kCopyLinkUrl,
@@ -193,18 +193,18 @@ public:
     static std::vector<ui::MenuItem> remindItems();
     static std::vector<ui::MenuItem> linkMenuItems();
     void runMenuAction(Ts ts, int id, const std::string &path = {}, ui::PointF windowPos = {});
-    // msga's file action bar ("…" → the file menu), for the hovered file.
+    // The file action bar ("…" → the file menu), for the hovered file.
     void openFileMenu(Ts ts, const std::string &path, ui::PointF windowPos);
     void fileHovered(ui::View *fileView, Ts ts, const std::string &path, bool on);
     // These run in the background (model::jobs(): the footer's cog lists
     // them) and outlive the list.
     void downloadFile(Ts ts, const std::string &path); // the bar's Download
     void copyImage(const model::File &f);              // "Copy full image"
-    void openCsvPreview(const model::File &f);         // "Preview" (msga's table viewer)
+    void openCsvPreview(const model::File &f);         // "Preview" (the table viewer)
     void openReactionPicker(Ts ts, ui::RectF anchorWindowRect);
     void openImage(const std::string &path, int w, int h);
     // A message's button (MessageExtras::buttons) pressed: Backend::
-    // pressButton, then msga's toast at the button ("Sent to the app", or
+    // pressButton, then a toast at the button ("Sent to the app", or
     // "Couldn't press the button: …").
     void pressButton(Ts ts, const std::string &buttonId, ui::PointF windowPos);
     void showToast(const std::string &text, int ms, ui::PointF windowPos);
@@ -252,7 +252,7 @@ private:
     bool applyJump();
 
 public:
-    std::vector<Ts> threadRoots(Ts except) const; // msga's, for "Move to thread…"
+    std::vector<Ts> threadRoots(Ts except) const; // for "Move to thread…"
 
 private:
     void        toggleSaved(Ts ts);
@@ -275,7 +275,7 @@ private:
     };
     static bool has(const std::vector<Key> &v, Key k);
     static void toggle(std::vector<Key> &v, Key k);
-    // msga's SavedAnchor: where a conversation was left (by its id, so it
+    // Where a conversation was left (by its id, so it
     // survives switching away and back).
     struct SavedAnchor {
         std::string conv;
@@ -314,7 +314,7 @@ private:
     uint64_t                   _seenProfile = 0, _seenText = 0;
     int                        _rowBinds     = 0;
     bool                       _loadingOlder = false, _loadingThread = false, _waiting = false;
-    // Selection (msga's _selAnchor / _selFocus / _selDragging).
+    // Selection.
     TextPos                    _selAnchor, _selFocus;
     bool                       _selDragging = false;
     // Opening: where to land once the first page is laid out — the saved

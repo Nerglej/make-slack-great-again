@@ -25,7 +25,7 @@ using V = ui::FormButton::Kind;
 
 namespace {
 
-// A rounded frame: 1-px border, fill (msga's #msgCard / #fwdCard).
+// A rounded frame: 1-px border, fill.
 class Frame final : public ui::View {
 public:
     Frame(C border, C fill, float radius) : _b(border), _f(fill), _r(radius) {}
@@ -269,7 +269,7 @@ private:
         }
         _empty->setVisible(first < 0);
         _list->setVisible(first >= 0);
-        select(first); // msga preselects row 0 after every change
+        select(first); // row 0 preselected after every change
     }
     void select(int i) {
         _sel = i;
@@ -372,7 +372,7 @@ ui::Popup *showReminderDialog(Context &ctx, ui::Window &w, ConvRef conv, Ts ts) 
     ui::Dialog *raw = d.get();
     save->onClick   = [raw] { raw->accept(); };
     d->onAccepted   = [&ctx, conv, ts, date, time] {
-        // msga's dueAt(): never earlier than a minute from now.
+        // Due never earlier than a minute from now.
         const int64_t due =
             base::fromLocal(date->year(), date->month(), date->day(), time->hour(), time->minute());
         ctx.backend.setReminder(conv, ts, std::max(due, base::nowSecs() + 60));
@@ -443,7 +443,7 @@ std::vector<std::vector<std::string>> parseCsv(std::string_view s) {
 namespace {
 
 // rows: plain text (a CSV file), or mrkdwn with a Context (a Block Kit
-// table: msga's tableBlockHtml cells, mentions, links and emoji as in the
+// table: cells, mentions, links and emoji as in the
 // message).
 class TableViewer final : public ui::Popup {
 public:
@@ -466,7 +466,7 @@ public:
         p.save();
         p.clipRect({c.x + 12, c.y + 12, c.w - 24, c.h - 24});
         p.translate(c.x + 12, c.y + 12 - _scroll);
-        // msga's paintDataTableChrome: header tint, a hairline under it,
+        // The table's chrome: header tint, a hairline under it,
         // row rules, a 1-px outer border radius 6; no vertical lines.
         const float tw = _tableW, y0 = 8;
         float       y = y0;
@@ -556,7 +556,7 @@ private:
         size_t      cols  = 0;
         for (auto &r : _rows)
             cols = std::max(cols, r.size());
-        // Qt's automatic table layout, roughly: natural widths, shrunk in
+        // Automatic table layout, roughly: natural widths, shrunk in
         // proportion (wrapping) when they don't fit.
         std::vector<float> nat(cols, 24);
         // Row 0 is the header, in bold. Custom emoji boxes are numbered
@@ -652,7 +652,7 @@ showTableViewer(ui::Window &w, Context &ctx, std::vector<std::vector<std::string
 ui::Popup *showTableViewer(ui::Window &w, std::vector<std::vector<std::string>> rows) {
     if (rows.empty())
         rows = {{tr("This file is empty")}};
-    constexpr size_t kMaxRows = 400; // msga's kMaxCsvViewerRows
+    constexpr size_t kMaxRows = 400;
     if (rows.size() > kMaxRows) {
         const size_t n = rows.size();
         rows.resize(kMaxRows);

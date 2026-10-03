@@ -54,7 +54,7 @@ HCURSOR loadCursor(Cursor c) {
     case Cursor::Move:
         id = IDC_SIZEALL;
         break;
-    // Windows ships no open/closed-hand cursors (Qt bakes its own bitmaps);
+    // Windows ships no open/closed-hand cursors;
     // the hand and the four-way arrow are the closest system shapes.
     case Cursor::Grab:
         id = IDC_HAND;

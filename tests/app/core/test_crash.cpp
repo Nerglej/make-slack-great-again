@@ -3,7 +3,7 @@
 // below): both install process-wide signal handlers and timers.
 //
 // The watchdog cases pin its startup window. Crash log 2026-06-30: under
-// AddressSanitizer the old app's watchdog fired *during* window construction
+// AddressSanitizer the watchdog fired *during* window construction
 // — startup is one long synchronous burst with no event-loop turns to
 // heartbeat through, yet it was armed with the tight steady-state window.
 // Fix: the first window is much wider; the first heartbeat() drops to the
@@ -38,7 +38,7 @@ bool watchdogBuilt() {
 
 } // namespace
 
-TEST("crash: crash.log lives where the old app kept it") {
+TEST("crash: crash.log lives in the data directory") {
     auto app = plat::App::create();
     REQUIRE(app);
     const std::string data = app->standardDir(plat::StandardDir::Data);

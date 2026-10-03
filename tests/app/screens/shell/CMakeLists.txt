@@ -5,13 +5,13 @@ target_link_libraries(msga_app_tests PRIVATE msga_screens_shell msga_app_fake ms
 # Headless plat, a pinned zone, and a throwaway HOME/XDG so the tests never
 # touch the user's settings or font index cache.
 set(_home "${CMAKE_CURRENT_BINARY_DIR}/test-home")
-foreach(s shell shortcuts pages parity agents agent_ui)
+foreach(s shell shortcuts pages shell_ui agents agent_ui)
     target_sources(msga_app_tests PRIVATE test_${s}.cpp)
 endforeach()
 msga_add_test(shell_tests COMMAND msga_app_tests test_shell TZ HOME ${_home} LABELS shell)
 msga_add_test(shortcut_tests COMMAND msga_app_tests test_shortcuts TZ HOME ${_home} LABELS shell)
 msga_add_test(pages_tests COMMAND msga_app_tests test_pages TZ HOME ${_home} LABELS shell)
-msga_add_test(parity_tests COMMAND msga_app_tests test_parity TZ HOME ${_home} LABELS shell)
+msga_add_test(shell_ui_tests COMMAND msga_app_tests test_shell_ui TZ HOME ${_home} LABELS shell)
 msga_add_test(agent_tests COMMAND msga_app_tests test_agents TZ HOME ${_home} LABELS shell)
 msga_add_test(agent_ui_tests COMMAND msga_app_tests test_agent_ui TZ HOME ${_home} LABELS shell)
 

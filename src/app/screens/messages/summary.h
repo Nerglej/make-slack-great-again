@@ -1,5 +1,4 @@
-// msga's "Summarize down" (MessageListWidget::startSummarizeDown, SummarizeJob,
-// SummaryDialog): an AI recap of a span of a conversation, from the chosen
+// "Summarize down": an AI recap of a span of a conversation, from the chosen
 // message to the newest loaded one.
 //
 // The whole wait runs in the background as a job ("Summarizing

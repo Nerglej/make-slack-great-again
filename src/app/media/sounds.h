@@ -1,4 +1,4 @@
-// Notification sounds (the old app's Sound::Player): the chime bundled in
+// Notification sounds: the chime bundled in
 // the binary plus the OS's own sounds (plat/audio.h), chosen in Settings →
 // Notifications and played when a notification fires.
 //
@@ -32,12 +32,11 @@ std::vector<Entry> bundled();
 // thread, never inside this call.
 void systemSounds(plat::App &app, std::function<void(std::vector<Entry>)> done);
 
-// plat::Notification::silent for every notification the app shows, as the
-// old app's DesktopNotifier had it per OS: on macOS the notification never
-// carried a sound (the app plays its own chime; one attached would double
-// it); on Linux and Windows it went out with no sound hint at all, so the
-// notification daemon / the toast played whatever the OS plays by default,
-// besides the app's own chime.
+// plat::Notification::silent for every notification the app shows, per OS:
+// on macOS the notification never carries a sound (the app plays its own
+// chime; one attached would double it); on Linux and Windows it goes out with
+// no sound hint at all, so the notification daemon / the toast plays whatever
+// the OS plays by default, besides the app's own chime.
 #ifdef __APPLE__
 inline constexpr bool kSilentNotifications = true;
 #else

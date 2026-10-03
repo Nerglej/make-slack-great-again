@@ -19,7 +19,7 @@ namespace shell {
 
 namespace {
 
-// msga's OverviewCard geometry (the Threads page's cards).
+// The card geometry the Threads page's cards share.
 constexpr float kAvatar = 36, kAvatarRadius = 4, kAvatarGap = 10;
 constexpr float kRowPadV = 4, kHdrGap = 2;
 
@@ -31,8 +31,8 @@ std::string dueLabel(const SavedItem &s) {
 
 } // namespace
 
-// One saved message (msga's SavedCard): the conversation header outside the
-// bordered body, the message row (msga's SavedMsgRow), the due footer.
+// One saved message: the conversation header outside the bordered body,
+// the message row, the due footer.
 class SavedPage::Card final : public View {
 public:
     Card(SavedPage &page, const SavedItem &item) : _page(page), _item(item) {
@@ -119,7 +119,7 @@ public:
         if (_page.onOpenMessage)
             _page.onOpenMessage(_item.conv, _item.ts, _item.thread);
     }
-    // msga's removeMessageReminder: the saved item goes, reminder or not.
+    // The saved item goes, reminder or not.
     void remove() {
         if (_item.due > 0)
             _page._ctx.backend.setReminder(_item.conv, _item.ts, 0);
@@ -221,7 +221,7 @@ void SavedPage::rebuild() {
     resolvePreviews();
 }
 
-// msga's resolveReminderPreviews: a card whose message was never seen (saved
+// A card whose message was never seen (saved
 // from another client, not in the loaded history) fetches it once; the
 // answer lands in the Store, which rebuilds the page.
 void SavedPage::resolvePreviews() {

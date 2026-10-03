@@ -23,7 +23,7 @@ bool isSpace(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
 }
 
-// QString::trimmed, as the old parser trimmed.
+// Unicode whitespace off both ends.
 std::string_view trim(std::string_view s) {
     return trimmed(s);
 }

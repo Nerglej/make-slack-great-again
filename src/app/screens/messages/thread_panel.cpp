@@ -18,7 +18,7 @@ namespace screens {
 
 namespace {
 
-// msga's IconButton: 32 px round, an 18 px icon.def glyph, surface.highlight
+// A round icon button: 32 px, an 18 px icon.def glyph, surface.highlight
 // on hover.
 class RoundButton final : public Clickable {
 public:
@@ -70,7 +70,7 @@ ThreadPanel::ThreadPanel(Context &ctx) : _ctx(ctx) {
     _list->setTypingRow(false); // the shell's indicator sits above the composer
     _typingSlot = add<View>();
     _slot       = add<View>();
-    // The composer brings its own margins, as in the channel view (msga adds none).
+    // The composer brings its own margins, as in the channel view (none added here).
     _slot->style().padding(0);
     // In line with the composer's contents (its margin plus the box's inner
     // padding), clear of the bottom edge; the composer's margin is the gap above.
@@ -158,7 +158,7 @@ void ThreadPanel::refreshBroadcast() {
     _broadcast->setChecked(show && !_blocked && _wanted);
 }
 
-// msga's downloadThread: where to, then ThreadExportJob (exportThread) pages
+// Where to, then exportThread pages
 // through the whole thread and writes its transcript in the background.
 void ThreadPanel::downloadThread() {
     const ConvRef conv = conversation();

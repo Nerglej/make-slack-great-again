@@ -1,6 +1,6 @@
-// The shell's agent-workspace flows (Claude Code), msga's MainWindow parts:
+// The shell's agent-workspace flows (Claude Code):
 // the Sessions "+" menu's actions (openSessionFinder, startAgentSession), the
-// teammate page with its composer (openTeammateView, applyTeammateComposer,
+// teammate page with its composer (openTeammate, applyTeammateComposer,
 // startSessionWithTeammate) and the team's dialogs (editTeammate,
 // removeTeammate). Shell members kept apart from shell.cpp.
 #include "app/mrkdwn/markdown.h"
@@ -154,7 +154,7 @@ void Shell::openTeammate(const std::string &role) {
         leaveTeammate(); // another teammate's: its draft is kept
     leaveThreads();
     leaveSaved();
-    _search->hideNow(); // msga's leaveConversationForOverview
+    _search->hideNow(); // the conversation's search goes with it
     // Unlike the other overview pages the composer stays: writing to a
     // teammate starts a session with it. The conversation's chrome goes.
     if (threadOpen())
@@ -267,7 +267,7 @@ bool Shell::startSessionWithTeammate() {
     return true;
 }
 
-// A message forwarded to a teammate (msga's prefillTeammate): its page, the
+// A message forwarded to a teammate: its page, the
 // text after what was already typed there and the files added, left for the
 // user to pick a folder and send.
 void Shell::prefillTeammate(

@@ -45,8 +45,8 @@ using namespace claude;
 //                 "hint": after Enter the box shows a queued-prompt hint
 //   typed.log     every prompt submitted, one per line ("\n" as "\\n")
 // When the job's state.json names its transcript (linkScanPath), Enter also
-// writes the prompt and an answer ("echo <text>") there, as the old app's
-// cc_fake_attach did: what the backend tests read back.
+// writes the prompt and an answer ("echo <text>") there: what the backend
+// tests read back.
 // A spinner redraws all the time, as Claude Code's does mid-turn.
 //
 // POSIX only, as is everything here that runs it or another program in a

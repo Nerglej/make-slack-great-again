@@ -11,7 +11,7 @@
 #include "base/process.h"
 #include "support/test.h"
 
-TEST("slack: credentials round-trip through the old app's auth blob") {
+TEST("slack: credentials round-trip through the stored auth blob") {
     slack::Credentials c;
     c.token                       = "xoxc-1-2-3";
     c.teamId                      = "T0123";
@@ -28,7 +28,7 @@ TEST("slack: credentials round-trip through the old app's auth blob") {
     const slack::Credentials d = slack::fromRecord(r);
     CHECK(d.token == c.token && d.cookie == c.cookie && d.workspaceUrl == c.workspaceUrl);
     CHECK(d.expiresAt == c.expiresAt && d.teamId == "T0123" && d.sessionAuth());
-    // An OAuth blob as the old app wrote it: no cookie, numeric-string expiry.
+    // An OAuth blob as stored: no cookie, numeric-string expiry.
     auth::WorkspaceRecord old;
     old.service                = "slack";
     old.id                     = "T9";

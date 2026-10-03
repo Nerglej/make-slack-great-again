@@ -1,4 +1,4 @@
-// RtmPresence (see rtm_presence.h): msga's port over net::WebSocket.
+// RtmPresence (see rtm_presence.h), over net::WebSocket.
 #include "app/slack/rtm_presence.h"
 
 #include "base/log.h"

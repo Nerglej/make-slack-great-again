@@ -1,4 +1,4 @@
-// old_settings.h: Qt's value and INI encodings (qsettings.cpp, Qt 6), and
+// old_settings.h: the store's value and INI encodings, and
 // the Linux store (an INI file). macOS and Windows have their own backends
 // (old_settings_mac.mm, old_settings_win.cpp); their tests use the INI file
 // too (old_settings.h).
@@ -49,7 +49,7 @@ bool Value::toBool(bool def) const {
         return n != 0;
     case Kind::String:
     case Kind::Bytes: {
-        // QVariant: true unless empty, "0" or "false" (any case).
+        // True unless empty, "0" or "false" (any case).
         const std::string l = str::asciiLower(str::trim(s));
         return !(l.empty() || l == "0" || l == "false");
     }
@@ -86,7 +86,7 @@ std::vector<std::string> Value::toList() const {
 
 namespace {
 
-// The code points of a UTF-8 string as Latin-1 bytes (QString::toLatin1).
+// The code points of a UTF-8 string as Latin-1 bytes.
 std::string latin1(std::string_view s) {
     std::string out;
     out.reserve(s.size());
@@ -115,8 +115,8 @@ Value decodeString(std::string s) {
             }
             if (s == "@Invalid()")
                 return v;
-            // @Variant / @DateTime / @Rect …: nothing the old app stored
-            // that the new one reads; keep the text.
+            // @Variant / @DateTime / @Rect …: nothing earlier versions
+            // stored that this one reads; keep the text.
         }
         if (s[1] == '@')
             s.erase(0, 1);
@@ -191,7 +191,7 @@ std::string escapeKey(std::string_view k) {
         }
         uint32_t cp = utf8::decode(k, i);
         if (cp > 0xFFFF)
-            cp = utf8::kReplacement; // QString would write two surrogates
+            cp = utf8::kReplacement; // UTF-16 would need two surrogates
         if (cp <= 0xFF) {
             out.push_back('%');
             out.push_back(hex[cp >> 4]);
@@ -205,7 +205,7 @@ std::string escapeKey(std::string_view k) {
     return out;
 }
 
-// "\x" and the hex digits of c, as QByteArray::number(c, 16).
+// "\x" and the lower-case hex digits of c, no leading zeros.
 void hexEscape(std::string &out, uint32_t c) {
     out += "\\x";
     if (c >= 16)
@@ -213,7 +213,7 @@ void hexEscape(std::string &out, uint32_t c) {
     out.push_back("0123456789abcdef"[c & 15]);
 }
 
-// iniEscapedString for a QString (UTF-8 in and out).
+// A string value escaped for the INI file (UTF-8 in and out).
 std::string escapeValue(std::string_view s) {
     std::string out;
     bool        quotes = false, escapeDigit = false;
@@ -374,8 +374,8 @@ Value unescapeValue(std::string_view str) {
     return v;
 }
 
-// One logical line of an INI file, as readIniLine sees it (Qt never writes
-// a value across lines: newlines in values are escaped).
+// One logical line of an INI file (a value never spans lines: newlines in
+// values are escaped).
 struct Line {
     size_t           begin = 0, end = 0; // [begin, end) in the text, without the EOL
     std::string_view text;               // trimmed
@@ -398,7 +398,7 @@ std::vector<Line> splitLines(std::string_view t) {
     return out;
 }
 
-// A section header's Qt key prefix: "" for [General], else "name/".
+// A section header's key prefix: "" for [General], else "name/".
 bool sectionOf(std::string_view line, std::string *prefix) {
     if (line.empty() || line[0] != '[')
         return false;
@@ -607,9 +607,9 @@ std::string iniPath(std::string_view app) {
 namespace {
 
 #ifndef _WIN32
-// QSettings syncs under a QLockFile "<file>.lock" (pid, app name, host); the
-// old app may be running, so take the same lock around a rewrite. A lock
-// whose process is gone, or older than Qt's 30 s stale time, is broken.
+// Earlier versions sync the file under a lock file "<file>.lock" (pid, app
+// name, host) and may be running, so take the same lock around a rewrite. A
+// lock whose process is gone, or older than 30 s (stale), is broken.
 class IniLock {
 public:
     explicit IniLock(const std::string &file) : _path(file + ".lock") {
@@ -667,7 +667,7 @@ bool rewrite(std::string_view key, const std::string *value, std::string_view ap
     const std::string next = setIniValue(text, key, value);
     if (existed && next == text)
         return true;
-    // Keep the file's permissions (Qt wrote it 0644 & ~umask); a new one
+    // Keep the file's permissions (earlier versions wrote it 0644 & ~umask); a new one
     // holds credentials, so owner-only.
     int mode = 0600;
 #ifndef _WIN32

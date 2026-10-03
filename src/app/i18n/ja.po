@@ -3649,6 +3649,10 @@ msgid "Messages can be scheduled up to 120 days ahead."
 msgstr "メッセージは120日先まで予約できます。"
 
 #: src/app/slack/slack_actions.cpp
+msgid "Slack has an unsent draft in this conversation. Send or clear it first."
+msgstr "この会話にはSlackの未送信の下書きがあります。先に送信するか削除してください。"
+
+#: src/app/slack/slack_actions.cpp
 msgid "Upload failed: %1"
 msgstr "アップロードに失敗しました: %1"
 

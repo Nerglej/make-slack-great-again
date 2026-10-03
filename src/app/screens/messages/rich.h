@@ -40,11 +40,11 @@ public:
 
     void        paint(gfx::Painter &p) override;
     // Hover on a mention or name: the profile card; right click on a link:
-    // the link menu (msga's).
+    // the link menu.
     bool        onEvent(ui::Event &e) override;
     uint8_t     cursorAt(ui::PointF local) const override;
     void        windowChanged() override;
-    // msga's link hover: the URL above the pointer, at once (none when the
+    // Link hover: the URL above the pointer, at once (none when the
     // link's text is the URL itself).
     std::string tooltip() const override { return _tip; }
     ui::RectF   tooltipAnchor() const override;
@@ -126,7 +126,7 @@ private:
     plat::TimerId _id = 0;
 };
 
-// msga's previewCut over the text the user reads, on a budget shared by
+// The preview cut over the text the user reads, on a budget shared by
 // several texts: the byte offset where the preview ends (both budgets drop
 // to 0), or UINT32_MAX when all of it fits (what it used is taken off).
 uint32_t previewCut(std::string_view mrkdwnText, int *maxChars, int *maxLines);
@@ -138,22 +138,22 @@ std::vector<std::string> bodyTexts(Context &ctx, std::string_view mrkdwnText, co
 
 // Plain text of a mrkdwn string as the user reads it (copy text, previews):
 // markup stripped, mentions resolved to names, emoji as Unicode. fullUrls:
-// a link label Slack shortened ("host/…/…") is its full URL instead (msga's
-// plainTextWithFullUrls, "Copy message").
+// a link label Slack shortened ("host/…/…") is its full URL instead ("Copy
+// message").
 std::string plainText(const Context &ctx, std::string_view mrkdwnText, bool fullUrls = false);
 
 // A link from a message: mailto: opens the mail app — none registered, the
-// address is copied and msga's toast says so at `at` — else Context::openUrl.
+// address is copied and a toast says so at `at` — else Context::openUrl.
 void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at);
 
-// msga's PopupTooltip::showToast: a tooltip chip above a click for `ms`.
+// A tooltip chip above a click for `ms`.
 void showClickToast(Context &ctx, ui::Window &w, const std::string &text, int ms, ui::PointF at);
 
 // A raw colour ("#3FCB8E") from attachment data; `fallback` when malformed.
-// msga's convPlaceLabel: "#name", a DM peer's name, a group DM's name or
+// A conversation's place label: "#name", a DM peer's name, a group DM's name or
 // "group message"; "" for a conversation this workspace can't see.
 std::string placeLabel(const Store &st, std::string_view convId);
-// msga's messageLinkLabel: what a message permalink's chip reads.
+// What a message permalink's chip reads.
 std::string messageLinkLabel(const Store &st, const mrkdwn::MessageRef &ref);
 
 gfx::Color parseHexColor(std::string_view hex, gfx::Color fallback);

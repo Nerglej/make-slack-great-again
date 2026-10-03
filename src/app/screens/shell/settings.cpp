@@ -64,7 +64,7 @@ const struct {
     {"emojiSkinTone", &Settings::emojiSkinTone, 0, 6},
 };
 
-// `secret`: the old app's key for it in the secret store (base/secret.h),
+// `secret`: its key in the secret store (base/secret.h),
 // where the value lives instead of the file.
 const struct {
     const char *key;
@@ -118,7 +118,7 @@ const struct {
         {"important", &ui::CustomPalette::important},
 },
   kCustomPins[] = {
-      // msga's CustomTheme::Pins, under its "pins" names; absent = derived.
+      // The pinned colours, under their "pins" names; absent = derived.
       {"itemHover", &ui::CustomPalette::itemHover},
       {"itemSelText", &ui::CustomPalette::itemSelText},
       {"itemText", &ui::CustomPalette::itemText},
@@ -126,7 +126,7 @@ const struct {
       {"titleBarText", &ui::CustomPalette::titleBarText},
 };
 
-// An AI provider's key in the secret store (old LlmTokenStore).
+// An AI provider's key in the secret store.
 std::string aiSecret(const AiProvider &p) {
     return "llm/" + p.id + "/apiKey";
 }

@@ -1,8 +1,8 @@
-// msga's Qt date/time fields: the reminder dialog's QDateEdit (calendar
-// popup) and QTimeEdit, and the schedule-send popup's QDateTimeEdit.
+// Date/time input fields: the reminder dialog's date field (with a calendar
+// popup) and time field, and the schedule-send popup's date-and-time field.
 //
 // DateTimeField shows sections ("9/30/26", "8:45 PM" / "20:45", "Sep 30,
-// 2026 8:45 PM"), laid out by a Qt-style pattern in the date language
+// 2026 8:45 PM"), laid out by a base::formatCivil pattern in the date language
 // (base/time.h: the locale's short date, so Japanese reads "2026/09/30", sv
 // "2026-09-30"; "2026年9月30日 午後8:45"), and the clock follows the
 // 12/24-hour setting; the focused section is highlighted, Left/Right move
@@ -31,7 +31,7 @@ public:
     void    setTime(int hour, int minute);
     void    setMinimumDate(int year, int month, int day);
     // DateTime: the value as epoch seconds (local wall clock), and the
-    // earliest one allowed (QDateTimeEdit::setMinimumDateTime; rounded up to
+    // earliest one allowed (rounded up to
     // the whole minute the field can show).
     void    setValue(int64_t secs);
     int64_t value() const;
@@ -45,7 +45,7 @@ public:
     int     minute() const { return _mi; }
     int     section() const { return _sec; }
     void    setSection(int i);
-    void    step(int dir); // the current section, ±1 (wrapping like QDateTimeEdit)
+    void    step(int dir); // the current section, ±1 (wrapping within it)
 
     std::function<void()> onChange;
 

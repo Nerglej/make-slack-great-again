@@ -29,7 +29,7 @@ enum class C : uint8_t {
     SidebarHover,
     SidebarSelected,
     SidebarSelectedText,
-    SidebarScrollbar, // chats-list thumb (the Qt app's nav.scrollThumb)
+    SidebarScrollbar, // chats-list thumb (nav.scrollThumb)
     Text,
     TextMuted,
     TextFaint,
@@ -64,9 +64,9 @@ enum class C : uint8_t {
     MentionSelfBg, // a mention of me, @here/@channel, my usergroup (yellow)
     Danger,
     Online,
-    // Form controls and dialogs (Settings): the Qt app's form palette, so
-    // dialogs read the same as there (surface.raised/sunken/highlight, the
-    // divider pair, text.primary/secondary/tertiary, …).
+    // Form controls and dialogs (Settings): the form palette, so every
+    // dialog reads the same (surface.raised/sunken/highlight, the divider
+    // pair, text.primary/secondary/tertiary, …).
     FormBg,              // dialog card, inputs, secondary buttons
     FormSunken,          // section list, secondary button hover
     FormHighlight,       // dialog header, hovered section / icon button
@@ -90,9 +90,9 @@ enum class C : uint8_t {
     UpdateBannerBg, // updateBanner.*: the update bar
     UpdateBannerBorder,
     UpdateBannerText,
-    TitleBar, // msga's titleBar.bg / controlDefault: the palette's, a custom theme's pins
+    TitleBar, // titleBar.bg / controlDefault: the palette's, a custom theme's pins
     TitleBarControl,
-    // The Qt app's icon/composer/badge tokens the shell paints with
+    // The icon/composer/badge tokens the shell paints with
     // (icon.starred, composer.toolbarIcon(Active), composer.dropArrow,
     // badge.activity, presence.away / phantom, editBanner.accent).
     IconStarred,
@@ -107,8 +107,8 @@ enum class C : uint8_t {
     ChipBorder,
     OverlayBg, // composer.attachmentOverlay*: the name plates on them
     OverlayText,
-    // The rest of the Qt app's palette (Th::c()) that its dialogs, toolbars,
-    // menus, cards and message rows paint with.
+    // The rest of the palette that dialogs, toolbars, menus, cards and
+    // message rows paint with.
     AccentPressed,  // accent.pressed (follows the palette, like Accent)
     AccentSubtle,   // accent.subtleBg (follows the palette)
     FormIcon,       // icon.def
@@ -151,7 +151,7 @@ enum class M : uint8_t {
 
 // Font roles → text::Style (size scaled by the OS text-size preference).
 // Control (13), ControlBold (13 semibold), Heading (14 semibold), DialogTitle
-// (15 semibold) and Field (14) are the form sizes of the Qt app's dialogs.
+// (15 semibold) and Field (14) are the dialogs' form sizes.
 enum class Font : uint8_t {
     Small,
     SmallBold,
@@ -165,7 +165,7 @@ enum class Font : uint8_t {
     Heading,
     DialogTitle,
     Field,
-    // The Qt app's sidebar/badge faces (ui/fonts.cpp): demiBold, the section
+    // The sidebar/badge faces: demiBold, the section
     // label (0.82, DemiBold / Bold), countBadge (0.78 bold), youLabel (0.88).
     BodySemibold,
     Section,
@@ -186,14 +186,13 @@ enum class Font : uint8_t {
 Color       color(C c);
 // A token in a given variant regardless of the current one (theme previews).
 Color       colorIn(C c, bool dark);
-// The system's text-selection highlight (msga's QPalette::Highlight): the
-// OS accent colour, Qt's default blue where the OS reports none. Selected
-// text is drawn white on it (QPalette::HighlightedText).
+// The system's text-selection highlight: the OS accent colour, a default
+// blue where the OS reports none. Selected text is drawn white on it.
 Color       systemHighlight();
 float       metric(M m);
 text::Style font(Font f, C color = C::Text);
 
-// A style for a size the Qt app gives in pixels (fonts.md 13, base 14, …):
+// A style for a size given in pixels (13, 14, …):
 // Body scaled by px / 15, so it follows the text-size preference too.
 text::Style pxFont(float px, text::Weight w, Color c);
 
@@ -202,7 +201,7 @@ text::Style pxFont(float px, text::Weight w, Color c);
 // theme switches too. resolve() maps a sentinel to the live colour and
 // passes ordinary colours through (a sentinel has alpha 0 and a marker byte).
 Color themed(C c);
-// A raw colour per theme, for the Qt theme's values the token table doesn't
+// A raw colour per theme, for values the token table doesn't
 // carry (message.* tints); resolved now, not a sentinel.
 Color byTheme(uint32_t dark, uint32_t light);
 Color resolve(Color c);
@@ -210,7 +209,7 @@ Color resolve(Color c);
 void  resolveSpans(text::AttributedText &t);
 
 // ── Palettes ────────────────────────────────────────────────────────────────
-// The chrome colour sets of the Qt app's theme presets (Settings → Color
+// The chrome colour sets of the theme presets (Settings → Color
 // theme): rail, sidebar, selection pill and accent over light or dark content.
 // Each content mode keeps its own pick; the content tokens stay as tabled.
 enum class Palette : uint8_t { Purple, Charcoal, Blue, Green, Custom, Count };
@@ -223,10 +222,9 @@ struct CustomPalette {
     Color important       = 0xffcd2553; // mention badge
     int   brightness      = 6;          // 0–10, 6 = the rail as designed
     bool  sidebarInverted = true;       // a dark rail over light content
-    bool  gradient        = true;       // kept for Slack round trips; next draws flat
-    // Pins a legacy Slack theme string names outright; 0 = derive (msga's
-    // CustomTheme::Pins): menu_bg / hover_item, active_item_text, text_color,
-    // top_nav_bg, top_nav_text.
+    bool  gradient        = true;       // kept for Slack round trips; drawn flat
+    // Pins a legacy Slack theme string names outright; 0 = derive: menu_bg / hover_item,
+    // active_item_text, text_color, top_nav_bg, top_nav_text.
     Color itemHover = 0, itemSelText = 0, itemText = 0, titleBarBg = 0, titleBarText = 0;
 };
 

@@ -33,10 +33,9 @@ using i18n::tr;
 namespace {
 
 constexpr int kRetryMs   = 15000; // offline at start: try again
-// The background workspaces start one at a time after the open one (msga's
-// ensureSessionsSequentially, 100 ms apart there): spaced wider here so each
-// one's first sync (users, conversations, unreads) is not a burst on top of
-// the others'.
+// The background workspaces start one at a time after the open one, spaced
+// wide enough that each one's first sync (users, conversations, unreads) is
+// not a burst on top of the others'.
 constexpr int kStaggerMs = 1500;
 
 enum : int { kAddSlack = 1, kAddClaudeCode };
@@ -140,7 +139,7 @@ void Accounts::start() {
         showSignedOut();
     else
         activate(_store.active());
-    // msga: the rest still connect — badges and notifications must not
+    // The rest still connect — badges and notifications must not
     // depend on clicking each one — one at a time after the open one.
     for (const auth::WorkspaceRecord &r : _store.all())
         if (r.key() != _activeKey)
@@ -314,8 +313,8 @@ bool Accounts::handleUrl(std::string_view url) {
 namespace {
 
 // The Claude Code workspace's own files: <dataDir>/claude-code (the team,
-// known sessions, your profile) and <cacheDir>/claude-code — the old app's
-// folders, whose files keep their format (app/identity.h).
+// known sessions, your profile) and <cacheDir>/claude-code — the folders
+// earlier versions used, whose files keep their format (app/identity.h).
 void setClaudeDirs(plat::App &app) {
     const std::string data  = identity::dataDir(app);
     const std::string cache = identity::cacheDir(app);
@@ -341,7 +340,7 @@ Accounts::Running *Accounts::bySerial(uint64_t serial) const {
     return nullptr;
 }
 
-// msga's ensureSession: the workspace's backend over a Store of its own,
+// The workspace's backend over a Store of its own,
 // watched by the shell from now on; what its cache kept shows before the
 // network answers (badges before the first poll), then connect merges.
 Accounts::Running *Accounts::ensure(const std::string &key) {
@@ -363,7 +362,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
     if (rec->service == claude::kService) {
         setClaudeDirs(pa);
         auto backend     = std::make_unique<claude::Backend>(st, pa, claude::fromRecord(*rec));
-        // msga subscribed the error banner to the active session only.
+        // The error banner shows for the active workspace only.
         backend->onError = [this, serial](const std::string &message) {
             if (Running *x = bySerial(serial); x && x == _active)
                 _shell.showError(message);
@@ -391,12 +390,12 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
                 _settings.slackClientId, _settings.slackClientSecret, _settings.slackAppToken
             )
         );
-        // Like the error banner, msga showed it for the active session only.
+        // Like the error banner, it shows for the active workspace only.
         backend->onParallelUsage = [this, serial] {
             if (Running *x = bySerial(serial); x && x == _active)
                 _shell.showParallelUsage();
         };
-        // msga subscribed the error banner to the active session only.
+        // The error banner shows for the active workspace only.
         backend->onError = [this, serial](const std::string &message) {
             if (Running *x = bySerial(serial); x && x == _active)
                 _shell.showError(message);
@@ -422,7 +421,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
     return raw;
 }
 
-// msga's SharedRealtime: the app's one Socket Mode socket, shared by every
+// The app's one Socket Mode socket, shared by every
 // workspace on these app keys (Slack spreads events over all of an app's
 // sockets) and closed with the last of them. None in session mode — the
 // hard off switch that keeps a build's app keys off the shared pool. The
@@ -486,7 +485,7 @@ void Accounts::restart(const std::string &key) {
         ensure(key);
 }
 
-// msga's activateWorkspace: the open workspace leaves the screens (it keeps
+// The open workspace leaves the screens (it keeps
 // running in the background), `key`'s takes its place — started first if
 // it wasn't — and its last chat opens again.
 void Accounts::activate(const std::string &key) {
@@ -585,7 +584,7 @@ void Accounts::connect(uint64_t serial) {
     });
 }
 
-// The credentials are dead (msga's authState → NotLoggedIn): the record
+// The credentials are dead (signed out by the server): the record
 // stays (signing in again replaces it), the workspace stops; the open one
 // shows the signed-out page, the others keep running.
 void Accounts::authLost(uint64_t serial, const std::string &error) {
@@ -633,7 +632,7 @@ void Accounts::fetchIcon(Running &r) {
 }
 
 // Downloads of Slack's files carry their workspace's token (and d cookie),
-// as msga's per-session downloadFile did: the team in a file URL's path
+// per workspace: the team in a file URL's path
 // picks the running workspace, the one on screen answers for the rest of
 // Slack's hosts — background workspaces' notification pictures and files
 // shown across workspaces included.
@@ -652,7 +651,7 @@ void Accounts::imageAuth() {
     });
 }
 
-// The screens show no workspace (msga's showLoggedOut): the rail stays,
+// The screens show no workspace: the rail stays,
 // nothing selected; the background workspaces keep running.
 void Accounts::showSignedOut() {
     if (_active) {
@@ -782,8 +781,8 @@ void Accounts::migrateDone(std::vector<slack::Credentials> converted, const std:
         if (_saveSettings)
             _saveSettings();
     }
-    // The old app restarted here to rebuild every backend in session mode:
-    // each running Slack workspace starts over on its new credentials.
+    // No restart: each running Slack workspace starts over in session mode
+    // on its new credentials.
     std::vector<std::string> keys;
     for (const auto &r : _running)
         if (r->slack)
@@ -835,7 +834,7 @@ void Accounts::setMuted(const std::string &key, bool muted) {
     refreshRail();
 }
 
-// msga's logoutWorkspace: the workspace stops, its record, custom icon,
+// The workspace stops, its record, custom icon,
 // cache and drafts go; the open one hands the screens to the next.
 void Accounts::signOut(const std::string &key) {
     const std::string            k   = key.empty() ? _activeKey : key;

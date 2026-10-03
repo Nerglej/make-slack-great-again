@@ -1,10 +1,10 @@
-// msga's scripted walkthrough of the demo workspace (`msga --demo demo
+// The scripted walkthrough of the demo workspace (`msga --demo demo
 // --demo-tour demo/tour.json`), the recording behind the README video. The
 // tour drives the real views: it moves the real pointer through plat's
 // input injection (XTest on X11: the screen capture draws it) and hands the
 // same pointer and key input to the window, so it clicks and types into
 // whatever is under it — menus and pickers are popups — and calls the
-// shell's own entry points where msga called MainWindow's. No screen
+// shell's own entry points otherwise. No screen
 // coordinates in the script: views are found by what they show.
 // Compiled only into demo builds (-DMSGA_DEMO=ON).
 #pragma once

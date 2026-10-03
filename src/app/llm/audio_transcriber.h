@@ -1,4 +1,4 @@
-// Speech-to-text of audio attachments (msga's AudioTranscriber): the
+// Speech-to-text of audio attachments: the
 // "Transcribe with AI" button on the inline audio player. Sits between the
 // message lists (the channel and the thread panel show the same file) and
 // Service::transcribe: one request per file however many cards ask, and the

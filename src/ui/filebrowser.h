@@ -12,7 +12,8 @@
 // to the next entry starting with it, Escape cancels; OpenMultiple adds
 // Ctrl/Shift+click, Shift+arrows and Ctrl+A. Everything is drawn from theme
 // tokens on the card's own background, so it reads in light and dark alike
-// (msga issue #18: Qt's fallback dialog inherited a foreign palette).
+// (issue #18: a fallback dialog that inherited a foreign palette was
+// unreadable).
 #pragma once
 
 #include "base/file.h"

@@ -525,8 +525,8 @@ void walk(const std::string &dir, int depth, Found &out) {
         walk(s, depth + 1, out);
 }
 
-// In the old app's cache dir (app/identity.h's cacheDir: Qt's CacheLocation
-// for organization "msga", application "MSGA"), under a name it never used.
+// In the app's cache dir (app/identity.h's cacheDir: organization "msga",
+// application "MSGA"), under a name earlier versions never used.
 std::string cachePath() {
 #ifdef _WIN32
     const std::string l = base::env("LOCALAPPDATA");

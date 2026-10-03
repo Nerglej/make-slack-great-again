@@ -54,8 +54,7 @@ const char *const kSlackAppUrl =
     "https://github.com/punarinta/make-slack-great-again/blob/master/docs/SETUP_SLACK.md";
 const char *const kGiphyUrl = "https://developers.giphy.com/dashboard/";
 
-// The presets' fixed parts (the Qt app's LlmProviderConfig presets) are the
-// LLM layer's table.
+// The presets' fixed parts are the LLM layer's table.
 using PresetInfo = llm::Preset;
 using llm::kCustomSttModel;
 
@@ -87,7 +86,7 @@ const shell::AiProvider *activeProvider(const shell::Settings &s) {
 }
 
 // A server that is not this machine or the local network, reached without
-// TLS: the key travels in plain text (msga's check, on the normalized URL).
+// TLS: the key travels in plain text (checked on the normalized URL).
 bool cleartextRemote(std::string_view url) {
     return llm::isCleartextRemote(llm::normalizeOpenAiBaseUrl(url));
 }
@@ -118,8 +117,8 @@ const struct {
     {"zh", "\xE4\xB8\xAD\xE6\x96\x87"},
 };
 
-// The process's private memory, the number each OS's task manager shows
-// (the Qt app's ProcessStats::rssBytes); 0 when unknown.
+// The process's private memory, the number each OS's task manager shows; 0
+// when unknown.
 uint64_t privateBytes() {
 #if defined(__linux__)
     if (FILE *f = std::fopen("/proc/self/smaps_rollup", "r")) {
@@ -403,7 +402,7 @@ void SettingsDialog::refreshAiList() {
                         _s.ai.end()
                     );
                     // A later server may reuse the id: it must not inherit the
-                    // default (msga's removeCustom).
+                    // default.
                     if (_s.aiDefault == id)
                         _s.aiDefault.clear();
                 }
@@ -505,7 +504,7 @@ void SettingsDialog::showAiEditor(const std::string &id) {
 }
 
 void SettingsDialog::probeAiEditor(bool fillModels) {
-    // msga's probeAiEditor: GET /models with what the editor holds.
+    // GET /models with what the editor holds.
     _p->aiError->setText({});
     if (!_ctx.ai)
         return;
@@ -679,7 +678,7 @@ void SettingsDialog::buildStorage() {
         _ctx.images.setBudget(0);
         _ctx.images.setBudget(budget);
 #endif
-        // msga's clearCache: the whole cache directory — the downloaded
+        // The whole cache directory — the downloaded
         // pictures and every workspace's conversations, users and messages
         // (the next start is a cold one).
         if (_ctx.remote)
@@ -696,7 +695,7 @@ void SettingsDialog::buildStorage() {
            "Clear this to let the app re-analyse activity from scratch on next load.")
     );
     auto *state    = button(_content, tr("Clear state"), FormButton::Kind::Danger);
-    // msga's clearState: conv/visitedAt goes; the sidebar re-seeds at once.
+    // The visit stamps go; the sidebar re-seeds at once.
     state->onClick = [this, state] {
         state->setEnabled(false);
         _s.visitedAt.clear();
@@ -710,7 +709,7 @@ void SettingsDialog::buildStorage() {
 void SettingsDialog::refreshCache() {
     if (!_p->cacheSize)
         return;
-    // msga: the cache directory's size (the downloaded pictures and the
+    // The cache directory's size (the downloaded pictures and the
     // workspaces' cached data).
     const int64_t data = cache::WorkspaceCache::diskBytes(_ctx.app.platform());
     if (_ctx.remote) {
@@ -748,7 +747,7 @@ void SettingsDialog::buildSystem() {
             Font::Caption,
             C::FormTextFaint
         );
-        // msga's refreshUpdateStatus, then setUpdateChecker's signal wiring.
+        // The update status now, then again on each of the updater's changes.
         update::Updater *u      = _hooks.updater;
         const auto       status = [this, checkBtn](bool enabled, std::string text) {
             checkBtn->setEnabled(enabled);

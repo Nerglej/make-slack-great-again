@@ -19,7 +19,7 @@ namespace screens {
 
 using mrkdwn::Kind;
 
-// msga's convPlaceLabel: "#name", a DM peer's name, a group DM's own name or
+// A conversation's place label: "#name", a DM peer's name, a group DM's own name or
 // "group message"; "" for a conversation we can't see.
 std::string placeLabel(const Store &st, std::string_view convId) {
     const ConvRef c = st.findConversation(convId);
@@ -30,7 +30,7 @@ std::string placeLabel(const Store &st, std::string_view convId) {
         return cv.dmUser != model::kNoUser ? std::string(st.user(cv.dmUser).label())
                                            : std::string();
     if (cv.kind == model::ConvKind::Group) {
-        // msga's groupDmCustomName: never Slack's internal "mpdm-a--b-1".
+        // A group DM's own name: never Slack's internal "mpdm-a--b-1".
         if (!cv.localName.empty())
             return cv.localName;
         if (!cv.name.empty() && !str::startsWith(cv.name, "mpdm-"))
@@ -40,7 +40,7 @@ std::string placeLabel(const Store &st, std::string_view convId) {
     return cv.name.empty() ? std::string() : "#" + cv.name;
 }
 
-// msga's messageLinkLabel: "Author in #channel", the author, the place, or
+// A message link's label: "Author in #channel", the author, the place, or
 // "message". The author is known only from a rich_text message_mention.
 std::string messageLinkLabel(const Store &st, const mrkdwn::MessageRef &ref) {
     const std::string place = placeLabel(st, ref.conv);
@@ -76,7 +76,7 @@ struct Builder {
     // and (fullUrls) a shortened link label is its URL.
     bool                           plain = false, fullUrls = false;
 
-    // self: msga's mentionSelfBg (a mention of me, @here/@channel, my group).
+    // self: the own-mention background (a mention of me, @here/@channel, my group).
     text::Style pill(text::Style s, bool self = false) const {
         s.color      = ui::themed(ui::C::MentionText);
         s.background = ui::themed(self ? ui::C::MentionSelfBg : ui::C::MentionBg);
@@ -117,7 +117,7 @@ struct Builder {
             }
             const mrkdwn::Entity  &e     = r.entities[size_t(run.entity)];
             const std::string_view label = std::string_view(r.text).substr(e.start, e.length);
-            // msga's link labels: a GIPHY media link is a "GIF" badge; a
+            // Link labels: a GIPHY media link is a "GIF" badge; a
             // label Slack shortened ("host/…/…") is rebuilt from the URL.
             const bool giphy = e.kind == Kind::Link && !plain && mrkdwn::isGiphyMediaUrl(e.data);
             const bool shortened = e.kind == Kind::Link && (!plain || fullUrls) &&
@@ -125,8 +125,8 @@ struct Builder {
             // Mentions, emoji and rewritten links are replaced as a whole:
             // emit them once even when a style change split the entity into
             // several runs.
-            // A permalink (it has a host; msga's own thread links don't) is
-            // a chip: msga's messageLinkChipHtml.
+            // A permalink (it has a host; the app's own thread links don't) is
+            // a chip.
             const bool chip =
                 e.kind == Kind::MessageLink && !plain && !mrkdwn::refFromToken(e.data).host.empty();
             const bool atomic =
@@ -180,8 +180,7 @@ struct Builder {
             case Kind::Channel: {
                 s.color  = ui::themed(ui::C::Link);
                 s.linkId = target(e.kind, e.data);
-                // One the roster doesn't list: its name is looked up once
-                // (msga's mentionedChannelName / fetchChannelIfNeeded).
+                // One the roster doesn't list: its name is looked up once.
                 if (store.findConversation(e.data) == model::kNoConv && !store.channelName(e.data))
                     ctx.backend.resolveChannel(e.data);
                 const std::string name = entityText(store, e);
@@ -265,7 +264,7 @@ void RichLabel::setContent(
 }
 
 ui::RectF RichLabel::tooltipAnchor() const {
-    return {_tipAt.x, _tipAt.y - 2, 1, 4}; // msga: the cursor point
+    return {_tipAt.x, _tipAt.y - 2, 1, 4}; // the cursor point
 }
 
 void RichLabel::hoverLink(uint32_t id, ui::PointF at) {
@@ -273,7 +272,7 @@ void RichLabel::hoverLink(uint32_t id, ui::PointF at) {
     if (id == _hoverLink)
         return;
     _hoverLink                     = id;
-    // msga's setDocLinkUnderline: every piece of the hovered URL link
+    // Every piece of the hovered URL link
     // underlines together (mentions, channels, message links never).
     const Target        *tg        = id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
     const bool           underline = tg && tg->kind == Kind::Link;
@@ -289,11 +288,11 @@ void RichLabel::hoverLink(uint32_t id, ui::PointF at) {
     // text already is the URL.
     std::string url;
     if (tg && tg->kind == Kind::Link) {
-        url = net::percentDecode(tg->data); // QUrl::fromPercentEncoding
+        url = net::percentDecode(tg->data);
     } else if (tg && tg->kind == Kind::MessageLink) {
         const mrkdwn::MessageRef ref = mrkdwn::refFromToken(tg->data);
         const model::ConvRef     c   = _ctx.store().findConversation(ref.conv);
-        if (c != model::kNoConv && !ref.host.empty()) // msga's own links have no permalink
+        if (c != model::kNoConv && !ref.host.empty()) // the app's own links have no permalink
             url = _ctx.store().permalink(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
     }
     _tip = url == shown ? std::string() : url;
@@ -314,7 +313,7 @@ void RichLabel::activate(uint32_t id) {
         const model::ConvRef     c      = _ctx.store().findConversation(ref.conv);
         const model::Ts          thread = model::parseTs(ref.threadTs);
         if (!ref.host.empty()) {
-            // msga: only this workspace's conversations can be jumped to; a
+            // Only this workspace's conversations can be jumped to; a
             // link into another team (or one we can't see) is still a link.
             if (c == model::kNoConv) {
                 if (_ctx.openUrl)
@@ -332,7 +331,7 @@ void RichLabel::activate(uint32_t id) {
             _ctx.openConversation(c);
         break;
     }
-    case Kind::User: { // msga: a click opens the profile card at once
+    case Kind::User: { // a click opens the profile card at once
         const model::UserRef u = _ctx.store().findUser(tg.data);
         if (u != model::kNoUser && _ctx.profileHover)
             _ctx.profileHover(u, windowRect(), 2);
@@ -361,7 +360,7 @@ bool RichLabel::onEvent(ui::Event &e) {
     case ui::EventType::PointerMove:
     case ui::EventType::PointerLeave: {
         hoverLink(e.type == ui::EventType::PointerMove ? linkAt(e.pos) : 0, e.windowPos);
-        // Hovering a mention or a name: msga's profile card after a delay.
+        // Hovering a mention or a name: the profile card after a delay.
         const Target  *tg = e.type == ui::EventType::PointerMove ? targetAt(e.pos) : nullptr;
         model::UserRef u =
             tg && tg->kind == Kind::User ? _ctx.store().findUser(tg->data) : model::kNoUser;
@@ -375,7 +374,7 @@ bool RichLabel::onEvent(ui::Event &e) {
         return ui::Label::onEvent(e);
     }
     case ui::EventType::ContextMenu: {
-        // msga's link menu, for links only (mentions, channels: nothing), and
+        // The link menu, for links only (mentions, channels: nothing), and
         // only from a right click (raw set) — no Menu key or long press.
         const Target *tg = e.raw ? targetAt(e.pos) : nullptr;
         if (!tg || !window())
@@ -677,7 +676,7 @@ std::string plainText(const Context &ctx, std::string_view text, bool fullUrls) 
 namespace {
 
 #if defined(__linux__)
-// msga's MailtoLink::systemHandlerAvailable: on Linux the opener reports
+// Whether a mail app handles mailto:. On Linux the opener reports
 // nothing back, so ask xdg-mime whether anything takes mailto: (once; the
 // answer is remembered). 1 = yes, 0 = no, -1 = not asked yet.
 int g_mailHandler = -1;

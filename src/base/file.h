@@ -59,12 +59,12 @@ std::string      resolve(std::string_view base, std::string_view rel);
 // The current directory joined in front of a relative path.
 std::string      absolute(std::string_view path);
 
-// An absolute local path as a file:// URL, as Qt's QUrl::fromLocalFile
-// encodes it: "/a/b c" → "file:///a/b%20c", "C:\x" → "file:///C:/x", a UNC
+// An absolute local path as a file:// URL: "/a/b c" → "file:///a/b%20c", "C:\x" → "file:///C:/x", a
+// UNC
 // "//srv/share/x" → "file://srv/share/x"; bytes outside RFC 3986's path
 // characters (spaces, '%', '#', '?', non-ASCII UTF-8) percent-encoded.
 std::string toFileUrl(std::string_view path);
-// The local path of a file:// URL (QUrl::toLocalFile): percent-decoded,
+// The local path of a file:// URL: percent-decoded,
 // "localhost" dropped, "file:///C:/x" → "C:/x" and another host → UNC on
 // Windows. "" when it isn't a file:// URL.
 std::string fromFileUrl(std::string_view url);

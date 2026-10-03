@@ -21,12 +21,12 @@ namespace shell {
 
 namespace {
 
-// msga's OverviewCard geometry: the message list's avatar, the chat rows'
+// The card geometry: the message list's avatar, the chat rows'
 // rhythm (spacing.sm around a row, spacing.xs under the name line).
 constexpr float kAvatar = 36, kAvatarRadius = 4, kAvatarGap = 10;
 constexpr float kRowPadV = 4, kHdrGap = 2;
 
-// One message inside a card (msga's ThreadMsgRow): avatar, name and time
+// One message inside a card: avatar, name and time
 // over the rich body, a one-line summary of attached files. A click outside
 // a link opens the real thread.
 class MessageRow final : public Clickable {
@@ -106,7 +106,7 @@ bool TextLink::onEvent(Event &e) {
 
 void TextLink::refreshLook() {
     text::Style st = font(_font);
-    // msga's link button turns accent.hover when hovered.
+    // The link button turns accent.hover when hovered.
     st.color       = themed(_underline && hovered() ? C::AccentHover : _color);
     st.underline   = _underline || hovered();
     text::AttributedText t;
@@ -252,7 +252,7 @@ void ThreadsPage::Card::showComposer() {
     _composer->setThreadMode(true);
     _composer->setScheduleVisible(false);
     // In line with the avatars: the card's padding is the gutter the chat
-    // footer's margins otherwise give (msga's setFlushHorizontalMargins).
+    // footer's margins otherwise give (flush horizontal margins).
     _composer->style().padding(0, 8, 0, 0);
     if (_page._setupComposer)
         _page._setupComposer(*_composer);

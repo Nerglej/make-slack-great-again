@@ -197,7 +197,7 @@ void fields(IO &io, model::User &u) {
     io.str(u.statusEmoji);
     io.str(u.statusText);
     io.num(u.tzOffset);
-    // Presence too, as the old cache did: the dots show until the first poll.
+    // Presence too: the dots show until the first poll.
     io.flags({&u.hasTz, &u.active, &u.bot, &u.admin, &u.owner, &u.deleted, &u.stranger});
 }
 
@@ -306,7 +306,7 @@ void fields(IO &io, model::Message &m) {
         records(io, x.blocks);
         io.str(x.botId);
         records(io, x.buttons);
-        // A huddle_thread's summary (msga's "hu"); the name line follows
+        // A huddle_thread's summary ("hu"); the name line follows
         // the locale when it is drawn.
         users(io, x.huddle.attendees);
         io.num(x.huddle.startSec);
@@ -406,8 +406,7 @@ std::string WorkspaceCache::root(plat::App &app) {
 
 std::string WorkspaceCache::dirFor(plat::App &app, std::string_view key) {
     const std::string r = root(app);
-    // "slack:T0123" → "slack_T0123" (':' can't be in a Windows path), as
-    // the old WorkspaceCache named its directories.
+    // "slack:T0123" → "slack_T0123" (':' can't be in a Windows path).
     return r.empty() || key.empty() ? std::string() : file::join(r, safeName(key));
 }
 

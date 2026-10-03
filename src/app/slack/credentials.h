@@ -1,6 +1,6 @@
 // Slack's per-workspace credentials and their place in the neutral
-// WorkspaceStore record (msga's slack_auth.h). The auth blob keeps the old
-// app's JSON shape: {xoxp, refreshToken, expiresAt (a string), cookie?,
+// WorkspaceStore record. The auth blob keeps the JSON shape stored
+// workspaces already have: {xoxp, refreshToken, expiresAt (a string), cookie?,
 // workspaceUrl?}.
 #pragma once
 

@@ -27,7 +27,9 @@ struct Composed {
     // mirroring the whole message.
     std::string blocks;
 };
-Composed    compose(std::string_view composerText);
+// `alwaysBlocks`: the block even without a list (for a call that takes
+// rich_text only: Slack's drafts.create).
+Composed    compose(std::string_view composerText, bool alwaysBlocks = false);
 std::string convertOutgoing(std::string_view composerText); // compose().mrkdwn
 std::string convertInline(std::string_view line);           // one line's inline rewrites
 // Parsed mrkdwn → {"elements":[…]}: rich_text inline elements ("text" with

@@ -1,7 +1,6 @@
-// Composer text → mrkdwn + rich_text (mrkdwn::compose): ported from msga's
-// tests/test_markdown_compose.cpp, the list / fence / quote block cases and
-// richTextElements. Keys come out in the writer's order (type first), not
-// sorted as Qt's JSON wrote them.
+// Composer text → mrkdwn + rich_text (mrkdwn::compose): the list / fence /
+// quote block cases and richTextElements. Keys come out in the writer's order
+// (type first), not sorted.
 #include "app/mrkdwn/markdown.h"
 #include "base/json.h"
 #include "support/test.h"

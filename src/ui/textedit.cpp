@@ -117,7 +117,7 @@ const text::Layout *TextEdit::layoutFor(float w) {
         }
         if (f & kLinkMask) {
             st.color = color(C::Link);
-            if (_linkBg != C::None) // pills: mentions in msga's composer
+            if (_linkBg != C::None) // pills: mentions in the composer
                 st.background = color(_linkBg);
         }
         return st;
@@ -805,7 +805,7 @@ void TextEdit::shiftSquiggles(uint32_t pos, size_t removed, size_t inserted) {
     _squiggles = std::move(kept);
 }
 
-// A 1-px zigzag 2 px below each line's baseline (msga's SpellCheckUnderline).
+// A 1-px zigzag 2 px below each line's baseline (spell-check underline).
 void TextEdit::paintSquiggles(gfx::Painter &p, const text::Layout *l) const {
     const Color c = color(C::Danger);
     for (const Range &r : _squiggles) {
@@ -950,8 +950,8 @@ bool TextEdit::onEvent(Event &e) {
         if (e.button == plat::Button::Middle) {
 #if defined(__linux__) || defined(__FreeBSD__)
             // The primary selection, as plain text — or, to an owner that
-            // takes media (msga's composer: insertFromMimeData covered the
-            // middle click too), its files and pictures.
+            // takes media (the composer: the middle click attaches like a
+            // paste), its files and pictures.
             moveTo(hitOffset(e.pos), false);
             paste(true, plat::Selection::Primary);
             return true;
@@ -1059,7 +1059,7 @@ bool TextEdit::onEvent(Event &e) {
     const bool     word = (m & wordMod) != 0;
     const uint32_t a = std::min(_caret, _anchor), b = std::max(_caret, _anchor);
 #ifndef __APPLE__
-    // Alt+arrows edit nothing here (as in Qt's editors): leave them to the
+    // Alt+arrows edit nothing here: leave them to the
     // window's shortcuts (Alt+Left/Right = back/forward).
     if ((m & plat::ModAlt) &&
         (e.key == K::Left || e.key == K::Right || e.key == K::Up || e.key == K::Down))

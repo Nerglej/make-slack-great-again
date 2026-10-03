@@ -27,7 +27,7 @@ std::string num(int v, bool pad2) {
     return b;
 }
 
-// QCalendarWidget, the way msga's QDateEdit pops it up: a month header with
+// The calendar popup under a date field: a month header with
 // arrows, weekday names from the locale's first day of the week (Sunday for
 // en_US, Monday for most of Europe), a 6×7 day grid; days before
 // the minimum are dim; a click picks the day.
@@ -267,10 +267,10 @@ void DateTimeField::changed() {
 }
 
 std::vector<DateTimeField::Part> DateTimeField::parts() const {
-    // Qt display formats in the date language (base::setDateLanguage, so a
-    // language change shows at once): QDateEdit's locale short date (en_US
-    // "M/d/yy", sv "yyyy-MM-dd", ja "yyyy/MM/dd"), QDateTimeEdit's msga
-    // editFormat ("MMM d, yyyy" / "yyyy年M月d日" + the clock), the clock by
+    // Display formats in the date language (base::setDateLanguage, so a
+    // language change shows at once): a date field shows the locale's short
+    // date (en_US "M/d/yy", sv "yyyy-MM-dd", ja "yyyy/MM/dd"), a date-and-time
+    // field "MMM d, yyyy" / "yyyy年M月d日" + the clock, the clock by
     // the 12/24-hour setting (Japanese puts the day period first).
     const bool  ja    = std::string_view(base::dateLanguage()) == "ja";
     const char *clock = base::use24h() ? "HH:mm" : ja ? "APh:mm" : "h:mm AP";
@@ -357,7 +357,7 @@ void DateTimeField::setSection(int i) {
 }
 
 void DateTimeField::step(int dir) {
-    // QDateTimeEdit without wrapping: sections stop at their bounds.
+    // No wrapping: sections stop at their bounds.
     switch (sectionField(_sec)) {
     case F::Month:
     case F::MonthName:
@@ -395,7 +395,7 @@ void DateTimeField::styleChanged() {
 }
 
 SizeF DateTimeField::measureContent(float, float) {
-    return {240, kFieldH}; // msga: minimum width 240
+    return {240, kFieldH}; // minimum width 240
 }
 
 int DateTimeField::sectionAt(float x) {

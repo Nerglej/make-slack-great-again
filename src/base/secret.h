@@ -1,17 +1,17 @@
 // Where msga keeps credentials (workspace tokens, cookies, API keys): the
-// very entries the old Qt app used, so an upgrade finds them and a rollback
+// very entries earlier versions used, so an upgrade finds them and a rollback
 // still works.
 //
 //   macOS     Keychain generic-password items (Security.framework), account
 //             = key: msga's own (service "com.nisdos.msga"), copied once
-//             from the old app's ("app.msga.msga", still written for a
+//             from earlier versions' ("app.msga.msga", still written for a
 //             rollback; secret_mac.mm). If the keychain refuses a write
-//             (locked, prompt denied), the value goes to the old app's
+//             (locked, prompt denied), the value goes to earlier versions'
 //             plaintext fallback, its settings (old_settings.h), where a read
-//             finds it and moves it into the keychain later — the old
-//             SecretStore::readMigrating / writeScrubbingLegacy.
-//   elsewhere the old app's settings store (msga.conf / the registry), the
-//             old app's QSettings fallback: no OS keychain backend there.
+//             finds it and moves it into the keychain later, as earlier
+//             versions did.
+//   elsewhere the settings store of earlier versions (msga.conf / the
+//             registry), their fallback: no OS keychain backend there.
 //
 //   tests     (base::testProcess(), marked by the test harness) the settings
 //             store on every OS — a temporary INI file there — never a

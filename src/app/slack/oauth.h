@@ -1,4 +1,4 @@
-// Slack sign-in with app keys (msga's OAuthFlow): the browser opens Slack's
+// Slack sign-in with app keys: the browser opens Slack's
 // authorize page; Slack redirects to msga://oauth/callback?code=…&state=…,
 // which the OS hands back to the running app (plat OpenUrls / a second
 // launch's argv); the code (+ PKCE verifier) is exchanged for a user token.
@@ -32,7 +32,7 @@ public:
     // A msga:// URL from the OS. True if it was this flow's callback.
     bool handleCallback(std::string_view url);
 
-    // The user scopes msga asks for (the old app's list).
+    // The user scopes msga asks for.
     static const char *userScopes();
 
 private:

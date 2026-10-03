@@ -1,4 +1,4 @@
-// The emoji picker, msga's EmojiPickerPopup (reactions and the composer):
+// The emoji picker (reactions and the composer):
 // a 354×460 card with the category bar (Frequently used, Smileys & people …
 // Flags, Custom), "Search all emoji", a sectioned 9-column grid painted
 // virtually (only the rows on screen), and the "Skin tone" selector.
@@ -37,7 +37,7 @@ public:
     int                      activeTab() const;
     void                     setSkinTone(int tone); // 0 default, 2-6
     int                      skinTone() const;
-    // msga's emoji/recent and emoji/skinTone: the shell hands back what it
+    // The recent emoji and the skin tone: the shell hands back what it
     // saved, and is told whenever a pick or a tone changes either.
     using StateObserver = std::function<void(const std::vector<std::string> &recent, int tone)>;
     static void restoreState(std::vector<std::string> recent, int tone);

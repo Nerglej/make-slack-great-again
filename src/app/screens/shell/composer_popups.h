@@ -1,13 +1,12 @@
-// The composer's floating parts, as msga draws them:
-//  - PickList: the @-mention popup (MentionPopup) and the "#" / ":" / "/"
-//    completer (MentionCompleter) — non-modal lists above the trigger
+// The composer's floating parts:
+//  - PickList: the @-mention popup and the "#" / ":" / "/" completer —
+//    non-modal lists above the trigger
 //    character; the editor keeps the keyboard and forwards Up / Down / Tab /
 //    Enter / Escape to handleKey();
 //  - the link popup (URL, Display text, Cancel / Insert), the schedule-send
 //    popup (Send at, Cancel / Schedule), the GIF picker (GIPHY key setup,
 //    search), and the undo-send chip ("Message sent · Undo Ctrl+Z");
-//  - HistorySearch: Ctrl+R's earlier-prompt search (msga's
-//    HistorySearchPopup) on the composer box, over a dimmed message area.
+//  - HistorySearch: Ctrl+R's earlier-prompt search on the composer box, over a dimmed message area.
 #pragma once
 
 #include "screens/common/context.h"
@@ -27,7 +26,7 @@ public:
     // kept whole on the right ("Disabled in threads"). A channel row: hash or
     // lock and the bold name. A plain row: one line (emoji "👋  :wave:").
     struct Item {
-        // Command: msga's two-line slash-command row (icon, "/name usage",
+        // Command: a two-line slash-command row (icon, "/name usage",
         // "source · description").
         enum class Kind : uint8_t { Mention, Alias, Channel, Plain, Command } kind = Kind::Plain;
         std::string display; // what goes into the editor (mentions: "@Name")
@@ -103,14 +102,14 @@ struct GifHooks {
 };
 ui::Popup *showGifPicker(ui::Window &w, ui::RectF anchor, screens::Context &ctx, GifHooks hooks);
 
-// msga's HistorySearch::filter / matchRanges: the entries holding every word
+// The entries holding every word
 // of the query (case-insensitively; an empty query matches all), and where
 // the words are in a text (byte start, length), sorted and merged.
 std::vector<size_t> historyFilter(const std::vector<std::string> &entries, std::string_view query);
 std::vector<std::pair<size_t, size_t>>
 historyMatches(std::string_view text, std::string_view query);
 
-// Ctrl+R in the composer (msga's HistorySearchPopup): the matches on top,
+// Ctrl+R in the composer: the matches on top,
 // newest at the bottom next to the search field under them; ↑ / Ctrl+R go
 // to older ones, ↓ to newer, PageUp / PageDown five at a time, Enter or a
 // click takes one into the editor (not sent), Esc or a click on the dimmed

@@ -64,7 +64,7 @@ public:
     void setFont(Font f);
     // Links drawn as pills on this background (C::None: plain link colour).
     void setLinkBackground(C c);
-    // Paste only text/plain (msga's composer: setAcceptRichText(false)).
+    // Paste only text/plain, never rich text (the composer).
     void setPlainPaste(bool on) { _plainPaste = on; }
     // Password-style display: every byte shows as a bullet, no IME, no copy.
     void setMasked(bool on);
@@ -81,7 +81,7 @@ public:
     // Before a paste inserts text: the clipboard's MIME types (plat's
     // normalised names) and which clipboard (Primary: a middle click on
     // Linux). Return true when the owner takes the paste (files, a picture:
-    // msga's composer attaches them); it then reads what it needs itself
+    // the composer attaches them); it then reads what it needs itself
     // from that selection, and may still call pasteText() when that turns
     // out to be text.
     std::function<bool(const std::vector<std::string> &mimes, plat::Selection sel)> onPasteMedia;
@@ -126,7 +126,7 @@ public:
     const std::string &preedit() const { return _preedit; }
     RectF              caretRect() const; // local coordinates
     // The caret is on the first (top) / last visual line: Up / Down can't
-    // move it to another line (msga's prompt history steps from there).
+    // move it to another line (the composer's prompt history steps from there).
     bool               caretOnEdgeLine(bool top) const;
 
     SizeF       measureContent(float availW, float availH) override;

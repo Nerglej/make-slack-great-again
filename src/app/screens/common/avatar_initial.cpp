@@ -22,8 +22,8 @@ std::string avatarInitial(std::string_view name) {
 gfx::Color initialHue(std::string_view letter) {
     size_t         i  = 0;
     const uint32_t cp = letter.empty() ? '?' : utf8::decode(letter, i);
-    // QColor::fromHsl(h, 130, 100): the code point is a UTF-16 unit in Qt;
-    // for the BMP that is the same number.
+    // HSL(h, 130, 100) on 0-255 scales; the hue comes from the code point's
+    // low 16 bits (the same number for the BMP).
     const float    h  = float((cp & 0xffff) * 37 % 360) / 60;
     const float    s = 130.f / 255, l = 100.f / 255;
     const float    c = (1 - std::fabs(2 * l - 1)) * s;

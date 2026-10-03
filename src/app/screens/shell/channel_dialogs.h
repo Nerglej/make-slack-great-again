@@ -1,11 +1,11 @@
-// msga's channel dialogs, ported item for item:
+// The channel dialogs:
 //
-//   Find a channel   (src/ui/browse_channels_dialog) a search field ("Search
+//   Find a channel   a search field ("Search
 //                    for channels" / "Search for people"), "Create channel",
 //                    the close button; the Channels and People tabs. Channel
 //                    rows: hash or lock, the name, "N members · topic",
 //                    "Joined"; people: the picture, the name, "@handle".
-//   Create a channel (src/ui/create_channel_dialog) two steps: the name
+//   Create a channel two steps: the name
 //                    ("# e.g. plan-budget", Next), then Public / Private
 //                    (Back, Create).
 #pragma once
@@ -35,14 +35,14 @@ ui::Popup *showFindChannel(
 );
 
 // "Create a channel": done(name, isPrivate) after Create; the name is
-// msga's channelName(): trimmed, lower-cased, spaces as dashes.
+// normalised: trimmed, lower-cased, spaces as dashes.
 ui::Popup *showCreateChannel(
     ui::Window                                             &w,
     const std::string                                      &workspaceName,
     std::function<void(const std::string &name, bool priv)> done
 );
 
-// The rows, in msga's order (by lower-cased name): every channel the Store
+// The rows, ordered by lower-cased name: every channel the Store
 // knows (joined or not), and everyone but the deactivated and the Slack
 // Connect strangers.
 std::vector<BrowseList::Item> channelItems(const model::Store &store);

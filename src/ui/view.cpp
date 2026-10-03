@@ -212,7 +212,7 @@ void View::setEnabled(bool on) {
     if (flag(Disabled) == !on)
         return;
     setFlag(Disabled, !on);
-    // Qt's rule: a disabled widget loses keyboard focus, so typing can't reach it.
+    // A disabled widget loses keyboard focus, so typing can't reach it.
     if (!on && _window && _window->_focus && isAncestorOf(_window->_focus))
         _window->setFocus(nullptr);
     update();

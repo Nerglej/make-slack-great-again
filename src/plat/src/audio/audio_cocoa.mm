@@ -1,4 +1,4 @@
-// macOS audio (ARC), as the old Qt app did it:
+// macOS audio (ARC):
 //   playback  AVAudioPlayer: pause/seek/position built in; decodes MP3,
 //             AAC/M4A, WAV, AIFF, FLAC, CAF. Delegate callbacks land on the
 //             main thread (the App's).

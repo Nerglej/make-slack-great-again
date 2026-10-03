@@ -1,14 +1,14 @@
-// The composer (channel and thread share it), msga's ComposerWidget: in a
+// The composer (channel and thread share it): in a
 // rounded box the formatting toolbar, the "Editing message" banner, the
 // attachment chips, the editor and the bottom bar (attach, emoji, GIF,
 // mention … voice, send + schedule).
 //
-// Like msga's, the editor is plain text: the toolbar and the format keys
+// The editor is plain text: the toolbar and the format keys
 // type Slack's markers ("*bold*", "> quote", "```"), and a link is typed as
 // <url|label>. Mentions, channels and GIFs picked from the popups are pills
 // that show "@Name" / "#name" / "GIF · title" and send their raw token.
 //
-// Draft invariant (msga's composer draft stash): whatever is typed — text and
+// Draft invariant (the composer draft stash): whatever is typed — text and
 // attached files — is stashed per (conversation, thread) on EVERY path that
 // leaves it — switching conversation, switching or closing the thread,
 // destroying the composer — and restored when that target is shown again.
@@ -44,7 +44,7 @@ class VoiceStrip;
 // A link whose URL is a raw token ("<@U…>", "<#C…|name>", "<!here>") or
 // "@U…" / "#C…" is a pill and goes out as that token.
 std::string toMrkdwn(std::string_view text, const std::vector<ui::TextEdit::Run> &runs);
-// The ":" completion (msga's composer): the ~20 common emoji first, then the
+// The ":" completion: the ~20 common emoji first, then the
 // built-in table, then the workspace's custom emoji, each tier by match — a
 // prefix, then at a _ - + boundary (":bcd" finds ":abc_bcd:"), then anywhere.
 // At most 8.
@@ -53,7 +53,7 @@ struct EmojiCompletion {
     bool        custom = false; // inserted as :name: (no Unicode form)
 };
 std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::string_view query);
-// The other way, for editing a sent message (msga's setEditorMrkdwn): the
+// The other way, for editing a sent message: the
 // mrkdwn stays literal text, except <@U…>, <#C…|name>, <!here> and GIPHY
 // links, which become pills; &amp; &lt; &gt; are shown decoded.
 void loadMrkdwn(ui::TextEdit &edit, const model::Store &store, std::string_view mrkdwn);
@@ -74,7 +74,7 @@ public:
     bool                     has(Key k) const;
     void                     erase(Key k);
     size_t                   size() const { return _drafts.size(); }
-    // The workspace the keys belong to (msga's draftKey: team + conversation):
+    // The workspace the keys belong to (a draft is keyed by team + conversation):
     // every workspace keeps its own drafts, the same ConvRef in another
     // workspace is another conversation. dropScope forgets one's drafts
     // (signed out).
@@ -121,10 +121,10 @@ public:
     model::Ts      editing() const { return _editTs; }
     bool           editBannerShown() const;
 
-    // msga's thread mode (the thread panel's composer): "@channel" & co. are
+    // Thread mode (the thread panel's composer): "@channel" & co. are
     // listed but inserted as plain text, "Reply in thread…".
     void               setThreadMode(bool on) { _threadMode = on; }
-    // The schedule-send chevron beside Send (msga: Capabilities::scheduledSend
+    // The schedule-send chevron beside Send (Capabilities::scheduledSend
     // on the channel composer; the thread composer never hides it).
     void               setScheduleVisible(bool on);
     bool               scheduleVisible() const;
@@ -136,7 +136,7 @@ public:
     void               setSuggestion(std::string text);
     const std::string &suggestion() const { return _suggestion; }
     bool               acceptSuggestion();
-    // msga's applyComposerAccess: a conversation nobody can write to from
+    // A conversation nobody can write to from
     // here (Conversation::readOnly) locks the composer, its reason the
     // placeholder; "" unlocks it ("Message #design" again).
     void               setLockReason(std::string reason);
@@ -145,7 +145,7 @@ public:
     void               refreshPlaceholder();
 
     // ── Agent sessions ──────────────────────────────────────────────────────
-    // msga's prompt history source (newest first): ↑ / ↓ from an empty
+    // The prompt history source (newest first): ↑ / ↓ from an empty
     // editor step through it, Ctrl+R searches it. Unset: no history.
     std::function<std::vector<std::string>()> historySource;
     HistorySearch                            *historySearch() const { return _historySearch; }
@@ -153,8 +153,8 @@ public:
     // Capabilities::slashCommands): asked instead of sending; others go out
     // as messages (Claude Code's commandsAreMessages).
     std::function<void(const std::string &name, const std::string &args)> onCommand;
-    // What the history search dims above the box (msga's parentWidget():
-    // the message area; default the composer's parent).
+    // What the history search dims above the box (the message
+    // area; default the composer's parent).
     void setPopupArea(ui::View *v) { _popupArea = v; }
 
     // ── Attachments ─────────────────────────────────────────────────────────
@@ -172,8 +172,7 @@ public:
     void      openLinkPopup();
     void      openSchedule();
     PickList *pickList() const { return _pick; } // the open @ / # / : list
-    // Re-reads the trigger before the caret (msga's checkMentionPopup and
-    // completer): opens, filters or closes the pick list.
+    // Re-reads the trigger before the caret: opens, filters or closes the pick list.
     void      updatePickList();
     // Tests: user labels folded into the @ filter's cache so far (each one
     // once, again only when it changes), and the pick list recomputes (an
@@ -196,7 +195,7 @@ public:
     std::function<void(const std::string &)> setAttachDir;
 
     // ── Voice input ─────────────────────────────────────────────────────────
-    // msga's dictation (llm::VoiceInput): the mic beside Send — shown while a
+    // Dictation (llm::VoiceInput): the mic beside Send — shown while a
     // provider can do speech-to-text — records, the strip above the bottom
     // bar shows the level, time and progress, and the text lands at the
     // caret. The voice shortcut toggles it (held past 400 ms: push-to-talk),
@@ -219,7 +218,7 @@ public:
     bool onEvent(ui::Event &e) override; // file drops
     void layout() override;
     void visibilityChanged(bool on) override; // hidden (the canvas tab): no undo offer
-    // msga's hideEvent: the thread panel closed, another page or workspace
+    // Hidden by an ancestor: the thread panel closed, another page or workspace
     // shown — the same as being hidden itself.
     void hiddenByAncestor() override { visibilityChanged(false); }
     // The tooltips that name a key which can change (the send key).
@@ -230,8 +229,8 @@ public:
     std::function<bool()> broadcastWanted;
     // Edit mode entered or left, attachments went from none to some or back.
     std::function<void()> onCompositionChanged;
-    // Set: Enter / Send call it instead of sending (msga's sendRequested,
-    // for the forward dialog's composer).
+    // Set: Enter / Send call it instead of sending (the
+    // forward dialog's composer).
     std::function<bool()> onSendRequest;
 
 private:
@@ -324,7 +323,7 @@ private:
     std::vector<std::string> _files;
     std::shared_ptr<int>     _alive      = std::make_shared<int>(0); // guards dialog callbacks
     double                   _lastTyping = -1e9;
-    // msga's undo-send offer (the pill above the box, 5 s): the sent message,
+    // The undo-send offer (the pill above the box, 5 s): the sent message,
     // what the editor held, the pill, its timer.
     model::Ts                _undoTs     = 0;
     std::string              _undoHtml;

@@ -1,14 +1,14 @@
-// msga's shell dialogs, ported item for item:
+// The shell's dialogs:
 //
-//   Forward      (src/ui/forward_dialog) "Forward this message" / "Forward
-//                this file": a channel/person picker (msga's
-//                ConvSelectorWidget), the composer ("Add a message, if you'd
-//                like."), the message preview, Copy Link / Cancel / Forward.
-//                Re-posts the text (and files) as my own message in the pick.
-//   Workspace icon (src/ui/workspace_icon_dialog) the rail bubble preview,
-//                Choose image… / Use default, a hint, Cancel / Save; the icon
-//                lives in the data folder and only this app shows it.
-//   Rename       (src/ui/rename_conversation_dialog) "Name conversation" /
+//   Forward      "Forward this message" / "Forward this file": a
+//                channel/person picker, the composer ("Add a message, if
+//                you'd like."), the message preview, Copy Link / Cancel /
+//                Forward. Re-posts the text (and files) as my own message in
+//                the pick.
+//   Workspace icon the rail bubble preview, Choose image… / Use default, a
+//                hint, Cancel / Save; the icon lives in the data folder and
+//                only this app shows it.
+//   Rename       "Name conversation" /
 //                "Rename session": a Name field (80 characters, the derived
 //                name as its placeholder), a hint, Cancel / Save. Sets the
 //                conversation's local name ("" = back to the derived one).
@@ -25,18 +25,17 @@
 
 namespace shell {
 
-// A workspace a message may be forwarded into (msga's ForwardDialog::
-// Workspace): a running one's Store and Backend.
+// A workspace a message may be forwarded into: a running one's Store and
+// Backend.
 struct ForwardWorkspace {
     std::string           key, name;
     model::Store         *store   = nullptr;
     model::Backend       *backend = nullptr;
     std::function<bool()> alive; // still running (the send may come after a download)
 };
-// An agent workspace's teammate picked as the target (msga's
-// prefillTeammate): workspace `key` ("" = the open one) shows the teammate's
-// page with `text` (mrkdwn) and the files in its composer, left to the user
-// to pick a folder and send.
+// An agent workspace's teammate picked as the target: workspace `key` ("" = the open one) shows the
+// teammate's page with `text` (mrkdwn) and the files in its composer, left to the user to pick a
+// folder and send.
 using PrefillTeammate = std::function<void(
     const std::string       &key,
     const std::string       &role,
@@ -59,7 +58,7 @@ ui::Popup *showForwardDialog(
     std::vector<ForwardWorkspace>            workspaces      = {},
     PrefillTeammate                          prefillTeammate = {}
 );
-// msga's forwardedText for another workspace (PortableMarkdown): `mrkdwn`
+// The forwarded text for another workspace (portable mrkdwn): `mrkdwn`
 // from `source` with its workspace-local tokens turned into the words they
 // read as there — <@U…> "@Name", <#C…> "#name", <!subteam^…> "@handle",
 // <!here>/<!channel>/<!everyone> plain "@here"… (nobody is pinged), dates
@@ -87,7 +86,7 @@ ui::Popup *showWorkspaceIconDialog(
 
 ui::Popup *showRenameDialog(screens::Context &ctx, ui::Window &w, model::ConvRef conv);
 
-// Settings → Tray icon (msga's TrayIconDialog on its IconPickerDialog): the
+// Settings → Tray icon: the
 // tray-like preview, Choose image… / Use default, the hint, "Convert to
 // monochrome", Cancel / Save. On Save the picture is copied into the data
 // folder: done(path, monochrome), path "" = back to the built-in icon.
@@ -99,7 +98,7 @@ ui::Popup *showTrayIconDialog(
     bool               monochrome,
     TrayIconDone       done
 );
-// The tray picture (msga's CustomTrayIcon): bytes → image (SVG rendered at
+// The tray picture: bytes → image (SVG rendered at
 // the stored size), then fitted into a kTrayIconSize square, aspect kept and
 // centred, and as a white silhouette with `monochrome`.
 constexpr int kTrayIconSize = 128;

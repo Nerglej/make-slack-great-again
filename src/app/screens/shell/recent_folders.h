@@ -1,7 +1,6 @@
 // Recently used folders, most recent first — the quick picks for where a new
-// Claude Code session starts (the teammate page's folder menu), msga's
-// RecentFolders. One list for every teammate, kept in Settings
-// (claudeRecentDirs); the pure parts (bumped / rank) are what the tests pin.
+// Claude Code session starts (the teammate page's folder menu). One list for every teammate, kept
+// in Settings (claudeRecentDirs); the pure parts (bumped / rank) are what the tests pin.
 #pragma once
 
 #include "screens/shell/settings.h"
@@ -55,8 +54,7 @@ std::string teammateFolder(const Settings &s, const std::string &role, const std
 // The folder picked for a teammate: its default from now on, and first among
 // the recent ones.
 void        pickTeammateFolder(Settings &s, const std::string &role, const std::string &dir);
-// A session actually started in `dir`: first among the recent ones
-// (msga's bumpRecentAgentFolder).
+// A session actually started in `dir`: first among the recent ones.
 void        bump(Settings &s, const std::string &dir);
 
 } // namespace shell::recent_folders

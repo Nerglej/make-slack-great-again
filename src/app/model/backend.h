@@ -34,7 +34,7 @@ public:
     // A thread's replies (the root stays in the conversation's list).
     virtual void loadThread(ConvRef conv, Ts root, Done done)    = 0;
     // What the user is looking at (kNoConv: nothing; thread 0: the channel).
-    // Poll-driven backends refresh it more often (msga's foreground poll).
+    // Poll-driven backends refresh it more often (the foreground poll).
     virtual void setActiveConversation(ConvRef conv, Ts thread) { (void)conv, (void)thread; }
 
     // Posts mrkdwn. A pending copy appears in the Store at once; it turns
@@ -66,7 +66,7 @@ public:
     virtual void openDm(UserRef user, std::function<void(ConvRef)> done)     = 0;
     virtual void setPinned(ConvRef conv, Ts ts, bool pinned)                 = 0;
     virtual void setSaved(ConvRef conv, Ts ts, bool saved)                   = 0;
-    // Deletes a file from a message (msga's deleteFile; own or as an admin).
+    // Deletes a file from a message (own or as an admin).
     virtual void deleteFile(ConvRef conv, Ts ts, const std::string &fileId)  = 0;
     // "Remove preview" on an own message (Capabilities::removePreview):
     // strips attachment `attachmentId` (Slack's positional id, 1-based) for
@@ -78,7 +78,7 @@ public:
     }
     // A file's bytes (a File's source(): an http(s) URL of this service) to
     // `toPath`, with the service's credentials; the write happens off the UI
-    // thread (msga's downloadFile). Local paths never come here: the
+    // thread. Local paths never come here: the
     // screens copy those themselves (screens/common/downloads.h). Default,
     // for backends without remote files: fails at once.
     virtual void downloadFile(const std::string &url, std::string toPath, Done done) {
@@ -111,7 +111,7 @@ public:
     virtual void stopSession(ConvRef) {}
 
     // ── Agent sessions, the rest (Claude Code; defaults: nothing of it) ────
-    // The team a session can be started with (msga's AgentRole): the
+    // The team a session can be started with: the
     // Generalist, the specialists, the teammates the user added.
     struct AgentRole {
         std::string id, name, description;
@@ -229,7 +229,7 @@ public:
     virtual void userTyping(ConvRef conv, Ts threadTs) = 0;
 
     // What the service can do: the UI shows a control only where it works
-    // (msga's Capabilities, the fields its shell gates on).
+    // (the fields the shell gates on).
     struct Capabilities {
         bool huddles          = false; // header huddle button, sidebar huddle pills
         bool replyBroadcast   = false; // "Also send to channel" under the thread composer
@@ -250,19 +250,19 @@ public:
     };
     virtual Capabilities capabilities() const { return {}; }
 
-    // How I look to others (msga's SelfPresence): phantom away = away only
+    // How I look to others: phantom away = away only
     // because no official client holds a connection.
     struct SelfPresence {
         bool loaded = false, active = false, online = false, manualAway = false;
         bool phantomAway() const { return loaded && !active && !online && !manualAway; }
     };
     virtual SelfPresence selfPresence() const { return {}; }
-    // Someone's presence asked for now (msga's requestPresence: the DM just
+    // Someone's presence asked for now (the DM just
     // opened), not on the poll's next round; the Store follows.
     virtual void         requestPresence(UserRef u) { (void)u; }
     // away = true forces "away" (the footer's toggle); false = automatic.
     virtual void         setPresence(bool away, Done done) { (void)away, (void)done; }
-    // The presence link (msga's PresenceMode): a connection the app holds so
+    // The presence link: a connection the app holds so
     // the service counts it as a running client — Slack shows you active
     // only while one is up. Settings → System → Presence, in its order.
     enum class PresenceMode : uint8_t {
@@ -368,14 +368,14 @@ public:
     // reply); "" = none.
     virtual std::string promptSuggestion(ConvRef) const { return {}; }
 
-    // ── Channel canvases (msga's CanvasPage) ────────────────────────────────
+    // ── Channel canvases ────────────────────────────────────────────────────
     // A conversation's canvas is Conversation::canvasId / canvasTitle; these
     // calls keep both up to date in the Store. Slack has no read API for a
     // canvas: content arrives as the HTML its file serves (blocks carrying
     // section ids), and is written back as canvas markdown (real markdown,
     // not mrkdwn).
     // canvases.edit's operations: the title, the whole document, or one
-    // section (msga's section diff; ids from the HTML's blocks).
+    // section (a section diff; ids from the HTML's blocks).
     struct CanvasChange {
         enum class Op : uint8_t {
             Rename,
@@ -442,7 +442,7 @@ public:
 
     // One message by ts — top-level, a thread root or a reply — as a copy, for
     // what the loaded history may not hold (the Saved messages page's
-    // previews; msga's loadMessageAt). ok = false: gone, or not readable.
+    // previews). ok = false: gone, or not readable.
     // Default, for backends whose Store holds everything: the Store's copy,
     // answered at once.
     using MessageDone = std::function<void(bool ok, Message m)>;
@@ -461,8 +461,8 @@ public:
     // Messages containing `query` (case-insensitive), newest first.
     virtual void search(std::string query, std::function<void(std::vector<SearchHit>)> done) = 0;
 
-    // The sidebar's "Threads" page (Capabilities::threadsView; msga's
-    // loadThreadsView): the threads I follow, newest activity first. Copies,
+    // The sidebar's "Threads" page (Capabilities::threadsView):
+    // the threads I follow, newest activity first. Copies,
     // not Store data: a root may be far older than the loaded history.
     struct FollowedThread {
         ConvRef              conv = kNoConv;
@@ -486,22 +486,22 @@ public:
     // My read cursor in a followed thread moves to ts (best effort).
     virtual void markThreadRead(ConvRef conv, Ts root, Ts ts) { (void)conv, (void)root, (void)ts; }
 
-    // A thread I follow (started, replied in, subscribed: msga's
-    // isThreadFollowed) — its replies are important (notify, badge).
+    // A thread I follow (started, replied in, subscribed)
+    // — its replies are important (notify, badge).
     virtual bool threadFollowed(ConvRef conv, Ts root) const {
         (void)conv, (void)root;
         return false;
     }
-    // A user known only by id (a placeholder): looked up (msga's
-    // fetchUserIfNeeded); the Store fills the record in when it answers.
+    // A user known only by id (a placeholder): looked up;
+    // the Store fills the record in when it answers.
     virtual void resolveUser(UserRef u) { (void)u; }
 
-    // A channel a message mentions that the roster doesn't list (msga's
-    // fetchChannelIfNeeded): its name lands in Store::setChannelName, once.
+    // A channel a message mentions that the roster doesn't list:
+    // its name lands in Store::setChannelName, once.
     virtual void resolveChannel(const std::string &id) { (void)id; }
 
-    // The account's own theme in the service (Capabilities::sidebarTheme;
-    // msga's SidebarThemePrefs): Slack's redesign theme JSON and/or the
+    // The account's own theme in the service (Capabilities::sidebarTheme):
+    // Slack's redesign theme JSON and/or the
     // legacy comma-separated sidebar colours ("" each when absent).
     struct SidebarTheme {
         std::string iaTheme, legacyValues;
@@ -518,10 +518,10 @@ public:
     Store &store() { return _store; }
 
     // Something the user should hear about that no call is waiting for (a
-    // queued message Claude Code never took): the shell's error banner
-    // (msga's errors()). Set by whoever puts the backend on screen.
+    // queued message Claude Code never took): the shell's error banner.
+    // Set by whoever puts the backend on screen.
     std::function<void(const std::string &message)> onError;
-    // A message reminder went off (msga's EvReminderDue): its saved item
+    // A message reminder went off: its saved item
     // (Store::findSaved) carries the preview. Set like onError.
     std::function<void(ConvRef conv, Ts ts)>        onReminderDue;
 

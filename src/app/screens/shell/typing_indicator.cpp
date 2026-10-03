@@ -92,7 +92,7 @@ void TypingIndicator::refresh() {
                 thinking &= t.sinceMs > 0;
             }
     thinking = thinking && !who.empty();
-    // msga's purge timer ticks the "thinking" clocks every second.
+    // A timer ticks the "thinking" clocks every second.
     if (thinking && !_tick)
         _tick = _ctx.app.addTimer(1000, true, [this] { refresh(); });
     else if (!thinking && _tick) {

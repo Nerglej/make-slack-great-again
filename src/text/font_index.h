@@ -1,6 +1,6 @@
 // The installed-font index: which faces exist, their family/weight/italic/
 // mono flags and cmap coverage. Built by reading sfnt tables directly (no
-// fontconfig), cached in the old app's cache dir (msga/MSGA/fonts.idx) and
+// fontconfig), cached in the app's cache dir (msga/MSGA/fonts.idx) and
 // revalidated by directory mtimes. Internal to text/.
 #pragma once
 

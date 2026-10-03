@@ -48,7 +48,7 @@ std::string configDir(plat::App &app) {
 
 std::string dataDir(plat::App &app) {
 #ifdef _WIN32
-    // Qt's AppDataLocation is the roaming profile; plat's Data is the local one.
+    // The data directory is in the roaming profile; plat's Data is the local one.
     return under(app.standardDir(plat::StandardDir::Config), "msga/MSGA");
 #else
     return under(app.standardDir(plat::StandardDir::Data), "msga/MSGA");
@@ -65,8 +65,8 @@ std::string cacheDir(plat::App &app) {
 
 namespace {
 
-// QDataStream << QString: a big-endian byte length, then UTF-16BE.
-std::string qtString(const std::string &s) {
+// A string as the hand-off carries it: a big-endian byte length, then UTF-16BE.
+std::string utf16BeString(const std::string &s) {
     std::string out(4, '\0');
     for (size_t i = 0; i < s.size();) {
         uint32_t   cp   = utf8::decode(s, i);
@@ -88,7 +88,7 @@ std::string qtString(const std::string &s) {
     return out;
 }
 
-// QDir::home().dirName().
+// The home folder's name (its last path component).
 std::string homeName() {
 #ifdef _WIN32
     std::string home = base::env("USERPROFILE");
@@ -102,9 +102,9 @@ std::string homeName() {
 
 } // namespace
 
-bool handOffToOldApp(const std::string &url) {
+bool handOffToEarlierVersion(const std::string &url) {
     const std::string name = "msga-" + homeName();
-    const std::string data = url.empty() ? std::string() : qtString(url);
+    const std::string data = url.empty() ? std::string() : utf16BeString(url);
 #ifdef _WIN32
     const std::string pipe = "\\\\.\\pipe\\" + name;
     const int         n    = MultiByteToWideChar(CP_UTF8, 0, pipe.c_str(), -1, nullptr, 0);
@@ -120,7 +120,7 @@ bool handOffToOldApp(const std::string &url) {
     CloseHandle(h);
     return true;
 #else
-    // QLocalServer's socket: QDir::tempPath() + "/" + name.
+    // The socket: <TMPDIR, else /tmp>/<name>.
     std::string tmp = base::env("TMPDIR");
     while (tmp.size() > 1 && tmp.back() == '/')
         tmp.pop_back();
@@ -138,7 +138,7 @@ bool handOffToOldApp(const std::string &url) {
     const int one = 1; // macOS: no MSG_NOSIGNAL
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
-    // A stale socket file refuses at once: the old app is not running.
+    // A stale socket file refuses at once: no earlier version is running.
     if (connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof addr) != 0) {
         close(fd);
         return false;
@@ -153,8 +153,8 @@ bool handOffToOldApp(const std::string &url) {
             break;
         put += size_t(w);
     }
-    // Give it a moment to read before the connection goes (QLocalSocket
-    // reads on readyRead; a hang-up first could lose the URL).
+    // Give it a moment to read before the connection goes (it reads when
+    // data arrives; a hang-up first could lose the URL).
     pollfd p{fd, POLLIN, 0};
     poll(&p, 1, 300);
     close(fd);

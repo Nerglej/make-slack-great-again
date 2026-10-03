@@ -306,7 +306,7 @@ void CanvasPage::flushPendingSave() {
                 if (fileId.empty()) {
                     _saving    = false;
                     _bodyDirty = true;
-                    // msga's Session fired the banner on every failure.
+                    // Every failure shows the banner.
                     if (onError)
                         onError(arg(tr("Could not create canvas: %1"), error));
                     // It had a canvas we didn't know about (a free team's
@@ -345,7 +345,7 @@ void CanvasPage::flushPendingSave() {
     std::vector<Change> changes;
     if (_titleDirty && !title.empty())
         changes.push_back({Change::Op::Rename, title});
-    // msga's section diff against the last served HTML: only the sections
+    // A section diff against the last served HTML: only the sections
     // that changed are written, so concurrent edits elsewhere survive. When
     // it can't be expressed safely, the whole document is replaced.
     if (_bodyDirty) {
@@ -378,7 +378,7 @@ void CanvasPage::flushPendingSave() {
                 loadContent();
                 return;
             }
-            // msga's Session fired the banner on every failure.
+            // Every failure shows the banner.
             if (onError)
                 onError(arg(tr("Canvas edit failed: %1"), error));
             if (error.find("canvas_not_found") != std::string::npos) {

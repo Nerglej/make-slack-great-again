@@ -25,7 +25,7 @@ if ! command -v gcovr >/dev/null 2>&1; then
 fi
 
 # Only configure when not already a coverage Ninja build; wipe anything else
-# (a stale dir, another generator, or the old Qt app's build-cov).
+# (a stale dir, another generator, or another project's build-cov).
 if [[ ! -f "${BUILD_DIR}/build.ninja" ]] ||
     ! grep -q '^MSGA_COVERAGE:BOOL=ON$' "${BUILD_DIR}/CMakeCache.txt" 2>/dev/null ||
     ! grep -q "^CMAKE_HOME_DIRECTORY:INTERNAL=${PROJECT_ROOT}\$" "${BUILD_DIR}/CMakeCache.txt"; then

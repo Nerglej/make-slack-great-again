@@ -1,5 +1,5 @@
-// old_settings.h: Qt's INI and registry encodings against Qt's own output
-// (old_settings_fixture.h), and the Linux store in the test's temporary
+// old_settings.h: the INI and registry encodings against a real settings
+// file of an earlier version (old_settings_fixture.h), and the Linux store in the test's temporary
 // XDG_CONFIG_HOME.
 #include "base/file.h"
 #include "base/old_settings.h"
@@ -32,7 +32,7 @@ std::string utf16(std::u16string_view s, bool nul) {
 
 } // namespace
 
-TEST("old settings: Qt's INI as Qt reads it") {
+TEST("old settings: the INI file as earlier versions read it") {
     const oldsettings::Map m = oldsettings::parseIni(oldsettings_fixture::kIni);
     // [General] keys have no section prefix.
     CHECK_STR(at(m, "active"), "slack:T0123");
@@ -72,7 +72,7 @@ TEST("old settings: Qt's INI as Qt reads it") {
     const auto gl = m.at("voice/glossary").toList();
     REQUIRE(gl.size() == 2);
     CHECK_STR(gl[1], "Kubernetes, k8s");
-    // @ByteArray with \x and \0 escapes: QWidget::saveGeometry's bytes.
+    // @ByteArray with \x and \0 escapes: saved window geometry bytes.
     const Value &g = m.at("window/geometry");
     CHECK(g.kind == Value::Kind::Bytes);
     REQUIRE(g.s.size() == 66);
@@ -82,7 +82,7 @@ TEST("old settings: Qt's INI as Qt reads it") {
     CHECK(m.find("nope") == m.end());
 }
 
-TEST("old settings: one key rewritten, everything else kept, Qt-readable") {
+TEST("old settings: one key rewritten, everything else kept, still readable") {
     const std::string text = oldsettings_fixture::kIni;
     // Replace in place.
     const std::string v1   = R"({"xoxp":"xoxc-NEW","cookie":"a;b, c"})";
@@ -120,12 +120,12 @@ TEST("old settings: one key rewritten, everything else kept, Qt-readable") {
     CHECK_STR(oldsettings::setIniValue("", "x", &v4), "[General]\nx=g\n");
 }
 
-TEST("old settings: registry values as QSettings reads them") {
+TEST("old settings: registry values as earlier versions read them") {
     using oldsettings::decodeRegistry;
-    // REG_SZ, a QString.
+    // REG_SZ, a string.
     CHECK_STR(decodeRegistry(1, utf16(u"xoxc-é", true)).text(), "xoxc-\xC3\xA9");
     CHECK_STR(decodeRegistry(1, utf16(u"@@x", true)).text(), "@x");
-    // REG_MULTI_SZ, a QStringList.
+    // REG_MULTI_SZ, a string list.
     const Value l = decodeRegistry(7, utf16(std::u16string(u"a\0bc\0\0", 6), false));
     CHECK((l.kind == Value::Kind::List && l.list == std::vector<std::string>{"a", "bc"}));
     // REG_DWORD / REG_QWORD.
@@ -136,7 +136,7 @@ TEST("old settings: registry values as QSettings reads them") {
     CHECK(b.kind == Value::Kind::Bytes && b.s == std::string("\x01\0\xd9", 3));
 }
 
-TEST("old settings: QVariant conversions") {
+TEST("old settings: value conversions") {
     CHECK(oldsettings::decodeString("true").toBool(false));
     CHECK_FALSE(oldsettings::decodeString("false").toBool(true));
     CHECK_FALSE(oldsettings::decodeString("0").toBool(true));
@@ -169,7 +169,7 @@ TEST("old settings: the Linux store is msga.conf under XDG_CONFIG_HOME") {
     REQUIRE(oldsettings::remove("workspace/slack:T1/auth"));
     CHECK(oldsettings::get("workspace/slack:T1/auth").kind == Value::Kind::None);
     CHECK_STR(oldsettings::get("workspace/slack:T1/displayName").text(), "One");
-    // The bare QSettings() store is a separate file.
+    // The store named after the application alone is a separate file.
     CHECK_STR(oldsettings::iniPath("MSGA"), file::join(file::dirName(path), "MSGA.conf"));
     file::remove(path);
 }

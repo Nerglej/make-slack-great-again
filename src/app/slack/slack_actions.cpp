@@ -12,7 +12,9 @@
 #include "app/model/jobs.h"
 #include "app/model/timers.h"
 #include "app/slack/slack_backend.h"
+#include "app/mrkdwn/markdown.h"
 #include "app/slack/slack_json.h"
+#include "base/crypto.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/log.h"
@@ -33,6 +35,26 @@ namespace {
 constexpr int kDeleteRetries   = 6; // msga's kMaxDeleteRetries
 constexpr int kUploadScans     = 6; // msga's kMaxUploadReconcileRetries
 constexpr int kUploadTimeoutMs = 300000;
+
+// A lowercase UUIDv4, the web client's client_msg_id (drafts.create
+// requires one). "" if the OS's random source refused (the call then fails
+// with Slack's own error).
+std::string clientMsgId() {
+    uint8_t b[16] = {};
+    if (!crypto::randomBytes(b, sizeof b))
+        return {};
+    b[6]                     = uint8_t((b[6] & 0x0F) | 0x40); // version 4
+    b[8]                     = uint8_t((b[8] & 0x3F) | 0x80); // variant 10
+    static const char kHex[] = "0123456789abcdef";
+    std::string       s;
+    for (int i = 0; i < 16; ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            s += '-';
+        s += kHex[b[i] >> 4];
+        s += kHex[b[i] & 15];
+    }
+    return s;
+}
 
 // The send/delete/upload retry backoff (msga's _sendRetryDelayMs).
 int backoff(int attempt) {
@@ -126,9 +148,11 @@ std::string friendlySendError(const std::string &e) {
         {"channel_not_found", N_("This conversation no longer exists.")},
         {"restricted_action", N_("You don't have permission to post here.")},
         {"no_permission", N_("You don't have permission to post here.")},
-        // chat.scheduleMessage's own
+        // chat.scheduleMessage's and drafts.create's own
         {"time_in_past", N_("That time has already passed.")},
         {"time_too_far", N_("Messages can be scheduled up to 120 days ahead.")},
+        {"attached_draft_exists",
+         N_("Slack has an unsent draft in this conversation. Send or clear it first.")},
     };
     for (const auto &t : kText)
         if (e == t.code)
@@ -1162,20 +1186,41 @@ void SlackBackend::scheduleBlocks(
     ConvRef conv, std::string text, std::string blocks, Ts thread, int64_t postAt, Done done
 ) {
     std::string form;
-    addParam(form, "channel", convId(conv));
-    addParam(form, "text", text);
-    if (!blocks.empty())
+    const char *method = "chat.scheduleMessage";
+    if (_creds.sessionAuth()) {
+        // chat.scheduleMessage refuses session tokens (not_allowed_token_type).
+        // The web client schedules a draft with a date instead; its body is
+        // rich_text only.
+        method = "drafts.create";
+        if (blocks.empty())
+            blocks = mrkdwn::compose(text, true).blocks;
+        json::Writer dest;
+        dest.beginArray().beginObject().key("channel_id").value(convId(conv));
+        if (thread)
+            dest.key("thread_ts").value(model::formatTs(thread));
+        dest.endObject().endArray();
         addParam(form, "blocks", blocks);
-    if (thread)
-        addParam(form, "thread_ts", model::formatTs(thread));
-    addParam(form, "post_at", str::number(postAt));
-    api("chat.scheduleMessage",
+        addParam(form, "destinations", dest.take());
+        addParam(form, "client_msg_id", clientMsgId());
+        addParam(form, "file_ids", "[]");
+        addParam(form, "is_from_composer", "true");
+        addParam(form, "date_scheduled", str::number(postAt));
+    } else {
+        addParam(form, "channel", convId(conv));
+        addParam(form, "text", text);
+        if (!blocks.empty())
+            addParam(form, "blocks", blocks);
+        if (thread)
+            addParam(form, "thread_ts", model::formatTs(thread));
+        addParam(form, "post_at", str::number(postAt));
+    }
+    api(method,
         std::move(form),
-        [this, done = std::move(done)](const json::Document &, const std::string &err) {
+        [this, method, done = std::move(done)](const json::Document &, const std::string &err) {
             if (err == "cancelled")
                 return;
             if (!err.empty()) {
-                LOG_WARN("slack", "chat.scheduleMessage: %s", err.c_str());
+                LOG_WARN("slack", "%s: %s", method, err.c_str());
                 // Nothing on screen stands for it: the banner says why.
                 if (onError)
                     onError(

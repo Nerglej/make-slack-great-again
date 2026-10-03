@@ -1,6 +1,6 @@
 // Linux: the vendored, trimmed Hunspell (src/third_party/hunspell) over the
 // dictionaries the system's packages installed. The words someone adds live
-// in the old app's list (one per line, <dataDir>/spelling/words.txt,
+// in msga's own list (one per line, <dataDir>/spelling/words.txt,
 // app/identity.h) and are added to every dictionary on load.
 #include "app/spell/codepages.h"
 #include "app/spell/spell.h"

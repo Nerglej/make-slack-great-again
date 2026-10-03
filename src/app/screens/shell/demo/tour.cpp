@@ -66,7 +66,7 @@ Tour::~Tour() = default;
 
 void Tour::start() {
     if (!_ctx.app.platform().testHooks()) {
-        // msga's tour moved the real pointer too: nothing to drive without it.
+        // The tour moves the real pointer: nothing to drive without it.
         std::fprintf(stderr, "tour: this platform has no input injection (X11 needs XTest)\n");
         finish();
         return;
@@ -265,7 +265,7 @@ View *Tour::messageView(const TourStep &step, Done retry, Ts *ts, bool *retrying
         return v;
     if (!_jumped) {
         _jumped = true;
-        _sh.jumpToMessage(c, *ts, 0); // msga's smooth jump, then the step again
+        _sh.jumpToMessage(c, *ts, 0); // a smooth jump, then the step again
         after(900, std::move(retry));
         *retrying = true;
         return nullptr;
@@ -290,7 +290,7 @@ void Tour::run(const TourStep &step, Done done) {
             done();
             return;
         }
-        // Its sidebar row; one that isn't listed opens the msga way anyway.
+        // Its sidebar row; one that isn't listed opens directly.
         if (View *row = findText(st.displayName(c), &_sh.sidebar())) {
             click(centerOf(row), [this, c, done] {
                 if (_sh.current() != c)
@@ -399,7 +399,7 @@ void Tour::run(const TourStep &step, Done done) {
                             done();
                             return;
                         }
-                        // msga's genuine path: "Move to thread…" → filter → Move.
+                        // The genuine path: "Move to thread…" → filter → Move.
                         TourStep pick;
                         pick.kind = K::MenuPick;
                         pick.arg  = "Move to thread";

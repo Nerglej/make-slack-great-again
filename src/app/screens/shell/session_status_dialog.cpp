@@ -21,9 +21,9 @@ public:
 
 Dialog *
 SessionStatusDialog::show(Window &w, const std::vector<std::pair<std::string, std::string>> &rows) {
-    // msga's cardWidth: as wide as the window allows, 480…760.
+    // As wide as the window allows, 480…760.
     auto  d    = std::make_unique<Dialog>(tr("Session status"), 760.f);
-    // msga's QGridLayout: spacing.xl between the columns, spacing.sm between
+    // A grid: spacing.xl between the columns, spacing.sm between
     // the rows, the values' column stretching.
     auto *grid = d->content()->add<View>();
     grid->style().row().spacing(16);

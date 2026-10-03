@@ -28,7 +28,7 @@ std::string      asciiLower(std::string_view s);
 std::string      asciiUpper(std::string_view s);
 // ASCII case-insensitive equality (header names, tokens).
 bool             iequals(std::string_view a, std::string_view b);
-// QString::simplified: every run of Unicode whitespace (utf8::isSpace) becomes
+// Every run of Unicode whitespace (utf8::isSpace) becomes
 // one space, none at the ends.
 std::string      simplified(std::string_view s);
 
@@ -38,8 +38,7 @@ std::string      simplified(std::string_view s);
 // reference comes out as a plain space (what a clipboard reader wants).
 std::string decodeEntities(std::string_view s, bool nbspAsSpace = false);
 
-// File sizes in binary units (1 KB = 1024 B), the way the old app printed
-// each of them.
+// File sizes in binary units (1 KB = 1024 B), in one of these styles.
 enum class ByteSize : uint8_t {
     Whole, // "812 B", "12 KB", "3 MB": all floored (composer chips, Settings)
     File,  // floored KB, MB with one decimal below 10: "1.4 MB", "23 MB";

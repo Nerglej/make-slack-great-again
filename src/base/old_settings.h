@@ -1,20 +1,21 @@
-// The old Qt msga's settings store — QSettings("msga", "msga") — read and
-// written in Qt's own encodings, so the two apps share one store:
+// The settings store of earlier msga versions (organization "msga",
+// application "msga"), read and written in its own encodings, so an earlier
+// version and this one share one store:
 //
-//   Linux     $XDG_CONFIG_HOME/msga/msga.conf, Qt's INI dialect
+//   Linux     $XDG_CONFIG_HOME/msga/msga.conf, an INI file
 //   macOS     CFPreferences domain "com.msga.msga" (~/Library/Preferences/
-//             com.msga.msga.plist); a Qt key's '/' is '.' there
+//             com.msga.msga.plist); a key's '/' is '.' there
 //   Windows   HKEY_CURRENT_USER\Software\msga\msga, one subkey per '/'
 //
-// The new app reads it once to import the old settings (the shell's
-// importer) and, on Linux and Windows, keeps its credentials in it exactly as
-// the old app did (secret.h): the old app had no keychain there, and a
-// rolled-back install must still find refreshed tokens. Keys are Qt's
-// ("workspace/slack:T0/auth"), values UTF-8.
+// The app reads it once to import the settings of earlier versions (the
+// shell's importer) and, on Linux and Windows, keeps its credentials in it
+// exactly as earlier versions did (secret.h): they had no keychain there, and
+// a rolled-back install must still find refreshed tokens. Keys are slash
+// paths ("workspace/slack:T0/auth"), values UTF-8.
 //
-// `app` names the store: "msga" is QSettings("msga", "msga"), the one the old
-// app used everywhere; "MSGA" is a bare QSettings() (its application name),
-// where only composer/lastAttachDir ever went.
+// `app` names the store: "msga" is the one earlier versions used everywhere;
+// "MSGA" is the store named after the application alone, where only
+// composer/lastAttachDir ever went.
 //
 // A test process (base::testProcess(), which the test harness marks) uses
 // the INI file on every OS, under the XDG_CONFIG_HOME the harness points at
@@ -32,7 +33,7 @@
 
 namespace oldsettings {
 
-// A QVariant as QSettings stores it.
+// A stored value, with the type it was stored as.
 struct Value {
     enum class Kind : uint8_t { None, String, List, Bytes, Int, Bool };
     Kind                     kind = Kind::None;
@@ -40,7 +41,7 @@ struct Value {
     std::vector<std::string> list;  // List
     int64_t                  n = 0; // Int; Bool as 0/1
 
-    // QVariant::toString / toBool / toLongLong / toStringList.
+    // The value as a string / bool / integer / string list.
     std::string              text() const;
     bool                     toBool(bool def) const;
     int64_t                  toInt(int64_t def) const;
@@ -52,23 +53,24 @@ using Map = std::map<std::string, Value, std::less<>>;
 Map   load(std::string_view app = "msga");
 // One key (Kind::None when absent).
 Value get(std::string_view key, std::string_view app = "msga");
-// Sets a string value (as QSettings::setValue(key, QString)), or removes the
+// Sets a string value, or removes the
 // key. False when the store could not be written.
 bool  write(std::string_view key, std::string_view value, std::string_view app = "msga");
 bool  remove(std::string_view key, std::string_view app = "msga");
 
-// ── Qt's encodings (pure; the platform code above and the tests use them) ──
-// QSettingsPrivate::stringToVariant: "@ByteArray(…)", "@@…", "@Invalid()".
+// ── The store's encodings (pure; the platform code above and the tests use
+// them) ──
+// A stored string to a value: "@ByteArray(…)", "@@…", "@Invalid()".
 Value       decodeString(std::string s);
-// QSettingsPrivate::variantToString for a QString ("@…" gets another '@').
+// A string value as stored ("@…" gets another '@').
 std::string encodeString(std::string_view s);
-// A whole INI file as QSettings reads it.
+// A whole INI file, as earlier versions read it.
 Map         parseIni(std::string_view text);
 // `text` with `key` set to the string `value` (or removed when null). Every
 // other line stays as it was.
 std::string setIniValue(std::string_view text, std::string_view key, const std::string *value);
 // A registry value (REG_SZ, REG_MULTI_SZ, REG_BINARY = UTF-16LE bytes,
-// REG_DWORD, REG_QWORD) as QSettings reads it.
+// REG_DWORD, REG_QWORD) as earlier versions read it.
 Value       decodeRegistry(uint32_t type, std::string_view bytes);
 // "$XDG_CONFIG_HOME/msga/<app>.conf" (Linux's store, and every OS's in
 // tests; "" without a home).

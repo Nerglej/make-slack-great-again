@@ -1,11 +1,9 @@
-// msga's inline data table (MsgRender::tableBlockHtml + paintDataTableChrome
-// + the list's "Open full table" pill): a Block Kit table in a message, at
-// most kMaxInlineTableRows rows, row 0 the header in bold. No vertical
-// lines: a rounded 1-px frame, a tinted header with a hairline under it,
-// rules between rows. Columns take their natural width and shrink in
-// proportion (wrapping) when the message column is narrower. When rows were
-// cut (the last one shown dimmed) or columns squeezed, hovering the table
-// shows the "Open full table" pill, which opens the table viewer.
+// The inline data table (with the list's "Open full table" pill): a Block Kit table in a message,
+// at most kMaxInlineTableRows rows, row 0 the header in bold. No vertical lines: a rounded 1-px
+// frame, a tinted header with a hairline under it, rules between rows. Columns take their natural
+// width and shrink in proportion (wrapping) when the message column is narrower. When rows were cut
+// (the last one shown dimmed) or columns squeezed, hovering the table shows the "Open full table"
+// pill, which opens the table viewer.
 #pragma once
 
 #include "app/screens/messages/context_fwd.h"

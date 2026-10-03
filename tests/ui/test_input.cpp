@@ -227,7 +227,7 @@ TEST("focus: a field inside a disabled container takes no typing and no focus") 
     edit->focus();
     w.type("ab");
     CHECK_STR(edit->text(), "ab");
-    // Disabling the container (the composer) drops the field's focus, as Qt does.
+    // Disabling the container (the composer) drops the field's focus.
     box->setEnabled(false);
     CHECK(!edit->focused() && w.w->focusView() == nullptr);
     w.type("cd");

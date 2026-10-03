@@ -45,7 +45,7 @@ public:
     uint32_t            linkAt(PointF local) const;
     // A highlighted range of the text (byte offsets; from == to: none),
     // painted in the system highlight with the text white on it — a
-    // selection the owner drives (msga's message list selects across many
+    // selection the owner drives (the message list selects across many
     // labels).
     void                setSelection(uint32_t from, uint32_t to);
     uint32_t            selectionFrom() const;
@@ -278,8 +278,7 @@ public:
     // Cursor: a context menu at a point (zero-size anchor) — below-right of
     // it, flipped left/up where it would leave the window.
     enum class Place : uint8_t { Below, Above, Right, Left, Over, Fill, Cursor, Tip };
-    // Tip: centred above the anchor, below it when there is no room (msga's
-    // PopupTooltip::showAbove).
+    // Tip: centred above the anchor, below it when there is no room.
     Popup();
     ~Popup() override;
 
@@ -321,13 +320,13 @@ struct MenuItem {
     // Non-empty: a submenu (opens on hover, Right or Enter; its items report
     // to the root menu's onSelect).
     std::vector<MenuItem> sub;
-    bool                  bold = false; // a spelling suggestion (msga's bold QAction font)
+    bool                  bold = false; // a spelling suggestion, in bold
 
     static MenuItem separatorItem();
     static MenuItem headerItem(std::string text);
 };
 
-// A popup list of actions, drawn like msga's Qt ContextMenu. Keyboard:
+// A popup list of actions (a context menu). Keyboard:
 // an item's hint is its shortcut ("E", "Del", "Ctrl+C" choose it), Up/Down/
 // Home/End move, Enter/Space choose, Escape closes, other letters jump to the
 // next item starting with them. Submenus open on a short hover, Right or
@@ -347,7 +346,7 @@ public:
 
     // A context menu at a window point (Place::Cursor).
     // Rows are as wide as the widest needs; setMinWidth sets a floor
-    // (msga's WidthMode::MinWidth, 140, for the workspace menus).
+    // (140 for the workspace menus).
     static Menu *popupAt(
         Window &w, PointF at, std::vector<MenuItem> items, std::function<void(int id)> onSelect
     );

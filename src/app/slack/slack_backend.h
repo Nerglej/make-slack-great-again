@@ -1,7 +1,6 @@
-// The Slack workspace backend (msga's PublicBackend + the Slack half of its
-// Session): everything a signed-in workspace does, written into the Store.
+// The Slack workspace backend: everything a signed-in workspace does, written into the Store.
 //
-// Two auth modes, as in the old app:
+// Two auth modes:
 //   session  (xoxc token + `d` cookie): no Socket Mode; new messages come
 //            from polling (the open chat every 5 s, counts in the background);
 //            an RTM socket may be held only for presence (rtm_presence.h)
@@ -154,7 +153,7 @@ public:
     editCanvas(const std::string &fileId, std::vector<CanvasChange> changes, Done done) override;
     void                 deleteCanvas(const std::string &fileId, Done done) override;
     // Slash commands: commands.list + msga's built-ins, run by runLocalCommand
-    // (msga's Session::runCommand; chat.command for the workspace's own).
+    // (chat.command for the workspace's own).
     std::vector<Command> commands(model::ConvRef conv) override;
     LocalResult          runLocalCommand(
         model::ConvRef conv, model::Ts thread, const std::string &name, const std::string &args
@@ -168,7 +167,7 @@ public:
     // ── Realtime, presence link, token refresh (slack_realtime.cpp) ─────────
     // The app's Socket Mode socket (one per app token, shared by every
     // workspace: see socket_mode.h), or null: polling only. Before connect().
-    // Session workspaces never take one (msga's session mode has no push).
+    // Session workspaces never take one (session mode has no push).
     void                                     setRealtime(std::shared_ptr<SocketMode> socket);
     // True while events are pushed: the polls slow down to a safety net.
     bool                                     hasRealtimePush() const;
@@ -196,7 +195,7 @@ public:
     // "C0123" for a ConvRef ("" if unknown). Ts ↔ "1712345678.123456":
     // model::parseTs / model::formatTs.
     const std::string &convId(model::ConvRef conv) const;
-    // The dead-conversation cache (msga's _deadConvIds: channel_not_found
+    // The dead-conversation cache (channel_not_found
     // here — another workspace's over the shared socket, a dead DM),
     // persisted with the workspace cache; a fresh roster revives what it lists.
     bool               isDead(const std::string &id) const;
@@ -226,11 +225,11 @@ private:
     static void   deleteLive(Live *l);
 
     // What the realtime half asks of the read half (slack_backend.cpp).
-    // A live message into the Store with msga's badge rules; false when it
+    // A live message into the Store with the badge rules; false when it
     // was already there (a poll, the send's own echo).
     bool                 deliver(model::ConvRef c, model::Message m, bool parentIsMe);
-    // What the write half asks: replying in a thread follows it (msga's
-    // markThreadFollowed on every send to a thread).
+    // What the write half asks: replying in a thread follows it (on
+    // every send to a thread).
     void                 followThread(model::ConvRef c, model::Ts root);
     // Merges a conversation the server just described (channel_created,
     // conversations.info) keeping what only this client knows.
@@ -260,10 +259,10 @@ private:
     bool refreshInFlight() const;
     void issueApi(std::string method, std::string form, ApiDone done, bool refreshed);
     void loseAuth(const std::string &error);
-    // A 429 on any call: the error banner, throttled (msga's EvRateLimited).
+    // A 429 on any call: the error banner, throttled.
     void noteRateLimited(const std::string &method, int64_t secs);
     // `done`, which also puts a failure on the error banner as tr(what) with
-    // the re-auth hint (msga's profile and photo errors).
+    // the re-auth hint (the profile and photo errors).
     Done bannerOnFailure(const char *what, Done done);
     // A reminder was set or moved here: the alarm re-arms (slack_backend.cpp).
     void rearmReminders();
@@ -274,7 +273,7 @@ private:
     Auth                               _auth;
     std::vector<net::RequestId>        _inflight;
     // Uploads and downloads (minutes long) on their own worker pool, made on
-    // first use, so they never hold up API calls (msga's separate download
+    // first use, so they never hold up API calls (a separate download
     // limit). Its destructor cancels them: nothing to track.
     std::unique_ptr<net::Client>       _transfers;
     net::Client                       &transfers();

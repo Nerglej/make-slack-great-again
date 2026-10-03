@@ -1,7 +1,7 @@
-// The keyboard, as msga has it (src/ui/shortcuts.{h,cpp} is the spec), driven
+// The keyboard (app/screens/shell/shortcuts.h), driven
 // through plat's TestHooks key injection on the headless backend: the table
 // itself, every window-scope shortcut, the composer's formatting and send
-// keys, and the bindings next used to have that msga does not.
+// keys, and bindings that must not exist.
 #include "app/fake/fake_backend.h"
 #include "base/file.h"
 #include "support/test.h"
@@ -121,7 +121,7 @@ constexpr uint8_t kCtrl = shell::shortcuts::Ctrl, kShift = shell::shortcuts::Shi
 
 // ── The table ───────────────────────────────────────────────────────────────
 
-TEST("shortcuts: one row per action, the help panel's rows in msga's order") {
+TEST("shortcuts: one row per action, the help panel's rows in order") {
     using namespace shell::shortcuts;
     REQUIRE(tableSize() == size_t(Id::Count));
     for (size_t i = 0; i < size_t(Id::Count); ++i)
@@ -170,7 +170,7 @@ TEST("shortcuts: no two window-scope bindings share a key") {
     }
 }
 
-TEST("shortcuts: tooltips and chips spell the keys as msga does") {
+TEST("shortcuts: tooltips and chips spell the keys per platform") {
     using namespace shell::shortcuts;
 #ifdef __APPLE__
     CHECK_STR(
@@ -198,7 +198,7 @@ TEST("shortcuts: tooltips and chips spell the keys as msga does") {
     CHECK_STR(keyChips(Id::NewLine)[0], "Enter");
     setCtrlEnterSends(false);
     CHECK(keyChips(Id::NewLine).size() == 2); // Shift + Enter
-    // Close is Qt's per-platform QKeySequence::Close.
+    // Close is the platform's own close key set, which differs per platform.
     Keys         b[2];
     const size_t n = bindings(Id::CloseFrontmost, b);
 #if defined(_WIN32)
@@ -214,7 +214,7 @@ TEST("shortcuts: tooltips and chips spell the keys as msga does") {
 
 TEST("shortcuts: Ctrl+K opens the switcher once, Enter opens the pick, Ctrl+W closes it") {
     Harness h;
-    REQUIRE(h.edit().focused()); // the composer holds focus, as in msga
+    REQUIRE(h.edit().focused()); // the composer holds focus
     h.chord(kCtrl, K::K);
     auto *sw = h.sh->quickSwitcher();
     REQUIRE(sw != nullptr);
@@ -229,7 +229,7 @@ TEST("shortcuts: Ctrl+K opens the switcher once, Enter opens the pick, Ctrl+W cl
     h.chord(0, K::G);
     REQUIRE(!sw->results().empty());
     const ConvRef want = sw->results()[0];
-    h.chord(kShift, K::Enter); // any modifiers, as msga's switcher
+    h.chord(kShift, K::Enter); // any modifiers
     pump();
     CHECK(h.sh->current() == want);
     CHECK(h.sh->quickSwitcher() == nullptr);
@@ -267,7 +267,7 @@ TEST("shortcuts: Ctrl+F toggles the message search over the chat, the composer l
     CHECK_STR(h.edit().text(), "draft");
     CHECK(h.closeRequests == 0);
     CHECK_FALSE(s->list()->visible()); // no results before a search
-    h.chord(kCtrl, K::F);              // msga: Ctrl+F again hides it at once
+    h.chord(kCtrl, K::F);              // Ctrl+F again hides it at once
     CHECK_FALSE(s->visible());
     CHECK(h.edit().focused());
     // The header's search button is the same toggle.
@@ -305,11 +305,11 @@ TEST("search: Enter searches, the arrows pick a result, Enter opens it and close
     h.key(K::Enter);
     CHECK(h.sh->current() == design);
     CHECK_FALSE(s->visible()); // opening another conversation hides it
-    // Nothing matches: msga's status line.
+    // Nothing matches: the status line.
     h.chord(kCtrl, K::F);
     REQUIRE(s->shown());
     CHECK_STR(s->field().text(), "  proposal b "); // kept, and selected
-    CHECK(s->selected() == 0); // so is the pick: Enter would open it again, as in msga
+    CHECK(s->selected() == 0);                     // so is the pick: Enter would open it again
     s->runSearch("no such words anywhere");
     for (int i = 0; i < 100 && s->statusText() == "Searching\xE2\x80\xA6"; ++i)
         pump(5);
@@ -323,7 +323,7 @@ TEST("search: Enter searches, the arrows pick a result, Enter opens it and close
     CHECK(h.edit().focused());
 }
 
-TEST("search: a result's labels are msga's") {
+TEST("search: a result's labels") {
     Harness             h;
     const model::Store &st = h.store;
     CHECK_STR(shell::searchConvLabel(st, h.conv("C0DESIGN")), "#design");
@@ -365,7 +365,7 @@ TEST("search: firstLink finds a URL or a message permalink") {
         screens::firstLink("see <https://example.com/a|this> and https://b.example"),
         "https://example.com/a"
     );
-    // A permalink to another message is a link too (msga's firstLinkInMessage).
+    // A permalink to another message is a link too.
     const std::string pl =
         screens::firstLink("look: https://acme.slack.com/archives/C0GEN0001/p1700000000000100");
     CHECK(pl.rfind("https://acme.slack.com/archives/C0GEN0001/p1700000000000100", 0) == 0);
@@ -379,8 +379,8 @@ TEST("shortcuts: Alt+Left/Right and Back/Forward walk the conversations opened")
     h.sh->open(eng);
     h.sh->open(gen);
 #ifdef __APPLE__
-    // Option+arrows move by word in a Mac text field (as in Qt's QTextEdit,
-    // so the old app's composer kept them too): from outside the composer,
+    // Option+arrows move by word, as in any Mac text field: from outside the
+    // composer,
     // which every open focuses again.
     const auto alt = [&](K k) {
         h.win->setFocus(nullptr);
@@ -558,7 +558,7 @@ TEST("navigation: the swipe recognizer, stream by stream") {
     }
 }
 
-TEST("shortcuts: next's own bindings msga lacks are gone") {
+TEST("shortcuts: bindings that must not exist are gone") {
     Harness       h;
     const ConvRef design = h.conv("C0DESIGN");
     // Alt+Up/Down switched conversations.
@@ -573,8 +573,8 @@ TEST("shortcuts: next's own bindings msga lacks are gone") {
     h.key(K::Escape);
     CHECK(h.sh->threadOpen());
     h.sh->closeThread();
-    // Up/Down on a focused sidebar row changed the conversation (msga's
-    // list only scrolls).
+    // Up/Down on a focused sidebar row changed the conversation (the list
+    // only scrolls).
     ui::View  *row  = nullptr;
     const auto find = [&](auto &self, ui::View *v) -> void {
         if (!row && v->visible() && v->role() == ui::Role::ListItem)
@@ -614,7 +614,7 @@ TEST("shortcuts: the composer's formatting keys") {
     h.chord(kCtrl | kShift, K::C);
     CHECK_STR(c.mrkdwn(), "`word`");
     fresh("word");
-    h.chord(kCtrl, K::U); // msga types underline markers
+    h.chord(kCtrl, K::U); // underline markers are typed
     CHECK_STR(e.text(), "__word__");
     e.clear();
     h.chord(kCtrl, K::U);
@@ -659,7 +659,7 @@ TEST("shortcuts: the composer's formatting keys") {
     CHECK(d.mode == plat::FileDialogDesc::Mode::OpenMultiple);
 }
 
-TEST("shortcuts: stubbed composer keys fall through as msga's do with the feature off") {
+TEST("shortcuts: stubbed composer keys fall through as with the feature off") {
     Harness h;
     auto   &e = h.edit();
     e.insertText("ab");

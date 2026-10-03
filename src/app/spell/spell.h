@@ -1,5 +1,5 @@
 // Composer spell checking (Settings → Appearance → Composer → "Check
-// spelling"), msga's Spell::Checker: the OS's own checker where there is one,
+// spelling"): the OS's own checker where there is one,
 //   • Linux   — the vendored, trimmed Hunspell (src/third_party/hunspell) over
 //               the dictionaries the distribution installed (/usr/share/hunspell,
 //               …/myspell): a static binary can't dlopen Enchant's providers;

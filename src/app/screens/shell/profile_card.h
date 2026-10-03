@@ -1,8 +1,8 @@
-// The profile card (msga's UserProfileCard, src/ui/user_profile_card): a
+// The profile card: a
 // role strip for owners/admins/apps, the picture, name with presence, status
 // and title, then email (click copies), local time and a "Message" button.
 //
-// Like msga's it is a hover card: pointing at an avatar, a name or a mention
+// It is a hover card: pointing at an avatar, a name or a mention
 // shows it after 300 ms (clicking a mention or a name at once), and leaving
 // both the target and the card hides it after a 260-ms grace period.
 // ProfileCards owns that behaviour; Context::profileHover drives it.
@@ -26,7 +26,7 @@ public:
     ~ProfileCard() override;
     model::UserRef user() const { return _user; }
     // Above `target` (falling back to below), its left edge where the
-    // avatar's is, as msga places it next to an avatar or a mention.
+    // avatar's is, next to an avatar or a mention.
     void           placeBeside(ui::RectF target);
 
     ui::SizeF measureContent(float availW, float availH) override;

@@ -1,4 +1,4 @@
-// The in-app updater, msga's UpdateChecker: fetches this platform's manifest
+// The in-app updater: fetches this platform's manifest
 // from msga.app ({"version": N, "sha256": "…"}), compares it with the running
 // version, and downloads the new release asset when there is one, checking
 // its SHA-256 against the manifest (older manifests carry none: unchecked).

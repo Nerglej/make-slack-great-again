@@ -1,7 +1,7 @@
 // "Import from local Slack": the session of the Slack desktop app installed
 // on this computer — the `d` cookie decrypted from its Chromium cookie
-// database, and the signed-in workspaces from its local storage. The old
-// app offered it on Linux only (Chromium "v10"/"v11" cookie encryption,
+// database, and the signed-in workspaces from its local storage. It is
+// offered on Linux only (Chromium "v10"/"v11" cookie encryption,
 // the v11 key from the Secret Service); elsewhere the button is hidden.
 #pragma once
 

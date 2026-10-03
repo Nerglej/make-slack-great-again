@@ -1,4 +1,4 @@
-// The app's LLM facade (msga's LlmService): the configured providers, the
+// The app's LLM facade: the configured providers, the
 // one requests go to, and the calls themselves over net::Client.
 //
 //   service.chat(req, [](llm::ChatResult r) { … r.ok ? r.response.text : r.error … });

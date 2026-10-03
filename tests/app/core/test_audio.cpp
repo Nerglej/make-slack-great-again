@@ -453,7 +453,7 @@ TEST("audio: MSGA_VOICE_FAKE_WAV records that file") {
     CHECK(wav == chime);
 }
 
-TEST("audio: system sounds come from the freedesktop theme, named like the old app") {
+TEST("audio: system sounds come from the freedesktop theme, labelled from their file names") {
     Scratch           s;
     const std::string data = s.path("data");
     const std::string dir  = file::join(data, "sounds/freedesktop/stereo");

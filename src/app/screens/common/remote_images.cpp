@@ -18,7 +18,7 @@ namespace screens {
 
 namespace {
 
-// The old app's CacheEvictor cadence: shortly after start, then every 30
+// The cache sweep's cadence: shortly after start, then every 30
 // minutes, and after a burst of 32 MB of downloads.
 constexpr int     kFirstSweepMs    = 15000;
 constexpr int     kSweepEveryMs    = 30 * 60 * 1000;

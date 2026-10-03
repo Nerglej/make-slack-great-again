@@ -71,7 +71,7 @@ std::string
 editorHtml(std::string_view h, const std::vector<std::string> &titles, std::string *title) {
     if (title)
         title->clear();
-    // The title: a leading <h1> naming the file (msga's splitTitleH1).
+    // The title: a leading <h1> naming the file.
     {
         size_t at = 0;
         while (at < h.size()) {

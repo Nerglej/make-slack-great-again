@@ -24,7 +24,7 @@ auth::WorkspaceRecord toRecord(const Credentials &c) {
     w.beginObject();
     w.key("xoxp").value(c.token);
     w.key("refreshToken").value(c.refreshToken);
-    // A string: the old app wrote it so (doubles lose precision elsewhere).
+    // A string, as stored blobs have it (doubles lose precision elsewhere).
     w.key("expiresAt").value(str::number(c.expiresAt));
     if (!c.cookie.empty())
         w.key("cookie").value(c.cookie);

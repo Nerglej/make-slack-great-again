@@ -1,4 +1,4 @@
-// ui — msga next's widget toolkit, on plat (windows/input), gfx (painting)
+// ui — msga's widget toolkit, on plat (windows/input), gfx (painting)
 // and text (layout). Include this one header.
 //
 // ── The model ───────────────────────────────────────────────────────────────

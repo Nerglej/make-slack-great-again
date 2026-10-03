@@ -1,7 +1,5 @@
 // The Settings dialog: an in-window modal (ui::Dialog) with the section list
-// on the left and the chosen page on the right — the Qt app's dialog
-// (src/ui/settings/settings_dialog.cpp) in content, wording, order and look,
-// minus what is specific to Microsoft Teams and IMAP:
+// on the left and the chosen page on the right:
 //
 //   Appearance     color mode, color theme (palettes + custom), font size,
 //                  language, date/time, threads, link previews, composer,
@@ -13,7 +11,7 @@
 //                  GIF picker key, memory
 //   About          license, contact, bug reports
 //
-// As in the Qt app, the color mode, the theme cards and the tray icon apply
+// The color mode, the theme cards and the tray icon apply
 // and persist at once, as do the AI, Storage and System pages; the rest of
 // Appearance and Notifications is kept in a draft until that page's Save
 // (which also closes the dialog). Hooks::changed fires after every write to
@@ -56,13 +54,13 @@ public:
         // Storage → "Clear state": the sidebar's visit stamps are gone.
         std::function<void()>                            clearState;
         // Notifications → "Test": shows the sample notification; `result`
-        // gets what the OS said about it (msga's setNotificationTestResult),
+        // gets what the OS said about it,
         // possibly later. Unset: the dialog submits it itself.
         std::function<void(plat::Notification n, std::function<void(const std::string &)> result)>
             testNotification;
         // Appearance → Custom theme → "Use my Slack theme" (shown only when
-        // set: a signed-in Slack workspace can read the account's theme,
-        // msga's SidebarThemePrefs): done(iaTheme, legacyValues, error).
+        // set: a signed-in Slack workspace can read the account's theme
+        // prefs): done(iaTheme, legacyValues, error).
         using SlackThemeDone =
             std::function<void(std::string iaTheme, std::string legacy, std::string error)>;
         std::function<void(SlackThemeDone)> fetchSlackTheme;
@@ -148,11 +146,11 @@ private:
     Page                   _page        = Page::Count;
 };
 
-// A Slack theme as text — the ia_theme JSON (with msga's "gradient" and
-// "pins") or the 8/10-colour legacy share string — into a whole custom
-// palette (msga's Th::parseCustomTheme); false, `out` untouched, on anything
-// else. Settings → Custom theme's Import and "Use my Slack theme", and the
-// old app's settings import.
+// A Slack theme as text — the ia_theme JSON (with the app's own "gradient"
+// and "pins") or the 8/10-colour legacy share string — into a whole custom
+// palette; false, `out` untouched, on anything else. Settings → Custom
+// theme's Import and "Use my Slack theme", and the import of settings from
+// earlier versions.
 bool parseSlackTheme(std::string_view text, ui::CustomPalette *out);
 
 } // namespace settings

@@ -1,4 +1,4 @@
-// A tiny test harness for next's ctest executables. Catch2 would dwarf the
+// A tiny test harness for msga's ctest executables. Catch2 would dwarf the
 // code under test and pull <iostream>/exceptions into every test binary; this
 // is all the tests need: named cases, CHECK (continue) and REQUIRE (abort the
 // case), and a non-zero exit when anything failed.

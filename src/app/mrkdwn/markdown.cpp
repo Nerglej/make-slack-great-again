@@ -511,7 +511,7 @@ std::string richTextElements(std::string_view mrkdwnText) {
     return w.take();
 }
 
-Composed compose(std::string_view composer) {
+Composed compose(std::string_view composer, bool alwaysBlocks) {
     std::string text;
     for (size_t i = 0; i < composer.size(); ++i) {
         if (composer[i] == '\r') {
@@ -683,7 +683,7 @@ Composed compose(std::string_view composer) {
             c.mrkdwn += '\n';
         c.mrkdwn += out[k];
     }
-    if (!anyList)
+    if (!anyList && !alwaysBlocks)
         return c;
     // Exactly one rich_text block mirroring the whole message (Slack renders
     // blocks instead of the text, never both).

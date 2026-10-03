@@ -1,4 +1,4 @@
-// Slack Socket Mode (msga's SocketModeRealtime + SharedRealtime): the
+// Slack Socket Mode: the
 // app-level WebSocket an xapp- token opens (apps.connections.open → a
 // one-use wss URL), its envelope acks, and the recovery machinery around it.
 //
@@ -80,7 +80,7 @@ public:
     // missed events — the overlapping replacement.
     void ensureConnected();
     void reconnectNow();
-    // plat's NetworkChanged (msga's QNetworkInformation reachability watch).
+    // plat's NetworkChanged: the network's reachability changed.
     void networkChanged(bool online);
     bool connected() const;
 

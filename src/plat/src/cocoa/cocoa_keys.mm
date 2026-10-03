@@ -5,7 +5,7 @@
 // are therefore resolved through the active keyboard layout with
 // UCKeyTranslate; when that layout types something plat has no Key for
 // (Cyrillic, Greek, ö, …) the ASCII-capable layout is tried, and only then
-// the US position — plat.h's rule, the one Qt and GTK follow, so shortcuts
+// the US position — plat.h's rule, the usual toolkit one, so shortcuts
 // keep working on non-Latin layouts.
 #import <Carbon/Carbon.h>
 

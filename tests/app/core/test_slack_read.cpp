@@ -175,7 +175,7 @@ TEST("slack read: connect fills users, conversations, unread, stars, emoji, grou
     REQUIRE(e.connect());
     CHECK_STR(e.store.workspaceName, "Lumen");
     CHECK_STR(e.store.user(e.store.me).id, "UME");
-    // Both pages of users, mapped as msga did.
+    // Both pages of users, mapped.
     const model::User &mira = e.user("UMIRA");
     CHECK_STR(mira.displayName, "Mira Okafor");
     CHECK_STR(mira.avatar, "https://a/mira72.png");
@@ -214,7 +214,7 @@ TEST("slack read: connect fills users, conversations, unread, stars, emoji, grou
     REQUIRE(pumpUntil([&] { return e.be->selfPresence().loaded; }, 3000));
     CHECK(e.be->selfPresence().active && e.be->selfPresence().online);
     CHECK(e.store.user(e.store.me).active);
-    // The listing parameters msga sent.
+    // The listing parameters sent.
     Log               l;
     const json::Value list = l.get("conversations.list");
     CHECK_STR(list["form"]["types"].str(), "public_channel,private_channel,im,mpim");

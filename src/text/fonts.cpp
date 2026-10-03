@@ -21,10 +21,9 @@ namespace text::fonts {
 namespace {
 
 // The fixed preference order (no fontconfig): first installed family wins.
-// An app setting can override these later. The OS's own first, as the old
-// app's QFont() was: Segoe UI on Windows (Qt's default, the system message
-// font), San Francisco on macOS (Qt's .AppleSystemUIFont); and for code its
-// CSS "monospace": Courier New on Windows, Menlo on macOS.
+// An app setting can override these later. The OS's own first: Segoe UI
+// on Windows (the system message font), San Francisco on macOS (the system
+// UI font); and for code the CSS "monospace": Courier New on Windows, Menlo on macOS.
 constexpr const char *kUiFamilies[] = {
 #if defined(_WIN32)
     "segoe ui",
@@ -49,7 +48,7 @@ constexpr const char *kMonoFamilies[] = {
     "dejavu sans mono",
     "liberation mono"
 };
-// The OS's own colour emoji font first, as the old app picked it: Segoe UI
+// The OS's own colour emoji font first: Segoe UI
 // Emoji (COLR) on Windows, Apple Color Emoji (sbix) on macOS, Noto Color
 // Emoji (CBDT) on Linux.
 constexpr const char *kEmojiFamilies[] = {

@@ -26,12 +26,12 @@ private:
     float     _gap;
 };
 
-// msga's plain file chip (the message list's, the forward preview's).
+// The plain file chip (the message list's, the forward preview's).
 ui::Clickable *addFileChip(ui::View *parent, const model::File &f, MessageList *list, Ts ts);
 
 class RichLabel;
 
-// msga's huddleSummaryText: a huddle row's sentence ("Mira and Jonas were in
+// A huddle row's sentence ("Mira and Jonas were in
 // the huddle for 1h 5m.").
 std::string huddleSummaryText(const Store &st, const model::Huddle &h);
 
@@ -39,8 +39,7 @@ std::string huddleSummaryText(const Store &st, const model::Huddle &h);
 // for rows not on screen: its body, or its text blocks.
 std::vector<std::string> selectableTexts(Context &ctx, const model::Message &m);
 
-// A canvas card (msga's paintCanvasCard): its title as shown (CanvasDisplay::
-// title), and the start of the document as text — headings larger, list
+// A canvas card: its title as shown, and the start of the document as text — headings larger, list
 // markers, inline formats, member mentions as chips with names, emoji (custom
 // ones as inline boxes, box id i is (*images)[i - 1]); no pictures.
 std::string          canvasTitle(const Context &ctx, const model::File &f);
@@ -58,7 +57,7 @@ public:
     // The message's text labels a selection runs over, in order.
     const std::vector<RichLabel *> &selectionLabels() const { return _sel; }
     // An attachment card under the pointer (index), for the "×" in the
-    // gutter beside it (msga's dismiss button on link previews).
+    // gutter beside it (the dismiss button on link previews).
     void                            attachHovered(int index, ui::View *card, bool on);
 
     void        paint(gfx::Painter &p) override;
@@ -93,7 +92,7 @@ private:
     void      buildUnfurl(ui::View *col, const model::Message &m, size_t index);
     ui::RectF dismissRect() const; // local; empty while no card is hovered
     bool      dismissable(int index) const;
-    // `file`: an uploaded image (msga's placeholder box and "Loading image…"
+    // `file`: an uploaded image (a placeholder box and "Loading image…"
     // while it loads); else a link preview's picture (nothing until then).
     ui::View *addThumb(
         ui::View          *col,
@@ -109,7 +108,7 @@ private:
     MessageList                  &_list;
     std::string                   _hoverTime; // grouped rows: the time shown in the gutter on hover
     std::unique_ptr<text::Layout> _hoverLayout;
-    // msga's mini-banners over the message: "Pinned by …" and the saved /
+    // The mini-banners over the message: "Pinned by …" and the saved /
     // reminder strip (text; laid out when painted).
     std::string                   _pinText, _savedText;
     std::unique_ptr<text::Layout> _pinLayout, _savedLayout;

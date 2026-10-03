@@ -30,8 +30,8 @@ using ui::C;
 
 namespace {
 
-// msga's audio card: round play button + title block on top, slider row
-// underneath (MsgRender's kAudio* constants).
+// The audio card: round play button + title block on top, slider row
+// underneath.
 constexpr float kPad      = 12;
 constexpr float kBtn      = 36; // play/pause circle
 constexpr float kKnob     = 12;
@@ -42,7 +42,7 @@ constexpr float kLabelGap = 6;  // time label → action button
 constexpr float kGlyph    = 16;
 constexpr float kBodyMaxH = 360; // the transcript dialog's text
 
-// QFontMetrics::height() of a face this size, for msga's line boxes.
+// A line box's height for a face this size, as a multiple of the size.
 constexpr float kLine = 1.2f;
 
 text::Style nameFont() {
@@ -101,7 +101,7 @@ bool live(AudioPlayer::State s) {
            s == AudioPlayer::State::Ended;
 }
 
-// "Mira at 2:34 PM" (msga's transcript subtitle), "· transcribed by X" added
+// "Mira at 2:34 PM" (the transcript subtitle), "· transcribed by X" added
 // for an AI transcript.
 std::string subtitleFor(Context &ctx, const model::Message *m, const std::string &by) {
     std::string s;
@@ -118,7 +118,7 @@ std::string subtitleFor(Context &ctx, const model::Message *m, const std::string
 }
 
 // ── The transcript dialog ───────────────────────────────────────────────────
-// msga's TranscriptDialog: "Transcript (auto-generated)", the subtitle, the
+// "Transcript (auto-generated)", the subtitle, the
 // timestamped lines (scrolling past 360 px), Copy. Opens in the Loading
 // shape; setCues / setText / setFailed fill it.
 class TranscriptDialog {

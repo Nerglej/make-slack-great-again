@@ -200,7 +200,7 @@ public:
     // Play GIF frames; `emoji`: gated by animateEmoji(), not animate().
     void               setAnimated(bool on, bool emoji = false);
     void               setPlaceholder(ui::C c) { _placeholder = c; }
-    // msga's "Loading image…": text centred over the placeholder until the
+    // "Loading image…": text centred over the placeholder until the
     // picture is there (Font::Body in `color`).
     void               setLoadingText(std::string text, ui::C color);
     const std::string &path() const { return _path; }

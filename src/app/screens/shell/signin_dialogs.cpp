@@ -143,7 +143,7 @@ public:
 
 private:
     Label *text(View *parent, std::string s) {
-        // The Qt app's default label font (15 px), text.primary.
+        // The default label font (15 px), text.primary.
         return styledLabel(
             parent, std::move(s), pxFont(15, text::Weight::Regular, color(C::FormText))
         );

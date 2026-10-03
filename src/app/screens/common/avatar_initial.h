@@ -1,10 +1,9 @@
-// msga's avatar placeholder (UserAvatar::paintInitial): until a photo is
+// The avatar placeholder: until a photo is
 // there — downloading, or none at all — a rounded tile with the person's
 // first letter in white bold, 0.38 × the tile height in points.
 //
 // The shell's avatars put it on presence.away; the message list's on a tile
-// in the letter's own hue (paintAvatarPhotoOrInitial: HSL(code · 37 mod 360,
-// 130, 100)).
+// in the letter's own hue (HSL(code · 37 mod 360, 130, 100)).
 #pragma once
 
 #include "ui/ui.h"

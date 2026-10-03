@@ -892,12 +892,12 @@ CocoaWindow::CocoaWindow(CocoaApp *a, const WindowDesc &d) : app(a), decorations
     window.colorSpace         = NSColorSpace.sRGBColorSpace;
     if (d.decorations == Decorations::Custom) {
         // The app draws the title bar; the traffic lights stay native (they
-        // float over our content, top-left), like msga's Qt build does.
+        // float over our content, top-left).
         window.titlebarAppearsTransparent = YES;
         window.titleVisibility            = NSWindowTitleHidden;
         // An empty toolbar in the compact unified style gives the traffic
         // lights the standard, centred placement of a unified macOS header
-        // (Finder's) instead of a bare title bar's, as msga's Qt build did;
+        // (Finder's) instead of a bare title bar's;
         // titleBarHeight() reports the band they sit in. AppKit owns the
         // buttons and their behaviour; PlatNSWindow routes the presses on the
         // rest of the band (the toolbar's own views included) to PlatView.

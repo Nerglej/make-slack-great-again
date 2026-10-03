@@ -1,7 +1,6 @@
 # msga sources
 
-A from-scratch msga (Slack + Claude Code) on `plat/`, with no Qt. The old Qt app
-lives in `../old-msga/` for comparison. The
+msga (Slack + Claude Code), built on its own platform layer `plat/`. The
 **first goal is the smallest possible binary and resource use**; every choice
 below serves that. Design record: `../docs/platform-layer-plan.md` (the plat
 layer) and `docs/` here as modules land.

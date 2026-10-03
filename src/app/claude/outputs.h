@@ -15,8 +15,8 @@
 // msga. An answer that names none gets an empty index: never looked through
 // again.
 //
-// An SVG is kept as the file it is (mime image/svg+xml, no size): the old app
-// rendered a PNG preview for it, and there is no PNG encoder here.
+// An SVG is kept as the file it is (mime image/svg+xml, no size): there is no
+// PNG encoder here to render a preview of it.
 #pragma once
 
 #include "app/model/types.h"
@@ -66,7 +66,7 @@ void        pruneOutputs(const std::vector<std::string> &keep);
 
 // ── File helpers the module shares (base/file.h lacks them) ─────────────────
 // `path` with '/' separators (on Windows), no "." or empty parts, ".."
-// resolved lexically, no trailing '/' but on a root — QDir::cleanPath.
+// resolved lexically, no trailing '/' but on a root.
 std::string      cleanPath(std::string_view path);
 // Deletes a file or a whole folder; symlinks are removed, never followed.
 // True when nothing is left at `path`.
@@ -76,7 +76,7 @@ int64_t          modifiedMicros(std::string_view path);
 // Size and last modification (epoch microseconds) in one look; false (both
 // -1) when missing.
 bool             fileStat(std::string_view path, int64_t *size, int64_t *mtimeMicros);
-// Unicode whitespace off both ends (QString::trimmed).
+// Unicode whitespace off both ends.
 std::string_view trimmed(std::string_view s);
 
 } // namespace claude

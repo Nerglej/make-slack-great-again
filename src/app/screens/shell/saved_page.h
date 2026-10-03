@@ -1,4 +1,4 @@
-// The sidebar's "Saved messages" page, msga's SavedMessagesPage: every saved
+// The sidebar's "Saved messages" page: every saved
 // message (Slack's "Later": reminders soonest due first, then the plain "Save
 // for later" bookmarks newest first) as cards — the conversation name (a
 // click opens it) on the page's grey, then in a bordered card the message as

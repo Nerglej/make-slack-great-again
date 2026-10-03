@@ -1,7 +1,7 @@
 # msga_screens_common — what every screen group shares beyond Context:
 # the file/folder choosers (OS dialog, else the in-app ui::FileBrowser) and
-# the disk cache of downloaded pictures (remote_images.h), msga's loading
-# ring and its avatar placeholder letter.
+# the disk cache of downloaded pictures (remote_images.h), the loading
+# ring and the avatar placeholder letter.
 add_library(msga_screens_common STATIC
     avatar_initial.cpp
     canvas_doc.cpp

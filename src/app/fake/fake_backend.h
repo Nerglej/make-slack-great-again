@@ -5,7 +5,7 @@
 // data; a sent link listed under "unfurls" grows its preview a second later;
 // mute, notification level, pins, saved items, leave/close and opening DMs
 // change the Store directly (a real backend would round-trip first).
-// Port of msga's demo::DemoBackend. Timers run on the plat event loop.
+// Timers run on the plat event loop.
 #pragma once
 
 #include "app/fake/fixture.h"
@@ -60,13 +60,13 @@ public:
     void deleteFile(model::ConvRef conv, model::Ts ts, const std::string &fileId) override;
     void userTyping(model::ConvRef conv, model::Ts threadTs) override;
     void search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
-    // msga's demo feed: the threads I started or replied in, the last three
+    // The demo feed: the threads I started or replied in, the last three
     // replies each, one page; every fixture thread starts out read.
     void loadThreadsView(std::string cursor, ThreadsViewDone done) override;
     void markThreadRead(model::ConvRef conv, model::Ts root, model::Ts ts) override;
-    // msga's demo: members, the Threads entry and Saved messages; no huddles,
+    // The demo: members, the Threads entry and Saved messages; no huddles,
     // broadcast replies or scheduled sends. I look phantom-away (no official
-    // client), and the toggle and status round-trip as the Qt demo's do.
+    // client); the toggle and status round-trip but change nothing.
     Capabilities capabilities() const override;
     SelfPresence selfPresence() const override { return {true, false, false, false}; }
     void         setPresence(bool away, Done done) override;

@@ -495,7 +495,7 @@ std::string toFileUrl(std::string_view path) {
         i = 2; // UNC "//server/share/x": the server is the authority
     else if (p.empty() || p[0] != '/')
         out += '/'; // "C:/x" → "file:///C:/x"
-    // RFC 3986 pchar, as QUrl encodes a path: unreserved, sub-delims, ':',
+    // RFC 3986 pchar: unreserved, sub-delims, ':',
     // '@' and '/' as they are, every other byte (UTF-8 too) as %XX.
     static const char kHex[] = "0123456789ABCDEF";
     for (; i < p.size(); ++i) {

@@ -45,7 +45,7 @@ std::string lower(std::string s) {
     return s;
 }
 
-// ── The conversation picker (msga's ConvSelectorWidget) ─────────────────────
+// ── The conversation picker ─────────────────────────────────────────────────
 
 struct Target {
     ConvRef     conv   = kNoConv;
@@ -158,7 +158,7 @@ public:
 
     void paint(gfx::Painter &p) override {
         const RectF b = bounds();
-        p.fillRoundRect(b, 4, 0xffffffffU); // msga: literal white, also in dark mode
+        p.fillRoundRect(b, 4, 0xffffffffU); // literal white, also in dark mode
         p.strokeRoundRect(
             {0.5f, 0.5f, b.w - 1, b.h - 1},
             4,
@@ -250,7 +250,7 @@ private:
             if (match(name))
                 out.push_back({c, kNoUser, direct ? name : "#" + name});
         }
-        // An agent workspace's teammates (msga's ChatTarget::teammate):
+        // An agent workspace's teammates:
         // writing to one starts a session with it.
         if (!chans && _ctx.backend.capabilities().agentSessions)
             for (const model::Backend::AgentRole &r : _ctx.backend.agentRoles())
@@ -325,7 +325,7 @@ bool PickerList::onEvent(Event &e) {
 
 // ── Forward ─────────────────────────────────────────────────────────────────
 
-// What a forward's files become (msga's fetchForwardedFiles): `paths` to
+// What a forward's files become: `paths` to
 // upload again, in file order; `links` that go along as text instead (a
 // canvas, a file with nothing to fetch, or every file when the target can't
 // take uploads); `temps` the downloaded copies among the paths, removed once
@@ -457,7 +457,7 @@ public:
             at          = 0;
         }
         _src = contextFor(ctx, ctx.store(), *srcBackend);
-        // msga: a picker above the selector when there is a choice of
+        // A picker above the selector when there is a choice of
         // workspace, starting on the message's.
         if (_workspaces.size() > 1) {
             std::vector<std::string> names;
@@ -492,7 +492,7 @@ public:
     void focusPicker() { _picker->edit().focus(); }
 
 private:
-    // msga's setTargetSession: the picker and the composer work in the
+    // The picker and the composer work in the
     // workspace `i` (a pick from the other one is cleared; the comment stays).
     void setTarget(int i) {
         if (i < 0 || size_t(i) >= _workspaces.size() || (i == _target && _picker))
@@ -518,7 +518,7 @@ private:
         _composer->style().padding(0);
         _composer->style().maxH = 120;
         _composer->setPlaceholder(tr("Add a message, if you'd like."));
-        _composer->setVoiceInput(false); // msga's forward composer had no voice source
+        _composer->setVoiceInput(false); // no voice input when forwarding
         if (!cm.empty())
             loadMrkdwn(_composer->edit(), tc.store(), cm);
         _composer->onSendRequest = [this] {
@@ -549,8 +549,8 @@ private:
             return;
         const ForwardWorkspace &to   = _workspaces[size_t(_target)];
         // No attribution header: the text is re-posted as mine — verbatim in
-        // its own workspace, else as portable mrkdwn (msga's forwardedText:
-        // mentions and channels become the words they read as here) — after
+        // its own workspace, else as portable mrkdwn (mentions and channels
+        // become the words they read as here) — after
         // the comment on its own line.
         const bool              same = to.store == &_src->store();
         const std::string       comment(str::trim(_composer->mrkdwn()));
@@ -580,7 +580,7 @@ private:
             if (!there() || (text.empty() && ff.paths.empty()))
                 return cleanup();
             if (conv == kNoConv && !role.empty()) {
-                // msga's prefillTeammate: the teammate's page with it all in
+                // The teammate's page with it all in
                 // the composer, left to send (the copies stay for that send).
                 if (prefill)
                     return prefill(to.key, role, std::move(text), std::move(ff.paths));
@@ -663,7 +663,7 @@ private:
 
 // ── Workspace icon ──────────────────────────────────────────────────────────
 
-// msga's paintWorkspaceBubble at 96 px, radius 24: the picture, else the
+// The rail's workspace bubble at 96 px, radius 24: the picture, else the
 // first letter on the workspace colour (HSL(hash·37 mod 360, 65 %, 42 %)).
 class IconPreview final : public View {
 public:
@@ -725,10 +725,10 @@ private:
 };
 
 std::string iconDir(plat::App &app) {
-    // The old app's folder: its pictures are named slack_<id>-…, ours <id>-….
+    // Pictures from earlier versions are named slack_<id>-…, ours <id>-….
     return file::join(identity::dataDir(app), "workspace_icons");
 }
-// msga's <stem>-<msecs>.png naming: a new file each time, so nothing caches
+// <stem>-<msecs>.png naming: a new file each time, so nothing caches
 // the old picture under the same path.
 std::vector<std::string> iconFiles(plat::App &app, const std::string &workspaceId) {
     std::vector<std::string>    out;
@@ -785,7 +785,7 @@ public:
             refresh();
         };
         // Saved first: a picture that can't be stored keeps the dialog open
-        // and says so (msga's "The icon could not be saved.").
+        // and says so ("The icon could not be saved.").
         _save->onClick = [this] {
             if (!_dirty)
                 return;
@@ -900,7 +900,7 @@ private:
 
 // ── Tray icon ───────────────────────────────────────────────────────────────
 
-// msga's TrayIconDialog preview: a dark panel stand-in (most trays are dark,
+// The preview: a dark panel stand-in (most trays are dark,
 // and the built-in icon is white), the icon at 56 px inside it, the unread
 // dot over its corner at the tray's proportions (36 of 128).
 class TrayPreview final : public View {
@@ -925,7 +925,7 @@ private:
     std::shared_ptr<const gfx::Bitmap> _bmp;
 };
 
-// The old app's data folder (app/identity.h), where its own tray_icon.png
+// The data folder (app/identity.h), where earlier versions' tray_icon.png
 // is too; ours have names of their own, so a rollback finds its picture.
 std::string trayDir(plat::App &app) {
     return identity::dataDir(app);
@@ -967,7 +967,7 @@ public:
         _save = makeButton(tr("Save"), V::Primary);
         addButtonRow(_save, makeButton(tr("Cancel"), V::Secondary), _mono);
         _mono->onChange = [this](bool) {
-            _dirty = true; // an option alone changed (msga's markDirty)
+            _dirty = true; // an option alone changed
             refreshPreview();
             refresh();
         };
@@ -981,7 +981,7 @@ public:
             refresh();
         };
         // Saved first: a picture that can't be stored keeps the dialog open
-        // and says so (msga's "The icon could not be saved.").
+        // and says so ("The icon could not be saved.").
         _save->onClick = [this] {
             if (!_dirty)
                 return;
@@ -1224,7 +1224,7 @@ gfx::Bitmap trayPicture(const gfx::Bitmap &src, bool monochrome) {
 }
 
 void trayMonochrome(gfx::Bitmap *bmp) {
-    // msga's toMonochrome: a white silhouette. The shape comes from the alpha
+    // A white silhouette. The shape comes from the alpha
     // channel when the picture has transparency inside its visible area (a
     // logo cut out of its background); an opaque one (a logo on a solid
     // backdrop, a photo) keys on each pixel's colour distance from the

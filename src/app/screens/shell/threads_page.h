@@ -1,5 +1,5 @@
-// The sidebar's "Threads" page, msga's ThreadsPage (the official client's
-// Threads view): every thread the user follows, newest activity first, as
+// The sidebar's "Threads" page (like the official client's Threads
+// view): every thread the user follows, newest activity first, as
 // cards — the channel name (a click opens it) over the participants and a
 // "New" pill, then in a bordered card the root, "Show N more replies", the
 // latest replies (a click on one opens the real thread) and an inline reply
@@ -98,7 +98,7 @@ private:
     std::shared_ptr<int>            _alive      = std::make_shared<int>(0);
 };
 
-// One followed thread (msga's ThreadCard).
+// One followed thread.
 class ThreadsPage::Card : public ui::View {
 public:
     Card(ThreadsPage &page, model::Backend::FollowedThread item);

@@ -1,4 +1,4 @@
-"""Remove stb_image public functions msga-next never calls (declarations and
+"""Remove stb_image public functions msga never calls (declarations and
 definitions). Internals stay: they're still reached from the four entry
 points we use (stbi_load_from_memory, stbi_load_gif_from_memory,
 stbi_info_from_memory, stbi_image_free)."""

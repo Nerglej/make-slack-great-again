@@ -3,7 +3,7 @@
 
 // ctest sets TZ=Europe/Stockholm; running the binary by hand uses the host
 // zone. Every expectation is built from local wall-clock times, so it passes
-// in any zone (as the Qt TimeFmt tests did).
+// in any zone.
 namespace {
 const int64_t kAfternoon = base::fromLocal(2026, 3, 15, 14, 34);
 const int64_t kMorning   = base::fromLocal(2026, 3, 15, 9, 5);
@@ -113,7 +113,7 @@ TEST("time: the date language — en, ja, and the OS's regional format") {
     CHECK_STR(base::osLanguage(), "sv");
     base::setDateLanguage("system");
     CHECK_STR(base::dateLanguage(), "sv");
-    // English patterns, Swedish names (the old app's QLocale::system()).
+    // English patterns, Swedish names (the OS's regional format).
     CHECK_STR(base::formatDate(kAfternoon, now), "mars 15");
     CHECK_STR(base::formatTime(kAfternoon), "2:34 em");
     CHECK_STR(base::weekdayName(0), "söndag");

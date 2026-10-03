@@ -2,7 +2,7 @@
 // (localtime_r / mktime; the Windows CRT equivalents), and the user-facing
 // formats the UI shows. Month, weekday and AM/PM names and the date patterns
 // follow the date language (setDateLanguage), not the translation table, so
-// a language change reformats dates at once (msga's TimeFmt); the words
+// a language change reformats dates at once; the words
 // around them ("Today", "%1 at %2") are UI text and go through i18n::tr.
 //
 // Seconds are Unix epoch seconds; micros are epoch microseconds (the unit of
@@ -42,7 +42,7 @@ void    civilFromDays(int64_t days, int *year, int *month, int *day);
 int64_t localDay(int64_t secs);
 
 // ── Preferences ─────────────────────────────────────────────────────────────
-// 24-hour clock ("14:34") vs 12-hour ("2:34 PM"). Default 12-hour, as msga's
+// 24-hour clock ("14:34") vs 12-hour ("2:34 PM"). Default 12-hour, the
 // English default; the settings screen persists and re-applies it.
 void setUse24h(bool on);
 bool use24h();
@@ -51,8 +51,7 @@ bool use24h();
 // The Appearance → Language setting: "en" (US English names and patterns),
 // "ja" (Japanese), or "system": the OS's regional format — its month and
 // weekday names, AM/PM and short date, with the English patterns (the
-// Japanese ones when the OS language is Japanese), as the old app's
-// QLocale::system() gave. Until set: "en". Not thread-safe (UI thread).
+// Japanese ones when the OS language is Japanese). Until set: "en". Not thread-safe (UI thread).
 void        setDateLanguage(std::string_view setting);
 // The language dates are in: "en", "ja", or the OS's ("sv", "de" …).
 const char *dateLanguage();
@@ -69,17 +68,17 @@ const char *monthShortName(int month);     // "Mar"
 const char *weekdayName(int weekday);      // 0 = Sunday: "Sunday"
 const char *weekdayShortName(int weekday); // "Sun"
 const char *dayPeriodName(int hour);       // 0-23: "AM" / "PM"
-// The numeric short date, Qt-style ("M/d/yy", "dd.MM.yyyy", "yyyy/MM/dd"):
-// what a date input field shows (msga's QDateEdit with the locale).
+// The numeric short date as a formatCivil pattern ("M/d/yy", "dd.MM.yyyy",
+// "yyyy/MM/dd"): what a date input field shows.
 const char *shortDatePattern();
-// The week's first day, 0 = Sunday … 6 = Saturday (the calendar popup; the
-// old app's QLocale::firstDayOfWeek): Sunday for "en" and "ja".
+// The week's first day, 0 = Sunday … 6 = Saturday (the calendar popup):
+// Sunday for "en" and "ja".
 int         firstDayOfWeek();
 // A month heading: "March 2026" / "2026年3月" (the calendar popup).
 std::string formatMonthYear(int year, int month);
 
 // ── UI formats (all local time) ─────────────────────────────────────────────
-// A date/time by pattern, Qt-style, so a translation can reorder and dress
+// A date/time by pattern, so a translation can reorder and dress
 // it ("MMMM d, yyyy" -> "yyyy年M月d日"): yyyy, M/MM (number), MMM (short
 // name), MMMM (name), d/dd, dddd (weekday name), H/HH (24-hour), h/hh
 // (12-hour), mm, ss, AP (AM/PM, translated); '...' is literal text, '' a quote.

@@ -161,7 +161,7 @@ const char *const kEnWeekdays[] = {
     "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
 };
 const char *const kEnWeekdaysShort[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-// Japanese (CLDR, as QLocale had it): months are numbers with 月.
+// Japanese (CLDR): months are numbers with 月.
 const char *const kJaWeekdays[]      = {
     "\xE6\x97\xA5\xE6\x9B\x9C\xE6\x97\xA5",
     "\xE6\x9C\x88\xE6\x9B\x9C\xE6\x97\xA5",
@@ -227,7 +227,7 @@ void setDateLanguage(std::string_view setting) {
     const bool          have = detail::osDateNames(tag, os);
     if (lang == "ja") {
         setJapanese(n);
-    } else if (have) { // else English, the old app's fallback too
+    } else if (have) { // else English
         for (int i = 0; i < 12; ++i)
             n.month[i] = std::move(os.month[i]), n.monthShort[i] = std::move(os.monthShort[i]);
         for (int i = 0; i < 7; ++i)
@@ -349,7 +349,7 @@ std::string formatCivil(const CivilTime &c, std::string_view pattern) {
 static const char *timePattern(bool withSecs) {
     // 24-hour: a two-digit hour ("09:05"); 12-hour: none ("9:05 AM"), with
     // the day period where the language puts it (Japanese: "午後2:34";
-    // msga's time_secs token kept it after the time).
+    // with seconds, it still comes after the time).
     if (g_use24h)
         return withSecs ? "HH:mm:ss" : "HH:mm";
     if (withSecs)
@@ -424,8 +424,7 @@ bool isoExpect(std::string_view s, size_t *i, char c) {
 } // namespace
 
 int64_t parseIsoMicros(std::string_view s) {
-    // YYYY-MM-DDTHH:MM[:SS[.f…]][Z|±HH:MM|±HHMM]; no zone = local time, as
-    // Qt's ISODateWithMs read it.
+    // YYYY-MM-DDTHH:MM[:SS[.f…]][Z|±HH:MM|±HHMM]; no zone = local time.
     size_t    i  = 0;
     const int y  = isoDigits(s, &i, 4);
     const int mo = isoExpect(s, &i, '-') ? isoDigits(s, &i, 2) : -1;

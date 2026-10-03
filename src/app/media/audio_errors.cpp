@@ -51,7 +51,7 @@ std::string audioErrorText(const plat::audio::Failure &f) {
         break;
     case E::MicrophoneOpen:
 #ifdef _WIN32
-        // The OS's own text goes in parentheses, as the old app showed it.
+        // The OS's own text goes in parentheses.
         summary =
             tr("Couldn't open the microphone. Check that microphone access is allowed in Windows "
                "Settings \xE2\x86\x92 Privacy & security \xE2\x86\x92 Microphone.");
@@ -77,7 +77,7 @@ std::string audioErrorText(const plat::audio::Failure &f) {
         summary = tr("Recording from the microphone failed");
         break;
     }
-    // A capture helper's last stderr line follows, as in the old app.
+    // A capture helper's last stderr line follows.
     const bool withDetail =
         f.code == E::NoAudio || f.code == E::StartFailed || f.code == E::Stopped;
     return f.detail.empty() || !withDetail ? std::string(summary)

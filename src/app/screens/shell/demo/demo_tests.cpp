@@ -10,7 +10,7 @@
 
 #include <string>
 
-TEST("demo tour: the script parses msga's verbs; mistakes are named") {
+TEST("demo tour: the script parses the tour verbs; mistakes are named") {
     demo::TourScript s;
     std::string      err;
     REQUIRE(

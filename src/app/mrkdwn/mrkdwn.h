@@ -1,10 +1,9 @@
 // Slack mrkdwn → rich text the UI renders.
 //
 // Two layers:
-//  1. parse(): a port of msga's MrkdwnParser (src/text/mrkdwn_parser.cpp) —
-//     plain UTF-8 text plus nested entity spans (bold, links, mentions,
-//     emoji, code, quotes…). Same grammar, same bug fixes, same entity order
-//     (parents before children), with byte offsets instead of UTF-16 ones.
+//  1. parse(): plain UTF-8 text plus nested entity spans (bold, links,
+//     mentions, emoji, code, quotes…), parents before children, with byte
+//     offsets.
 //  2. blocks() + runs(): the layout view of that result — paragraphs, code
 //     blocks, list items and quoted blocks, each flattened into
 //     non-overlapping styled runs that map 1:1 onto text::AttributedText
@@ -56,8 +55,7 @@ struct Rich {
 };
 
 // Full mrkdwn: marks, tokens, emoji, quotes, code, entities; bare http(s)
-// URLs in plain text (and inside `code`, as msga's renderer linked them)
-// become Link entities too.
+// URLs in plain text (and inside `code`) become Link entities too.
 Rich        parse(std::string_view mrkdwn);
 // Only <…> tokens and :emoji: — for already-structured runs (rich_text "text"
 // elements) whose emphasis comes from a style object. *_~` stay literal and a

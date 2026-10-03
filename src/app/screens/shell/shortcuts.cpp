@@ -10,12 +10,12 @@ namespace {
 using K = plat::Key;
 constexpr Keys kNone{};
 
-// msga's kDefs, row for row. Ordered as the shortcuts panel lists them
+// The table. Ordered as the shortcuts panel lists them
 // (inHelp rows, top to bottom); the rest sit next to the group they belong to.
 const Def kDefs[] = {
     {Id::OpenSettings, Scope::Window, true, N_("Open settings"), {{K::Comma, Ctrl}, kNone}},
     {Id::QuickSwitch, Scope::Window, true, N_("Jump to a conversation"), {{K::K, Ctrl}, kNone}},
-    // Qt's QKeySequence::Find: Ctrl+F on every platform.
+    // Find: Ctrl+F on every platform.
     {Id::SearchMessages, Scope::Window, true, N_("Search messages"), {{K::F, Ctrl}, kNone}},
     // The keys of the next two are replaced by bindings() (the Ctrl+Enter option).
     {Id::SendMessage, Scope::Documented, true, N_("Send message"), {{K::Enter, 0}, kNone}},
@@ -67,7 +67,7 @@ const Def kDefs[] = {
      false,
      N_("Next conversation"),
      {{K::Right, Alt}, {K::Forward, 0}}},
-    // Qt's QKeySequence::Close, resolved per platform.
+    // The platform's Close key, resolved per platform.
     {Id::CloseFrontmost,
      Scope::Window,
      false,
@@ -101,7 +101,7 @@ uint32_t platMods(uint8_t m) {
     return out;
 }
 
-// Qt's portable key names, as msga's table spells them.
+// Portable key names, as the table spells them.
 std::string portableName(plat::Key k) {
     if (k >= K::A && k <= K::Z)
         return std::string(1, char('A' + (int(k) - int(K::A))));
@@ -141,7 +141,7 @@ std::string portableName(plat::Key k) {
 }
 
 std::vector<std::string> tokens(const Keys &k) {
-    // In msga's spelling order (Ctrl, Alt, Shift), each token rendered natively.
+    // In spelling order (Ctrl, Alt, Shift), each token rendered natively.
     std::vector<std::string> out;
 #ifdef __APPLE__
     if (k.mods & Ctrl)

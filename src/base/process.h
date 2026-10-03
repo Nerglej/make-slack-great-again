@@ -74,7 +74,7 @@ void markTestProcess();
 
 // The running executable's absolute path ("" when the OS won't say).
 std::string executablePath();
-// A restart (msga's kRestartExitCode): once the app has exited — main
+// A restart: once the app has exited — main
 // returned, the window, the tray and the single-instance claim gone — the
 // same executable starts again with `args` (argv without argv[0]): exec on
 // Linux and macOS (an updated binary is the new one), a new process on

@@ -2,9 +2,9 @@
 // Settings dialog's choices (app/screens/settings), in
 // <configDir>/settings.json (app/identity.h; tests and the demo recorder
 // point HOME/XDG_CONFIG_HOME at a throwaway directory), written owner-only.
-// The first start imports the old app's settings (app/legacy). The
-// secrets — API keys, the Slack app secret and token, the GIPHY key — are
-// not in the file but in the old app's entries (base/secret.h), unless that
+// The first start imports the settings of earlier versions (app/legacy).
+// The secrets — API keys, the Slack app secret and token, the GIPHY key —
+// are not in the file but in the secret store (base/secret.h), unless that
 // store refuses them.
 //
 // Plain values are listed in tables in settings.cpp (JSON key → member), so
@@ -37,7 +37,7 @@ struct Settings {
     int           x = 0, y = 0;
     bool          maximized   = false;
     ui::ThemeMode theme       = ui::ThemeMode::System;
-    int           threadWidth = 360;  // thread panel (msga's window/threadWidth)
+    int           threadWidth = 360;  // thread panel width, px
     bool          closeToTray = true; // the window's close hides it to the tray
 
     // ── Appearance ──────────────────────────────────────────────────────────
@@ -47,24 +47,23 @@ struct Settings {
     std::string              language = "system"; // "system", "en", "ja"
     bool                     use24h = false, threadsInline = false, linkPreviews = true;
     // use24h came from the file; without it the clock follows the language
-    // (Japanese convention is 24-hour, as the old app's default).
+    // (Japanese convention is 24-hour).
     bool                     use24hSaved    = false;
     bool                     ctrlEnterSends = false, spellCheck = false;
-    // The spell checker's languages (msga's composer/spellLanguages: the
-    // backend's codes, "en_US" / "en-US"); empty = the system language's.
+    // The spell checker's languages (the spell backend's
+    // codes, "en_US" / "en-US"); empty = the system language's.
     std::vector<std::string> spellLanguages;
     int                      relevantDays = 14; // sidebar: conversations active in the last N days
     bool                     showAgentsApps = true, unreadsOnly = false;
     bool                     animateEmoji = true, animateMedia = true;
     bool                     customTrayIcon = false;
     // Claude Code workspaces: the footer's zen toggle (hide the tool-call
-    // cards), per workspace like msga's zenMode/<teamId>: the keys of the
+    // cards), per workspace: the keys of the
     // workspaces with it on ("claude-code:local", auth::WorkspaceRecord::key).
     std::vector<std::string> zenWorkspaces;
     std::string              trayIconPath; // the picture for the custom tray icon
 
-    // ── Composer state (msga's emoji/recent, emoji/skinTone,
-    //    composer/lastAttachDir) ──────────────────────────────────────────────
+    // ── Composer state ──────────────────────────────────────────────────────
     std::vector<std::string> emojiRecent;       // picked emoji names, newest first
     int                      emojiSkinTone = 0; // 0 default, 2-6
     std::string              lastAttachDir;     // the attach chooser's last folder
@@ -90,12 +89,12 @@ struct Settings {
     int         presence        = 0;    // 0 while running, 1 while using, 2 official apps
     bool        slackSession    = true; // false = app keys (OAuth + Socket Mode)
     std::string slackClientId, slackClientSecret, slackAppToken, giphyKey;
-    // The sidebar's visit stamps (msga's conv/visitedAt): conversation id →
+    // The sidebar's visit stamps: conversation id →
     // when it was last opened here (epoch secs); "Clear state" empties it.
     std::vector<std::pair<std::string, int64_t>> visitedAt;
-    bool trayMonochrome = true; // msga's tray/customIconMonochrome
+    bool trayMonochrome = true; // the custom tray icon turned monochrome
 
-    // ── Claude Code (msga's claudeCode/* keys) ──────────────────────────────
+    // ── Claude Code ─────────────────────────────────────────────────────────
     // The folder the last session started in (claudeCode/lastDir; "" = home),
     // the recently used ones, newest first (claudeCode/recentDirs, see
     // recent_folders.h), and each teammate's own pick (claudeCode/lastDir/<id>).
@@ -115,8 +114,8 @@ struct Settings {
     AiProvider *provider(std::string_view id);
     const AiProvider  *provider(std::string_view id) const;
     // The language AI features answer in: the one picked, else the app
-    // language's — the OS locale's language for "system" (msga's
-    // LlmService::nativeLanguage), so "sv" for a Swedish desktop.
+    // language's — the OS locale's language for "system", so "sv" for a
+    // Swedish desktop.
     std::string        effectiveAiLanguage() const;
     // The GIPHY key searches use: the user's own, else the build's
     // (MSGA_GIPHY_KEY in credentials.cmake; "" when the build has none).

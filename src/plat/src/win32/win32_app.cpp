@@ -123,8 +123,8 @@ bool Win32App::init(std::string *error) {
     wc.hCursor     = nullptr;   // WM_SETCURSOR decides
     wc.hbrBackground = nullptr; // we paint every pixel; no erase flash
     wc.lpszClassName = kWindowClass;
-    // Qt's generated .rc names the app icon IDI_ICON1; msga's resource keeps
-    // that name, so windows pick it up without a plat API for icons.
+    // The app's resource script names its icon IDI_ICON1, so windows pick it
+    // up without a plat API for icons.
     wc.hIcon         = LoadIconW(GetModuleHandleW(nullptr), L"IDI_ICON1");
     if (!wc.hIcon)
         wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);

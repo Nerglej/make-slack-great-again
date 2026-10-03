@@ -78,7 +78,7 @@ const struct {
     {"claudeCode/lastDir", &Settings::claudeLastDir},
 };
 
-// The old theme presets' ids (ui/theme.cpp), in ui::Palette order.
+// The stored theme presets' ids, in ui::Palette order.
 int paletteOf(const std::string &id, int def) {
     static const char *const ids[] = {"purple", "charcoal", "blue", "green", "custom"};
     for (int i = 0; i < int(std::size(ids)); ++i)
@@ -87,9 +87,9 @@ int paletteOf(const std::string &id, int def) {
     return def;
 }
 
-// appearance/customTheme: the JSON the old serializeCustomTheme wrote, or a
+// appearance/customTheme: the custom theme JSON earlier versions wrote, or a
 // Slack sidebar string of 8 or 10 hex colours — read by the same parser as
-// Settings' Import (msga's parseCustomTheme), pins and all.
+// Settings' Import, pins and all.
 void customTheme(const std::string &text, ui::CustomPalette *c) {
     settings::parseSlackTheme(text, c);
 }
@@ -101,10 +101,10 @@ int32_t be32(std::string_view b, size_t at) {
     );
 }
 
-// window/geometry: QWidget::saveGeometry's bytes (QDataStream, big-endian):
+// window/geometry: the saved window geometry's bytes (big-endian):
 // magic 0x1D9D0CB, version (2 × u16), frameGeometry, normalGeometry, screen,
-// maximized, fullScreen, [v2] screen width, [v3] geometry — each QRect as
-// left, top, right, bottom. A maximized window restores to normalGeometry.
+// maximized, fullScreen, [v2] screen width, [v3] geometry — each rectangle as
+// left, top, right, bottom (inclusive). A maximized window restores to normalGeometry.
 void windowGeometry(std::string_view b, Settings *s) {
     if (b.size() < 46 || be32(b, 0) != 0x1D9D0CB)
         return;
@@ -132,7 +132,7 @@ std::string lower(std::string s) {
     return s;
 }
 
-// QUrl::fromPercentEncoding: "%3A" → ':' (malformed escapes stay as they are).
+// Percent-decoding: "%3A" → ':' (malformed escapes stay as they are).
 std::string percentDecoded(std::string_view s) {
     const auto hex = [](char c) {
         return c >= '0' && c <= '9'   ? c - '0'
@@ -160,7 +160,7 @@ bool isKnownService(std::string_view key) {
 
 void importOldSettings(
     const Map                                &old,
-    const Map                                &oldApp,
+    const Map                                &appStore,
     const std::string                        &dataDir,
     const std::vector<auth::WorkspaceRecord> &workspaces,
     Settings                                 *s
@@ -173,13 +173,13 @@ void importOldSettings(
         if (has(old, k.key))
             s->*k.field = at(old, k.key).text();
 
-    // The one-time migration the old main.cpp ran: the per-conversation
+    // A one-time migration earlier versions ran at start: the per-conversation
     // default became "All new posts".
     if (!at(old, "notifications/defaultMigrated").toBool(false) && s->notifyLevel == 1)
         s->notifyLevel = 0;
 
     // Appearance. Before appearance/mode existed, appearance/theme alone
-    // chose the theme, "charcoal" meaning dark (old ThemeManager).
+    // chose the theme, "charcoal" meaning dark.
     const std::string light = at(old, "appearance/theme").text();
     if (has(old, "appearance/mode")) {
         const std::string mode = at(old, "appearance/mode").text();
@@ -211,7 +211,7 @@ void importOldSettings(
         s->slackSession = conn == "session";
     } else {
         // Never chosen: session, unless an OAuth workspace (no session cookie)
-        // was signed in before the choice existed (old slack::connectionMode).
+        // was signed in before the choice existed.
         s->slackSession = true;
         for (const auth::WorkspaceRecord &r : workspaces)
             if (r.service == "slack" && !r.auth.empty() &&
@@ -243,7 +243,7 @@ void importOldSettings(
         p.model    = at(old, base + "model").text();
         p.sttModel = at(old, base + "sttModel").text();
         if (id.empty() || p.url.empty() || s->provider(id))
-            continue; // a half-written entry, as the old app skipped it
+            continue; // a half-written entry: skipped
         s->ai.push_back(std::move(p));
     }
     std::string glossary;
@@ -252,7 +252,7 @@ void importOldSettings(
             glossary += glossary.empty() ? term : "\n" + term;
     s->voiceGlossary = glossary;
 
-    // Claude Code folders: claudeCode/recentDirs is a QSettings array
+    // Claude Code folders: claudeCode/recentDirs is an INI array
     // (<key>/size, <key>/<1-based index>/path|usedAt); claudeCode/lastDir/<role>
     // each teammate's own pick.
     s->claudeRecentDirs.clear();
@@ -272,7 +272,7 @@ void importOldSettings(
             s->claudeTeammateDirs.emplace_back(it->first.substr(kTeammate.size()), dir);
 
     if (s->emojiSkinTone == 1)
-        s->emojiSkinTone = 0; // tones are 2-6, as the old picker checked
+        s->emojiSkinTone = 0; // only 2-6 are tones
     s->spellLanguages = at(old, "composer/spellLanguages").toList();
     // conv/visitedAt: the sidebar's visit stamps, a JSON object of
     // conversation id → epoch seconds.
@@ -283,13 +283,13 @@ void importOldSettings(
                 s->visitedAt.emplace_back(std::string(e.key()), e.integer());
     s->emojiRecent = at(old, "emoji/recent").toList();
     // zenMode/<percent-encoded workspace key>: the footer's zen toggle, per
-    // workspace (old MainWindow's zenModeKey).
+    // workspace.
     s->zenWorkspaces.clear();
     constexpr std::string_view kZen = "zenMode/";
     for (auto it = old.lower_bound(kZen); it != old.end() && str::startsWith(it->first, kZen); ++it)
         if (it->second.toBool(false))
             s->zenWorkspaces.push_back(percentDecoded(it->first.substr(kZen.size())));
-    s->lastAttachDir = at(oldApp, "composer/lastAttachDir").text();
+    s->lastAttachDir = at(appStore, "composer/lastAttachDir").text();
 }
 
 std::vector<auth::WorkspaceRecord> oldWorkspaces(const Map &old, std::string *active) {
@@ -311,9 +311,8 @@ std::vector<auth::WorkspaceRecord> oldWorkspaces(const Map &old, std::string *ac
         out.push_back(std::move(r));
     };
     if (at(old, "storeVersion").toInt(0) < 2) {
-        // The layouts before TokenStore v2 (old token_store.cpp migrateV0toV1,
-        // migrateV1toV2): one Slack workspace under auth/*, then bare team
-        // ids with plain token fields. Their tokens were never in a keychain.
+        // The layouts before store version 2 (versions 0 and 1): one Slack workspace under auth/*,
+        // then bare team ids with plain token fields. Their tokens were never in a keychain.
         const auto blob = [](const std::string &xoxp, const std::string &refresh, int64_t exp) {
             json::Writer w;
             w.beginObject().key("xoxp").value(xoxp).key("refreshToken").value(refresh);
@@ -358,7 +357,7 @@ std::vector<auth::WorkspaceRecord> oldWorkspaces(const Map &old, std::string *ac
         const std::string base = "workspace/" + handle + "/";
         if (!has(old, base + "displayName") && !has(old, base + "iconUrl") &&
             !has(old, base + "auth"))
-            continue; // listed, but its record is gone (old loadWorkspace: nullopt)
+            continue; // listed, but its record is gone
         add(handle.substr(0, colon),
             handle.substr(colon + 1),
             at(old, base + "displayName").text(),
@@ -395,7 +394,7 @@ void importOldSettingsAndWorkspaces(
     if (old.empty())
         return; // a fresh install: nothing to bring along
     // The imported records with their auth (read once: each keychain read of
-    // an item the old binary wrote may ask the user).
+    // an item an earlier version wrote may ask the user).
     std::vector<auth::WorkspaceRecord> workspaces;
     if (wantWorkspaces) {
         // Two statements: oldWorkspaces fills `active`, and the order a
@@ -412,7 +411,7 @@ void importOldSettingsAndWorkspaces(
         importOldSettings(old, oldsettings::load("MSGA"), identity::dataDir(app), workspaces, &s);
         s.save(settingsPath);
     }
-    LOG_INFO("legacy", "imported the old msga's settings and workspaces");
+    LOG_INFO("legacy", "imported the earlier version's settings and workspaces");
 }
 
 } // namespace legacy

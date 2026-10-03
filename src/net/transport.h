@@ -18,7 +18,7 @@
 namespace net::detail {
 
 // What every request says it is when the caller sets no User-Agent: the
-// same on every OS, and what the old app's Qt stack sent everywhere.
+// same on every OS, and the one msga has always sent.
 inline constexpr const char *kUserAgent = "Mozilla/5.0";
 
 // One HTTP exchange — no redirect following, no cookie handling, no

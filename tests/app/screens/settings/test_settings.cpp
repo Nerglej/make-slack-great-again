@@ -1,7 +1,7 @@
 // The Settings dialog inside a whole shell on plat's headless backend, with
 // input through plat's TestHooks (the path real input takes): it opens as an
 // in-window overlay, Escape and the backdrop close it, sections switch pages,
-// every page lists the Qt app's items in its order, controls write
+// every page lists its items in order, controls write
 // shell::Settings and the file (at once, or on the page's Save), and what
 // can apply live does (theme and palettes, font size, time format, link
 // previews, Ctrl+Enter, the notification level).
@@ -59,7 +59,7 @@ void pump(int n = 10) {
 
 std::string testPath() {
     const char *h = std::getenv("XDG_CONFIG_HOME");
-    return file::join(h ? h : "/tmp", "msga-next-settings-test.json");
+    return file::join(h ? h : "/tmp", "msga-settings-test.json");
 }
 
 struct Harness {
@@ -259,7 +259,7 @@ TEST("settings: every value survives the file, which is owner-only") {
 
 TEST("settings: the gear opens a window-filling overlay; Escape and the backdrop close it") {
     Harness   h;
-    ui::View *gear = findIn(&h.win->root(), "Settings"); // msga's rail tooltip
+    ui::View *gear = findIn(&h.win->root(), "Settings"); // the rail tooltip
     REQUIRE(gear != nullptr);
     h.click(gear);
     SettingsDialog *d = h.sh->settingsDialog();
@@ -285,7 +285,7 @@ TEST("settings: the gear opens a window-filling overlay; Escape and the backdrop
     CHECK(h.sh->settingsDialog() == nullptr);
 }
 
-TEST("settings: the pages and their sections, in the Qt app's order") {
+TEST("settings: the pages and their sections, in order") {
     Harness         h;
     SettingsDialog &d = h.open();
     // Rows are 41 px apart under 8 px of padding: row 4 is System.
@@ -350,7 +350,7 @@ TEST("settings: the pages and their sections, in the Qt app's order") {
          {"Version",
           "Check for updates automatically",
           "Check for updates",
-#ifndef __APPLE__ // the old app's macOS minimizes to the Dock: no Window section
+#ifndef __APPLE__ // macOS minimizes to the Dock: no Window section
           "Window",
           "Minimize to tray",
 #endif
@@ -429,7 +429,7 @@ TEST("settings: color mode and theme cards apply and persist at once") {
     CHECK(h.settings.custom.primary == 0xff1a2b3cu);
     CHECK(ui::color(ui::C::Rail) == 0xff1a2b3cu);
     CHECK(shell::Settings::load(path).custom.primary == 0xff1a2b3cu);
-    // A 10-colour string pins what it names outright (msga's CustomTheme::Pins).
+    // A 10-colour string pins what it names outright.
     imp->setText("#1A2B3C,#222222,#1164A3,#EEEEEE,#333333,#DDDDDD,#2BAC76,#CD2553,#101010,#C0C0C0");
     h.click(d.find("Import"));
     CHECK(ui::color(ui::C::SidebarHover) == 0xff333333u);
@@ -646,8 +646,8 @@ TEST(
         h.click(d.find("Save"));
         CHECK_STR(h.settings.soundId, "system:bell");
 
-        // A notification plays it; the OS's own sound is as the old app had
-        // it (off on macOS only).
+        // A notification plays it; the OS's own sound is off on macOS
+        // only.
         h.sh->setLive(true);
         const ConvRef eng = h.store.findConversation("C0ENG");
         REQUIRE(eng != kNoConv);

@@ -53,7 +53,7 @@ cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" -G Ninja "${COMPILERS[@]+"${COMPILERS[@
 
 cmake --build "$BUILD_DIR" --target msga --parallel "$NPROC"
 
-# macOS builds the old app's bundle, msga.app (bundle id com.nisdos.msga).
+# macOS builds the bundle, msga.app (bundle id com.nisdos.msga).
 BIN="${BUILD_DIR}/msga"
 if [[ "$(uname -s)" == "Darwin" ]]; then
     BIN="${BUILD_DIR}/msga.app/Contents/MacOS/msga"

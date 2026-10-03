@@ -1,6 +1,6 @@
 // plat audio: playing a local file (inline audio clips), recording the
 // microphone (voice input) and short notification sounds. No toolkit audio
-// stack and no new shared libraries; each OS uses what the old Qt app used:
+// stack and no new shared libraries; each OS uses its own:
 //
 //   playback   Linux   in-process decode (vendored miniaudio: MP3/WAV/
 //                      Vorbis; `ffmpeg` on PATH for the rest, e.g. Slack's

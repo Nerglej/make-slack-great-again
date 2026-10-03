@@ -20,9 +20,9 @@ namespace shell {
 
 namespace {
 
-constexpr float kListH = 300; // msga's kListMinH
+constexpr float kListH = 300; // the list's minimum height
 
-// msga's issue #60: fuzzy, not substring ("xdg" lands on #xd-general). None
+// Issue #60: fuzzy, not substring ("xdg" lands on #xd-general). None
 // for an id we can't name yet: not something to offer.
 std::optional<double> scoreOf(const model::Store &store, ConvRef c, std::string_view q) {
     const std::string name = store.displayName(c);
@@ -33,11 +33,11 @@ std::optional<double> scoreOf(const model::Store &store, ConvRef c, std::string_
         return std::nullopt;
     // Group DMs are named after their members, so a person matches every
     // group they are in as well as their DM — and the groups, often more
-    // recent, buried it (msga's issue #61): half a consecutive match.
+    // recent, buried it (issue #61): half a consecutive match.
     return *s + (store.conversation(c).kind == model::ConvKind::Group ? -0.5 : 0.0);
 }
 
-// msga's WorkspaceTabStrip bubble: the rail's 40 px bubble in a slot that
+// A workspace tab's bubble: the rail's 40 px bubble in a slot that
 // keeps room for the selection ring (accent around the current one, a
 // divider ring on hover), so picking one moves nothing; dimmed when its
 // workspace has nothing for the query.
@@ -164,7 +164,7 @@ std::vector<ConvRef> quickSwitchFilter(
 }
 
 // The list rows, virtual (a large workspace has thousands of channels):
-// msga's BrowseListView row — a DM's photo, a group DM's initial disc, a
+// a DM's photo, a group DM's initial disc, a
 // channel's # or lock, then the name.
 class QuickSwitcher::Rows final : public VirtualList::Adapter {
 public:
@@ -267,7 +267,7 @@ QuickSwitcher::QuickSwitcher(
     _field->setBorder(C::InputBorderFocus);
     _field->style().padding(10, 8);
     _field->onChange = [this] { applyFilter(); };
-    // msga's switcher keys, whatever the modifiers: Up/Down move (wrapping),
+    // The switcher's keys, whatever the modifiers: Up/Down move (wrapping),
     // Enter opens; with several workspaces ←/→ and Tab/Shift+Tab switch
     // between them instead of moving the caret.
     _field->onKey    = [this, multi](const Event &e) {
@@ -293,7 +293,7 @@ QuickSwitcher::QuickSwitcher(
         }
         return false;
     };
-    // msga's list: every match, scrolling, at least kListMinH (300) tall.
+    // The list: every match, scrolling, at least kListH (300) tall.
     _rows = std::make_unique<Rows>(*this);
     _list = add<VirtualList>(_rows.get());
     _list->setGap(1);
@@ -322,7 +322,7 @@ QuickSwitcher::QuickSwitcher(
     refilter();
 }
 
-// msga's bestScore: the same key and bias as the list rows, so "the
+// The best score: the same key and bias as the list rows, so "the
 // workspace with the best match" is the one whose top row would rank highest.
 std::optional<double>
 QuickSwitcher::bestScore(const QuickSwitchTab &t, std::string_view query) const {
@@ -401,7 +401,7 @@ void QuickSwitcher::refilter() {
     _current                  = 0;
     _list->reset();
     _list->scrollTo(0);
-    // msga's refreshList: point at the other tabs when they hold what this
+    // Point at the other tabs when they hold what this
     // one doesn't.
     const bool any = !_results.empty();
     _list->setVisible(any);
@@ -441,7 +441,7 @@ void QuickSwitcher::choose(int index) {
     if (open)
         open(c);
     else if (!here && in)
-        in(key, c); // msga's openConversationIn
+        in(key, c); // opened in its own workspace
 }
 
 } // namespace shell

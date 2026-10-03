@@ -28,12 +28,12 @@ using model::tsSecs;
 namespace shell {
 
 namespace {
-// msga's ConvListWidget metrics: one row height for everything (scaled with
+// The list's metrics: one row height for everything (scaled with
 // the text size), a 6 px inset above the first row, pills inset 8 px from the
 // list's edges; icons at kPadH, labels and conversation content at 32.
 constexpr float   kRowHBase = 30, kTopPad = 6, kPill = 8, kPadH = 12, kContentX = 32;
 constexpr int     kAvatarPx         = 40;         // 20 logical, sharp at 2x
-constexpr int64_t kMaxNotifyAgeSecs = 30 * 86400; // msga's kMaxNotifyAgeDays
+constexpr int64_t kMaxNotifyAgeSecs = 30 * 86400; // 30 days
 
 float rowH() {
     return std::round(kRowHBase * (app() ? app()->userTextScale() : 1.f));
@@ -44,7 +44,7 @@ C ink(bool selected, bool bright) {
     return selected ? C::SidebarSelectedText : bright ? C::SidebarText : C::SidebarTextMuted;
 }
 
-// Rows that change colour on hover (msga repaints them bright).
+// Rows that change colour on hover (repainted bright).
 class HoverRow : public Clickable {
 public:
     bool onEvent(Event &e) override {
@@ -86,8 +86,8 @@ public:
 };
 
 // The "+" on the Direct messages / Sessions / Team header: shown while the
-// header is hovered. `at` is where the press was (msga opens the session
-// menu at the cursor); a right click on it does the same as a left one.
+// header is hovered. `at` is where the press was (the session menu
+// opens at the cursor); a right click on it does the same as a left one.
 class HeaderPlus final : public Clickable {
 public:
     explicit HeaderPlus(const char *tip) {
@@ -278,8 +278,8 @@ public:
         label->setColor(on ? C::SidebarText : C::SidebarTextMuted);
         update();
     }
-    // msga rebuilds its rows on a toggle, which forgets the hover until the
-    // pointer moves again: so does this.
+    // A toggle rebuilds the rows, which forgets the hover until the
+    // pointer moves again.
     bool lit() const { return hovered() && !stale; }
     void activate() override {
         stale = true;
@@ -352,7 +352,7 @@ private:
     bool _plus;
 };
 
-// msga's sidebar huddle pill: the first participant's avatar, then an
+// The sidebar's huddle pill: the first participant's avatar, then an
 // accent pill (headphones, the participant count) — a click joins instead
 // of opening the conversation. kHuddlePad / kHuddleIcon / kHuddleGap.
 class HuddlePill final : public Clickable {
@@ -381,10 +381,10 @@ public:
 
 } // namespace
 
-// What a conversation row and a teammate row share: msga selects on press
+// What a conversation row and a teammate row share: selection on press
 // (not on release), the row's context menu, a hover repaint (the presence
 // dot's ring takes the hover colour), and the full name over a truncated one
-// (msga's truncated-name tooltip).
+// (a tooltip).
 class SidebarRow : public Clickable {
 public:
     bool onEvent(Event &e) override {
@@ -441,7 +441,7 @@ public:
         label->style().shrink = 1;
         if (cv.kind == ConvKind::Dm) {
             const auto &u = store.user(cv.dmUser);
-            // msga's "EXT" pill after a Slack Connect peer's name.
+            // The "EXT" pill after a Slack Connect peer's name.
             if (u.stranger)
                 screens::addTagBadge(this, true, true)->style().margins(6, 0, 0, 0);
             if (!u.statusEmoji.empty()) {
@@ -546,7 +546,7 @@ public:
     int            count = 0, huddleCount = 0;
 };
 
-// A teammate in the Team section (msga's paintTeammateRow): the pill of a
+// A teammate in the Team section: the pill of a
 // conversation row, its user's avatar and presence, its name — bright while
 // any of its sessions has something unread (the sessions carry the badges).
 class TeammateRow final : public SidebarRow {
@@ -621,9 +621,8 @@ public:
 Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(avatars) {
     _now    = [this] { return _ctx.backend.nowSecs(); };
     _scroll = add<ScrollView>();
-    // msga's list is a QAbstractScrollArea: a click focuses it, and then its
-    // keys scroll it (they never change the selection). Tab already stops on
-    // each row here, so the list itself is click-focus only.
+    // A click focuses the list, and then its keys scroll it (they never change the selection). Tab
+    // already stops on each row here, so the list itself is click-focus only.
     _scroll->setClickFocus(true);
     _scroll->setThinThumb(C::SidebarScrollbar);
     _scroll->style().flex(1);
@@ -643,7 +642,7 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
         case model::ChangeKind::Prepend:
         case model::ChangeKind::Insert:
             // History that makes a hidden conversation relevant lists it
-            // (msga re-derives its rows whenever conversations change).
+            // (the rows are re-derived whenever conversations change).
             if (ch.thread == 0 && ch.conv < _ctx.store().conversationCount() && !rowFor(ch.conv) &&
                 _ctx.store().conversation(ch.conv).member && relevant(ch.conv))
                 rebuildSoon();
@@ -710,12 +709,12 @@ bool Sidebar::muted(const model::Conversation &c) const {
     return level(c) == model::NotifyLevel::Nothing;
 }
 
-// msga's effectiveNotifLevel: Default follows the global level.
+// The effective level: Default follows the global level.
 model::NotifyLevel Sidebar::level(const model::Conversation &c) const {
     return c.effectiveNotify(_filters.defaultLevel);
 }
 
-// msga's paintsUnread: the one rule for bold rows and the unreads-only filter.
+// The one rule for bold rows and the unreads-only filter.
 bool Sidebar::paintsUnread(const model::Conversation &c) const {
     if (c.unread == 0 || muted(c))
         return false;
@@ -736,14 +735,14 @@ void Sidebar::setVisited(std::unordered_map<std::string, int64_t> stamps) {
 
 void Sidebar::clearVisited() {
     _visited.clear();
-    // The rebuild re-seeds from what the Store knows (unreads), msga's
-    // resetVisitedAt: a fresh first-launch view without a restart.
+    // The rebuild re-seeds from what the Store knows (unreads): a fresh
+    // first-launch view without a restart.
     rebuild();
     if (onVisitedChanged)
         onVisitedChanged();
 }
 
-// msga's isRelevant: unread, open, visited or active within the window, or a
+// Relevant: unread, open, visited or active within the window, or a
 // channel nothing is known about yet. Agent sessions are always listed.
 bool Sidebar::relevant(ConvRef ref) const {
     const auto &c = _ctx.store().conversation(ref);
@@ -803,12 +802,12 @@ void Sidebar::rebuild() {
     }
 
     // Starred first (any kind), then channels, direct messages, agents &
-    // apps; fixture (= server) order inside each, as msga shows them.
+    // apps; fixture (= server) order inside each.
     std::vector<ConvRef> lists[4], hiddenCh;
     const auto           listed = [&](ConvRef c) {
         return !_filters.unreadsOnly || c == _selected || paintsUnread(store.conversation(c));
     };
-    // msga's seed: a conversation with unread messages is stamped, so it stays
+    // The seed: a conversation with unread messages is stamped, so it stays
     // listed for the whole window once read.
     const int64_t now    = _now();
     const int64_t cutoff = now - int64_t(std::max(1, _filters.relevantDays)) * 86400;
@@ -901,7 +900,7 @@ void Sidebar::rebuild() {
             h->extras.push_back(add);
         }
         applyCollapse(h);
-        // The team, under the sessions (msga's section 4): the roles sessions
+        // The team, under the sessions (the fourth section): the roles sessions
         // are started with.
         if (s == 2 && !_team.empty()) {
             auto *t      = _items->add<SectionHeader>(*this, 4, Icon::Users, tr("Team"));
@@ -995,7 +994,7 @@ void Sidebar::usersSoon() {
     });
 }
 
-// Collapsed, a section lists nothing under its header (msga's rebuildRows).
+// Collapsed, a section lists nothing under its header.
 void Sidebar::applyCollapse(SectionHeader *h) {
     for (ConvRow *r : h->rows)
         r->setVisible(!h->collapsed);
@@ -1106,7 +1105,7 @@ void Sidebar::refresh(ConvRef conv) {
 }
 
 void Sidebar::refreshSections() {
-    // msga's sectionHasUnread: bright and bold while anything in it is.
+    // A section header is bright and bold while anything in it is.
     for (SectionHeader *h : _sections) {
         bool any = false;
         for (ConvRow *r : h->rows)
@@ -1176,8 +1175,8 @@ void Sidebar::select(ConvRef conv) {
         }
     }
     refresh(old);
-    // A conversation opened from elsewhere must have a row: msga's
-    // selectConversation lists it (relevance, unreads-only, apps) and
+    // A conversation opened from elsewhere must have a row: selecting it
+    // lists it (relevance, unreads-only, apps) and
     // expands its section. Rebuilt after the click that got here.
     ConvRow *r = rowFor(conv);
     if (r && r->section->collapsed) {

@@ -71,7 +71,7 @@ RectF Popup::placeIn(SizeF win) {
         break;
     case Place::Tip:
         x = a.x + a.w / 2 - s.w / 2;
-        y = a.y - 4 - s.h; // msga's kGap: arrow tip to target
+        y = a.y - 4 - s.h; // a 4-px gap: arrow tip to target
         if (y < kMargin)
             y = a.y + a.h + 4;
         break;
@@ -104,8 +104,7 @@ bool Popup::onEvent(Event &e) {
 }
 
 // ── Menu ────────────────────────────────────────────────────────────────────
-// Metrics, colours and drawing follow msga's Qt ContextMenu
-// (src/ui/context_menu/context_menu.{h,cpp}): 36-px rows, 26-px section
+// Metrics, colours and drawing: 36-px rows, 26-px section
 // headers, 9-px separators, 12-px side padding, a 16-px check column when
 // any row is checked, an 8-px radius card with a soft halo, a faint full-width
 // hover wash, and its own palette (Th::c().contextMenu) in both themes.
@@ -119,11 +118,11 @@ constexpr float kPadV     = 6;
 constexpr float kIconGap  = 8;
 constexpr float kCheckW   = 16;
 constexpr float kRadius   = 8;
-constexpr float kHalo     = 8; // shadow halo width (msga's kShadow)
+constexpr float kHalo     = 8; // shadow halo width
 constexpr float kSlack    = 4; // so the widest label never elides
 constexpr float kGapRight = 24;
 
-// msga's ContextMenuColors (+ accent.def and icon.strong).
+// The menu's colours (+ the accent and the strong icon colour).
 enum MenuColor : uint8_t { Bg, Text, Dim, Danger, Accent, Icon, Hover, Sep, NColors };
 constexpr C kMenuColors[NColors] = {
     C::MenuBg,
@@ -186,10 +185,10 @@ Menu::Menu(std::vector<MenuItem> items, std::function<void(int)> onSelect)
     : _items(std::move(items)), _onSelect(std::move(onSelect)) {
     setRole(Role::Menu);
     setFocusable(true);
-    setCard(false); // painted here, msga's way
+    setCard(false); // painted here, with its own halo
     setPaintOutset(uint8_t(kHalo + 2));
     style().padding(0, kPadV);
-    // Like msga's collapseSeparators(): no doubled, leading or trailing dividers.
+    // Separators collapse: no doubled, leading or trailing dividers.
     std::vector<MenuItem> kept;
     for (MenuItem &it : _items)
         if (!it.separator || (!kept.empty() && !kept.back().separator))
@@ -215,7 +214,7 @@ Menu *Menu::show(
 Menu *Menu::popupAt(
     Window &w, PointF at, std::vector<MenuItem> items, std::function<void(int)> onSelect
 ) {
-    // msga's menu widget carries its halo as a transparent margin, so the card
+    // The menu carries its halo as a transparent margin, so the card
     // sits that far from the click; flipped, it ends that far before it.
     return show(
         w,
@@ -467,7 +466,7 @@ bool Menu::onEvent(Event &e) {
     case EventType::PointerMove: {
         const int i = bounds().contains(e.pos) ? itemAt(e.pos.y) : -1;
         if (i < 0 || !_items[size_t(i)].enabled) {
-            setCurrent(-1); // msga: nothing hovered off the rows
+            setCurrent(-1); // nothing hovered off the rows
             return true;
         }
         if (i != _current)
@@ -495,7 +494,7 @@ bool Menu::onEvent(Event &e) {
             choose(itemAt(e.pos.y));
         return true;
     case EventType::KeyDown: {
-        // An item's shortcut hint ("E", "Del", "Ctrl+C") chooses it, as in msga.
+        // An item's shortcut hint ("E", "Del", "Ctrl+C") chooses it.
         const bool primary = (e.mods & (plat::ModCtrl | plat::ModSuper)) != 0;
         for (size_t i = 0; i < _items.size(); ++i) {
             bool            needPrimary = false;

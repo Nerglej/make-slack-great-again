@@ -1,11 +1,11 @@
-// "Sign in with <browser>" for Slack session auth (msga's BrowserLogin):
+// "Sign in with <browser>" for Slack session auth:
 // launches a Chromium-family browser on a throwaway profile at Slack's
 // sign-in page, then reads the `d` cookie — and, when the web client boots,
 // the signed-in workspaces with their xoxc- tokens — over the DevTools
 // protocol (CDP). The temp profile is the sandbox: the user's real browser
 // profile is never touched, and the profile is wiped when the flow ends.
 //
-// Non-obvious, all learned the hard way in the old app:
+// Non-obvious, all learned the hard way:
 // - a fixed DevTools port (not --remote-debugging-port=0): snap/flatpak
 //   browsers have a private /tmp, so the DevToolsActivePort file is
 //   invisible, but they share the host network;

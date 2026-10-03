@@ -1,4 +1,4 @@
-// Link labels (msga's LinkLabels): Slack's composer stores pasted-URL labels
+// Link labels: Slack's composer stores pasted-URL labels
 // already truncated ("host/path/…/…") — only the link keeps the full URL.
 // These helpers spot such labels so the message list can show a longer one
 // and "Copy message" can put the full URL on the clipboard; and GIPHY media

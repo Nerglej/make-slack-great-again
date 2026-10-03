@@ -1,4 +1,4 @@
-// The messages screens' scroll torture test (msga-next --debug-scroll N):
+// The messages screens' scroll torture test (msga --debug-scroll N):
 // every conversation in turn, then a thread with the panel open (both lists),
 // then the same in the other theme — each scrolled through with
 // ui::debug::scrollTour while Window::setVerify checks every frame. Prints a

@@ -1,5 +1,4 @@
-// Back/forward from a trackpad swipe, the way a browser does it (msga's
-// src/ui/swipe_nav.h and swipe_indicator/):
+// Back/forward from a trackpad swipe, the way a browser does it:
 //  - SwipeNav turns one horizontal swipe into one back/forward step. Two-finger
 //    swipes are Scroll events: phased on macOS/Wayland, a bare delta stream on
 //    Windows/X11 (segmented here by an idle gap). Three-or-more-finger swipes

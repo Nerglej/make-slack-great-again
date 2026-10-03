@@ -2,10 +2,8 @@
 // session "+" and teammates, and the workspace tile on the rail — and what
 // their items do.
 //
-// Items, order and wording are msga's Qt menus (conv_list_widget.cpp
-// showChannelContextMenu / showMpdmContextMenu / showDmContextMenu /
-// showTeammateContextMenu, main_window.cpp showWorkspaceMenu and the
-// agentSessionMenuRequested menu), nothing added or left out. Every
+// Items, order and wording are fixed per menu (channel, group DM, DM,
+// teammate, workspace and agent session). Every
 // state change goes through the Backend (or the
 // Store for app-local state), copies through plat's clipboard. The menus are
 // data first (…Items) and actions second (run), so tests check both without
@@ -77,7 +75,7 @@ public:
     // The active workspace's menu, or `w`'s (a rail tile's).
     std::vector<ui::MenuItem> workspaceItems() const;
     std::vector<ui::MenuItem> workspaceItems(const Workspace &w) const;
-    // msga's agentSessionMenuRequested menu, and showTeammateContextMenu.
+    // An agent session's "+" menu, and a teammate's menu.
     std::vector<ui::MenuItem> sessionItems() const;
     std::vector<ui::MenuItem> teammateItems(const model::Backend::AgentRole &mate) const;
     // `target` is the ConvRef the item's menu was built for (0: workspace).

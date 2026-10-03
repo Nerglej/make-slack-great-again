@@ -1,6 +1,5 @@
-// msga's dialog kit (AppDialog, StyledButton, StyledLineEdit) as the titled
-// ui::Dialog, FormButton and TextField, its date and time fields and check
-// box, and msga's tooltip (above, arrowed, and at once where a view asks for
+// The dialog kit: the titled ui::Dialog, FormButton and TextField, the date
+// and time fields and check box, and the tooltip (above, arrowed, and at once where a view asks for
 // it).
 #include "harness.h"
 #include "gfx/icons_generated.h"
@@ -28,7 +27,7 @@ struct Tipped : ui::Clickable {
 
 } // namespace
 
-TEST("popup: msga's app dialog — 560-wide card, Escape, backdrop and buttons") {
+TEST("popup: the titled dialog — 560-wide card, Escape, backdrop and buttons") {
     Win   w(1000, 700);
     int   accepted = 0, rejected = 0;
     auto  d   = std::make_unique<ui::Dialog>("Delete message");
@@ -82,11 +81,11 @@ TEST("popup: a titled card taller than the window scrolls; its buttons stay reac
     w.w->showPopup(std::move(d));
     w.frame();
     const ui::RectF card = raw->panel()->windowRect();
-    CHECK(card.h <= 400 - 80 + 0.5f); // msga: height ≤ window − 80
+    CHECK(card.h <= 400 - 80 + 0.5f); // height ≤ window − 80
     REQUIRE(raw->scroller() != nullptr);
     CHECK(raw->scroller()->canScroll());
-    // Tab to Cancel (past the card's bottom) scrolls it into view (msga's
-    // focus-follows scrolling), then back to the top.
+    // Tab to Cancel (past the card's bottom) scrolls it into view
+    // (focus-follows scrolling), then back to the top.
     w.key(plat::Key::Tab);
     CHECK(raw->scroller()->scrollOffset() > 0);
     raw->scroller()->scrollTo(0);
@@ -113,7 +112,7 @@ TEST("popup: a titled card taller than the window scrolls; its buttons stay reac
     CHECK(s2->panel()->windowRect().h < 200);
 }
 
-TEST("popup: msga's tooltip sits above the target with its arrow; some show at once") {
+TEST("popup: the tooltip sits above the target with its arrow; some show at once") {
     Win   w(400, 300);
     auto *t = w.root().add<Tipped>();
     t->style().alignSelf(ui::Align::Center);
@@ -133,7 +132,7 @@ TEST("popup: msga's tooltip sits above the target with its arrow; some show at o
     CHECK(w.until([&] { return w.w->tooltip() != nullptr; }));
 }
 
-TEST("popup: date and time fields step, type and clamp like QDateTimeEdit") {
+TEST("popup: date and time fields step, type and clamp") {
     Win   w(500, 300);
     auto *col = w.root().add<ui::View>();
     col->style().padding(20).spacing(8);
@@ -159,7 +158,7 @@ TEST("popup: date and time fields step, type and clamp like QDateTimeEdit") {
     w.key(plat::Key::Right); // AM/PM
     w.key(plat::Key::A);
     CHECK(time->hour() == 8);
-    // QDateTimeEdit ("MMM d, yyyy h:mm AP"): never below its minimum, which
+    // Date and time ("MMM d, yyyy h:mm AP"): never below its minimum, which
     // is rounded up to the whole minute it shows.
     auto         *dt  = col->add<ui::DateTimeField>(ui::DateTimeField::Kind::DateTime);
     const int64_t min = base::fromLocal(2026, 9, 30, 20, 45, 30);
@@ -200,7 +199,7 @@ TEST("popup: date and time fields step, type and clamp like QDateTimeEdit") {
     cb->onChange = [&](bool v) { on = v; };
     w.frame();
     const ui::RectF c = cb->windowRect();
-    CHECK(near(c.h, 18)); // checkBoxQss: 16 + the 1-px border
+    CHECK(near(c.h, 18)); // the box: 16 + the 1-px border
     w.click(c.x + 8, c.y + c.h / 2);
     CHECK(on && cb->checked());
     cb->focus();

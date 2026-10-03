@@ -230,7 +230,7 @@ TEST("sidebar: the open chat isn't read while the window is in the background") 
         e.window = &h.win->native();
         h.win->handle(e);
     };
-    // msga's setReading({}) on deactivation: it builds up unreads.
+    // Nothing is being read while the window is inactive: it builds up unreads.
     focus(false);
     h.backend.postAs(mira, h.store.conversation(mira).dmUser, "still there?");
     for (int i = 0; i < 60; ++i) // well past the list's edge check
@@ -411,7 +411,7 @@ TEST("quick switcher: filters by name, best match first") {
     CHECK(h.sh->quickSwitcher() == nullptr);
 }
 
-TEST("quick switcher: msga's namedConversations — members, live peers, most recent first") {
+TEST("quick switcher: named conversations — members, live peers, most recent first") {
     model::Store store;
     User         me, bob, gone, raw;
     me.id = "U0ME00001", me.name = "me";
@@ -472,14 +472,14 @@ TEST("settings: round trip through the file") {
     s.setZenMode("claude-code:local", true);
     const std::string d = base::test::makeTempDir("msga_shell_");
     REQUIRE(!d.empty());
-    const std::string path = d + "/msga-next/settings.json";
+    const std::string path = d + "/msga/settings.json";
     REQUIRE(s.save(path));
     const shell::Settings l = shell::Settings::load(path);
     CHECK((l.width == 1300 && l.height == 900 && l.hasPosition && l.x == 40 && l.y == 60));
     CHECK(l.maximized);
     CHECK(l.theme == ui::ThemeMode::Dark);
     CHECK(l.threadWidth == 500);
-    CHECK(l.zenMode("claude-code:local")); // per workspace (msga's zenMode/<teamId>)
+    CHECK(l.zenMode("claude-code:local")); // per workspace
     CHECK_FALSE(l.zenMode("slack:T0OTHER"));
     // Earlier builds' one global toggle goes to the Claude Code workspace.
     REQUIRE(file::writeAtomic(d + "/old.json", R"({"zenMode":true})"));
@@ -555,7 +555,7 @@ dropEvent(ui::Window &w, plat::EventType t, ui::PointF at, std::vector<std::stri
 
 } // namespace
 
-TEST("menus: channel, DM, group DM and workspace menus are msga's, item for item") {
+TEST("menus: channel, DM, group DM and workspace menus, item by item") {
     Harness       h;
     shell::Menus &m = h.sh->menus();
     // conv_list_widget.cpp showChannelContextMenu
@@ -583,7 +583,7 @@ TEST("menus: channel, DM, group DM and workspace menus are msga's, item for item
     CHECK_STR(labels(m.workspaceItems()), "Change icon…|Mute|Log out from Lumen Studio(off)");
     CHECK(m.workspaceItems().back().danger);
     h.store.user(h.store.me).admin = true;
-    CHECK(labels(m.workspaceItems()).rfind("Change icon…", 0) == 0); // msga: no team URL, no item
+    CHECK(labels(m.workspaceItems()).rfind("Change icon…", 0) == 0); // no team URL, no item
     h.store.workspaceUrl = "https://lumen.slack.com/";
     CHECK(labels(m.workspaceItems()).rfind("Workspace admin|Change icon…", 0) == 0);
     // Muted: "Mute and hide" is the checked level; a muted DM offers Unmute.
@@ -632,7 +632,7 @@ TEST("menus: conversation actions go through the backend") {
     m.run(shell::Menus::kRename, trio);
     pump();
     REQUIRE(h.win->topPopup() != nullptr);
-    CHECK(h.win->topPopup()->place() == ui::Popup::Place::Fill); // msga's AppDialog
+    CHECK(h.win->topPopup()->place() == ui::Popup::Place::Fill); // an in-window dialog
     plat::Event te;
     te.type   = plat::EventType::TextInput;
     te.window = &h.win->native();
@@ -682,7 +682,7 @@ TEST("menus: an untouched conversation follows the default level; All opts it ba
     CHECK(h.sh->sidebar().rowState(rel).dot); // explicit "All new posts" wins
 }
 
-TEST("attention: the rail, tray and badge count by msga's updateUnreadBadges") {
+TEST("attention: the rail, tray and badge count unread DMs, mentions and chats") {
     Harness       h;
     const auto    now = h.backend.nowSecs();
     const ConvRef eng = h.conv("C0ENG"), rel = h.conv("C0RELEASES"), mira = h.conv("D0MIRA");
@@ -722,7 +722,7 @@ TEST("menus: a sidebar row's menu works from the keyboard") {
     CHECK(h.win->topPopup() == nullptr);
 }
 
-TEST("profile card: a hover card like msga's — delay, grace period, Message") {
+TEST("profile card: a hover card — delay, grace period, Message") {
     Harness              h;
     shell::ProfileCards &pc   = h.sh->profiles();
     const UserRef        yuki = h.store.findUser("U0YUKI");
@@ -996,7 +996,7 @@ TEST("drafts: files are stashed with the text") {
     CHECK_FALSE(d.has(k));
 }
 
-// ── msga's dialogs and the undo toast ───────────────────────────────────────
+// ── Dialogs and the undo toast ──────────────────────────────────────────────
 
 namespace {
 
@@ -1030,7 +1030,7 @@ TEST("forward: pick a channel, add a comment, the message is re-posted there") {
     typeInto(*h.win, "#gen");        // "#": channels only
     press(*h.win, plat::Key::Enter); // the first match
     const size_t                          before = h.store.conversation(general).messages.size();
-    // Enter in the dialog's composer forwards (msga's sendRequested).
+    // Enter in the dialog's composer forwards.
     std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
         if (v->accessibleName() == "Add a message, if you'd like.")
             return v;
@@ -1245,7 +1245,7 @@ ui::View *findNamed(ui::View *v, std::string_view name) {
 
 } // namespace
 
-TEST("find a channel: msga's rows — by name, Joined, members · topic; no strangers") {
+TEST("find a channel: the rows — by name, Joined, members · topic; no strangers") {
     Store        store;
     Conversation a, b, d;
     a.id = "C1", a.name = "Zeta", a.memberCount = 1, a.topic = "last";
@@ -1373,7 +1373,7 @@ TEST("undo send: the pill for 5 s, Ctrl+Z or a click takes the message back") {
     h.sh->showCanvas(false);
 }
 
-TEST("workspace icon: msga's dialog; the rail shows the saved picture") {
+TEST("workspace icon: the dialog; the rail shows the saved picture") {
     Harness h;
     CHECK(shell::customWorkspaceIconPath(app().platform(), h.store.workspaceId).empty());
     REQUIRE(h.sh->menus().hooks.changeWorkspaceIcon);
@@ -1414,7 +1414,7 @@ bool until(const std::function<bool()> &done, int ms = 3000) {
 
 } // namespace
 
-TEST("first load: no conversations yet hides the column and shows msga's loading state") {
+TEST("first load: no conversations yet hides the column and shows the loading state") {
     Store             store;
     fake::FakeBackend backend{store, app().platform()};
 #ifdef MSGA_HAVE_MESSAGES
@@ -1440,7 +1440,7 @@ TEST("first load: no conversations yet hides the column and shows msga's loading
     CHECK_FALSE(sh.sidebar().visible());
     CHECK_FALSE(showsText(&win.root(), "Keyboard shortcuts"));
 #ifdef MSGA_HAVE_MESSAGES
-    // msga's hint after a second.
+    // The hint after a second.
     CHECK(until([&] { return showsText(&win.root(), "Loading your stuff..."); }, 2500));
 #endif
     // Connected: the column is back, and the shortcuts panel (nothing open).
@@ -1488,7 +1488,7 @@ TEST("workspace switch: the open chat and thread are left before the Store empti
     CHECK(h.sh->current() == h.conv("C0DESIGN"));
 }
 
-// ── Workspace rail (msga's WorkspaceSwitcher) ───────────────────────────────
+// ── Workspace rail ──────────────────────────────────────────────────────────
 
 namespace {
 
@@ -1545,7 +1545,7 @@ TEST("workspace rail: a tile per workspace; a click or its tray item switches") 
     REQUIRE(switched.size() == 1);
     CHECK_STR(switched[0], kClaudeKey);
 
-    // The tray menu: msga's one item per workspace, in the rail's order.
+    // The tray menu: one item per workspace, in the rail's order.
     plat::Event e;
     e.type = plat::EventType::TrayMenuItem;
     e.id   = 101;
@@ -1619,7 +1619,7 @@ TEST("workspace rail: a background workspace's menu acts on it") {
     CHECK_STR(signedOut, "");
 }
 
-TEST("notifications: pictures are msga's rounded square (roundedNotifIcon)") {
+TEST("notifications: pictures are a rounded square (roundedNotifIcon)") {
     gfx::Bitmap b(80, 64); // wider than tall: centre-cropped to 64
     for (int i = 0; i < 80 * 64; ++i)
         b.pixels()[i] = 0xffffffffu;
@@ -1889,7 +1889,7 @@ TEST("threads page: participants, and a feed that can't be loaded") {
     root.replyUsers = {bea, cy, dee, me};
     CHECK_STR(shell::threadParticipants(store, root), "adam, bea, cy and 1 others");
 
-    // msga's error line when the feed fails (and nothing was shown before).
+    // The error line when the feed fails (and nothing was shown before).
     struct NoFeed : fake::FakeBackend {
         using FakeBackend::FakeBackend;
         void loadThreadsView(std::string, ThreadsViewDone done) override {
@@ -2140,7 +2140,7 @@ TEST("composer: voice input — the mic, the strip, the dictation at the caret, 
     file::remove(quiet);
 }
 
-// ── Running workspaces (msga's Session per workspace) ───────────────────────
+// ── Running workspaces (a session per workspace) ────────────────────────────
 
 namespace {
 
@@ -2303,7 +2303,7 @@ TEST("workspaces: a background workspace notifies, its name first; the click goe
     CHECK_STR(w.switched[0], kKeyB);
     CHECK(&w.ctx.store() == &w.b);
     CHECK(w.sh->current() == w.b.findConversation("C0GENERAL"));
-    // A muted workspace says nothing (msga's _mutedTeams).
+    // A muted workspace says nothing.
     w.a.workspaceMuted = true;
     w.post(w.a, "C0GENERAL", "shh");
     pump();
@@ -2401,7 +2401,7 @@ TEST("history: back and forward cross workspaces; a signed-out one's entries go"
     const ConvRef aGeneral = w.a.findConversation("C0GENERAL");
     const ConvRef bGeneral = w.b.findConversation("C0GENERAL");
     w.sh->open(aGeneral);
-    w.show(kKeyB); // switching keeps the history (msga's NavLocation has the team)
+    w.show(kKeyB); // switching keeps the history (a location names its workspace)
     w.sh->open(bGeneral);
     pump();
     // Back: into the other workspace, on the chat open there, not its last.
@@ -2422,7 +2422,7 @@ TEST("history: back and forward cross workspaces; a signed-out one's entries go"
     CHECK(&w.ctx.store() == &w.b);
     CHECK(w.sh->current() == bGeneral);
     // A manual switch and a direct open; then the second signs out: its
-    // entries go (msga's purgeTeam), back stays in this workspace.
+    // entries go, back stays in this workspace.
     w.show(kKeyA);
     w.sh->open(aDesign);
     w.sh->purgeHistory(kKeyB);
@@ -2433,7 +2433,7 @@ TEST("history: back and forward cross workspaces; a signed-out one's entries go"
     CHECK(&w.ctx.store() == &w.a);
 }
 
-TEST("zen mode: each workspace keeps its own (msga's zenMode/<teamId>)") {
+TEST("zen mode: each workspace keeps its own") {
     TwoWorkspaces         w;
     shell::SidebarFooter &f = w.sh->sidebar().footer();
     REQUIRE(!f.zenOn());
@@ -2454,7 +2454,7 @@ TEST("header: names, presence, DND and my phantom state follow the Store") {
     w.fa.presenceAsked.clear();
     w.sh->open(dm);
     pump();
-    // msga's requestPresence: the peer's presence is asked for on open.
+    // The peer's presence is asked for on open.
     REQUIRE(w.fa.presenceAsked.size() == 1);
     CHECK(w.fa.presenceAsked[0] == mira);
     using P              = shell::Avatar::Presence;
@@ -2471,7 +2471,7 @@ TEST("header: names, presence, DND and my phantom state follow the Store") {
     pump();
     CHECK(w.sh->header().avatarPresence() == int(P::Dnd));
     st.user(mira).dnd         = false;
-    st.user(mira).unavailable = true; // msga: an unreachable peer is phantom too
+    st.user(mira).unavailable = true; // an unreachable peer is phantom too
     st.usersChanged();
     pump();
     CHECK(w.sh->header().avatarPresence() == int(P::Phantom));
@@ -2542,7 +2542,7 @@ TEST("window: fit to screen — shrink to the work area, pull back, refit (issue
     w.setMaximized(false);
 }
 
-TEST("tray: on macOS the plane is a template the menu bar tints (msga's setIsMask)") {
+TEST("tray: on macOS the plane is a template the menu bar tints") {
     Harness h;
     pump();
     REQUIRE(h.sh->tray() != nullptr);
@@ -2612,7 +2612,7 @@ TEST("workspaces: Workspace admin for a background workspace you administer") {
     pump();
     m.run(shell::Menus::kWorkspaceAdmin, 0);
     CHECK_STR(opened, "https://second.slack.com/admin/settings");
-    // Not running (no Store): no item, as msga without a session.
+    // Not running (no Store): no item.
     CHECK(
         labels(m.workspaceItems({kKeyB, "Second Co", false, false})).rfind("Change icon", 0) == 0
     );
@@ -2646,7 +2646,7 @@ TEST("forward: with two workspaces a picker sends it into the other one") {
     pump();
     auto *dlg = static_cast<ui::Dialog *>(w.win->topPopup());
     REQUIRE(dlg != nullptr);
-    // msga's Dropdown of workspaces, on the message's own.
+    // A dropdown of workspaces, on the message's own.
     std::function<ui::View *(ui::View *, std::string_view)> named =
         [&](ui::View *v, std::string_view name) -> ui::View * {
         if (v->accessibleName() == name)
@@ -2698,9 +2698,9 @@ TEST("workspaces: the presence mode and real input reach every running workspace
     CHECK(w.fb.activity == b + 1);
 }
 
-// ── Notifications, huddles, reminders (msga's MainWindow) ───────────────────
+// ── Notifications, huddles, reminders ───────────────────────────────────────
 
-TEST("notifications: msga's titles and gates — level, mutes, replies to unloaded threads") {
+TEST("notifications: the titles and gates — level, mutes, replies to unloaded threads") {
     TwoWorkspaces w;
     Store        &a       = w.a;
     const ConvRef general = a.findConversation("C0GENERAL"), dm = a.findConversation("D0MIRA");
@@ -2871,7 +2871,7 @@ TEST("reminders: the due notification names the place; its click opens the messa
     w.sh->handleAppEvent(e);
     pump();
     CHECK(w.sh->current() == general);
-    // Without a preview: msga's stand-in sentence.
+    // Without a preview: the stand-in sentence.
     a.setSavedItem(general, m.ts, false);
     a.setSavedItem(general, m.ts + 1, true, 1);
     w.sh->notifyReminderDue(kKeyA, a, general, m.ts + 1);
@@ -2947,7 +2947,7 @@ TEST("title bar: controls take their presses, empty space drags the window") {
     const ui::PointF   search = centre(hd.search());
     const auto         at = [&](ui::PointF p) { return h.sh->hitTest({double(p.x), double(p.y)}); };
 #ifdef __APPLE__
-    // msga's unified header: the conversation header is the title bar's
+    // The unified header: the conversation header is the title bar's
     // content, its title centred in the window.
     CHECK(search.y < 40);
     CHECK(at(search) == H::Client);

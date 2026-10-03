@@ -27,7 +27,7 @@ constexpr float kBarW    = 2;
 constexpr float kBarGap  = 2;
 constexpr float kSpinner = 14; // processing spinner diameter
 constexpr float kCancel  = 20;
-constexpr float kSpSm = 4, kSpMd = 8; // msga's spacing.sm / .md
+constexpr float kSpSm = 4, kSpMd = 8; // spacing.sm / .md
 
 // A single message beyond this is cut: the context is there for vocabulary
 // and names, and one pasted log must not crowd out the rest.

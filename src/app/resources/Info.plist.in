@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  macOS bundle Info.plist for msga — the old Qt app's, unchanged, so the new
+  macOS bundle Info.plist for msga — unchanged across versions, so every
   binary is the same app to macOS (bundle id com.nisdos.msga: notifications,
   Keychain prompts, LaunchServices, the Homebrew cask). CMake fills the
   MACOSX_BUNDLE placeholders below (screens/shell/CMakeLists.txt).
@@ -51,10 +51,9 @@
     <key>LSMinimumSystemVersion</key>
     <string>${MSGA_MACOS_MIN_VERSION}</string>
 
-    <!-- Shown in the system prompt the first time voice input records
-         (the old src/media/audio_recorder_mac.mm). Without it macOS kills the
-         app on microphone access. Signed releases also need the audio-input
-         entitlement (old-msga/resources/msga.entitlements). -->
+    <!-- Shown in the system prompt the first time voice input records.
+         Without it macOS kills the app on microphone access. Signed releases
+         also need the audio-input entitlement (msga.entitlements). -->
     <key>NSMicrophoneUsageDescription</key>
     <string>msga uses the microphone for voice input when you dictate a message.</string>
 

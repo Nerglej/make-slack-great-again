@@ -38,7 +38,7 @@ std::string encode(const Cps &cps, size_t from = 0, size_t to = SIZE_MAX) {
     return out;
 }
 
-// Letters and numbers (msga's \p{L} / \p{N}), within utf8::isWordChar's
+// Letters and numbers (\p{L} / \p{N}), within utf8::isWordChar's
 // approximation; case by the search folding (Latin, Greek, Cyrillic, …).
 bool isLetterOrNumber(uint32_t c) {
     return c != '_' && utf8::isWordChar(c);
@@ -79,7 +79,7 @@ bool any(const Cps &t, bool (*pred)(uint32_t)) {
     return std::any_of(t.begin(), t.end(), pred);
 }
 
-// msga's acronym pattern ^[Lu\d]*Lu[Lu\d]*Lu[Lu\d]*s?$: upper-case letters
+// An acronym, ^[Lu\d]*Lu[Lu\d]*Lu[Lu\d]*s?$: upper-case letters
 // and digits, at least two of the letters, an optional plural "s".
 bool isAcronym(const Cps &t) {
     size_t n = t.size(), upper = 0;

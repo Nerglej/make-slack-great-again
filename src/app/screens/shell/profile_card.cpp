@@ -18,7 +18,7 @@ namespace shell {
 
 namespace {
 
-// msga's UserProfileCard metrics.
+// The card's metrics.
 constexpr float kShadow = 8, kRadius = 8, kPad = 16, kAv = 72, kAvRadius = 8, kAvGap = 14;
 constexpr float kBtnH = 36, kGap = 6, kDot = 8, kDotGap = 8;
 constexpr int   kCopiedMs = 1200;
@@ -54,7 +54,7 @@ Color tone(Tone t) {
     return color(kTones[t]);
 }
 
-// msga sizes these in pixels (fonts.xl 16, fonts.md 13); scaled with the
+// These are sized in pixels (fonts.xl 16, fonts.md 13); scaled with the
 // text-size preference like every other role.
 text::Style px(float size, bool bold, Tone t) {
     return pxFont(size, bold ? text::Weight::Bold : text::Weight::Regular, tone(t));
@@ -80,11 +80,11 @@ ProfileCard::ProfileCard(
     screens::Context &ctx, Avatars &avatars, ProfileCards &owner, model::UserRef user
 )
     : _ctx(ctx), _owner(owner), _user(user) {
-    setCard(false);  // painted here, msga's way
+    setCard(false);  // painted here
     setModal(false); // a hover card: no focus grab, no outside-press close
     setPaintOutset(uint8_t(kShadow + 4));
     _avatar  = avatars.get(ctx.store().user(user).avatar, 144);
-    _message = true; // msga hides it only for deactivated accounts
+    _message = true; // hidden only for deactivated accounts
 }
 
 ProfileCard::~ProfileCard() {
@@ -190,7 +190,7 @@ void ProfileCard::paint(gfx::Painter &p) {
         build();
     const model::User &u = _ctx.store().user(_user);
     const RectF        b = bounds();
-    p.dropShadow(b, kRadius, kShadow, {0, 4}, color(C::Shadow)); // msga: dy 4
+    p.dropShadow(b, kRadius, kShadow, {0, 4}, color(C::Shadow)); // dy 4
     p.fillRoundRect(b, kRadius, tone(Raised));
     float y = 0;
     if (_role) { // the role strip
@@ -209,7 +209,7 @@ void ProfileCard::paint(gfx::Painter &p) {
         p.clipRoundRect(av, kAvRadius);
         p.drawBitmap(_avatar->view(), av, gfx::Sampling::Smooth);
         p.restore();
-    } else { // msga: the initial-letter tile on presence.away
+    } else { // the initial-letter tile on presence.away
         screens::paintInitial(
             p,
             *this,
@@ -228,7 +228,7 @@ void ProfileCard::paint(gfx::Painter &p) {
     _name->paint(p, snapPx({textX, ty}));
     const float  cy = ty + _name->height() / 2;
     const PointF dot{textX + _name->width() + kDotGap + kDot / 2, cy};
-    if (u.dnd) { // msga: presence.away with a surface.raised dash across
+    if (u.dnd) { // presence.away with a surface.raised dash across
         p.fillCircle(dot, kDot / 2, ui::color(C::PresenceAway));
         p.fillRoundRect(
             {dot.x - kDot / 2 + 2, dot.y - 0.75f, kDot - 4, 1.5f}, 0.75f, ui::color(C::FormBg)
@@ -305,7 +305,7 @@ bool ProfileCard::onEvent(Event &e) {
     }
     case EventType::PointerUp:
         if (messageButton().contains(e.pos)) {
-            // msga's messageRequested → openDmWith: the DM (opened or
+            // "Message": the DM (opened or
             // created), or a teammate's page.
             if (_ctx.messageUser)
                 _ctx.messageUser(_user);
@@ -331,8 +331,8 @@ bool ProfileCard::onEvent(Event &e) {
 // ── ProfileCards ────────────────────────────────────────────────────────────
 
 namespace {
-constexpr int kShowDelayMs = 300; // msga's _profileShowTimer
-constexpr int kHideDelayMs = 260; // msga's kHideDelay
+constexpr int kShowDelayMs = 300; // hover before the card shows
+constexpr int kHideDelayMs = 260; // grace before it hides
 } // namespace
 
 ProfileCards::ProfileCards(screens::Context &ctx, Window &win, Avatars &avatars)

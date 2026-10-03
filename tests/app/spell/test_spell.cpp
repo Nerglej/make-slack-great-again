@@ -1,4 +1,4 @@
-// Spell checking, ported from msga's tests/test_spell_check.cpp: what the
+// Spell checking: what the
 // composer checks (spell::checkableWords), the checker's cache, ignore list
 // and dictionary additions over a fake backend, language names and defaults,
 // and on Linux the Hunspell backend against tiny 8-bit dictionaries and the
@@ -364,7 +364,7 @@ TEST("hunspell: checks, suggests and keeps added words with the system en_US") {
         std::printf("  skipped: no en_US Hunspell dictionary installed (hunspell-en-us)\n");
         return;
     }
-    // Added words go to the old app's <dataDir>/spelling/words.txt: a throwaway HOME.
+    // Added words go to <dataDir>/spelling/words.txt: a throwaway HOME.
     const std::string home = tempDir() + "/home";
     file::makeDirs(home);
     const char       *oldData = std::getenv("XDG_DATA_HOME");

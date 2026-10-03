@@ -13,7 +13,7 @@
 #ifdef __linux__
 #include <unistd.h>
 
-// gfx/icon_256.png, embedded by CMake (the old app's :/icon.png).
+// gfx/icon_256.png, embedded by CMake.
 extern const unsigned char kMsgaIconPng[];
 extern const unsigned      kMsgaIconPngSize;
 #endif
@@ -23,7 +23,7 @@ namespace shell {
 std::string desktopEntry(const std::string &exePath, const std::string &icon) {
     const std::string exec =
         exePath.find(' ') != std::string::npos ? str::concat({"\"", exePath, "\""}) : exePath;
-    // gfx/msga.desktop, the old app's template.
+    // The template is gfx/msga.desktop.
     return str::concat({
         "[Desktop Entry]\n"
         "Name=MSGA\n"

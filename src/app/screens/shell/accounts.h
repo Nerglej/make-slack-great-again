@@ -1,7 +1,6 @@
-// Signing in and out (msga's MainWindow: promptAddWorkspace, connectSlack,
-// addSessionWorkspaces, loginWithService, logoutWorkspace,
-// activateWorkspace, ensureSession): owns the workspace store and every
-// signed-in workspace's backend and Store (msga's _sessions). They all run —
+// Signing in and out (adding a workspace, connecting Slack or Claude Code,
+// importing sessions, signing out, switching): owns the workspace store and
+// every signed-in workspace's backend and Store. They all run —
 // the open one behind the screens' BackendProxy and StoreSlot, the others
 // in the background, still polling, counting unreads and notifying (the
 // shell's attachWorkspace). Switching only swaps what the screens show.
@@ -60,7 +59,7 @@ public:
     // Slack's sign-in (the session-import dialog first).
     void             connectSlack();
     // The Claude Code workspace: nothing to sign in to — the CLI must be
-    // there and logged in (msga's claude_code AuthStrategy).
+    // there and logged in.
     void             connectClaudeCode();
     // The active workspace's Claude Code backend (null for Slack).
     claude::Backend *claudeBackend() const;
@@ -69,18 +68,18 @@ public:
     // A msga:// URL from the OS (the OAuth callback). True if consumed.
     bool             handleUrl(std::string_view url);
     // plat's NetworkChanged: the shared Socket Mode socket reconnects when
-    // the network comes back (msga's reachability watch).
+    // the network comes back.
     void             networkChanged(bool online);
     // "Log out from <workspace>": the active one, or `key`'s ("" = active).
     void             signOut();
     void             signOut(const std::string &key);
-    // The rail (msga's WorkspaceSwitcher): a tile clicked, a drag-reorder
+    // The rail: a tile clicked, a drag-reorder
     // dropped (saved), a workspace's Mute/Unmute (saved with its record).
     void             switchTo(const std::string &key);
     void             reorder(const std::vector<std::string> &keys);
     void             setMuted(const std::string &key, bool muted);
     // Settings → "Import Slack session…" (the dialog without the OAuth link
-    // wired, as in the old Settings) and "Convert them to session".
+    // wired) and "Convert them to session".
     void             importSession();
     void             convertToSession();
     int              oauthSlackWorkspaces() const;
@@ -92,7 +91,7 @@ private:
     void     addSessionWorkspaces(std::vector<slack::Credentials> creds);
     void     refreshRail(); // the store's workspaces to the shell
     void     activate(const std::string &key);
-    // msga's restoreLastConv: the open workspace's last chat, once its
+    // The open workspace's last chat opens again, once its
     // Store lists it; false when it doesn't (yet).
     bool     restoreLast(Running &r);
     void     showSignedOut();

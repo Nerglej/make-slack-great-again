@@ -1,7 +1,7 @@
 #include "support/test.h"
 #include "base/str.h"
 
-TEST("str: simplified folds Unicode whitespace like QString::simplified") {
+TEST("str: simplified folds runs of Unicode whitespace into one space and trims") {
     CHECK_STR(str::simplified("  a \t\n b\r\n\nc  "), "a b c");
     CHECK_STR(str::simplified(""), "");
     CHECK_STR(str::simplified(" \t\n "), "");

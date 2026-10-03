@@ -270,8 +270,8 @@ constexpr uint32_t kSentinelMask = 0xff00ff00u, kSentinel = 0x0000a500u;
 } // namespace
 
 // ── Palettes ────────────────────────────────────────────────────────────────
-// The Qt app's chrome presets (src/ui/theme.cpp: kAubergineChrome, …) and its
-// derivation rules, evaluated here so a pick recolours the rail, sidebar,
+// The chrome presets (kAubergineChrome, …) and their derivation rules,
+// evaluated here so a pick recolours the rail, sidebar,
 // selection and accent over either content mode.
 
 namespace {
@@ -385,7 +385,7 @@ Color scaled(Color c, float f) {
 }
 
 // A brand accent tuned for white content, lifted to stay visible as a filled
-// control on dark surfaces (the Qt app's liftForDark).
+// control on dark surfaces.
 void liftForDark(Color def, Color *accent, Color *hover, Color *pressed, Color *subtle) {
     const float l = std::max(lightness(def), 0.36f);
     *accent       = withLightness(def, l);
@@ -451,7 +451,7 @@ PaletteColors paletteColors(Palette p, bool dark) {
     }
     c.online = custom ? g_custom.highlight2 : kLight[size_t(C::Online)];
     c.badge  = custom ? g_custom.important : kLight[size_t(C::Badge)];
-    // A custom theme's pins (msga's chromeFromCustom): dim text derives from
+    // A custom theme's pins: dim text derives from
     // the pinned ink, so a pinned off-white keeps its cast.
     if (custom && g_custom.itemHover)
         c.hover = g_custom.itemHover;
@@ -602,7 +602,7 @@ text::Style font(Font f, C c) {
 
 text::Style pxFont(float px, text::Weight w, Color c) {
     text::Style s = font(Font::Body);
-    s.size        = s.size * px / 15.f; // Body is the Qt app's font (15 px here)
+    s.size        = s.size * px / 15.f; // Body is 15 px here
     s.weight      = w;
     s.color       = c;
     return s;

@@ -141,7 +141,7 @@ std::string toUnicode(std::string_view name) {
             mod[10] <= '6')
             out = applySkinTone(out, mod[10] - '0');
         else if (!mod.empty())
-            out += lookupPlain(mod); // any other modifier glyph: appended, as msga did
+            out += lookupPlain(mod); // any other modifier glyph: appended
         if (next == std::string_view::npos)
             break;
         mods.remove_prefix(next + 2);

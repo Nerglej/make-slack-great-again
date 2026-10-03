@@ -1,4 +1,4 @@
-// "Set a status" (msga's StatusDialog, from the footer's "Manage status"):
+// "Set a status" (from the footer's "Manage status"):
 // the emoji + text input, "Clear after", the workspace's five suggestions,
 // "Clear status" while one is set, Cancel / Save. Saving goes through
 // Backend::setStatus (text, emoji shortcode, expiry).
@@ -24,7 +24,7 @@ public:
     void               clearStatus();
     // The expiry "Clear after" picks, from `now` (epoch secs); 0 = never.
     int64_t            expiry(int64_t now) const;
-    // A set or clear the service refused (msga's Session::setStatus):
+    // A set or clear the service refused:
     // "Could not set status: …", with the re-sign-in hint a missing scope
     // needs. Outlives the dialog (it is closed by then).
     std::function<void(const std::string &message)> onError;
@@ -42,7 +42,7 @@ private:
     std::string       _emoji;
 };
 
-// "Profile" (msga's ProfileDialog, from "Manage profile"): the avatar (a
+// "Profile" (from "Manage profile"): the avatar (a
 // click picks a new photo), Name / Email / Phone, Cancel / "Save changes";
 // only changed fields are saved.
 class ProfileDialog : public ui::Dialog {

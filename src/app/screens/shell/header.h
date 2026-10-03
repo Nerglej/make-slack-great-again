@@ -1,5 +1,5 @@
-// The conversation header and its tab strip, as msga's MainWindow builds
-// them (buildRightPanel, ConvTabsWidget, HeaderAvatarWidget, MembersPopup):
+// The conversation header and its tab strip, with the header avatar and the
+// members popup:
 //
 //   [avatar] #name ··········· [people 9] [headphones] [star] [search]
 //   Messages | Design crit — week 38                    (or "Add canvas")
@@ -9,7 +9,7 @@
 // count (a click lists them); a channel shows the members button (a click
 // opens the searchable member list). The huddle button shows only where the
 // service has huddles. On macOS the header is the unified title bar's
-// content instead (msga's TitleBar::setContent): the name centred, the
+// content instead: the name centred, the
 // actions on the right, as tall as the title bar.
 #pragma once
 
@@ -44,8 +44,8 @@ public:
     bool           starred() const;
     int            avatarPresence() const; // tests: a DM's Avatar::Presence, else -1
 
-    // SEARCH HOOK: the search button (msga's _searchBtn, toggling its
-    // SearchWidget). Shell routes it to Shell::openSearch, where the message
+    // SEARCH HOOK: the search button (toggling the message search). Shell
+    // routes it to Shell::openSearch, where the message
     // search lands; the header itself does nothing more.
     std::function<void()> onSearch;
     // The member list: shown under `anchor` (window rect).
@@ -62,10 +62,10 @@ private:
     std::unordered_set<std::string> _membersAsked; // group DMs whose members were asked for
 };
 
-// Where the huddle button sends a conversation (msga's huddleJoinUrl).
+// Where the huddle button sends a conversation.
 std::string huddleJoinUrl(const model::Store &st, model::ConvRef conv);
 
-// msga's ConvTabsWidget: 38 px (its bottom divider included), tabs 16 px in,
+// The conversation tabs: 38 px (the bottom divider included), tabs 16 px in,
 // the active one bold with a 2 px underline over the divider.
 class ConvTabs : public ui::View {
 public:

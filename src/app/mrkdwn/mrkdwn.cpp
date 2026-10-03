@@ -1,5 +1,4 @@
-// Port of msga's src/text/mrkdwn_parser.cpp: same single-pass scanner, same
-// rules and fixes, UTF-8 byte offsets instead of UTF-16. Every special
+// A single-pass scanner over UTF-8, with byte offsets. Every special
 // character of the grammar is ASCII and UTF-8 continuation bytes never equal
 // an ASCII byte, so the scanner walks bytes; only the word-character test
 // ('_' inside words) decodes code points.
@@ -20,8 +19,8 @@ namespace {
 using str::endsWith;
 using str::startsWith;
 
-// Qt's QString::split('|'), which the grammar relies on (only parts[0] and
-// parts[1] — or the last part — are ever used).
+// Splits at every '|', keeping empty parts, which the grammar relies on (only
+// parts[0] and parts[1] — or the last part — are ever used).
 std::vector<std::string_view> splitBar(std::string_view s) {
     std::vector<std::string_view> parts;
     size_t                        start = 0;
@@ -177,7 +176,7 @@ std::string formatDateToken(int64_t secs, std::string_view fmt) {
                 } else if (name == "date_pretty" || name == "date_short_pretty") {
                     out += prettyDay(secs, base::formatDate(secs, now));
                 } else if (name == "date_long" || name == "date_long_pretty") {
-                    // "Friday, March 15" (", 2025" in another year): msga's
+                    // "Friday, March 15" (", 2025" in another year): the
                     // day name + ", " + the date, in the date language.
                     const std::string longDate = str::concat(
                         {base::weekdayName(base::localTime(secs).weekday),
@@ -573,8 +572,8 @@ Rich parseImpl(std::string_view src, int depth, bool inQuote) {
             // Drop preceding newlines: the quote is its own block.
             while (!b.text.empty() && b.text.back() == '\n')
                 b.text.pop_back();
-            // msga never clamped here; a span ending in a dropped newline
-            // (```code\n```) would point past the text.
+            // Clamped: a span ending in a dropped newline (```code\n```) would
+            // point past the text.
             for (auto &e : b.entities)
                 if (e.end() > b.text.size())
                     e.length = e.start >= b.text.size() ? 0 : uint32_t(b.text.size()) - e.start;
@@ -637,7 +636,7 @@ bool isUrlChar(char c) {
 
 // Bare http(s) URLs in the output text become Link entities — where the text
 // is not already a token (links, mentions, emoji) or a code block. Inside
-// inline `code` they are linked too, as msga's renderer did (linkCodeUrls).
+// inline `code` they are linked too.
 void linkifyBareUrls(Rich &r) {
     if (r.text.find("://") == std::string::npos)
         return;
@@ -727,7 +726,7 @@ std::string percentDecode(std::string_view s) {
 
 std::string decodeEntities(std::string_view s) {
     // Slack escapes exactly these three. One left-to-right pass is equivalent
-    // to msga's replace(&lt;) → replace(&gt;) → replace(&amp;) chain: "&amp;lt;"
+    // to replacing &lt;, then &gt;, then &amp;: "&amp;lt;"
     // decodes to the literal "&lt;" because the "lt;" after an &amp; is never
     // re-scanned. Plus msga's "&#42;" for a mark meant literally (asciiRef).
     std::string out;
@@ -1058,7 +1057,7 @@ void addRegion(
 void addCode(const Rich &r, const Entity &e, bool quoted, std::vector<Block> &out) {
     uint32_t start = e.start, end = e.end();
     // "```\ncode\n```": the fence's own line breaks are not code lines (the
-    // parser keeps them, as msga's did; its renderer chopped the trailing ones).
+    // parser keeps them).
     if (start < end && r.text[start] == '\n')
         ++start;
     while (end > start && r.text[end - 1] == '\n')

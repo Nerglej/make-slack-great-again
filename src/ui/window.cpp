@@ -40,7 +40,7 @@ public:
     }
 };
 
-// msga's PopupTooltip (src/ui/popup_tooltip): a near-black chip in both
+// The tooltip: a near-black chip in both
 // themes, medium-weight white text, 10/5 padding, 6-px radius, and an arrow
 // (7-px half base, 6 high) pointing at the target's centre; above the target,
 // below it when there is no room.

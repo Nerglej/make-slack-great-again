@@ -1,5 +1,5 @@
 // msga: the app. Opens the signed-in workspace (screens/shell/accounts.h),
-// or the old app's "Log in to workspace" page when there is none.
+// or the "Log in to workspace" page when there is none.
 //
 //   msga                  the saved workspace, or the logged-out page
 //   msga msga://…         also hands an OAuth callback URL to the sign-in
@@ -82,9 +82,9 @@ namespace {
 }
 
 #ifdef MSGA_DEMO
-// msga's demo::isolateState: a demo run keeps nothing of the user's — its
+// A demo run keeps nothing of the user's — its
 // HOME and XDG dirs point at a fresh <tmp>/msga-demo-state-<pid>, so the
-// settings, workspaces, caches and the old app's credential store it reads and
+// settings, workspaces, caches and the credential store it reads and
 // writes are throwaway ones. Before the platform starts: it reads them on first
 // use. Per process so that demo runs can overlap (scripts/demo-video.sh in
 // parallel); the dirs of earlier runs that are gone are removed here.
@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
             debugScroll = std::atoi(next().c_str());
         else if (str::startsWith(a, "msga://"))
             urls.push_back(a);
-        // Anything else is ignored, like the old app did.
+        // Anything else is ignored.
     }
 
     std::string err;
@@ -204,18 +204,19 @@ int main(int argc, char **argv) {
         return 1;
     }
     plat::App  &pa    = app->platform();
-    // The old Qt app's ids (app/identity.h), which its msga.desktop, Start-menu
-    // shortcut and bundle carry: shells find the window's, the notifications'
+    // The app's ids (app/identity.h), which msga.desktop, the Start-menu
+    // shortcut and the bundle carry: shells find the window's, the notifications'
     // and the launcher badge's entry by them (Linux: app_id "msga", WM_CLASS
     // "msga", "MSGA"; elsewhere com.nisdos.msga).
     const char *appId = identity::appId();
-    // Windows: the old app's "MSGA" Start-menu entry (with the AUMID), always
+    // Windows: the "MSGA" Start-menu entry (with the AUMID), always
     // (not for a demo run).
     pa.setAppInfo({identity::kName, appId, {}, demo.empty()});
-    // The old app still running takes this launch, as its own second
+    // An earlier version still running takes this launch, as its own second
     // launches did; then a second launch of ours hands its arguments to the
     // running one (which raises its window on InstanceActivated) and exits.
-    if (demo.empty() && identity::handOffToOldApp(urls.empty() ? std::string() : urls.front()))
+    if (demo.empty() &&
+        identity::handOffToEarlierVersion(urls.empty() ? std::string() : urls.front()))
         return 0;
     std::vector<std::string> args(argv + 1, argv + argc);
     // A demo run has its own channel, one per process: it neither hands off to
@@ -230,8 +231,8 @@ int main(int argc, char **argv) {
 #endif
     if (!pa.claimSingleInstance(instance, args))
         return 0;
-    // A crash now prints a stack trace (stderr + crash.log, the old app's
-    // file) instead of a bare "Segmentation fault", then still core-dumps.
+    // A crash now prints a stack trace (stderr + crash.log, the file earlier
+    // versions wrote too) instead of a bare "Segmentation fault", then still core-dumps.
     crash::install(identity::crashLogPath(pa));
     // Dev builds only: the main-thread hang watchdog (crash_handler.h), its
     // heartbeat started below. AddressSanitizer makes everything ~5-10x
@@ -244,13 +245,13 @@ int main(int argc, char **argv) {
 
     const std::string settingsPath = shell::Settings::defaultPath(pa);
 #ifdef MSGA_LEGACY_IMPORT
-    // The upgrade from the old app: its settings, workspaces and caches.
+    // The upgrade from an earlier version: its settings, workspaces and caches.
     if (demo.empty())
-        legacy::importOldApp(pa, settingsPath, auth::WorkspaceStore::defaultPath(pa));
+        legacy::importOldData(pa, settingsPath, auth::WorkspaceStore::defaultPath(pa));
 #endif
     shell::Settings settings = shell::Settings::load(settingsPath);
     // Before any UI text exists: strings are translated when a view is built,
-    // so a changed language applies at the next start (as in the old app).
+    // so a changed language applies at the next start.
     app_i18n::registerLanguages();
     if (settings.language == "system" || !i18n::setLanguage(settings.language))
         i18n::setPreferredLanguage(pa.preferredLanguages());
@@ -276,11 +277,11 @@ int main(int argc, char **argv) {
     // Pictures and the update's download on a worker pool of their own, so
     // a screenful of avatars never holds up the workspace's API calls.
     net::Client           transfers(pa);
-    // msga's UpdateChecker (msga.app's manifest; the shell drives it).
+    // The update check (msga.app's manifest; the shell drives it).
     update::Updater       updater(pa, transfers, MSGA_VERSION);
     // Avatars, files, emoji and previews from URLs, cached on disk.
     screens::RemoteImages remote(pa, &transfers, screens::RemoteImages::defaultDir(pa));
-    // The rest of what the old CacheEvictor bounded: the inline player's
+    // The rest of the cache limit: the inline player's
     // audio and the opened HTML files are evicted with the pictures; the
     // workspaces' data and icons only count toward the limit.
     if (const std::string cache = identity::cacheDir(pa); !cache.empty())
@@ -330,9 +331,9 @@ int main(int argc, char **argv) {
     plat::WindowDesc desc;
     desc.title   = "MSGA";
     desc.appId   = appId;
-    desc.wmClass = "MSGA"; // Qt's res_class: the application name
+    desc.wmClass = "MSGA"; // WM_CLASS res_class: the application name
 #ifdef __linux__
-    // The logo for the X11 _NET_WM_ICON, at the sizes the old app sent.
+    // The logo for the X11 _NET_WM_ICON, at 16 to 256 px.
     for (int n : {16, 20, 24, 32, 48, 64, 128, 256}) {
         gfx::Bitmap  b(n, n);
         gfx::Painter p(b.view(), 1.f);
@@ -383,7 +384,7 @@ int main(int argc, char **argv) {
 
     if (!demoMode) {
         // The OAuth redirect (msga://oauth/callback) comes back to us; on
-        // Linux through the launcher entry the old app installed.
+        // Linux through the launcher entry (msga.desktop).
         shell::installDesktopEntry(pa);
         accounts.emplace(
             ctx,
@@ -417,7 +418,7 @@ int main(int argc, char **argv) {
     else {
         fake::FakeBackend &fb = *demoBackend;
         const double       t0 = app->nowMs();
-        sh.setSignedIn(true); // the workspace opening: msga's first-load state until connected
+        sh.setSignedIn(true); // the workspace opening: the first-load state until connected
         fb.connect([&](bool ok, const std::string &why) {
             if (!ok) {
                 std::fprintf(stderr, "msga: %s\n", why.c_str());

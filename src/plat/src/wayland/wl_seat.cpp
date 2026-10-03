@@ -314,7 +314,7 @@ void WlApp::onPointerButton(uint32_t serial, uint32_t code, uint32_t state) {
                     w->showWindowMenu(serial, _pointerPos);
             } else if (area == HitArea::Caption) {
                 // Client-side title bars own the double-click-to-maximise
-                // gesture on Wayland (GTK and Qt do the same).
+                // gesture on Wayland (GTK does the same).
                 if (clicks == 2)
                     w->setMaximized(!w->isMaximized());
                 else

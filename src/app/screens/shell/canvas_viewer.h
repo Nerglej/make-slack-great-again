@@ -1,4 +1,4 @@
-// msga's CanvasViewerOverlay: a canvas shared as a message file (huddle
+// The canvas viewer: a canvas shared as a message file (huddle
 // notes, a canvas posted into a chat) opened over the window — the canvas
 // page (readable and editable like a channel's canvas tab) in a panel on the
 // viewer backdrop, under a small bar: "Canvas", Open in browser, Close.

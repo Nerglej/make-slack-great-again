@@ -1,5 +1,5 @@
-// Background work, and the jobs the user sees running (msga's
-// BackgroundTasks: the footer's spinning cog lists them on hover).
+// Background work, and the jobs the user sees running (the footer's
+// spinning cog lists them on hover).
 //
 // The rule: nothing heavy runs on the UI thread. Network calls already
 // answer later (net::Client); disk and CPU work — reading a file to upload,

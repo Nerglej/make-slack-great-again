@@ -145,7 +145,7 @@ public:
     // Moves the read cursor and recomputes unread/mentions from the loaded
     // messages after it. Fires Meta.
     void                     markRead(ConvRef c, Ts ts);
-    // Muted threads get no notifications (msga's "Mute thread"; app-local).
+    // Muted threads get no notifications ("Mute thread"; app-local).
     bool                     threadMuted(ConvRef c, Ts root) const;
     void                     setThreadMuted(ConvRef c, Ts root, bool on); // fires Meta
     // Message reminders ("Remind me"): due time in epoch seconds, 0 = none.
@@ -159,7 +159,7 @@ public:
     // <!channel>, <!everyone>, or a <!subteam^S…> group listed in myGroups.
     bool                     mentionsMe(std::string_view text) const;
     std::vector<std::string> myGroups; // user-group ids "me" belongs to
-    // Every user group of the workspace (msga's Usergroup: a <!subteam^S…>
+    // Every user group of the workspace (a <!subteam^S…>
     // mention shows "@handle"); setUsergroups also derives myGroups. Fires
     // Users (mentions repaint).
     struct Usergroup {
@@ -170,14 +170,14 @@ public:
     const std::vector<Usergroup> &usergroups() const { return _usergroups; }
     const Usergroup              *findUsergroup(std::string_view id) const;
     void                          setUsergroups(std::vector<Usergroup> groups);
-    // Channels a message mentions that the roster doesn't list (msga's
-    // mentionedChannelName, filled by Backend::resolveChannel): id → name,
+    // Channels a message mentions that the roster doesn't list
+    // (filled by Backend::resolveChannel): id → name,
     // "" = it doesn't exist for us. Null: not looked up. Fires Users.
     const std::string            *channelName(std::string_view id) const;
     void                          setChannelName(std::string id, std::string name);
     // Who wrote a message some other message links to (Slack's rich_text
     // message_mention names the author; a permalink URL alone doesn't): the
-    // link chip reads "Author in #channel" (msga's MessageRef::author). Keyed
+    // link chip reads "Author in #channel". Keyed
     // by the linked conversation id and its ts as the permalink has it.
     UserRef                       linkedAuthor(std::string_view conv, std::string_view ts) const;
     void           setLinkedAuthor(std::string_view conv, std::string_view ts, UserRef u);
@@ -185,7 +185,7 @@ public:
     const Message *arrived() const { return _arrived; }
     // One such reply: fires Arrived (the caller counted it on its root).
     void           announceReply(ConvRef c, const Message &m);
-    // Followed threads with unread replies (msga's unreadThreadCount: the
+    // Followed threads with unread replies (the
     // sidebar's Threads entry is bright while > 0). Fires Meta (kNoConv).
     int            unreadThreads() const { return _unreadThreads; }
     void           setUnreadThreads(int n);
@@ -197,7 +197,7 @@ public:
     bool           mentions(const Message &m) const;
 
     // ── Saved messages ──────────────────────────────────────────────────────
-    // msga's message reminders (Slack's "Later" list): every saved message,
+    // Message reminders (Slack's "Later" list): every saved message,
     // loaded or not, with what the Saved messages page shows of it. Backends
     // keep it next to Message::saved and reminderAt.
     struct SavedItem {
@@ -211,7 +211,7 @@ public:
         UserRef     author = kNoUser;
         std::string botName, botAvatar;
         bool        previewed = false; // the message was found (text may still be "")
-        // The reminder went off (msga's MessageReminder::fired): it stays
+        // The reminder went off: it stays
         // listed, it doesn't go off again; a new due time re-arms it.
         bool        fired     = false;
     };
@@ -230,7 +230,7 @@ public:
     void setReminderFired(ConvRef c, Ts ts, bool fired);
 
     // ── "Transcribe with AI" ────────────────────────────────────────────────
-    // msga's AI transcripts of audio files (app-local: Slack has no write API
+    // AI transcripts of audio files (app-local: Slack has no write API
     // for a file's transcript). Setting one fires Update for every loaded
     // message with the file.
     const AiTranscript *aiTranscript(const std::string &fileId) const;
@@ -259,7 +259,7 @@ public:
         std::string image;   // non-empty: a custom emoji image
         bool        resolved() const { return !unicode.empty() || !image.empty(); }
     };
-    // Resolves a shortcode the way msga's resolveEmojiRich does: skin-tone
+    // Resolves a shortcode in this order: skin-tone
     // suffixes, the Unicode table, a raw glyph passed as a name (Teams),
     // then custom emoji with alias chains (bounded).
     EmojiGlyph emojiFor(std::string_view name) const;

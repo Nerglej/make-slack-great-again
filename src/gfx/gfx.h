@@ -269,7 +269,7 @@ bool   renderSvgCover(std::string_view svg, int w, int h, Bitmap *out);
 // `radius` (a circle when it is half the short side or more), anti-aliased
 // over one pixel.
 void   maskRoundedRect(Bitmap &b, float radius);
-// Clears a disc out of b (rim anti-aliased): Qt's CompositionMode_Clear ellipse.
+// Clears a disc out of b (rim anti-aliased): the pixels inside become transparent.
 void   clearDisc(Bitmap &b, float cx, float cy, float r);
 
 // Decoders refuse images larger than this many pixels (decompression bombs).

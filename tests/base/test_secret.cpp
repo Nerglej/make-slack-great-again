@@ -14,7 +14,7 @@
 #include <string>
 
 TEST("secret: tests keep credentials in their temporary settings file") {
-    // runAll's isolation: the old app's settings store as an INI file under
+    // runAll's isolation: the settings store of earlier versions as an INI file under
     // the test's own XDG_CONFIG_HOME, on every OS — never a keychain.
     const std::string config = base::env("XDG_CONFIG_HOME");
     REQUIRE(!config.empty());
@@ -79,7 +79,7 @@ TEST("secret: keychain write, replace, read, remove") {
 
 namespace {
 
-// The test keychain's services (secret_mac.mm): the old app's and msga's own.
+// The test keychain's services (secret_mac.mm): earlier versions' and msga's own.
 CFStringRef cf(const char *s) {
     return CFStringCreateWithCString(nullptr, s, kCFStringEncodingUTF8);
 }
@@ -101,7 +101,7 @@ CFMutableDictionaryRef query(SecKeychainRef kc, const char *service, const char 
     return q;
 }
 
-// An item as the old app added it (old secret_store_mac.mm).
+// An item as an earlier version added it.
 bool addItem(SecKeychainRef kc, const char *service, const char *key, const char *value) {
     CFMutableDictionaryRef q = query(kc, service, key);
     CFDictionaryRemoveValue(q, kSecMatchSearchList);
@@ -136,7 +136,7 @@ constexpr const char *kOld = "app.msga.msga.tests", *kOwn = "com.nisdos.msga.tes
 
 } // namespace
 
-TEST("secret: the old app's item is copied once, and kept up to date") {
+TEST("secret: an earlier version's item is copied once, and kept up to date") {
     const std::string dir = base::test::makeTempDir("msga_secret_test_");
     REQUIRE(!dir.empty());
     const std::string path = dir + "/test.keychain";
@@ -144,7 +144,7 @@ TEST("secret: the old app's item is copied once, and kept up to date") {
     REQUIRE(SecKeychainCreate(path.c_str(), 4, "test", false, nullptr, &kc) == errSecSuccess);
     secret::detail::testKeychain = kc;
 
-    // An upgrade: only the old app's item exists. The first read takes it and
+    // An upgrade: only the earlier version's item exists. The first read takes it and
     // copies it into msga's own; later reads use that one.
     const char *key = "workspace/slack:T0/auth";
     REQUIRE(addItem(kc, kOld, key, "{\"xoxp\":\"old\"}"));
@@ -152,7 +152,7 @@ TEST("secret: the old app's item is copied once, and kept up to date") {
     CHECK_STR(secret::read(key, &found), "{\"xoxp\":\"old\"}");
     CHECK(found);
     CHECK_STR(itemData(kc, kOwn, key), "{\"xoxp\":\"old\"}");
-    // A write (a refreshed token) goes to both: the old app reads it after a
+    // A write (a refreshed token) goes to both: an earlier version reads it after a
     // rollback.
     CHECK(secret::write(key, "{\"xoxp\":\"new\"}"));
     CHECK_STR(itemData(kc, kOwn, key), "{\"xoxp\":\"new\"}");
@@ -170,7 +170,7 @@ TEST("secret: the old app's item is copied once, and kept up to date") {
     CHECK_STR(secret::read(key, &found), "{\"xoxp\":\"again\"}");
     CHECK(found);
     CHECK_STR(itemData(kc, kOld, key), "{\"xoxp\":\"again\"}");
-    // A key the old app never had: its old-app item is ours, so a removal
+    // A key earlier versions never had: its earlier-version item is ours, so a removal
     // deletes both, no tombstone.
     CHECK(secret::write("llm/x/apiKey", "k"));
     CHECK_STR(itemData(kc, kOld, "llm/x/apiKey"), "k");

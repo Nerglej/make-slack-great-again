@@ -1,6 +1,6 @@
 // StoreSlot — the Store the screens show: the open workspace's. Every
 // signed-in workspace keeps its own Store, alive while it runs in the
-// background (msga's Session per workspace); switching workspaces points the
+// background; switching workspaces points the
 // slot at another one instead of reloading anything.
 //
 // The views observe through the slot, so their observers move with it: on

@@ -1,4 +1,4 @@
-// App-wide inline audio playback (msga's Media::AudioPlayer): the audio cards
+// App-wide inline audio playback: the audio cards
 // in the message lists. One file plays at a time; playback goes on across
 // conversation switches, and every card showing the same file (the channel's,
 // the thread panel's) paints the same status, keyed by the file id.

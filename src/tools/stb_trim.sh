@@ -1,6 +1,6 @@
 #!/bin/sh
 # Rebuild src/third_party/stb/stb_image.h from a pristine upstream copy, cut
-# down to the code msga-next can ever use (PNG, JPEG, GIF from memory, 8-bit
+# down to the code msga can ever use (PNG, JPEG, GIF from memory, 8-bit
 # RGBA out). Then re-apply the two "msga patch" GIF fixes (README there).
 #
 #   src/tools/stb_trim.sh path/to/upstream/stb_image.h

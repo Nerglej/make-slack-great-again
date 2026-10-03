@@ -53,7 +53,7 @@ const char *currentCode();
 const char *tr(const char *msgid);
 // Plural lookup; every "%n" in the result is replaced by n.
 std::string trn(const char *singular, const char *plural, int64_t n);
-// Positional substitution: "%1 at %2" with a1, a2, a3 (Qt's arg(), kept so the
+// Positional substitution: "%1 at %2" with a1, a2, a3 (numbered, so the
 // translated strings can reorder their arguments).
 std::string
 arg(std::string_view fmt, std::string_view a1, std::string_view a2 = {}, std::string_view a3 = {});

@@ -1,4 +1,4 @@
-// msga's UpdateBar: a thin bar right under the title bar once an update is
+// The update bar: a thin bar right under the title bar once an update is
 // downloaded — "A new version of msga has been downloaded. Restart to
 // apply." with "Restart now" (Linux, Windows), or "…ready to install." with
 // "Open installer" (macOS, where the DMG waits in Downloads). Hidden until

@@ -1,10 +1,7 @@
-// The Claude Code parts of the conversation UI as msga has them (the Qt
-// app's main_window / composer_widget / history_search / conv_footer /
-// typing_indicator / thread_panel / message_list are the spec): the error
-// banner, the composer's lock, prompt history (↑ / ↓, Ctrl+R), slash
-// commands msga runs itself, the zen toggle, "thinking (…)", the thread
-// panel's "Open as session" and read-only threads, message buttons and the
-// agent delete rule.
+// The Claude Code parts of the conversation UI: the error banner, the composer's lock, prompt
+// history (↑ / ↓, Ctrl+R), slash commands msga runs itself, the zen toggle, "thinking (…)", the
+// thread panel's "Open as session" and read-only threads, message buttons and the agent delete
+// rule.
 #include "app/fake/fake_backend.h"
 #include "support/test.h"
 #include "base/time.h"
@@ -132,7 +129,7 @@ struct Harness {
         sh->open(dm);
         pump();
     }
-    // ctrl: the primary modifier (Cmd on macOS), as msga's shortcuts mean it.
+    // ctrl: the primary modifier (Cmd on macOS), as the shortcuts mean it.
     void key(K k, bool ctrl = false) {
         auto   *t    = app().platform().testHooks();
         const K held = plat::primaryMod() == plat::ModSuper ? K::SuperLeft : K::ControlLeft;
@@ -338,7 +335,7 @@ TEST("footer: the zen toggle in the presence toggle's place, remembered") {
     );
     f.zenToggle()->onClick();
     CHECK(f.zenOn());
-    CHECK(h.settings.zenWorkspaces.size() == 1); // this workspace's (msga's zenMode/<teamId>)
+    CHECK(h.settings.zenWorkspaces.size() == 1); // this workspace's own
     CHECK_FALSE(h.settings.zenMode("claude-code:other"));
     CHECK(h.backend.zen);
     CHECK_STR(

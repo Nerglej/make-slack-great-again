@@ -1,5 +1,5 @@
-// The Linux launcher entry the old app installed for itself on every start
-// (old util/desktop_integration.cpp): ~/.local/share/applications/msga.desktop
+// The Linux launcher entry msga installs for itself on every start:
+// ~/.local/share/applications/msga.desktop
 // — visible in the application menu, the msga:// handler, named after the
 // app id so the window, its notifications and the launcher badge match it —
 // and the logo at icons/hicolor/256x256/apps/msga.png, which the entry names
@@ -22,8 +22,8 @@ namespace shell {
 // Off the UI thread; registers the scheme when done.
 void installDesktopEntry(plat::App &app);
 
-// The entry's text: the old template with Exec= and Icon= filled in (Exec
-// quoted when the path has a space, as the old buildDesktopEntry did).
+// The entry's text: the template with Exec= and Icon= filled in (Exec
+// quoted when the path has a space).
 std::string desktopEntry(const std::string &exePath, const std::string &icon);
 
 } // namespace shell

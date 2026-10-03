@@ -131,7 +131,7 @@ void TableView::layout() {
 void TableView::paint(gfx::Painter &p) {
     build(width());
     const float y0 = kMarginV, tw = _tableW;
-    // msga's paintDataTableChrome: header tint, a hairline under it, row
+    // The table's chrome: header tint, a hairline under it, row
     // rules, a 1-px frame of radius 6; no vertical lines.
     float       y = y0;
     for (size_t r = 0; r < _layouts.size(); ++r) {

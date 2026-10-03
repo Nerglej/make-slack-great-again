@@ -7,7 +7,7 @@
 
 namespace legacy {
 
-void importOldApp(
+void importOldData(
     plat::App &app, const std::string &settingsPath, const std::string &workspacesPath
 ) {
     importOldSettingsAndWorkspaces(app, settingsPath, workspacesPath);

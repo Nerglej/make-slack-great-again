@@ -104,7 +104,7 @@ TEST("menu: hovering a submenu row opens it; moving on closes it; clicks choose"
 
 TEST("menu: a context menu at a point opens below-right, flips at the edges, stays inside") {
     Win       w(500, 300);
-    // Plenty of room: its corner is the point plus msga's 8-px halo margin.
+    // Plenty of room: its corner is the point plus the 8-px halo margin.
     ui::Menu *m = ui::Menu::popupAt(*w.w, {100, 50}, items(), nullptr);
     w.frame();
     ui::RectF r = m->windowRect();
@@ -204,7 +204,7 @@ TEST("hit: the Menu key and Shift+F10 open the focused view's context menu") {
     CHECK(t->menus == 2);
 }
 
-TEST("menu: msga's geometry — 36-px rows, 26-px headers, 9-px separators, fitted width") {
+TEST("menu: geometry — 36-px rows, 26-px headers, 9-px separators, fitted width") {
     Win                       w(600, 400);
     std::vector<ui::MenuItem> v;
     v.push_back(ui::MenuItem::separatorItem()); // leading: dropped
@@ -236,7 +236,7 @@ TEST("menu: msga's geometry — 36-px rows, 26-px headers, 9-px separators, fitt
     CHECK(m->current() == 3); // Star channel (0 after tidying), header skipped → All new posts
 }
 
-TEST("menu: an item's shortcut hint chooses it (msga's T, E, Del, Ctrl+C)") {
+TEST("menu: an item's shortcut hint chooses it (T, E, Del, Ctrl+C)") {
     Win                       w(600, 400);
     int                       chosen = -1;
     std::vector<ui::MenuItem> v      = {

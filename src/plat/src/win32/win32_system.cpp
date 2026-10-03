@@ -1146,7 +1146,7 @@ std::string Win32App::standardDir(StandardDir d) const {
     }
     // Config roams with the profile; data, cache and state are machine-
     // local. Windows has no separate cache/state folders: apps append their
-    // own subdirectory (…\msga\cache), as Qt's AppLocalDataLocation does.
+    // own subdirectory (…\msga\cache).
     const KNOWNFOLDERID *id     = nullptr;
     bool                 create = true;
     switch (d) {

@@ -1,6 +1,6 @@
 // NullBackend — no workspace signed in: the Store stays empty and every call
 // is a no-op. The shell runs on it while it shows the "Log in to workspace"
-// page (the old app's logged-out state).
+// page (the logged-out state).
 #pragma once
 
 #include "app/model/backend.h"

@@ -1,9 +1,9 @@
-// The old Qt msga's per-workspace cache (legacy.h), brought into the new
-// app's: what Slack can't give back first.
+// Earlier versions' per-workspace cache (legacy.h), brought into the current
+// one: what Slack can't give back first.
 //
-// The old app kept one directory per workspace, <dataDir>/cache/<key with
-// ':' as '_'> ("slack_T0123"; before multi-service, the bare team id), in its
-// own JSON (old-msga/src/cache/workspace_cache.cpp):
+// Earlier versions kept one directory per workspace, <dataDir>/cache/<key with
+// ':' as '_'> ("slack_T0123"; before multi-service, the bare team id), in this
+// JSON:
 //   conversations.json  [{id, ki kind, na name, mb member, lr lastRead,
 //                       lt latest, un unread, mc mentions, dm peer, mu muted,
 //                       st starred, lm "mute this person", ln local name,
@@ -26,18 +26,18 @@
 // meta.json ("x": saved items with their previews and fired flags, followed
 // threads, probe times, the sweep stamp, dead ids, user groups) is written in
 // its format (SlackBackend::Read::saveExtras). Over an existing new cache
-// only what is msga's own goes in, where the new cache has nothing: mute,
+// only the app's own state goes in, where the new cache has nothing: mute,
 // notification level, group-DM names, muted and followed threads, AI
 // transcripts.
 //
-// Claude Code: the old Session kept the sessions' star, mute and level in the
-// same cache; they go into <dataDir>/claude-code/known-sessions.json, which
-// the new backend keeps them in (claude/backend.cpp loadKnown).
+// Claude Code: the sessions' star, mute and level were kept in the same
+// cache; they go into <dataDir>/claude-code/known-sessions.json, which
+// the backend keeps them in (claude/backend.cpp loadKnown).
 //
 // Not imported: the unread counts (stale; the server's answer has them), the
 // cached messages (the old ones were parsed text with entities, not Slack's
-// mrkdwn — the network gives them back on open), the images (the new app
-// caches pictures elsewhere), the old notification level "Default" (= "All
+// mrkdwn — the network gives them back on open), the images (pictures are
+// cached elsewhere now), the old notification level "Default" (= "All
 // new posts" until there is a per-conversation default) and the agent role
 // "ar" (Claude Code keeps it itself).
 //

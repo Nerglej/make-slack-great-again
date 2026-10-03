@@ -1,4 +1,4 @@
-// Slack Web API JSON → the model (msga's JsonMappers), table-driven where it
+// Slack Web API JSON → the model, table-driven where it
 // can be. Pure functions over the Store: references to users are interned
 // (Store::internUser), so a message never waits for the roster.
 #pragma once
@@ -28,19 +28,19 @@ model::Conversation toConversation(const json::Value &c, model::Store &store);
 // reactions, thread fields, edited, subtype. A message_changed event maps
 // its nested "message". Messages whose blocks say more than `text` (bot
 // sections, headers, context lines, tables) get mrkdwn built from the
-// blocks, as msga rendered the blocks instead of the fallback text.
+// blocks instead of the fallback text.
 model::Message      toMessage(const json::Value &m, model::Store &store);
 
 // Block Kit → mrkdwn (rich_text, section, header, context, table). Image
 // blocks are not text (see toBlocks).
 std::string               blocksToMrkdwn(const json::Value &blocks);
 // The blocks as structure (model::Block) when any is a header, divider,
-// image or table — what msga drew as such; else none (the mrkdwn is enough).
+// image or table — what is drawn as such; else none (the mrkdwn is enough).
 // Text blocks become Text blocks of their mrkdwn; actions/inputs are skipped.
 std::vector<model::Block> toBlocks(const json::Value &blocks);
 
-// A conversation's live huddle from a "room" object (msga's
-// readHuddleRoom): false when it is no huddle (call_family != "huddle").
+// A conversation's live huddle from a "room" object:
+// false when it is no huddle (call_family != "huddle").
 // A room with neither has_ended nor a date_end is live, even with nobody
 // in it; nobody listed means its host (created_by).
 struct HuddleRoom {
@@ -49,8 +49,8 @@ struct HuddleRoom {
     std::vector<model::UserRef> participants;
 };
 bool toHuddleRoom(const json::Value &room, model::Store &store, HuddleRoom &out);
-// The newest huddle_thread message's room in a history page (msga's first
-// page check), false when there is none or it is no huddle.
+// The newest huddle_thread message's room in a history page
+// (the first page's check), false when there is none or it is no huddle.
 bool newestHuddleRoom(const json::Value &messages, model::Store &store, HuddleRoom &out);
 
 // One client.counts entry (channels, mpims and ims alike).

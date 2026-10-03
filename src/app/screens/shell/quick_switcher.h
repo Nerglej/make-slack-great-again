@@ -16,7 +16,7 @@
 
 namespace shell {
 
-// msga's namedConversations: every conversation you are a member of except
+// Every conversation you are a member of except
 // DMs whose peer is deactivated or still unresolved (a raw user id), most
 // recent first by max(visited here, latest message, last read), then by
 // name. `visited`: the sidebar's visit stamps (conv id → epoch secs).
@@ -31,7 +31,7 @@ std::vector<model::ConvRef> quickSwitchFilter(
     const model::Store &store, std::string_view query, const std::vector<model::ConvRef> &order
 );
 
-// One workspace's tab (msga's QuickSwitcherDialog::Workspace).
+// One workspace's tab.
 struct QuickSwitchTab {
     std::string                 key, name, icon; // icon: a local picture ("" = the letter)
     const model::Store         *store = nullptr;

@@ -1,4 +1,4 @@
-// Adding a Slack workspace (msga's SessionImportDialog): sign in through a
+// Adding a Slack workspace: sign in through a
 // driven browser (the headline path), import from the local Slack app, or
 // paste the `d` cookie + the workspace address; the xoxc token is derived.
 // "Use app keys (OAuth) instead" hands over to the OAuth flow.
@@ -22,7 +22,7 @@ struct SessionImportHooks {
     std::function<void()>                                useAppKeys; // the dialog closes first
 };
 
-// msga's QMessageBox::critical/information: a title, the text, OK.
+// A message box: a title, the text, OK.
 ui::Popup *showMessage(ui::Window &w, std::string title, std::string text);
 
 ui::Popup *showSessionImportDialog(

@@ -1,6 +1,6 @@
-// The shell's desktop notifications, msga's MainWindow parts: new messages
-// (maybeNotify with its gates, notifyWhenUsersResolve), huddles starting
-// (maybeNotifyHuddle) and message reminders going off (notifyReminderDue).
+// The shell's desktop notifications: new messages (maybeNotify with its
+// gates, waiting for the people named to resolve), huddles starting
+// (huddleChanged) and message reminders going off (notifyReminderDue).
 // Shell members kept apart from shell.cpp; the clicks are handleAppEvent's.
 #include "app/media/sounds.h"
 #include "app/screens/common/message_text.h"
@@ -24,13 +24,13 @@ namespace shell {
 
 namespace {
 
-constexpr int64_t kMaxNotifyAgeSecs   = 30 * 86400; // msga's kMaxNotifyAgeDays
-constexpr int     kNotifyResolveStep  = 150;        // ms, msga's kNotifyResolveStepMs
+constexpr int64_t kMaxNotifyAgeSecs   = 30 * 86400; // older messages never notify
+constexpr int     kNotifyResolveStep  = 150;        // ms between tries to resolve names
 constexpr int     kNotifyResolveTries = 10;
 constexpr size_t  kMaxBody            = 100;
 constexpr int     kNotifyTimeoutMs    = 5000;
 
-// msga's body cap: 97 characters and "…".
+// The body's cap: 97 characters and "…".
 std::string capped(std::string s) {
     if (utf8::countCodePoints(s) <= kMaxBody)
         return s;
@@ -41,7 +41,7 @@ std::string capped(std::string s) {
     return s + "\xE2\x80\xA6";
 }
 
-// msga's notificationPreview: the text, else what the attachments say.
+// The preview: the text, else what the attachments say.
 std::string preview(const model::Store &st, const model::Message &m) {
     std::string text(str::trim(screens::plainText(st, m.text)));
     if (!text.empty())
@@ -83,7 +83,7 @@ bool hasUserIdPrefix(std::string_view id) {
 
 } // namespace
 
-// msga: the workspace's name in front ("Team · …") when it isn't the one on
+// The workspace's name in front ("Team · …") when it isn't the one on
 // screen.
 std::string Shell::teamTitle(const model::Store &st, const std::string &key, std::string title) {
     if (key.empty() || (key == _activeKey && _signedIn))
@@ -125,7 +125,7 @@ std::string Shell::workspaceIconFor(const model::Store &st) const {
 
 // The OS notification, where there is a notifier (Windows falls back to a
 // tray balloon by itself); 0 = none shown. Callers play the chime either way,
-// as the old app did when it fell back to the tray.
+// also for a tray balloon.
 uint64_t Shell::post(const plat::Notification &n) {
     plat::App &pa = _ctx.app.platform();
     return pa.notificationsAvailable() ? pa.notify(n) : 0;
@@ -135,7 +135,7 @@ model::NotifyLevel Shell::defaultLevel() const {
     return _settings.notifyLevel == 1 ? model::NotifyLevel::Mentions : model::NotifyLevel::All;
 }
 
-// msga's effectiveNotifLevel: muted is Nothing, Default follows Settings.
+// Muted is Nothing, Default follows Settings.
 model::NotifyLevel Shell::effectiveLevel(const model::Conversation &c) const {
     return c.effectiveNotify(defaultLevel());
 }
@@ -158,7 +158,7 @@ void Shell::messagesArrived(model::Store &st, const std::string &key, const mode
         maybeNotify(st, key, ch.conv, (*list)[i], true);
 }
 
-// msga's maybeNotify: its gates in its order, then the notification.
+// The gates, in order, then the notification.
 void Shell::maybeNotify(
     model::Store &st, const std::string &key, ConvRef conv, const model::Message &m, bool allowDefer
 ) {
@@ -190,7 +190,7 @@ void Shell::maybeNotify(
     if (effectiveLevel(c) != model::NotifyLevel::All && !important)
         return;
 
-    // msga's notifyWhenUsersResolve: the author and raw mentions resolved
+    // The author and raw mentions resolved
     // first (at most ~1.5 s), so the text names people.
     if (allowDefer) {
         std::vector<model::UserRef> pending;
@@ -239,8 +239,8 @@ void Shell::maybeNotify(
         pic = workspaceIconFor(st);
     }
     n.timeoutMs = kNotifyTimeoutMs;
-    // The chosen sound is ours to play (the old app's playNotificationSound);
-    // the OS's own goes as the old app had it (sounds.h).
+    // The chosen sound is ours to play; whether the OS plays its own is
+    // sounds.h's call.
     n.silent    = sounds::kSilentNotifications;
     notificationImage(
         {std::move(pic)},
@@ -283,7 +283,7 @@ void Shell::notifyWhenUsersResolve(
     _resolveTimers.push_back(*id);
 }
 
-// msga's maybeNotifyHuddle: once per huddle start (the conversation's Meta
+// Once per huddle start (the conversation's Meta
 // with huddleActive), never for one I'm in, a channel's only on "All new
 // posts"; the banner covers the open conversation.
 void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv) {
@@ -344,7 +344,7 @@ void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv
     );
 }
 
-// msga's notifyReminderDue: only the master switch gates it; the click opens
+// Only the master switch gates it; the click opens
 // the message itself (its thread for a reply) and flashes it.
 void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef conv, Ts ts) {
     if (!_settings.notifications || conv >= st.conversationCount())
@@ -376,7 +376,7 @@ void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef 
                              : it->botName;
     if (it->author != kNoUser && st.user(it->author).placeholder)
         backendFor(st).resolveUser(it->author);
-    // msga's snippet: the text simplified, at most 120 characters.
+    // The snippet: the text simplified, at most 120 characters.
     std::string snippet;
     for (char ch : screens::plainText(st, it->text))
         if (!(ch == ' ' || ch == '\n' || ch == '\t') || (!snippet.empty() && snippet.back() != ' '))

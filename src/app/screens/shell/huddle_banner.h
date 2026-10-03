@@ -1,4 +1,4 @@
-// msga's HuddleBanner: a 34 px green strip over the messages while the open
+// The huddle banner: a 34 px green strip over the messages while the open
 // conversation has a live huddle — the headphones, "A huddle is happening"
 // and a white "Join" (its tooltip above it: "Opens the huddle in Slack for
 // web"). The shell shows it (Conversation::huddleActive, where the service

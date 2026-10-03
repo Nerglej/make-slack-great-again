@@ -43,7 +43,7 @@ void LoadingIndicator::paint(gfx::Painter &p, ui::RectF r, float diameter) const
     const float     cx = std::floor(r.x + r.w / 2), cy = std::floor(r.y + r.h / 2);
     const float     outer = diameter / 2, inner = outer - kStroke * diameter / kDiameter;
     constexpr float kPi = 3.14159265f;
-    // Each arc as a filled annulus sector: the flat cap of Qt's FlatCap pen.
+    // Each arc as a filled annulus sector, so its ends are cut flat.
     for (int i = 0; i < 4; ++i) {
         const float   a0    = (float(i) * 90 + kGapDeg) * kPi / 180;
         const float   a1    = (float(i) * 90 + 90 - kGapDeg) * kPi / 180;

@@ -1,4 +1,4 @@
-// ThreadPanel — the right-hand thread view, as msga's ThreadPanel: a 48 px
+// ThreadPanel — the right-hand thread view: a 48 px
 // header ("Thread", then mute / download / open-as-session / close), the
 // root and its replies (a MessageList in thread mode), the shell's typing
 // indicator and composer in their slots, and "Also send to channel" under

@@ -1,4 +1,4 @@
-// The demo tour's script (demo/tour.json) as data, msga's demo_tour_script:
+// The demo tour's script (demo/tour.json) as data:
 // the verbs demo::Tour performs and the parser — no UI, so tests cover it.
 // Compiled only into demo builds (-DMSGA_DEMO=ON) and the tests.
 #pragma once

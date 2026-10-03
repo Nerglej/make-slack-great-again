@@ -1,4 +1,4 @@
-// "Session status" (msga's SessionStatusDialog, an agent session's /status):
+// "Session status" (an agent session's /status):
 // label / value rows about the conversation (Backend::runLocalCommand) —
 // version, model, account, folder — the labels in text.secondary, the
 // values in text.primary with the value as their tooltip (a long path may

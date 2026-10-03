@@ -460,7 +460,7 @@ void Backend::loadProfile() {
         return;
     _myName       = doc.root()["name"].str();
     _myAvatarPath = doc.root()["avatar"].str();
-    // The old app kept a file:// URL.
+    // Earlier versions kept a file:// URL.
     if (str::startsWith(_myAvatarPath, "file://"))
         _myAvatarPath = file::fromFileUrl(_myAvatarPath);
 }

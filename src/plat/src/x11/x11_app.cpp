@@ -8,7 +8,7 @@
 #include <xcb/shm.h>
 #include <xcb/xcb_cursor.h>
 #include <xcb/xfixes.h>
-// xkb.h names a struct member `explicit`; rename it for C++ (as Qt does).
+// xkb.h names a struct member `explicit`; rename it for C++.
 #define explicit explicit_
 #include <xcb/xkb.h>
 #undef explicit
@@ -278,7 +278,7 @@ void X11App::readScale() {
         s            = std::strtod(env, nullptr);
         _scaleForced = true;
     } else {
-        // Xft.dpi is what GTK, Qt and every Xft client scale by; desktops set
+        // Xft.dpi is what GTK and every Xft client scale by; desktops set
         // it (and xsettingsd mirrors it) when the user picks a scale.
         auto cookie =
             xcb_get_property(_c, 0, _root, XCB_ATOM_RESOURCE_MANAGER, XCB_ATOM_STRING, 0, 1 << 16);

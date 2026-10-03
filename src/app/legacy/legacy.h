@@ -1,17 +1,17 @@
-// The upgrade from the old Qt msga — a self-contained module, meant to be
-// deleted once most users have upgraded. The rest of the app does not depend
+// The upgrade from earlier versions' data — a self-contained module, meant to
+// be deleted once most users have upgraded. The rest of the app does not depend
 // on it: main.cpp makes the one call below, in an #ifdef MSGA_LEGACY_IMPORT.
 //
 // What it brings along, once:
-//   old_settings_import.h  the QSettings store's settings and workspace list
+//   old_settings_import.h  the old settings store's settings and workspace list
 //                          (settings.json, workspaces.json, workspace icons,
 //                          the zen toggles)
 //   old_cache_import.h     each workspace's cache (mutes, notification levels,
 //                          group-DM names, muted threads, AI transcripts, the
 //                          roster for a warm first start, …)
-// The old files are only read: a rollback to the old app finds them as they
-// were. Credentials are not migrated at all — the new app keeps them in the
-// old app's own entries (base/secret.h, base/old_settings.h; both stay).
+// The old files are only read: a rollback to an earlier version finds them as
+// they were. Credentials are not migrated at all — they stay in the entries
+// earlier versions used (base/secret.h, base/old_settings.h; both stay).
 //
 // To remove the module:
 //   1. delete src/app/legacy/
@@ -31,11 +31,11 @@ class App;
 namespace legacy {
 
 // The first start's import, then each workspace's old cache the first time
-// it is seen. `settingsPath` / `workspacesPath` are the new app's files
+// it is seen. `settingsPath` / `workspacesPath` are the current files
 // (shell::Settings::defaultPath, auth::WorkspaceStore::defaultPath). Cheap
 // once done: a few stat calls and one small read. Synchronous, before the
 // UI exists (the workspaces' caches must be in place before they open).
-void importOldApp(
+void importOldData(
     plat::App &app, const std::string &settingsPath, const std::string &workspacesPath
 );
 

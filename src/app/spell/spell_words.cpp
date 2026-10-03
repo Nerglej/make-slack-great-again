@@ -1,4 +1,4 @@
-// msga's Spell::checkableWords / wordAt over UTF-8: the text is decoded once
+// The checkable words, over UTF-8: the text is decoded once
 // into code points (with their byte offsets), the non-prose parts are blanked
 // to spaces in place, and the words are cut from what is left.
 #include "app/spell/spell.h"

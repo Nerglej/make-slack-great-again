@@ -1,5 +1,5 @@
-// A teammate's page in an agent workspace (Backend::agentRoles), msga's
-// TeammatePage, opened from the sidebar's Team section: who it is ("Edit
+// A teammate's page in an agent workspace (Backend::agentRoles),
+// opened from the sidebar's Team section: who it is ("Edit
 // teammate…"), its sessions (a click opens one) and the folder a new session
 // with it starts in ("Change folder": the recent folders, "Browse…").
 // Writing to a teammate starts that session: the shell keeps its composer

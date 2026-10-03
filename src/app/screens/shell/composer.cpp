@@ -171,7 +171,7 @@ std::string toMrkdwn(std::string_view text, const std::vector<TextEdit::Run> &ru
         while (j < n && marks[j] == marks[i] && !link[j])
             ++j;
         open(marks[i]);
-        // & < > go out bare, like msga's composer text: Slack escapes them
+        // & < > go out bare, as typed: Slack escapes them
         // itself, so an entity sent here would arrive as "&amp;gt;".
         out += text.substr(i, j - i);
         i = j;
@@ -296,7 +296,7 @@ void DraftStash::appendText(const std::string &scope, Key k, std::string_view ad
 }
 
 // ── Undo send ───────────────────────────────────────────────────────────────
-// msga's UndoSendPill (src/ui/composer/undo_send_pill): "Message sent · Undo
+// The undo-send pill: "Message sent · Undo
 // Ctrl+Z" on the tooltip chip, right-aligned 6 px above the composer box, for
 // 5 s. A click (or Ctrl+Z with an empty editor) takes the message back.
 
@@ -381,7 +381,7 @@ private:
 
 namespace {
 
-// msga's toolbar/bottom-bar QToolButton: 26 px, the icon in
+// A toolbar / bottom-bar button: 26 px, the icon in
 // composer.toolbarIcon (…Active while the editor has focus), a
 // surface.highlightStrong wash on hover, radius 3.
 GlyphButton *toolButton(View *parent, Icon icon, float iconPx, std::string tip) {
@@ -427,7 +427,7 @@ private:
     bool _on = false, _chevron;
 };
 
-// The send + schedule pair's shared pill (msga's _sendGroup).
+// The send + schedule pair's shared pill.
 class SendGroup final : public View {
 public:
     void paint(gfx::Painter &p) override {
@@ -531,7 +531,7 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     box->setBackground(C::FormBg, 8);
     box->setBorder(C::FieldBorder);
     box->setClipChildren(true);
-    box->style().padding(1); // inside the 1-px border, as a QFrame's contents
+    box->style().padding(1); // the contents sit inside the 1-px border
     _box = box;
 
     // ── Formatting toolbar ──────────────────────────────────────────────────
@@ -564,8 +564,7 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     }
 
     // ── "Editing message" banner ────────────────────────────────────────────
-    // msga styles a plain QWidget here (no WA_StyledBackground), so only its
-    // label and cross show: no fill, no accent bar.
+    // Unstyled: only its label and cross show, no fill, no accent bar.
     _editBar = box->add<View>();
     _editBar->style().row().height(30).padding(8, 0, 4, 0).spacing(4).items(Align::Center);
     _editBar->add<Label>(tr("Editing message"), Font::SmallSemibold, C::BannerText)
@@ -589,7 +588,7 @@ Composer::Composer(screens::Context &ctx, DraftStash &drafts) : _ctx(ctx), _draf
     _edit = box->add<TextEdit>();
     _edit->setMaxLines(18);
     _edit->style().padding(14, 10);
-    _edit->setPlainPaste(true);                // msga: setAcceptRichText(false)
+    _edit->setPlainPaste(true);                // pasted rich text arrives as plain
     _edit->setLinkBackground(C::AccentSubtle); // mention / channel / GIF pills
     _edit->onChange = [this] {
         typing();
@@ -785,9 +784,9 @@ void Composer::refreshLook() {
     );
 }
 
-// msga's composer key handler, in its order. A feature that is off here
+// The composer's key handler, in this order. A feature that is off here
 // (voice input without a provider, prompt history without a source) lets
-// the key go on to the editor, as msga's does.
+// the key go on to the editor.
 bool Composer::keyDown(const Event &e) {
     using shortcuts::Id;
     using shortcuts::matches;
@@ -876,8 +875,8 @@ bool Composer::keyDown(const Event &e) {
     return false;
 }
 
-// msga's toolbar: markers typed around the selection (applyInlineFormat),
-// line prefixes (prefixSelectedLines), fences (applyBlockFormat).
+// The toolbar: markers typed around the selection (wrapInline), line
+// prefixes (prefixLines), fences (wrapCodeBlock).
 void Composer::formatAction(shortcuts::Id id) {
     using shortcuts::Id;
     switch (id) {
@@ -910,8 +909,8 @@ void Composer::formatAction(shortcuts::Id id) {
     }
 }
 
-// Up in an empty editor: edit my newest message here (msga's lastOwnMessage:
-// mine and not a system line). Agent sessions have no edit.
+// Up in an empty editor: edit my newest message here (the newest
+// that is mine and not a system line). Agent sessions have no edit.
 void Composer::editLast() {
     if (_key.conv == model::kNoConv || _ctx.backend.isAgentSession(_key.conv))
         return;
@@ -1105,7 +1104,7 @@ void Composer::insertVoiceText(const std::string &text) {
     refreshLook();
 }
 
-// msga's stepPromptHistory: ↑ from an empty editor shows the newest prompt,
+// ↑ from an empty editor shows the newest prompt,
 // then older ones; ↓ goes back, past the newest to an empty editor again.
 bool Composer::stepPromptHistory(bool older) {
     if (_editTs)
@@ -1142,13 +1141,13 @@ void Composer::resetPromptHistory() {
 }
 
 void Composer::setHistoryText(const std::string &text, bool caretAtStart) {
-    loadMrkdwn(*_edit, _ctx.store, text); // msga's setText: the editor's mrkdwn
+    loadMrkdwn(*_edit, _ctx.store, text); // the editor's mrkdwn
     if (caretAtStart)
         _edit->setSelection(0, 0);
     refreshLook();
 }
 
-// msga's openHistorySearch: Ctrl+R over the composer box.
+// Ctrl+R: the prompt search over the composer box.
 bool Composer::openPromptSearch() {
     Window *w = window();
     if (_editTs || !historySource || !w)
@@ -1185,12 +1184,12 @@ bool Composer::openPromptSearch() {
 }
 
 void Composer::setSuggestion(std::string text) {
-    _suggestion = str::simplified(text); // msga's simplified()
+    _suggestion = str::simplified(text); // whitespace runs as one space, trimmed
     refreshLook();
 }
 
 void Composer::setLockReason(std::string reason) {
-    // Unlocked, "Message <name>" follows a rename (msga's renameSession).
+    // Unlocked, "Message <name>" follows a rename of the session.
     if (reason == _lock && !_lock.empty())
         return;
     const bool changed = reason != _lock;
@@ -1278,7 +1277,7 @@ void Composer::setTarget(model::ConvRef conv, model::Ts thread) {
     const DraftStash::Key next{conv, thread};
     if (next == _key)
         return;
-    withdrawUndo(); // msga: a conversation switch withdraws the offer
+    withdrawUndo(); // a conversation switch withdraws the offer
     // A dictation still running finishes for the conversation being left.
     finishVoiceInBackground();
     if (_voiceStrip->mode() == VoiceStrip::Mode::Error)
@@ -1318,7 +1317,7 @@ void Composer::setTarget(model::ConvRef conv, model::Ts thread) {
     }
     _placeholder = _fixedPlaceholder.empty() ? std::move(ph) : _fixedPlaceholder;
     if (conv != model::kNoConv)
-        setSuggestion(_ctx.backend.promptSuggestion(conv)); // simplified, as msga does
+        setSuggestion(_ctx.backend.promptSuggestion(conv)); // simplified
     refreshLook();
     compositionChanged();
 }
@@ -1336,7 +1335,7 @@ std::string Composer::mrkdwn() const {
 bool Composer::send() {
     if (onSendRequest) // an embedded composer (the forward dialog's)
         return onSendRequest();
-    // msga's MarkdownCompose::convert: CommonMark habits become mrkdwn, and
+    // CommonMark habits become mrkdwn, and
     // a list also travels as a rich_text block.
     mrkdwn::Composed  composed = mrkdwn::compose(mrkdwn());
     const std::string text(str::trim(composed.mrkdwn));
@@ -1409,7 +1408,7 @@ bool Composer::send() {
 // ── Undo send ───────────────────────────────────────────────────────────────
 
 void Composer::offerUndo(const std::string &html, const std::vector<std::string> &files) {
-    // msga: only where messages can be deleted, never in agent sessions.
+    // Only where messages can be deleted, never in agent sessions.
     if (_ctx.backend.isAgentSession(_key.conv) || !window())
         return;
     // The ghost: my newest pending message in this list.
@@ -1436,7 +1435,7 @@ void Composer::offerUndo(const std::string &html, const std::vector<std::string>
     _undoPill = raw;
     window()->showPopup(std::move(pill));
     _ctx.app.cancelTimer(_undoTimer);
-    _undoTimer = _ctx.app.addTimer(5000, false, [this] { // msga's kUndoSendMs
+    _undoTimer = _ctx.app.addTimer(5000, false, [this] { // the offer lasts 5 s
         _undoTimer = 0;
         withdrawUndo();
     });
@@ -1444,7 +1443,7 @@ void Composer::offerUndo(const std::string &html, const std::vector<std::string>
 
 void Composer::visibilityChanged(bool on) {
     if (!on) {
-        withdrawUndo(); // msga: the composer being hidden withdraws the offer
+        withdrawUndo(); // the composer being hidden withdraws the offer
         // A recording stops; its text lands when the transcription is done.
         finishVoiceInBackground();
     }
@@ -1532,7 +1531,7 @@ void Composer::chooseAttachments() {
     );
 }
 
-// msga's attachFromMimeData: files copied in a file manager arrive as local
+// Pasted files: files copied in a file manager arrive as local
 // file URIs, raw pictures (screenshots, a browser's "Copy image") are saved
 // to a temporary file; both go the attachment way. Anything else (and a URI
 // list with no local file in it) pastes as text. `sel` is the clipboard the
@@ -1712,7 +1711,7 @@ bool Composer::onEvent(Event &e) {
 }
 
 void Composer::layout() {
-    // msga caps the editor at half the window's height, then it scrolls.
+    // The editor is capped at half the window's height, then it scrolls.
     if (Window *w = window()) {
         const float line = std::ceil(font(Font::Body).size * 1.4f);
         _edit->setMaxLines(std::max(1, int((w->size().h / 2 - 20) / std::max(1.f, line))));
@@ -1729,7 +1728,7 @@ void Composer::typing() {
     _ctx.backend.userTyping(_key.conv, _key.thread);
 }
 
-// msga's prefixSelectedLines: each line the selection touches gets the
+// Each line the selection touches gets the
 // prefix ("1. ", "2. " … when ordered); without one, just the caret's line.
 void Composer::prefixLines(std::string_view prefix, bool numbered) {
     const std::string    &t    = _edit->text();
@@ -1759,7 +1758,7 @@ void Composer::prefixLines(std::string_view prefix, bool numbered) {
     _edit->focus();
 }
 
-// msga's applyBlockFormat: a selection is fenced (trimmed) with the caret
+// A selection is fenced (trimmed) with the caret
 // after the closing fence; without one the caret lands between the fences.
 void Composer::wrapCodeBlock() {
     if (_edit->hasSelection()) {
@@ -1773,7 +1772,7 @@ void Composer::wrapCodeBlock() {
     _edit->focus();
 }
 
-// msga's applyInlineFormat: markers around the selection, or a pair with the
+// Markers around the selection, or a pair with the
 // caret between them.
 void Composer::wrapInline(std::string_view marker) {
     if (_edit->hasSelection()) {
@@ -1840,7 +1839,7 @@ void Composer::respell() {
     );
 }
 
-// msga's ComposerTextEdit::addSpellingActions: on an underlined word, up to
+// The spelling menu: on an underlined word, up to
 // five suggestions (bold), "Add to dictionary" and "Ignore" lead the
 // standard edit menu. The suggestions are made off the UI thread (Hunspell
 // can take 15–120 ms), so the menu opens once they are in.
@@ -1989,7 +1988,7 @@ void Composer::openEmoji() {
     if (!w)
         return;
 #ifdef MSGA_HAVE_MESSAGES
-    // The messages screens' searchable picker (shared with reactions); msga
+    // The messages screens' searchable picker (shared with reactions); it
     // inserts the shortcode, which Slack renders.
     std::weak_ptr<int> alive = _alive;
     screens::EmojiPicker::show(
@@ -2019,7 +2018,7 @@ void Composer::openGif() {
     h.picked                 = [this, alive](std::string url, std::string title) {
         if (alive.expired())
             return;
-        // Held as Slack's labelled link; shown as a pill (msga's gifLinkToken).
+        // Held as Slack's labelled link; shown as a pill.
         std::string label;
         for (char ch : title)
             if (ch != '|' && ch != '<' && ch != '>')
@@ -2161,7 +2160,7 @@ void Composer::computePickList() {
             ++added;
         }
     } else if (trig == '/' && start == 0) {
-        // msga: slash commands only at the very start of the message; a bare
+        // Slash commands only at the very start of the message; a bare
         // "/" lists them all, by name.
         if (!_ctx.backend.capabilities().slashCommands || _key.conv == model::kNoConv) {
             dismiss();
@@ -2183,7 +2182,7 @@ void Composer::computePickList() {
             it.usage    = c.usage;
             it.subtitle = c.desc;
             it.source   = c.source; // "source · description"
-            // The service's own commands bring its icon (msga: the Claude
+            // The service's own commands bring its icon (the Claude
             // Code avatar); Slack's built-ins draw the Slack mark instead.
             it.avatar   = !c.icon.empty()                ? c.icon
                           : c.app || c.source == "Slack" ? std::string()
@@ -2238,9 +2237,8 @@ void Composer::computePickList() {
     const RectF cr = _edit->caretRect();
     _edit->setSelection(keepA, keepC);
     _inPick = false;
-    // msga maps QTextEdit::cursorRect (viewport coordinates) from the editor
-    // widget, so its anchor sits the viewport's inset (10, 6) up and left of
-    // the character; the @ list hangs from the line's bottom, the others
+    // The anchor sits the editor's inset (10, 6) up and left of the
+    // character; the @ list hangs from the line's bottom, the others
     // from its top.
     const PointF anchor{er.x + cr.x - 10, er.y + cr.y + (trig == '@' ? cr.h : 0) - 6};
     _pickFrom = start;

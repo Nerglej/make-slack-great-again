@@ -1,8 +1,7 @@
 // Linux audio. There is no dependency-free in-process audio path: every sound
 // server needs a shared library that won't link into the static release
-// binary, and the static (musl) build can't dlopen one. So, as the old Qt app
-// did, audio goes through the sound server's own command-line tools, present
-// on essentially every desktop:
+// binary, and the static (musl) build can't dlopen one. So audio goes through the sound server's
+// own command-line tools, present on essentially every desktop:
 //
 //   playback  source (PCM frames)  ──►  sink (helper reading raw PCM on stdin)
 //             sources: the vendored miniaudio decoders in-process (MP3/WAV/

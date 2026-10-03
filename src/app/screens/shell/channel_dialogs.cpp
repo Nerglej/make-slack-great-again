@@ -21,7 +21,7 @@ namespace shell {
 
 namespace {
 
-// One of the dialog's tabs (msga's checkable QPushButton): 8/16 padding,
+// One of the dialog's tabs (a checkable button): 8/16 padding,
 // the active one bold in the primary colour over a 2-px accent underline.
 class FinderTab final : public Clickable {
 public:
@@ -40,7 +40,7 @@ public:
     bool onEvent(Event &e) override {
         const bool r = Clickable::onEvent(e);
         if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
-            tint(); // msga's QPushButton:hover { color: primary }
+            tint(); // the primary colour on hover
         return r;
     }
     void paintOver(gfx::Painter &p) override {
@@ -79,7 +79,7 @@ public:
         );
         _search->style().flex(1).minW = 200;
         auto *createBtn =
-            top->add<FormButton>(tr("Create Channel"), V::Primary, false); // msga's casing
+            top->add<FormButton>(tr("Create Channel"), V::Primary, false); // this casing on purpose
         createBtn->setFocusable(false);
         createBtn->onClick = [this] {
             auto cb = _create;
@@ -97,7 +97,7 @@ public:
         for (int i = 0; i < 2; ++i)
             _tabs[i]->onClick = [this, i] {
                 selectTab(i);
-                _search->edit().focus(); // msga's tabs take no focus from the field
+                _search->edit().focus(); // the tabs take no focus from the field
             };
         content()->add<Separator>(false, C::FormDivider);
 

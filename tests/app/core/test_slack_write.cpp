@@ -8,6 +8,7 @@
 #include "base/file.h"
 #include "base/json.h"
 #include "base/process.h"
+#include "base/str.h"
 #include "support/test.h"
 #include "net/net.h"
 #include "plat/plat.h"
@@ -557,6 +558,73 @@ TEST("slack write: save and remind use saved.*; a rejection rolls back") {
     CHECK(!Log().get("saved.add", 1)["form"].has("date_due")); // a plain bookmark
     REQUIRE(errors.size() == 1);
     CHECK_STR(errors[0], "Couldn't save the message: not_allowed");
+}
+
+TEST(
+    "slack write: schedule send — a session schedules a draft, a token uses "
+    "chat.scheduleMessage"
+) {
+    if (!haveServer())
+        return;
+    Env    e;
+    Result r;
+    // Session tokens: chat.scheduleMessage answers not_allowed_token_type,
+    // so it is the web client's dated draft, its body a rich_text block.
+    e.be->scheduleMessage(e.general, "*later* <@UMIRA>", 0, 1900000000, r.cb());
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    CHECK(r.ok);
+    Log         log;
+    json::Value d = log.get("drafts.create")["form"];
+    CHECK(log.count("chat.scheduleMessage") == 0);
+    CHECK_STR(d["date_scheduled"].str(), "1900000000");
+    CHECK_STR(d["destinations"].str(), R"([{"channel_id":"C1"}])");
+    CHECK_STR(d["file_ids"].str(), "[]");
+    CHECK_STR(d["is_from_composer"].str(), "true");
+    const std::string id(d["client_msg_id"].str());
+    CHECK(id.size() == 36 && id[14] == '4' && id[8] == '-' && id[23] == '-');
+    CHECK(id.find_first_of("ABCDEF") == std::string::npos);
+    CHECK(d["blocks"].str().find(R"("type":"rich_text")") != std::string_view::npos);
+    CHECK(d["blocks"].str().find(R"("user_id":"UMIRA")") != std::string_view::npos);
+    CHECK(d["blocks"].str().find(R"("bold":true)") != std::string_view::npos);
+    // A thread reply names its thread; a fresh id each time.
+    Result t;
+    e.be->scheduleMessage(e.general, "in thread", e.old, 1900000000, t.cb());
+    REQUIRE(pumpUntil([&] { return t.called; }));
+    Log         log2;
+    json::Value d2 = log2.get("drafts.create", 1)["form"];
+    CHECK(
+        d2["destinations"].str() ==
+        str::concat({R"([{"channel_id":"C1","thread_ts":")", model::formatTs(e.old), R"("}])"})
+    );
+    CHECK(d2["client_msg_id"].str() != id);
+    // A rejection says why.
+    std::vector<std::string> errors;
+    e.be->onError = [&](const std::string &m) { errors.push_back(m); };
+    script("drafts.create", R"([{"ok":false,"error":"attached_draft_exists"}])");
+    Result f;
+    e.be->scheduleMessage(e.general, "again", 0, 1900000000, f.cb());
+    REQUIRE(pumpUntil([&] { return f.called; }));
+    CHECK_FALSE(f.ok);
+    REQUIRE(errors.size() == 1);
+    CHECK_STR(
+        errors[0],
+        "Couldn't schedule message: Slack has an unsent draft in this conversation. Send or "
+        "clear it first."
+    );
+
+    // A token workspace (no cookie): the public method.
+    slack::Credentials cr;
+    cr.token  = "xoxp-test";
+    cr.teamId = "T1";
+    slack::SlackBackend tok(e.store, app(), e.client, cr);
+    Result              p;
+    tok.scheduleMessage(e.general, "later", 0, 1900000000, p.cb());
+    REQUIRE(pumpUntil([&] { return p.called; }));
+    Log         log3;
+    json::Value s = log3.get("chat.scheduleMessage")["form"];
+    CHECK_STR(s["channel"].str(), "C1");
+    CHECK_STR(s["text"].str(), "later");
+    CHECK_STR(s["post_at"].str(), "1900000000");
 }
 
 TEST("slack write: pins, stars, leave, members, DMs") {

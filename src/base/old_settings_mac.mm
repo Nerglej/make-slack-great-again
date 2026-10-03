@@ -1,8 +1,8 @@
-// old_settings.h on macOS: QSettings' CFPreferences domain, "com.msga.<app>"
-// (qsettings_mac.cpp: the organization "msga" becomes "com.msga", then the
-// application name). Keys rotate '/' → '.', '.' → U+00B7, U+00B7 → '/';
-// values are CF property-list types (a QString a CFString, an int a CFNumber,
-// a QByteArray CFData, a QStringList a CFArray). Read through CFPreferences,
+// old_settings.h on macOS: the store's CFPreferences domain, "com.msga.<app>"
+// (the organization "msga" becomes "com.msga", then the application
+// name). Keys rotate '/' → '.', '.' → U+00B7, U+00B7 → '/';
+// values are CF property-list types (a string a CFString, an int a CFNumber,
+// bytes CFData, a string list a CFArray). Read through CFPreferences,
 // never the .plist file, which cfprefsd may not have flushed.
 #include "base/old_settings.h"
 

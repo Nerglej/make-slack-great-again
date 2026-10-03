@@ -526,7 +526,7 @@ TEST(
     pump(4);
     CHECK(e.list->flashing(oldest));
     REQUIRE(until([&] { return e.row(oldest) != nullptr; }));
-    // Not loaded yet (msga: a jump that also switched conversations): the
+    // Not loaded yet (a jump that also switched conversations): the
     // jump waits for the first page.
     model::Conversation c;
     c.id                = "C0LATER";
@@ -585,7 +585,7 @@ TEST("actions: a reaction pill toggles mine; the newest message on screen marks 
         if (x.name == "+1")
             mineNow = e.store.reactedByMe(x);
     CHECK(mineNow);
-    // The hover toolbar's "…" opens msga's message menu.
+    // The hover toolbar's "…" opens the message menu.
     e.list->openMenu(target, {200, 200});
     pump(4);
     CHECK(e.win->topPopup() != nullptr);
@@ -602,7 +602,7 @@ TEST("thread: day dividers, the root and its replies; the summary opens the thre
     auto *panel = e.win->root().add<ThreadPanel>(e.ctx);
     panel->show(design, root);
     REQUIRE(until([&] { return panel->list().items().size() >= 3; }));
-    // msga's thread view: a day divider above the root, no reply-count row.
+    // The thread view: a day divider above the root, no reply-count row.
     const auto messages = [&] {
         size_t n = 0;
         for (const auto &x : panel->list().items()) {
@@ -656,7 +656,7 @@ std::string exportPath(const char *name) {
     const char *t = std::getenv("TMPDIR");
     return file::join(
         t && *t ? t : "/tmp",
-        std::string("msga-next-test-") + name + "-" + std::to_string(base::nowMicros()) + "-" +
+        std::string("msga-test-") + name + "-" + std::to_string(base::nowMicros()) + "-" +
             std::to_string(std::random_device()()) // distinct across parallel runs too + ".txt"
     );
 }
@@ -791,7 +791,7 @@ std::string clipboard(const char *mime = "text/plain;charset=utf-8") {
 
 } // namespace
 
-TEST("actions: the message menu is msga's, item for item, and acts through the backend") {
+TEST("actions: the message menu, item for item, acts through the backend") {
     Env           e(true);
     const ConvRef eng = e.conv("C0ENG");
     e.list->showConversation(eng);
@@ -814,7 +814,7 @@ TEST("actions: the message menu is msga's, item for item, and acts through the b
     CHECK_STR(items[6].hint, "P");
     CHECK(items[0].icon == uint16_t(gfx::Icon::MessageSquareReply));
     CHECK(items[8].icon == uint16_t(gfx::Icon::AlarmClock));
-    CHECK(!items[10].enabled && !items[11].enabled); // no forwarding / AI in msga-next yet
+    CHECK(!items[10].enabled && !items[11].enabled); // no forwarding hook / AI provider here
 
     using M = MessageList;
     e.list->runMenuAction(linked, M::kCopyLinkInText);
@@ -830,7 +830,7 @@ TEST("actions: the message menu is msga's, item for item, and acts through the b
         menuLabels(e.list->menuItems(linked)).find("Unpin from channel|Remove from saved|") !=
         std::string::npos
     );
-    // Remind me: msga's presets; a reminder replaces "Remove from saved".
+    // Remind me: the presets; a reminder replaces "Remove from saved".
     CHECK_STR(
         menuLabels(MessageList::remindItems()),
         "Remind me about this…|In 20 minutes|In 1 hour|In 3 hours|Tomorrow|Next week|-|Custom…"
@@ -861,14 +861,14 @@ TEST("actions: the message menu is msga's, item for item, and acts through the b
     );
     e.list->runMenuAction(mine, M::kEdit);
     CHECK(editing == mine);
-    e.list->runMenuAction(mine, M::kDelete); // msga: the confirmation first
+    e.list->runMenuAction(mine, M::kDelete); // the confirmation first
     auto *dlg = static_cast<ui::Dialog *>(e.win->topPopup());
     REQUIRE(dlg != nullptr);
     dlg->accept();
     pump(2);
     CHECK(e.store.findMessage(eng, mine) == nullptr);
 
-    // A thread's messages can mute it (msga's Mute thread).
+    // A thread's messages can mute it (Mute thread).
     Ts root = 0;
     for (const model::Message &m : e.store.conversation(eng).messages)
         if (m.replyCount > 0)
@@ -881,7 +881,7 @@ TEST("actions: the message menu is msga's, item for item, and acts through the b
 }
 
 TEST("actions: Save for later and Remind me need messageReminders (session tokens)") {
-    // msga: an OAuth workspace has no saved.* — no items, no toolbar Save.
+    // An OAuth workspace has no saved.* — no items, no toolbar Save.
     Env           e(true);
     const ConvRef eng = e.conv("C0ENG");
     e.list->showConversation(eng);
@@ -895,7 +895,7 @@ TEST("actions: Save for later and Remind me need messageReminders (session token
     CHECK(labels.find("Pin to channel") != std::string::npos);
 }
 
-TEST("actions: a message link is msga's chip; a click jumps there or opens the browser") {
+TEST("actions: a message link is a chip; a click jumps there or opens the browser") {
     Env           e(false);
     const ConvRef c = addConv(e.store, {});
     model::User   jo;
@@ -915,7 +915,7 @@ TEST("actions: a message link is msga's chip; a click jumps there or opens the b
     auto ref = [](const char *conv, const char *ts, const char *thread = "") {
         return mrkdwn::MessageRef{"acme.slack.com", conv, ts, thread, ""};
     };
-    // msga's messageLinkLabel: the place, the author when Slack named one.
+    // The chip's label: the place, the author when Slack named one.
     CHECK_STR(messageLinkLabel(e.store, ref("C1", "1.000001")), "#design");
     CHECK_STR(messageLinkLabel(e.store, ref("D1", "1.000001")), "Mira");
     CHECK_STR(messageLinkLabel(e.store, ref("G1", "1.000001")), "group message");
@@ -980,7 +980,7 @@ TEST("actions: a message link is msga's chip; a click jumps there or opens the b
     CHECK_STR(urls[0], "https://other.slack.com/archives/C77/p1700000000000100");
 }
 
-TEST("image: two or more pictures are msga's gallery of equal 180-px tiles") {
+TEST("image: two or more pictures are a gallery of equal 180-px tiles") {
     Env               e(false);
     model::Message    m   = msg(model::kNoUser, 1700000000, "pics");
     const std::string png = asset("avatars/mira.png");
@@ -1021,7 +1021,7 @@ TEST("image: two or more pictures are msga's gallery of equal 180-px tiles") {
     CHECK(g->child(1)->frame().x == g->child(0)->width() + 8);
 }
 
-TEST("actions: msga's link and file menus") {
+TEST("actions: the link and file menus") {
     Env           e(true);
     const ConvRef design = e.conv("C0DESIGN");
     e.list->showConversation(design);
@@ -1149,7 +1149,7 @@ TEST("actions: hovering an avatar asks for the profile card; right click on the 
     CHECK(e.win->topPopup() == nullptr);
 }
 
-TEST("actions: msga's hover toolbar — react, forward, save, more; save toggles") {
+TEST("actions: the hover toolbar — react, forward, save, more; save toggles") {
     Env           e(true);
     const ConvRef design  = e.conv("C0DESIGN");
     ConvRef       fwdConv = model::kNoConv;
@@ -1169,7 +1169,7 @@ TEST("actions: msga's hover toolbar — react, forward, save, more; save toggles
     const ui::RectF rr = row->windowRect();
     h->injectPointerMove(e.win->native(), {rr.x + 300, rr.y + 20});
     pump(4);
-    // The four buttons, their tooltips, msga's 28-px buttons in a 16/12-padded card.
+    // The four buttons, their tooltips, 28-px buttons in a 16/12-padded card.
     ui::View *fwd = findByTooltip(e.win->root().child(0), "Forward message");
     REQUIRE(fwd != nullptr);
     ui::View *card = fwd->parent();
@@ -1182,7 +1182,7 @@ TEST("actions: msga's hover toolbar — react, forward, save, more; save toggles
     // It straddles the row's top edge, 12 px from the right.
     CHECK(near(card->windowRect().y, rr.y - 20, 1));
     CHECK(near(card->windowRect().x + card->frame().w, e.win->size().w - 12, 1));
-    // Forward asks the shell for msga's dialog; Save toggles the bookmark.
+    // Forward asks the shell for its dialog; Save toggles the bookmark.
     static_cast<ui::Clickable *>(card->child(1))->activate();
     CHECK(fwdConv == design && fwdTs == last.ts && fwdFile.empty());
     static_cast<ui::Clickable *>(card->child(2))->activate();
@@ -1209,7 +1209,7 @@ TEST("actions: msga's hover toolbar — react, forward, save, more; save toggles
     }
 }
 
-TEST("actions: msga's file bar on hovered files; right click on them does nothing") {
+TEST("actions: the file bar on hovered files; right click on them does nothing") {
     Env           e(true);
     const ConvRef general = e.conv("C0GENERAL");
     std::string   shared;
@@ -1258,7 +1258,7 @@ TEST("actions: msga's file bar on hovered files; right click on them does nothin
     CHECK(e.win->topPopup() == nullptr);
 }
 
-TEST("actions: the delete, move to thread, reminder dialogs and the CSV viewer are msga's") {
+TEST("actions: the delete, move to thread and reminder dialogs and the CSV viewer") {
     Env           e(true);
     const ConvRef eng = e.conv("C0DESIGN"); // it has a thread
     e.list->showConversation(eng);
@@ -1283,7 +1283,7 @@ TEST("actions: the delete, move to thread, reminder dialogs and the CSV viewer a
         movedMessageText(e.ctx, *e.store.findMessage(eng, mine), true)
             .rfind("_Moved from the channel \xC2\xB7 originally posted by ", 0) == 0
     );
-    { // msga: the files go along as links under the text (a link-less one is left out)
+    { // the files go along as links under the text (a link-less one is left out)
         model::Message withFiles = e.store.findMessage(eng, mine)->clone();
         model::File    a, b, c;
         a.name                   = "plan.pdf";
@@ -1319,7 +1319,7 @@ TEST("actions: the delete, move to thread, reminder dialogs and the CSV viewer a
     rem->accept();
     pump(2);
     CHECK(e.store.reminderAt(eng, any) > base::nowSecs() + 3000);
-    // CSV: msga's parsing (quotes, the header row), then the viewer.
+    // CSV: parsing (quotes, the header row), then the viewer.
     const auto rows = parseCsv("a,\"b,c\",\"d\"\"e\"\r\n1,2,3\n\n");
     REQUIRE(rows.size() == 2);
     CHECK_STR(rows[0][1], "b,c");
@@ -1343,7 +1343,7 @@ std::string tempDir(const char *name) {
     const char *t = std::getenv("TMPDIR");
     std::string d = file::join(
         t && *t ? t : "/tmp",
-        std::string("msga-next-test-") + name + "-" + std::to_string(base::nowMicros()) + "-" +
+        std::string("msga-test-") + name + "-" + std::to_string(base::nowMicros()) + "-" +
             std::to_string(std::random_device()()) // distinct across parallel runs too
     );
     file::makeDirs(d);
@@ -1800,7 +1800,7 @@ struct HoldEnv {
 
 } // namespace
 
-TEST("loading: the ring and msga's hints until the first page, then No messages yet") {
+TEST("loading: the ring and its hints until the first page, then No messages yet") {
     using State = MessageList::State;
     HoldEnv       e;
     const ConvRef c = e.conv("C1");
@@ -1860,7 +1860,7 @@ TEST("loading: a thread shows the ring, not its root, until the replies are in")
     CHECK(messages == 2);
 }
 
-// ── Summarize down (msga's SummarizeJob + SummaryDialog) ────────────────────
+// ── Summarize down (the job and its dialog) ─────────────────────────────────
 
 namespace {
 
@@ -1900,7 +1900,7 @@ TEST("actions: Summarize down without an AI provider says so and links to the se
     const auto items = e.list->menuItems(ts);
     CHECK_STR(items.back().label, "Summarize down");
     CHECK(items.back().icon == uint16_t(gfx::Icon::Sparkles));
-    CHECK(items.back().enabled); // msga offers it always; the notice explains
+    CHECK(items.back().enabled); // always offered; the notice explains
     e.list->runMenuAction(ts, MessageList::kSummarize);
     CHECK(model::jobs().count() == 0); // fails fast: no job, no fetches
     ui::Popup *dlg = e.win->topPopup();
@@ -2284,7 +2284,7 @@ TEST("blocks: the full table is rich; a canvas card names mentions and draws emo
 }
 
 TEST("blocks: mentions of me, @here/@channel and my user group are the yellow chip") {
-    // msga's mentionSelfBg; everyone else's mention keeps the blue one.
+    // The own-mention background; everyone else's mention keeps the blue one.
     Env e(false);
     addConv(e.store, {});
     e.store.setUsergroups({{"S1", "design", "Design", {"U1"}}, {"S2", "ops", "Ops", {"U2"}}});
@@ -2481,7 +2481,7 @@ TEST("blocks: the canvas section diff writes only what changed") {
     );
 }
 
-TEST("blocks: a huddle row says who, how many and how long (msga's sentence)") {
+TEST("blocks: a huddle row says who, how many and how long in one sentence") {
     model::Store st;
     model::User  u;
     u.id                       = "UME";
@@ -2588,7 +2588,7 @@ struct AudioEnv : Env {
 
 } // namespace
 
-TEST("audio: a voice clip is msga's card: size, transcript line, play / pause / seek") {
+TEST("audio: a voice clip is a card: size, transcript line, play / pause / seek") {
     AudioEnv e;
     REQUIRE(e.ts != 0);
     ui::View *card = e.card();

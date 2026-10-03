@@ -1,14 +1,14 @@
-// The canvas tab (msga's CanvasPage, src/ui/canvas_page): a big borderless
+// The canvas tab: a big borderless
 // title line over the body, autosaved a few seconds after typing stops, in a
 // column as wide as Slack's (1040 px); a floating "⋮" with "Copy link" and
 // "Delete canvas" once the canvas exists. A conversation without one opens a
 // blank page: the first save creates the canvas, then the tab names it.
 //
 // The asymmetry is Slack's: a canvas reads as the HTML its file serves and
-// saves as canvas markdown. msga edited it as rich text (QTextBrowser); here
-// the body is a TextEdit holding the markdown's block syntax as text ("## ",
+// saves as canvas markdown. The body is a TextEdit holding the markdown's block syntax as text ("##
+// ",
 // "- ", "1. ", "> ", "| a | b |") with bold, italic, strike, code and links
-// as formats. Saves are msga's section diff (screens/common/canvas_doc.h):
+// as formats. Saves are a section diff (screens/common/canvas_doc.h):
 // only the sections that changed are written, the whole document when that
 // can't be done safely. There is no co-editing.
 #pragma once

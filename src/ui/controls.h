@@ -1,7 +1,7 @@
 // Form controls and the modal dialog frame, for Settings and every other
-// dialog. They follow the Qt app's form look (src/ui/theme.cpp radioQss/
-// checkBoxQss/spinBoxQss, StyledButton, StyledLineEdit, Dropdown, AppDialog;
-// sizes from control_metrics.h) and paint from the Form* tokens:
+// dialog. They share one form look (radio buttons, check boxes, spin boxes,
+// buttons, line edits, dropdowns and the dialog card; sizes from
+// control_metrics.h) and paint from the Form* tokens:
 //
 //   CheckBox     an 18-px square, accent-filled with a check when on
 //   Radio        an 18-px circle, accent ring and dot when chosen;
@@ -15,8 +15,8 @@
 //   SectionList  a vertical list of page names (a settings dialog's left side)
 //   Dialog       an in-window modal: a dimmed backdrop over the whole window
 //                with a centred card, either Settings' fixed panel or the
-//                Qt app's AppDialog (a title, a close button, a content
-//                column and a button row)
+//                titled card (a title, a close button, a content column
+//                and a button row)
 //
 // Like widgets.h, each paints itself from theme tokens; only the composite
 // ones (RadioGroup, TextField, TextArea, Dialog) have child views.
@@ -129,8 +129,8 @@ public:
     void  paintOver(gfx::Painter &p) override;
     void  activate() override; // opens the menu
     Menu *menu() const { return _menu; }
-    // A divider in the open menu after option `index` (-1 = none), as the Qt
-    // app's Dropdown::addSeparator() drew between groups of options.
+    // A divider in the open menu after option `index` (-1 = none), between
+    // groups of options.
     void  setSeparatorAfter(int index) { _separatorAfter = index; }
 
 private:
@@ -262,7 +262,7 @@ private:
 // card, panel(), holding the content (shrunk to fit small windows). Escape,
 // the close button or a press on the backdrop reject it. Never a top-level
 // OS window: those misbehave on Wayland (compositor-chosen positions, no
-// reliable modality). Two frames, as in the Qt app:
+// reliable modality). Two frames:
 //   Dialog(w, h)          the Settings window: a fixed w × h panel with a
 //                         1-px border and an 8-px radius over rgba(0,0,0,150);
 //   Dialog(title, cardW)  AppDialog: a 12-px card as tall as its content
@@ -272,7 +272,7 @@ private:
 //                         content() is a column, 12 apart.
 class Dialog : public Popup {
 public:
-    // The titled card's content (msga's AppDialog::Scroll): wrapped in a
+    // The titled card's content: wrapped in a
     // scroll view (the default), so a card taller than the window scrolls —
     // its buttons included — instead of clipping. A dialog that scrolls its
     // own body, sized around it, passes Disabled (no nested scrolling).
@@ -289,7 +289,7 @@ public:
     View *addButtonRow(FormButton *primary, FormButton *secondary, View *leading = nullptr);
     // A Normal-size button for addButtonRow (which adopts it).
     static FormButton             *makeButton(std::string label, FormButton::Kind k);
-    // msga's confirmation dialog: `title`, `text` as a 15-px paragraph in
+    // A confirmation dialog: `title`, `text` as a 15-px paragraph in
     // `textColor` (a themed() sentinel or a colour), whatever `extra` adds
     // below it, then [Cancel] [confirmLabel]. Confirming accepts (onAccepted
     // runs); Cancel and × reject. Not shown yet.

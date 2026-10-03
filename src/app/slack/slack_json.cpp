@@ -1,7 +1,6 @@
-// Slack Web API JSON -> the model (see slack_json.h). A port of msga's
-// JsonMappers (old-msga/src/backend/slack/json_mappers.cpp) onto the model's
-// smaller shape: a message keeps raw mrkdwn, so where msga rendered Block
-// Kit blocks this builds the equivalent mrkdwn once, at mapping time.
+// Slack Web API JSON -> the model (see slack_json.h). A message keeps raw
+// mrkdwn, so Block Kit blocks that say more than its text become the
+// equivalent mrkdwn once, at mapping time.
 #include "app/slack/slack_json.h"
 
 #include "app/mrkdwn/mrkdwn.h"
@@ -28,7 +27,7 @@ std::string trimmed(const Value &v) {
     return std::string(str::trim(v.str()));
 }
 
-// ":palm_tree:" → "palm_tree"; ":baby::skin-tone-3:" → "baby" (msga's toUser).
+// ":palm_tree:" → "palm_tree"; ":baby::skin-tone-3:" → "baby".
 std::string statusEmoji(std::string_view e) {
     if (!e.empty() && e.front() == ':')
         e.remove_prefix(1);
@@ -64,13 +63,13 @@ void wrapMark(std::string &out, std::string_view s, char mark) {
     out.append(s.substr(e));
 }
 
-// One rich_text inline element (msga's richInlineToTWE, as mrkdwn tokens).
+// One rich_text inline element, as mrkdwn tokens.
 void richInline(std::string &out, const Value &el) {
     const std::string_view type = el["type"].str();
     if (type == "text") {
         const std::string_view t     = el["text"].str();
         const Value            style = el["style"];
-        // One mark, in msga's precedence (it applied only the first match).
+        // One mark, the first that matches in this precedence.
         const char             mark  = style["code"].boolean()     ? '`'
                                        : style["bold"].boolean()   ? '*'
                                        : style["italic"].boolean() ? '_'
@@ -117,7 +116,7 @@ void trimTrailingNewlines(std::string &s) {
         s.pop_back();
 }
 
-// A rich_text block (msga's richTextToTWE): sections, lists, code, quotes.
+// A rich_text block: sections, lists, code, quotes.
 void richText(std::string &out, const Value &block) {
     for (const Value section : block["elements"]) {
         const std::string_view stype = section["type"].str();
@@ -181,8 +180,8 @@ void textObject(std::string &out, const Value &o) {
     }
 }
 
-// Block types whose content `text` already mirrors (msga: "most rich_text
-// blocks mirror the fallback text") or that carry nothing renderable here.
+// Block types whose content `text` already mirrors (most rich_text blocks
+// mirror the fallback text) or that carry nothing renderable here.
 bool mirrorsText(std::string_view type) {
     return type == "rich_text" || type == "divider" || type == "actions" || type == "input";
 }
@@ -343,7 +342,7 @@ model::User toUser(const json::Value &o) {
     u.hasTz       = o.has("tz_offset");
     u.tzOffset    = int32_t(o["tz_offset"].integer());
     // Slackbot and "Slack" (the billing/trial notifier) report is_bot=false
-    // but are apps: Agents & apps, no presence (msga's isSyntheticUser).
+    // but are apps: Agents & apps, no presence.
     u.bot         = o["is_bot"].boolean() || isSlackSystemUser(u.id);
     u.admin       = o["is_admin"].boolean() || o["is_owner"].boolean();
     u.owner       = o["is_owner"].boolean() || o["is_primary_owner"].boolean();
@@ -383,7 +382,7 @@ model::Conversation toConversation(const json::Value &o, model::Store &store) {
                                   : pref == "nothing"  ? model::NotifyLevel::Nothing
                                                        : model::NotifyLevel::Default;
     // Channel canvas: properties.canvas.file_id, or (free teams) a "canvas"
-    // tab. The title lives on the file, not here (msga fetched it on open).
+    // tab. The title lives on the file, not here (fetched on open).
     const Value props           = o["properties"];
     c.canvasId                  = std::string(props["canvas"]["file_id"].str());
     for (const Value tab : props["tabs"])
@@ -413,7 +412,7 @@ bool roomEnded(const Value &room) {
     return room["has_ended"].boolean() || roomSeconds(room["date_end"]) != 0;
 }
 
-// msga's readHuddleSummary: a huddle_thread message's attendees and times.
+// A huddle_thread message's attendees and times.
 model::Huddle huddleSummary(const Value &room, model::Store &store) {
     model::Huddle h;
     h.ended    = roomEnded(room);
@@ -425,7 +424,7 @@ model::Huddle huddleSummary(const Value &room, model::Store &store) {
     return h;
 }
 
-// A Block Kit button (msga's toButton); blockId is its block's.
+// A Block Kit button; blockId is its block's.
 model::Button toButton(const Value &el, std::string_view blockId) {
     model::Button b;
     const Value   t              = el["text"];
@@ -494,8 +493,8 @@ model::Ts attachmentTs(const Value &v) {
     return model::parseTs(v.str());
 }
 
-// The image variant a message shows: msga's UI picked from the thumb ladder
-// by the physical preview size (360 px wide at most, so 720 covers 2x
+// The image variant a message shows: picked from the thumb ladder by the
+// physical preview size (360 px wide at most, so 720 covers 2x
 // screens); the full file only when Slack made no thumb (or for GIFs,
 // whose thumbs are a still first frame).
 const char *const kThumbs[] = {
@@ -536,7 +535,7 @@ File toFile(const Value &o) {
                 break;
             }
     if (f.width == 0 && o.has("thumb_pdf")) {
-        // msga's PDF preview: the server-rendered first page.
+        // A PDF's preview: the server-rendered first page.
         f.thumb  = owned(o["thumb_pdf"]);
         f.width  = int32_t(o["thumb_pdf_w"].integer());
         f.height = int32_t(o["thumb_pdf_h"].integer());
@@ -602,7 +601,7 @@ model::Attachment toAttachment(const Value &o) {
     a.linkPreview = o["is_msg_unfurl"].boolean() || o["is_app_unfurl"].boolean() ||
                     o["is_unfurl"].boolean() || !o["original_url"].str().empty() ||
                     !o["from_url"].str().empty();
-    // A blocks-only attachment (msga rendered its blocks: as structure, or
+    // A blocks-only attachment (its blocks shown as structure, or as
     // their mrkdwn), else the fallback when the card would otherwise be empty.
     if (a.text.empty() && a.blocks.empty())
         a.text = blocksToMrkdwn(o["blocks"]);
@@ -612,7 +611,7 @@ model::Attachment toAttachment(const Value &o) {
     return a;
 }
 
-// msga's message_mention: a link to another message names its author, which
+// message_mention: a link to another message names its author, which
 // the permalink in `text` doesn't; the Store keeps it for the link chip.
 void noteLinkedAuthors(const Value &v, model::Store &store, int depth = 0) {
     if (depth > 6)
@@ -640,7 +639,7 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
     m.replyCount  = uint32_t(o["reply_count"].integer());
     for (const Value u : o["reply_users"])
         m.replyUsers.push_back(store.internUser(u.str()));
-    // A bot post without a user is authored by its bot id (msga's author).
+    // A bot post without a user is authored by its bot id.
     m.user   = store.internUser(o.has("user") ? o["user"].str() : o["bot_id"].str());
     m.edited = o.has("edited");
     m.pinned = o["pinned_to"].size() > 0;
@@ -655,8 +654,8 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
         m.reactions.push_back(std::move(x));
     }
 
-    // Text: msga drew the blocks when there were any and fell back to `text`
-    // only when they produced nothing. rich_text blocks mirror `text`, so the
+    // Text: the blocks when there are any, falling back to `text` only when
+    // they produce nothing. rich_text blocks mirror `text`, so the
     // raw text is kept unless some block says more (or the text is empty).
     const Value blocks = o["blocks"];
     bool        richer = false;
@@ -710,7 +709,7 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
                 if (act["type"].str() == "button")
                     x.buttons.push_back(toButton(act, {}));
         }
-        // msga's presentHuddleThread: no Slackbot author, the frozen "A
+        // A huddle thread: no Slackbot author, the frozen "A
         // huddle started" block dropped, the room's summary kept; the name
         // line and the text say whether it is still going.
         if (subtype == "huddle_thread") {

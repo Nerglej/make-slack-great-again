@@ -1,8 +1,8 @@
-// Back/forward conversation history (msga's src/ui/nav_history.h), with text
+// Back/forward conversation history, with text
 // editor undo/redo semantics: going back keeps the forward stack, opening a
 // conversation by a direct action (sidebar, switcher, notification, menu)
-// clears everything in front of the current one. Conversations only, like
-// msga: threads are not entries. A location is a conversation in a
+// clears everything in front of the current one. Conversations only:
+// threads are not entries. A location is a conversation in a
 // (possibly background) workspace, so the history crosses workspaces.
 #pragma once
 
@@ -12,7 +12,7 @@
 
 namespace shell {
 
-// msga's NavLocation: the workspace's key and the conversation's id (ids,
+// A location: the workspace's key and the conversation's id (ids,
 // not ConvRefs: a workspace's Store is rebuilt when it restarts).
 struct NavLocation {
     std::string key, conv;

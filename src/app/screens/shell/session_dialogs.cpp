@@ -22,7 +22,7 @@ namespace shell {
 
 namespace {
 
-// msga's BrowseListView metrics.
+// The browse list's metrics.
 constexpr float kRowH = 60, kAvatar = 36, kRowPadH = 24;
 
 std::string lowered(std::string_view s) {
@@ -34,7 +34,7 @@ std::string lowered(std::string_view s) {
 class BrowseRow final : public Clickable {
 public:
     BrowseRow() {
-        // Keyboard selection reads stronger than hover (msga's pairing).
+        // Keyboard selection reads stronger than hover.
         setLook({C::None, C::FormHighlight, C::FormHighlight, C::FormHighlightStrong, 0});
         setRole(Role::ListItem);
         setFocusable(false);
@@ -60,7 +60,7 @@ public:
         text->style().flex(1).spacing(1);
         text->style().shrink = 1;
         View *titleLine      = text;
-        if (channel) { // msga: the hash / lock 6 px before the title
+        if (channel) { // the hash / lock 6 px before the title
             titleLine = text->add<View>();
             titleLine->style().row().items(Align::Center).spacing(6);
             titleLine->add<IconView>(Icon(it.titleIcon), 14, muted)->style().size(14, 14);
@@ -90,7 +90,7 @@ public:
         }
     }
     bool onEvent(Event &e) override {
-        // msga's list activates on press.
+        // The list activates on press.
         if (e.type == EventType::PointerDown && e.button == plat::Button::Left) {
             activate();
             return true;
@@ -99,7 +99,7 @@ public:
     }
 };
 
-// msga's IconButton(":/ui/x.svg", 32, 14): flat, a round hover wash.
+// A 32 px close button with a 14 px cross: flat, a round hover wash.
 class CloseX final : public Clickable {
 public:
     CloseX() {
@@ -348,7 +348,7 @@ public:
         );
         _prompt->style().height(170);
         _prompt->setText(role.prompt);
-        _prompt->edit().setSelection(0, 0); // shown from the top, as QPlainTextEdit
+        _prompt->edit().setSelection(0, 0); // shown from the top
         std::string about =
             tr("Added to Claude Code's own instructions: what the teammate focuses on, how it "
                "works, what to avoid.");
@@ -505,7 +505,7 @@ void BrowseList::moveSelection(int delta) {
     const int n = int(shown.size());
     if (n == 0 || delta == 0)
         return;
-    // Wrap, so Up from the top lands on the last match (msga's).
+    // Wrap, so Up from the top lands on the last match.
     const int from = _selected < 0 ? (delta > 0 ? -1 : 0) : _selected;
     setSelectedRow(((from + delta) % n + n) % n);
 }

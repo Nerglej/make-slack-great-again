@@ -1,6 +1,5 @@
-// The inline audio player in the message list (msga's audio file card,
-// MsgRender::paintAudioCard + MessageListWidget's toggleAudio /
-// startTranscription / openTranscript, TranscriptDialog).
+// The inline audio player in the message list (the audio file card, its
+// play / pause, transcription and the transcript dialog).
 //
 // An audio file (File::isAudio) shows as a 380×88 card: a round play/pause
 // button, the name over "0:05 (79 KB)" / "Loading…" / the error, a seek bar
@@ -37,7 +36,7 @@ addAudioCard(ui::View *parent, Context &ctx, MessageList *list, Ts ts, const mod
 // ticks reshape nothing but a changed time label).
 size_t audioCardLayoutBuilds();
 
-// Play or pause `f` (msga's toggleAudio): downloads it first when needed.
+// Play or pause `f`: downloads it first when needed.
 void toggleAudio(Context &ctx, const model::File &f);
 // "Transcribe with AI": the transcript dialog, filled by the speech-to-text
 // provider (a cached result at once); the text then replaces the file's

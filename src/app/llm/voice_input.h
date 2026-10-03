@@ -1,4 +1,4 @@
-// Voice input for the composer (msga's VoiceInput): record → speech-to-text
+// Voice input for the composer: record → speech-to-text
 // (gpt-transcribe on the OpenAI wire, Service::sttProvider) → optional AI
 // clean-up → the text handed back to the composer that started it. One
 // recording app-wide, but a recording already stopped keeps transcribing
@@ -17,7 +17,7 @@
 // replaces it with a file). The glossary and the clean-up
 // switch are Settings → AI assistance → Voice input; the shell pushes them
 // in. UI thread only (listeners run on it; start() may report a failure
-// inside the call, as msga's did).
+// inside the call).
 #pragma once
 
 #include "app/llm/voice_prompt.h"

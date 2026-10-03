@@ -280,7 +280,7 @@ public:
     bool    focused() const { return _flags & Focused; }
     bool    focusable() const { return _flags & Focusable; }
     void    setFocusable(bool on, bool focusOnClick = true);
-    // Focus by click only, never by Tab (Qt's ClickFocus).
+    // Focus by click only, never by Tab.
     void    setClickFocus(bool on) { setFlag(FocusOnClick, on); }
     void    focus(); // keyboard focus to this view (if attached)
     void    setClipChildren(bool on) { setFlag(ClipChildren, on); }
@@ -313,7 +313,7 @@ public:
     virtual std::string tooltip() const { return {}; }
     // What the tooltip points at, in window coordinates (default: the view).
     virtual RectF       tooltipAnchor() const;
-    // Shown on hover without the delay (msga's toolbar and link tips).
+    // Shown on hover without the delay (the toolbar and link tips).
     virtual bool        tooltipImmediate() const { return false; }
 
     // ── Invalidation ────────────────────────────────────────────────────────
@@ -352,14 +352,14 @@ public:
     virtual void    windowChanged() {}
     // setVisible changed it (not an ancestor's visibility).
     virtual void    visibilityChanged(bool) {}
-    // An ancestor was hidden (setVisible(false) above this view; Qt's
-    // hideEvent for children). Only for views that asked: watchAncestorHide().
+    // An ancestor was hidden (setVisible(false) above this view). Only for views that asked:
+    // watchAncestorHide().
     virtual void    hiddenByAncestor() {}
     virtual bool    tick(double nowMs) { return false; }
     // A press anywhere in the window: stop flings and smooth scrolls.
     virtual void    interruptAnimation() {}
-    // Tab moved the focus to `descendant`: a scroll container shows it (Qt's
-    // QScrollArea::focusNextPrevChild).
+    // Tab moved the focus to `descendant`: a scroll container scrolls it into
+    // view.
     virtual void    revealFocus(const View *descendant) {}
 
     static constexpr uint8_t kCursorInherit = 0xff;
@@ -454,7 +454,7 @@ public:
     static constexpr uint32_t kPrimary = 1u << 16;
     int                       addShortcut(plat::Key key, uint32_t mods, std::function<void()> fn);
     void                      removeShortcut(int id);
-    // Sees every KeyDown before the focused view does (msga's app-wide key
+    // Sees every KeyDown before the focused view does (an app-wide key
     // filter): return true to consume it.
     std::function<bool(const Event &)>       keyFilter;
     // Sees every PointerDown/PointerUp, Scroll and touchpad gesture before

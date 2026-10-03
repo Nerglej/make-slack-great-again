@@ -54,7 +54,7 @@ TEST("file: path strings") {
     CHECK(file::isAbsolute(file::absolute("rel")));
 }
 
-TEST("file: file:// URLs as QUrl::fromLocalFile / toLocalFile make and read them") {
+TEST("file: file:// URLs made from local paths and read back, percent-encoded") {
     CHECK_STR(file::toFileUrl("/a/b c"), "file:///a/b%20c");
     CHECK_STR(file::toFileUrl("/x/100%#?.txt"), "file:///x/100%25%23%3F.txt");
     CHECK_STR(file::toFileUrl("/x/a+b(1),c=d;e@f:g~h!$&'*"), "file:///x/a+b(1),c=d;e@f:g~h!$&'*");

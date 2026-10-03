@@ -1,5 +1,5 @@
 // Fuzzy subsequence matching for pick-lists driven by a search field (the
-// Ctrl/Cmd+K switcher, msga's issue #60), msga's util/fuzzy_match: "xdg"
+// Ctrl/Cmd+K switcher, issue #60): "xdg"
 // finds "xd-general", "bb" finds "Bob Builder". Every query character must
 // appear in the haystack in order, but not adjacently; the score ranks the
 // candidates that pass.

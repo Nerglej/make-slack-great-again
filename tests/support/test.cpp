@@ -327,7 +327,7 @@ void makeDir(const std::string &path) {
 // backend only, D-Bus pointed at nothing, and a throwaway HOME unless ctest
 // already gave one.
 void isolate() {
-    // The keychain and the old app's settings (base/secret.h,
+    // The keychain and the settings of earlier versions (base/secret.h,
     // base/old_settings.h): a temporary file. Audio (plat/audio.h) looks for
     // its helper programs only here: nowhere, so nothing reaches the
     // speakers or the microphone. Audio tests point it at fake helpers of

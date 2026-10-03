@@ -1,5 +1,5 @@
 // ui_gallery — every ui widget in a fake chat screen modelled on msga's
-// current look: workspace rail, sidebar with sections/badges/selection, a
+// look: workspace rail, sidebar with sections/badges/selection, a
 // header with tabs, a 10,000-message VirtualList, and the composer with its
 // formatting toolbar. Also the toolkit's perf probe (--bench).
 //

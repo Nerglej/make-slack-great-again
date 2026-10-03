@@ -54,17 +54,17 @@ public:
     ~Shell();
 
     // Signed in to a workspace (the default), or not: then the rail shows no
-    // workspace and the old app's "Log in to workspace" page replaces the
+    // workspace and the "Log in to workspace" page replaces the
     // sidebar and the conversation.
     void                                   setSignedIn(bool on);
     bool                                   signedIn() const { return _signedIn; }
-    // The rail's "+" and "Log in to workspace" (msga's promptAddWorkspace);
+    // The rail's "+" and "Log in to workspace";
     // `anchor` is where the service menu opens (window coordinates).
     std::function<void(ui::PointF anchor)> onAddWorkspace;
     // The workspace's name, icon or URL changed (signed in, switched): the
     // rail tile, the tray menu and the header follow.
     void                                   workspaceChanged();
-    // msga's WorkspaceSwitcher: every signed-in workspace on the rail, in the
+    // The rail: every signed-in workspace, in the
     // saved order, and the one the Store holds ("" when signed out). The
     // active tile shows the Store's name and icon; the others these.
     struct Workspace {
@@ -86,7 +86,7 @@ public:
     // Settings → System → Slack connection (the accounts controller's).
     std::function<void()> onImportSlackSession, onConvertToSession;
     std::function<int()>  oauthSlackWorkspaces;
-    // Every running workspace (msga's Session per workspace): the accounts
+    // Every running workspace: the accounts
     // controller attaches each signed-in workspace's Store and Backend while
     // it runs, open or in the background. Its new messages notify (the title
     // says which workspace when it isn't the open one), its unread state
@@ -109,13 +109,13 @@ public:
     void                       notifyReminderDue(
         const std::string &key, model::Store &store, model::ConvRef conv, model::Ts ts
     );
-    // "Session expired" (msga's notifySessionExpired), when the window is hidden.
+    // "Session expired", when the window is hidden.
     void        notifySessionExpired(const std::string &workspace);
-    // msga's error banner: a message no call waits for (a queued Claude Code
+    // The error banner: a message no call waits for (a queued Claude Code
     // message that never went out), shown for a few seconds.
     void        showError(const std::string &message);
     ui::Label  *errorBanner() const { return _errorBanner; } // tests
-    // msga's ParallelUsageBanner: the same app keys run on another device and
+    // The parallel-usage banner: the same app keys run on another device and
     // keep interrupting the realtime connection. Stays until closed.
     void        showParallelUsage();
     ui::View   *parallelUsageBanner() const { return _parallelBanner; } // tests
@@ -130,7 +130,7 @@ public:
     // nothing points into the old data. The back/forward history stays: it
     // crosses workspaces.
     void           leaveWorkspace();
-    // A signed-out workspace (msga's logoutWorkspace): its history entries go.
+    // A signed-out workspace: its history entries go.
     void           purgeHistory(const std::string &key);
     model::ConvRef current() const { return _current; }
     bool           threadOpen() const;
@@ -141,8 +141,8 @@ public:
     bool           navigateHistory(bool back);
     // CloseFrontmost: the top dialog, else Settings, else the window.
     void           closeFrontmost();
-    // SearchMessages and the header's search button: msga's toggle of its
-    // search overlay over the message area.
+    // SearchMessages and the header's search button: toggle the search
+    // overlay over the message area.
     void           openSearch();
     MessageSearch *messageSearch() const { return _search; }
     QuickSwitcher *quickSwitcher() const { return _switcher; }
@@ -152,23 +152,21 @@ public:
     // The profile card; beside `anchor` (window rect of the avatar/name)
     // when given, else centred near the top.
     void           showProfile(model::UserRef u, ui::RectF anchor = {});
-    // msga's rename dialog: a local name for a group DM (or agent session).
+    // The rename dialog: a local name for a group DM (or agent session).
     void           renameConversation(model::ConvRef c);
-    // msga's openBrowseDialog: "Find a channel" on its Channels (0) or
+    // "Find a channel" on its Channels (0) or
     // People (1) tab — a channel opens (joined first), a person's DM opens.
     void           openBrowseDialog(int tab);
     // "Create a channel": the two-step dialog, then the backend creates it.
     void           openCreateChannel();
 
-    // ── Agent workspace: sessions and the team (msga's MainWindow
-    // openSessionFinder / startAgentSession / openTeammateView / editTeammate
-    // / removeTeammate; shell_agents.cpp) ──
+    // ── Agent workspace: sessions and the team (shell_agents.cpp) ──
     void openSessionFinder();
     // The directory picker, then a new session there (opened, composer focused).
     void startAgentSession(bool skipPermissionChecks);
     // The teammate's page in the content area; its composer starts a session.
     void openTeammate(const std::string &role);
-    // A message forwarded to a teammate (msga's prefillTeammate): its page,
+    // A message forwarded to a teammate: its page,
     // `text` (mrkdwn) after what was typed there and the files added — the
     // user picks the folder and sends.
     void prefillTeammate(const std::string &role, std::string text, std::vector<std::string> paths);
@@ -178,18 +176,18 @@ public:
     void          restoreTeammate(const std::string &role);
     void          removeTeammate(const std::string &role);
 
-    // The sidebar's Threads entry (msga's openThreadsView): the followed
+    // The sidebar's Threads entry: the followed
     // threads in the content area, no channel composer (the cards have their
     // own reply boxes). Reloaded on every open.
     void         openThreads();
     bool         threadsOpen() const;
     ThreadsPage *threadsPage() const { return _threadsPage; }
-    // The sidebar's Saved messages entry (msga's openSavedMessagesView): the
+    // The sidebar's Saved messages entry: the
     // saved list as cards in the content area, no composer.
     void         openSaved();
     bool         savedOpen() const;
     SavedPage   *savedPage() const { return _savedPage; }
-    // msga's openMessageTarget: the conversation, then the message (inside
+    // The conversation, then the message (inside
     // its thread when `thread` is its root), scrolled to and flashed.
     void         jumpToMessage(model::ConvRef conv, model::Ts ts, model::Ts thread);
 
@@ -203,7 +201,7 @@ public:
     // Starts notifying about incoming messages (after the initial load); also
     // ends the first-load state (waiting()).
     void setLive(bool on);
-    // msga's first workspace load with nothing cached: the conversation
+    // The first workspace load with nothing cached: the conversation
     // column hidden and the message area's loading ring (with its hints)
     // until the conversations arrive. On while signed in with none yet.
     bool waiting() const { return _waiting; }
@@ -230,12 +228,12 @@ public:
     plat::HitArea               hitTest(plat::Point p) const;
     // Everything worth saving happens on close: geometry + stashed drafts.
     void                        saveState();
-    // msga's fitToScreen (issue #45): a window the work area can't hold
+    // Issue #45: a window the work area can't hold
     // shrinks to it (its minimum first) and one hanging off it is pulled
     // back; a window that fits is left alone. At start, on every show and
     // whenever monitors come, go or change, or the window moves to another.
     void                        fitToScreen();
-    // msga's kPreferredMinSize: the minimum before a small screen lowers it.
+    // The minimum size before a small screen lowers it.
     static constexpr plat::Size kMinWindowSize{800, 600};
     // The window's close: hides to the tray when that is on and a tray host
     // shows our icon; false = nothing hidden, the caller quits.
@@ -254,7 +252,7 @@ public:
     void                        quit();
     std::function<void()>       onQuit;
 
-    // msga's restartApp: quit, then the same executable starts again with
+    // Quit, then the same executable starts again with
     // restartArgs (base::relaunchOnExit) — an applied update, Slack app keys.
     void                     restart();
     std::vector<std::string> restartArgs;
@@ -327,7 +325,7 @@ private:
     void showWorkspaceMenu(const std::string &key, ui::PointF at);
     void refreshRail(); // the tiles' names, icons and active state
     bool hideWindow();  // to the tray, while a tray host shows our icon
-    // msga's _readingConv: the open chat is on screen and the window focused
+    // The open chat is on screen and the window focused
     // (not hidden, minimized or in the background); updateReading tells the
     // message list.
     bool reading() const;
@@ -350,7 +348,7 @@ private:
     void sampleNotificationReady(const plat::Notification &n); // its picture is there
     void applyUpdate();                                        // the update bar's button
     void storeVisited(); // the sidebar's visit stamps into _settings
-    // Claude Code UI (msga's MainWindow parts for agent sessions): the
+    // Claude Code UI for agent sessions: the
     // composer's lock and suggestion, slash commands that msga runs itself,
     // the footer's zen toggle, the thread panel's "Open as session".
     void applyComposerAccess();
@@ -396,7 +394,7 @@ private:
     model::ConvRef              _current = model::kNoConv;
     NavHistory                  _nav;
     bool                        _navApplying = false, _navSwitching = false;
-    // msga's _pendingNavConv: a back/forward jump into a workspace whose
+    // A back/forward jump into a workspace whose
     // conversations haven't arrived yet; opened when they do.
     NavLocation                 _pendingNav;
     void                        applyPendingNav();
@@ -429,7 +427,7 @@ private:
     bool                      _builtEmoji = true;
     std::string               _trayImagePath; // the custom tray picture, decoded
     std::shared_ptr<const gfx::Bitmap> _trayImage;
-    // The teammate page and what was typed to each teammate (msga's
+    // The teammate page and what was typed to each teammate (the
     // "teammate:<role>" drafts); guards the agent flows' callbacks.
     TeammatePage                      *_teammatePage = nullptr;
     ThreadsPage                       *_threadsPage  = nullptr;
@@ -440,7 +438,7 @@ private:
     };
     std::vector<TeammateDraft> _teammateDrafts;
     std::shared_ptr<int>       _agentAlive       = std::make_shared<int>(0);
-    // msga's _errorBanner (5 s), and what the composer was last given
+    // The error banner (5 s), and what the composer was last given
     // (applyComposerAccess hands changes on only).
     ui::Label                 *_errorBanner      = nullptr;
     bool                       _ownsBackendError = false; // set ctx.backend.onError
@@ -451,7 +449,7 @@ private:
     void                       noteActivity();
     std::string                _composerLock, _composerSuggestion;
 
-    // msga's conv/visitedAt save (coalesced), the update bar and checker,
+    // The visit stamps' save (coalesced), the update bar and checker,
     // Settings' sample notification and where its outcome goes.
     plat::TimerId                            _visitedTimer = 0, _updateTimer = 0;
     UpdateBar                               *_updateBar          = nullptr;

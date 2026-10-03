@@ -41,7 +41,7 @@ void FakeBackend::connect(Done done) {
         const bool  ok = loadFixture(_path, _store, &_fx, &err, _now ? _now : base::nowSecs());
         _replyUsed.assign(_fx.autoReplies.size(), 0);
         // Every fixture thread starts out read: the recording opens on a
-        // quiet workspace (msga's demo).
+        // quiet workspace.
         _threadRead.clear();
         for (ConvRef c = 0; ok && c < _store.conversationCount(); ++c)
             for (const model::Thread &t : _store.conversation(c).threads)
@@ -149,7 +149,7 @@ void FakeBackend::sendWithFiles(
     m.user                   = _store.me;
     m.pending                = true;
     // A GIF from the picker (<gifDir/x.gif|title>) stays a link and
-    // unfurls as the animated image card, as the Qt demo's stand-in GIPHY does.
+    // unfurls as the animated image card, a stand-in for GIPHY.
     const std::string gifDir = _fx.gifDir + "/";
     for (size_t at = 0; (at = text.find("<" + gifDir, at)) != std::string::npos;) {
         const size_t end = text.find('>', at);
@@ -179,7 +179,7 @@ void FakeBackend::sendWithFiles(
     _store.addMessage(conv, std::move(m));
     // Confirm asynchronously: a real server never answers synchronously.
     later(kSendConfirmMs, [this, conv, ts, threadTs, done = std::move(done)] {
-        if (!_store.findMessage(conv, ts)) { // undone while in flight (msga's undo send)
+        if (!_store.findMessage(conv, ts)) { // undone while in flight (undo send)
             if (done)
                 done(false, "message_deleted");
             return;
@@ -364,7 +364,7 @@ FakeBackend::Capabilities FakeBackend::capabilities() const {
 }
 
 void FakeBackend::setPresence(bool, Done done) {
-    // The Qt demo's backend accepts it and changes nothing: the snapshot it
+    // Accepted, and nothing changes: the snapshot it
     // reports stays phantom-away, so the toggle settles back.
     later(kReadLatencyMs, [done = std::move(done)] {
         if (done)
@@ -387,7 +387,7 @@ void FakeBackend::setStatus(std::string emoji, std::string text, int64_t, Done d
 
 void FakeBackend::loadMembers(ConvRef conv, MembersDone done) {
     // A group DM names its members; a fixture channel only carries a count,
-    // so it holds everyone who is not a bot (the Qt demo's rule).
+    // so it holds everyone who is not a bot.
     std::vector<model::UserRef> members;
     if (conv < _store.conversationCount())
         members = _store.conversation(conv).members;
@@ -455,7 +455,7 @@ void FakeBackend::searchGifs(std::string, std::function<void(std::vector<Gif>)> 
                 continue;
             Gif g;
             g.url = g.preview = dir + "/" + e.name;
-            // msga's title: the file name, dashes as spaces, capitalised.
+            // The title: the file name, dashes as spaces, capitalised.
             g.title           = e.name.substr(0, e.name.size() - 4); // less ".gif"
             for (char &c : g.title)
                 if (c == '-')
@@ -483,7 +483,7 @@ void FakeBackend::userTyping(ConvRef, Ts) {
 void FakeBackend::search(std::string query, std::function<void(std::vector<SearchHit>)> done) {
     std::vector<SearchHit> hits;
     // Trimmed, case-insensitive substring over the rendered text (so a query
-    // never matches markup like "<@U…>"), as the Qt demo did.
+    // never matches markup like "<@U…>").
     std::string_view       q = query;
     while (!q.empty() && q.front() == ' ')
         q.remove_prefix(1);
@@ -851,7 +851,7 @@ Ts FakeBackend::findTs(ConvRef conv, std::string_view fragment) const {
     if (conv >= _store.conversationCount())
         return 0;
     // Text, then file names and attachment titles: a voice clip or an image
-    // post has no text of its own (msga's Tour::findMessageTs).
+    // post has no text of its own.
     const auto hit = [fragment](const model::Message &m) {
         if (utf8::containsFolded(mrkdwn::parse(m.text).text, fragment))
             return true;

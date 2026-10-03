@@ -238,7 +238,7 @@ TEST("slack features: slash commands — the list, built-ins, chat.command, DND"
     e.be->runLocalCommand(general, 0, "broken", "");
     REQUIRE(pumpUntil([&] { return !e.errors.empty(); }));
     CHECK_STR(e.errors.back(), "Command /broken failed: no_such_thing");
-    // /dnd: minutes in msga's forms, "off" ends it; my User follows.
+    // /dnd: minutes in the accepted forms, "off" ends it; my User follows.
     e.be->runLocalCommand(general, 0, "dnd", "1h 30m");
     REQUIRE(pumpUntil([&] { return count("dnd.setSnooze") == 1; }));
     CHECK_STR(std::string(Log().get("dnd.setSnooze")["form"]["num_minutes"].str()), "90");
@@ -265,7 +265,7 @@ TEST("slack features: slash commands — the list, built-ins, chat.command, DND"
     REQUIRE(pumpUntil([&] { return count("chat.postMessage") == 2; }));
     CHECK_STR(std::string(Log().get("chat.postMessage", 1)["form"]["channel"].str()), "D1");
     CHECK_STR(std::string(Log().get("chat.postMessage", 1)["form"]["text"].str()), "hello there");
-    // /mute toggles the conversation (msga's local mute).
+    // /mute toggles the conversation (a local mute).
     e.be->runLocalCommand(general, 0, "mute", "");
     CHECK(e.store.conversation(general).muted);
     // In a thread: /shrug replies there, chat.command carries thread_ts

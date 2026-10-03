@@ -1,18 +1,17 @@
-// msga's agent-workspace dialogs (Claude Code), ported item for item:
+// The agent-workspace dialogs (Claude Code):
 //
-//   Session finder (src/ui/session_finder_dialog) "Find a session": every
+//   Session finder "Find a session": every
 //                  session the agent has, from every folder, like Claude
 //                  Code's /resume — a search field ("Search for sessions"),
 //                  "Create a session", the close button; rows with the
 //                  agent's picture, the title, "folder · when · last
 //                  prompt", "In the list" for those listed already.
-//   Teammate       (src/ui/teammate_dialog) "Add a teammate" / "Edit
-//                  teammate": Name, Description, Picture (a glyph on a
+//   Teammate       "Add a teammate" / "Edit teammate": Name, Description, Picture (a glyph on a
 //                  colour), Instructions, the hint; [Restore default] Cancel /
 //                  Add teammate | Save.
 //   Remove teammate "Remove the %1 from the team? …", Cancel / Remove.
 //
-// BrowseList is msga's BrowseListView, the list the finder, the teammate
+// BrowseList is the list the finder, the teammate
 // page and "Find a channel" share: 60-px rows (36-px avatar or a channel's
 // hash / lock, bold title, a muted subtitle, a badge on the right), hover
 // and keyboard selection, a substring filter.
@@ -89,7 +88,7 @@ private:
     bool     _onContent = false;
 };
 
-// The finders' close button (msga's IconButton(":/ui/x.svg", 32, 14)).
+// The finders' close button (32 px, a 14 px cross).
 ui::Clickable *addDialogCloseButton(ui::View *parent);
 
 // "Find a session". pick(id) after a row was chosen (the dialog is closed),
@@ -114,7 +113,7 @@ ui::Popup *showTeammateDialog(
 ui::Popup *
 showRemoveTeammateDialog(ui::Window &w, const std::string &name, std::function<void()> remove);
 
-// The finder's row for a session (msga's SessionFinderDialog::setSessions);
+// The finder's row for a session;
 // `home` is replaced by "~".
 BrowseList::Item
 foundSessionItem(const model::Backend::FoundSession &s, const std::string &home, int64_t nowSecs);

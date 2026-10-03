@@ -29,8 +29,8 @@
 // Lifetime: each runs on its own once started (it holds itself) until it is
 // over and `attach` has exited, and the returned handle may be dropped — keep
 // a std::weak_ptr to cancel() it later. `done` runs once, on the plat loop;
-// a caller that may be gone by then guards it (a shared alive flag). As in
-// the old (Qt) client it runs at once, from inside the call, when nothing
+// a caller that may be gone by then guards it (a shared alive flag). It runs
+// at once, from inside the call, when nothing
 // could be started (nothing to type, `attach` didn't start) and from cancel().
 #pragma once
 
