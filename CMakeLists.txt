@@ -87,10 +87,24 @@ if(MSGA_COVERAGE)
     target_compile_options(msga_flags INTERFACE ${MSGA_COVERAGE_FLAGS})
     target_link_options(msga_flags INTERFACE --coverage)
 endif()
+# AddressSanitizer + LeakSanitizer (scripts/run-asan.sh, build.sh --asan →
+# build-asan/): heap errors (use-after-free, overflows) as they happen, leaks
+# reported at a clean exit. Our code and plat are instrumented; the vendored
+# libraries are not, but their mallocs still go through ASan, so their leaks
+# show up too. -O1 comes after Debug's -O0: ASan at -O0 makes the UI crawl.
+option(MSGA_ASAN "Build with AddressSanitizer + LeakSanitizer" OFF)
+if(MSGA_ASAN)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "MSGA_ASAN needs GCC or Clang")
+    endif()
+    set(MSGA_ASAN_FLAGS -fsanitize=address -fno-omit-frame-pointer -O1 -g)
+    target_compile_options(msga_flags INTERFACE ${MSGA_ASAN_FLAGS})
+    target_link_options(msga_flags INTERFACE -fsanitize=address)
+endif()
 # The release scripts turn MSGA_LINK_STRIP off: they build with -g, split the
 # symbols into a .debug / .dSYM for crash reports, then strip themselves.
 option(MSGA_LINK_STRIP "Strip MinSizeRel executables at link time (lld)" ON)
-if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel" AND NOT MSGA_COVERAGE)
+if(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel" AND NOT MSGA_COVERAGE AND NOT MSGA_ASAN)
     # lld folds identical functions (template copies, trivial thunks). Not
     # under coverage: folded functions would share one function's counts.
     if(MSGA_HAVE_LLD AND NOT APPLE)
@@ -154,6 +168,10 @@ if(MSGA_COVERAGE)
     # code is instrumented too; it lives in the build dir, outside the report.
     target_compile_options(plat PRIVATE ${MSGA_COVERAGE_FLAGS})
     target_link_options(plat INTERFACE --coverage)
+endif()
+if(MSGA_ASAN)
+    target_compile_options(plat PRIVATE ${MSGA_ASAN_FLAGS})
+    target_link_options(plat INTERFACE -fsanitize=address)
 endif()
 
 # MSGA_VERSION: the release number (the update check, the bundle and .exe

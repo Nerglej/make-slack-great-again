@@ -6,6 +6,8 @@
 #   scripts/build.sh --debug   # Debug      → build-debug/msga
 #   scripts/build.sh --test    # also build and run the test suite (combines with --debug)
 #   scripts/build.sh --demo    # also compile the demo workspace (msga --demo demo)
+#   scripts/build.sh --asan    # AddressSanitizer + LeakSanitizer → build-asan/msga
+#                              #   (run it with scripts/run-asan.sh)
 # --test and --demo switch the option on in that build dir; it stays on there.
 set -euo pipefail
 
@@ -21,11 +23,13 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu)"
 
 DEBUG=0
+ASAN=0
 TEST=0
 OPTIONS=()
 for arg in "$@"; do
     case "$arg" in
         --debug) DEBUG=1 ;;
+        --asan) ASAN=1 ;;
         --test) TEST=1; OPTIONS+=(-DMSGA_BUILD_TESTS=ON) ;;
         --demo) OPTIONS+=(-DMSGA_DEMO=ON) ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
@@ -33,8 +37,11 @@ for arg in "$@"; do
 done
 
 # Size is the default build: the release flags are what the size budgets
-# measure. Debug gets its own dir so the two never share objects.
-if [[ "$DEBUG" == "1" ]]; then
+# measure. Debug and ASan get their own dirs so none share objects.
+if [[ "$ASAN" == "1" ]]; then
+    BUILD_DIR="${PROJECT_ROOT}/build-asan"
+    BUILD_TYPE=Debug
+elif [[ "$DEBUG" == "1" ]]; then
     BUILD_DIR="${PROJECT_ROOT}/build-debug"
     BUILD_TYPE=Debug
 else
@@ -47,6 +54,7 @@ fi
 if [[ ! -f "${BUILD_DIR}/build.ninja" ]]; then
     rm -rf "${BUILD_DIR}"
     cmake -S "$PROJECT_ROOT" -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+        -DMSGA_ASAN="$([[ "$ASAN" == "1" ]] && echo ON || echo OFF)" \
         "${OPTIONS[@]+"${OPTIONS[@]}"}"
 elif [[ ${#OPTIONS[@]} -gt 0 ]]; then
     cmake "$BUILD_DIR" "${OPTIONS[@]}"
