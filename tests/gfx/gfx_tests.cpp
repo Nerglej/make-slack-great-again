@@ -1339,6 +1339,96 @@ void testSvgFuzz() {
     CHECK(!renderSvgOwn(many + "</svg>", 16, 16, &b));
 }
 
+uint32_t g_rnd = 1;
+uint32_t rnd() {
+    g_rnd = g_rnd * 1664525u + 1013904223u;
+    return g_rnd >> 8;
+}
+Bitmap randomPremul(int w, int h) {
+    Bitmap b(w, h);
+    for (int i = 0; i < w * h; ++i) {
+        const uint32_t a = (rnd() & 1) ? 255 : rnd() & 255;
+        b.pixels()[i]    = (a << 24) | ((rnd() & 255) * a / 255 << 16) |
+                           ((rnd() & 255) * a / 255 << 8) | ((rnd() & 255) * a / 255);
+    }
+    return b;
+}
+Bitmap transposed(const Bitmap &b) {
+    Bitmap t(b.height(), b.width());
+    for (int y = 0; y < b.height(); ++y)
+        for (int x = 0; x < b.width(); ++x)
+            t.pixels()[x * b.height() + y] = px(b, x, y);
+    return t;
+}
+bool samePixels(const Bitmap &a, const Bitmap &b) {
+    return a.width() == b.width() && a.height() == b.height() &&
+           std::memcmp(a.pixels(), b.pixels(), size_t(a.width()) * size_t(a.height()) * 4) == 0;
+}
+
+// The vertical pass runs a row at a time, the horizontal one a pixel at a
+// time: resizing one axis must give the same pixels either way round.
+void testResizeAxes() {
+    g_rnd = 7;
+    for (int c = 0; c < 120; ++c) {
+        const int    w = 1 + int(rnd() % 90), h = 1 + int(rnd() % (c % 8 == 0 ? 700 : 90));
+        const int    nh  = 1 + int(rnd() % 120);
+        const Bitmap src = randomPremul(w, h);
+        // src w×h → w×nh is all vertical pass; its transpose all horizontal.
+        const Bitmap v   = resize(src.view(), w, nh);
+        const Bitmap t   = transposed(src);
+        const Bitmap hz  = resize(t.view(), nh, w);
+        CHECK(samePixels(transposed(hz), v));
+        CHECK(premulValid(v));
+    }
+}
+
+// A PaintScratch lent to painters one after another (different widths,
+// scales and contents) paints exactly what each painter's own scratch does.
+void paintScene(Painter &p, uint32_t seed) {
+    g_rnd  = seed;
+    auto f = [](float lo, float hi) { return lo + (hi - lo) * float(rnd() % 1000) / 1000.f; };
+    p.fillRect({0, 0, 400, 300}, rgb(0xf0f0f0));
+    for (int i = 0; i < 12; ++i) {
+        p.save();
+        if (i % 3 == 0)
+            p.clipRoundRect({f(0, 40), f(0, 40), f(60, 200), f(60, 160)}, f(2, 20));
+        Path path;
+        path.moveTo(f(0, 150), f(0, 120));
+        path.cubicTo(f(0, 150), f(0, 120), f(0, 150), f(0, 120), f(0, 150), f(0, 120));
+        path.lineTo(f(0, 150), f(0, 120));
+        path.close();
+        const Color c = rgba(rnd() & 0xffffff, uint8_t(120 + rnd() % 136));
+        if (i % 2)
+            p.fillPath(path, c, i % 4 == 1 ? FillRule::EvenOdd : FillRule::NonZero);
+        else
+            p.strokePath(path, f(0.5f, 5), c);
+        const Bitmap img = randomPremul(1 + int(rnd() % 40), 1 + int(rnd() % 40));
+        p.drawBitmap(img.view(), {f(0, 120), f(0, 100), f(1, 90), f(1, 70)}, Sampling(i % 3));
+        drawIconRotated(p, Icon(i % kIconCount), {f(0, 120), f(0, 100), 18, 18}, kBlack, f(0, 360));
+        p.restore();
+    }
+}
+
+void testScratch() {
+    PaintScratch shared;
+    const int    widths[] = {300, 120, 401, 64};
+    const float  scales[] = {1, 1.5f, 2, 1.25f};
+    for (int i = 0; i < 8; ++i) {
+        const int w = widths[i % 4];
+        Bitmap    own(w, 200), lent(w, 200);
+        {
+            Painter p(own.view(), scales[i % 4]);
+            paintScene(p, uint32_t(100 + i));
+        }
+        {
+            Painter p(lent.view(), scales[i % 4], &shared);
+            paintScene(p, uint32_t(100 + i));
+        }
+        CHECK(samePixels(own, lent));
+        CHECK(countNonZero(own) > w * 100);
+    }
+}
+
 void testCover() {
     // 6×2, a column per value: covering 2×2 keeps the middle two columns.
     Bitmap wide(6, 2);
@@ -1408,7 +1498,8 @@ const Group kGroups[] = {
     {"shadow", testShadow},         {"decode", testDecode},   {"anim", testAnim},
     {"animbudget", testAnimBudget}, {"snapped", testSnapped}, {"icons", testIcons},
     {"paint2", testPaint2},         {"svg", testSvg},         {"svgsize", testSvgSize},
-    {"svgfuzz", testSvgFuzz},       {"cover", testCover},
+    {"svgfuzz", testSvgFuzz},       {"cover", testCover},     {"resizeaxes", testResizeAxes},
+    {"scratch", testScratch},
 };
 
 } // namespace

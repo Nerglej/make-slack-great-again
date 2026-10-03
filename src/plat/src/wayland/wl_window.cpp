@@ -658,6 +658,7 @@ void WlWindow::requestFrame() {
 
 void WlWindow::emitFrame() {
     _frameWanted      = false;
+    _callbackPaced    = false;
     _presentedInFrame = false;
     emitEvent({.type = EventType::Frame});
     // An app that had nothing to repaint still owes the compositor a commit
@@ -674,7 +675,8 @@ void WlWindow::emitFrame() {
 void WlWindow::onFrameDone() {
     if (_frameCb)
         wl_callback_destroy(_frameCb);
-    _frameCb = nullptr;
+    _frameCb       = nullptr;
+    _callbackPaced = true;
     // The Frame itself goes out from WlApp::afterWait, outside dispatch.
 }
 

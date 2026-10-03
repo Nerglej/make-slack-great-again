@@ -149,7 +149,7 @@ const text::Layout *TextEdit::layoutFor(float w) {
     }
     text::LayoutOptions o;
     o.maxWidth = w;
-    _layout    = text::Layout::build(t, o, scale);
+    _layout    = text::Layout::build(std::move(t), o, scale);
     _layoutW   = w;
     return _layout.get();
 }

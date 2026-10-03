@@ -79,6 +79,8 @@ class Layout {
 public:
     static std::unique_ptr<Layout>
     build(const AttributedText &t, const LayoutOptions &o, float scale);
+    // The same, taking over t's text instead of copying it.
+    static std::unique_ptr<Layout> build(AttributedText &&t, const LayoutOptions &o, float scale);
     virtual ~Layout() = default;
 
     virtual float width() const            = 0; // logical, tight

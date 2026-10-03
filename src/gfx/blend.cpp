@@ -278,10 +278,11 @@ void Painter::drawBitmap(const BitmapView &src, RectF dst, Sampling smp, float o
             );
         return;
     }
-    const int        n = x1 - x0;
-    std::vector<int> xi(size_t(n) * 2);
-    const float      kx = float(sv.width) / float(dw), ky = float(sv.height) / float(dh);
-    const bool       nearest = smp == Sampling::Nearest;
+    const int         n  = x1 - x0;
+    std::vector<int> &xi = PainterImpl::scratch(*this).xi;
+    xi.resize(size_t(n) * 2);
+    const float kx = float(sv.width) / float(dw), ky = float(sv.height) / float(dh);
+    const bool  nearest = smp == Sampling::Nearest;
     for (int x = x0; x < x1; ++x) {
         const float u = (float(x - ix0) + 0.5f) * kx - (nearest ? 0 : 0.5f);
         if (nearest) {
@@ -363,12 +364,10 @@ void PainterImpl::rasterize(
         return;
     const int W = x1 - x0;
 
-    struct Edge {
-        float x, dxdy, top, bot; // x at `top`
-        int   dir;
-    };
-    std::vector<Edge> edges;
-    edges.reserve(segs.size());
+    using Edge                = RasterEdge;
+    PaintScratch::Data &sc    = scratch(p);
+    std::vector<Edge>  &edges = sc.edges;
+    edges.clear();
     for (const Seg &s : segs) {
         if (s.y0 == s.y1)
             continue;
@@ -388,20 +387,20 @@ void PainterImpl::rasterize(
             return ta < tb ? -1 : ta > tb ? 1 : 0;
         });
 
-    std::vector<float> cov(size_t(W) + 2, 0.0f), diff(size_t(W) + 2, 0.0f);
+    std::vector<float> &cov = sc.cov, &diff = sc.diff;
+    cov.assign(size_t(W) + 2, 0.0f);
+    diff.assign(size_t(W) + 2, 0.0f);
     // Active edges by value (cache-friendly), kept in the previous
     // sub-scanline's x order so the insertion sort below is ~O(n). Edges not
     // spanning the current sub-scanline sort to the end with cx = +inf.
-    struct Active {
-        float cx;
-        Edge  e;
-    };
-    constexpr float     kInf = 3.0e38f;
-    std::vector<Active> act;
-    uint8_t            *out  = row8(p, 0);
-    size_t              next = 0;
-    const float         w    = 1.0f / kSub;
-    const float         fx0  = float(x0);
+    using Active              = RasterActive;
+    constexpr float      kInf = 3.0e38f;
+    std::vector<Active> &act  = sc.act;
+    act.clear();
+    uint8_t    *out  = row8(p, 0);
+    size_t      next = 0;
+    const float w    = 1.0f / kSub;
+    const float fx0  = float(x0);
 
     for (int y = y0; y < y1; ++y) {
         size_t n = 0;

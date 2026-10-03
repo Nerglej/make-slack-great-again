@@ -116,6 +116,28 @@ bool       renderSvgOwn(std::string_view svg, int width, int height, Bitmap *out
 // For tests and diagnostics.
 extern int g_svgBackend;
 
+// The rasterizer's edge tables (blend.cpp).
+struct RasterEdge {
+    float x, dxdy, top, bot; // x at `top`
+    int   dir;
+};
+struct RasterActive {
+    float      cx;
+    RasterEdge e;
+};
+
+struct PaintScratch::Data {
+    std::vector<uint8_t>      buf8;  // row8(): four coverage rows
+    std::vector<uint32_t>     buf32; // row32(): one pixel row
+    std::vector<int>          xi;    // drawBitmap's column taps
+    std::vector<RasterEdge>   edges; // rasterize()
+    std::vector<RasterActive> act;
+    std::vector<float>        cov, diff;
+    Flat                      flat; // icon geometry (icons.cpp)
+    std::vector<Seg>          segs, fill;
+    Path                      path;
+};
+
 struct PainterImpl {
     // Row span [x0, x1) of row y (already inside the rect clip), optional
     // coverage, through the round clips, blended with premultiplied pm.
@@ -140,12 +162,13 @@ struct PainterImpl {
         return {k, 0, 0, k, -p._s.tx, -p._s.ty};
     }
     // A8 mask at absolute physical position.
-    static void      maskAt(Painter &p, const Mask8 &m, int x, int y, uint32_t pm);
-    static uint8_t  *row8(Painter &p, int which); // scratch row 0..3, width + 2 bytes
-    static uint32_t *row32(Painter &p);
-    static float     opacity(const Painter &p) { return p._s.opacity; }
-    static float     scale(const Painter &p) { return p._scale; }
-    static PointF    origin(const Painter &p) { return {p._s.tx * p._scale, p._s.ty * p._scale}; }
+    static void                maskAt(Painter &p, const Mask8 &m, int x, int y, uint32_t pm);
+    static uint8_t            *row8(Painter &p, int which); // scratch row 0..3, width + 2 bytes
+    static uint32_t           *row32(Painter &p);
+    static PaintScratch::Data &scratch(Painter &p) { return (p._lent ? *p._lent : p._own).data(); }
+    static float               opacity(const Painter &p) { return p._s.opacity; }
+    static float               scale(const Painter &p) { return p._scale; }
+    static PointF origin(const Painter &p) { return {p._s.tx * p._scale, p._s.ty * p._scale}; }
 };
 
 } // namespace gfx

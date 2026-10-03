@@ -42,33 +42,75 @@ uint32_t hashKey(uint32_t font, uint32_t glyph, uint32_t ppem, int phase) {
     return h ^ (h >> 15);
 }
 
-void insertEntry(const Entry &e) {
+size_t homeOf(const Entry &e, size_t mask) {
+    return hashKey(e.font, e.glyph, e.ppem, e.phase) & mask;
+}
+
+Entry *insertEntry(const Entry &e) {
     const size_t mask = c.table.size() - 1;
-    size_t       i    = hashKey(e.font, e.glyph, e.ppem, e.phase) & mask;
+    size_t       i    = homeOf(e, mask);
     while (c.table[i].used)
         i = (i + 1) & mask;
     c.table[i] = e;
     ++c.count;
+    return &c.table[i];
 }
 
-void rehash(size_t newSize, int dropPage) {
+void grow() {
     std::vector<Entry> old;
     old.swap(c.table);
-    c.table.assign(newSize, Entry{});
+    c.table.assign(old.size() * 2, Entry{});
     c.count = 0;
     for (auto &e : old)
-        if (e.used && (dropPage < 0 || e.g.page != dropPage))
+        if (e.used)
             insertEntry(e);
 }
 
-void evictOne(int keep) {
+// Drops every entry on a dead page in one sweep, in place: backward-shift
+// deletion keeps each probe chain intact, so no tombstones and no rehash.
+// The sweep starts just after an empty slot (load stays below 1/2), so no
+// chain wraps past its start and an entry only ever moves to a slot the
+// sweep has not passed yet.
+void purgeDeadPages() {
+    const size_t n = c.table.size();
+    if (!n)
+        return;
+    const size_t mask  = n - 1;
+    size_t       start = 0;
+    while (c.table[start].used)
+        ++start;
+    for (size_t step = 1; step <= n;) {
+        const size_t i = (start + step) & mask;
+        Entry       &e = c.table[i];
+        if (!e.used || e.g.page == 0xFFFF || c.pages[e.g.page].alive) {
+            ++step;
+            continue;
+        }
+        size_t hole = i;
+        for (size_t j = (hole + 1) & mask; c.table[j].used; j = (j + 1) & mask) {
+            const size_t home = homeOf(c.table[j], mask);
+            // Movable when its home is not cyclically in (hole, j].
+            if (((j - home) & mask) >= ((j - hole) & mask)) {
+                c.table[hole] = c.table[j];
+                hole          = j;
+            }
+        }
+        c.table[hole] = Entry{};
+        --c.count;
+        // Slot i now holds a shifted entry (or is empty): look at it again.
+    }
+}
+
+// Frees the least recently used page other than `keep`; its entries stay in
+// the table until purgeDeadPages(). False when nothing could be freed.
+bool evictOne(int keep) {
     int victim = -1;
     for (int i = 0; i < int(c.pages.size()); ++i)
         if (c.pages[i].alive && i != keep &&
             (victim < 0 || c.pages[i].lastUse < c.pages[victim].lastUse))
             victim = i;
     if (victim < 0)
-        return;
+        return false;
     Page &p = c.pages[victim];
     c.bytes -= p.bytes();
     p = Page{};
@@ -76,7 +118,7 @@ void evictOne(int keep) {
         c.openA8 = -1;
     if (c.openColor == victim)
         c.openColor = -1;
-    rehash(c.table.size(), victim);
+    return true;
 }
 
 int newPage(bool color, int w, int h) {
@@ -100,12 +142,11 @@ int newPage(bool color, int w, int h) {
     else
         p.a8.assign(size_t(w) * h, 0);
     c.bytes += p.bytes();
-    while (c.bytes > c.budget && c.pages.size() > 1) {
-        const size_t before = c.bytes;
-        evictOne(idx);
-        if (c.bytes == before)
-            break;
-    }
+    bool evicted = false;
+    while (c.bytes > c.budget && c.pages.size() > 1 && evictOne(idx))
+        evicted = true;
+    if (evicted)
+        purgeDeadPages();
     return idx;
 }
 
@@ -195,15 +236,8 @@ const Glyph *get(fonts::FontKey font, uint32_t glyph, uint32_t ppem64, int phase
         e.g.left = int16_t(r.left);
     }
     if ((c.count + 1) * 2 > c.table.size())
-        rehash(c.table.size() * 2, -1);
-    insertEntry(e);
-    // Find it again: rehash/insert moved things around.
-    const size_t m2 = c.table.size() - 1;
-    for (size_t i = hashKey(font, glyph, ppem64, phase) & m2;; i = (i + 1) & m2) {
-        Entry &f = c.table[i];
-        if (f.font == font && f.glyph == glyph && f.ppem == ppem64 && f.phase == phase)
-            return &f.g;
-    }
+        grow();
+    return &insertEntry(e)->g;
 }
 
 gfx::Mask8 mask(const Glyph &g) {
@@ -227,6 +261,26 @@ size_t bytesUsed() {
 }
 size_t glyphCount() {
     return c.count;
+}
+
+bool consistent() {
+    const size_t n = c.table.size(), mask = n ? n - 1 : 0;
+    size_t       used = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const Entry &e = c.table[i];
+        if (!e.used)
+            continue;
+        ++used;
+        if (e.g.page != 0xFFFF && (e.g.page >= c.pages.size() || !c.pages[e.g.page].alive))
+            return false;
+        for (size_t j = homeOf(e, mask); j != i; j = (j + 1) & mask) {
+            const Entry &o = c.table[j];
+            if (!o.used ||
+                (o.font == e.font && o.glyph == e.glyph && o.ppem == e.ppem && o.phase == e.phase))
+                return false;
+        }
+    }
+    return used == c.count;
 }
 
 } // namespace text::cache

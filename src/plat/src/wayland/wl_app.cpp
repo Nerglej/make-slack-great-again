@@ -1,6 +1,8 @@
 // Wayland backend: connection, registry, the loop hook and frame pacing.
 #include "wayland/wl_internal.h"
 
+#include "core/pacing.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cerrno>
@@ -20,11 +22,6 @@ extern char **environ;
 namespace plat::wl {
 
 namespace {
-
-// Frames the compositor has not asked for (first frame, requestFrame while
-// idle) are still rate-limited, so an app that requests a frame from every
-// Frame without presenting cannot spin the CPU.
-constexpr auto kMinUnpacedFrameGap = std::chrono::milliseconds(8);
 
 const wl_registry_listener kRegistryListener = {
     .global        = [](
@@ -436,26 +433,49 @@ bool WlApp::dispatchQueueUntil(wl_event_queue *q, const std::function<bool()> &p
     }
 }
 
+// Frames no frame callback paces (first frame, requestFrame while idle, a
+// Frame that presented nothing) go out at most once per display refresh,
+// like X11 and Win32, so an app that requests a frame from every Frame
+// without presenting cannot spin the CPU. Callback-paced Frames keep a 4 ms
+// floor (250 Hz) in case a compositor answers callbacks at once (a hidden
+// surface).
+bool WlApp::frameDue(WlWindow *w, std::chrono::steady_clock::time_point now, int *waitMs) const {
+    int ms = 4;
+    if (!w->callbackPaced()) {
+        int hz = 0; // the window's output, else the fastest one
+        if (const Output *o = w->output())
+            hz = o->refreshMilliHz;
+        if (hz <= 0)
+            for (const auto &o : outputs)
+                hz = std::max(hz, o->refreshMilliHz);
+        ms = core::frameIntervalMs(hz);
+    }
+    const auto due = w->lastFrame + std::chrono::milliseconds(ms);
+    if (now >= due)
+        return true;
+    *waitMs = int(std::chrono::ceil<std::chrono::milliseconds>(due - now).count());
+    return false;
+}
+
 bool WlApp::emitReadyFrames() {
-    bool       later = false;
-    const auto now   = std::chrono::steady_clock::now();
+    int        wait = -1;
+    const auto now  = std::chrono::steady_clock::now();
     for (auto *w : std::vector<WlWindow *>(_windows)) {
         if (!alive(w) || !w->frameReady())
             continue;
-        if (now - w->lastUnpacedFrame < kMinUnpacedFrameGap) {
-            later = true;
+        int ms = 0;
+        if (!frameDue(w, now, &ms)) {
+            wait = wait < 0 ? ms : std::min(wait, ms);
             continue;
         }
-        w->lastUnpacedFrame = now;
+        w->lastFrame = now;
         w->emitFrame();
     }
-    if (later && !_frameTimer) {
+    if (wait >= 0 && !_frameTimer) {
         // A timer is how the loop learns when to look again.
-        _frameTimer = _loop.core.addTimer(int(kMinUnpacedFrameGap.count()), false, [this] {
-            _frameTimer = 0;
-        });
+        _frameTimer = _loop.core.addTimer(std::max(1, wait), false, [this] { _frameTimer = 0; });
     }
-    return later;
+    return wait >= 0;
 }
 
 bool WlApp::beforeWait() {
@@ -478,11 +498,13 @@ bool WlApp::beforeWait() {
         fatal("flush failed");
         return false;
     }
-    // Don't sleep if a window has an unpaced frame due right now.
-    for (auto *w : _windows)
-        if (w->frameReady() &&
-            std::chrono::steady_clock::now() - w->lastUnpacedFrame >= kMinUnpacedFrameGap)
+    // Don't sleep if a window has a frame due right now.
+    const auto now = std::chrono::steady_clock::now();
+    for (auto *w : _windows) {
+        int ms = 0;
+        if (w->frameReady() && frameDue(w, now, &ms))
             return false;
+    }
     return true;
 }
 

@@ -1,4 +1,5 @@
 #include "core/backends.h"
+#include "core/pacing.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -133,3 +134,12 @@ std::unique_ptr<App> App::create(std::string *error) {
 }
 
 } // namespace plat
+
+namespace plat::core {
+
+int frameIntervalMs(int refreshMilliHz) {
+    const int ms = refreshMilliHz > 0 ? 1000000 / refreshMilliHz : 16;
+    return ms < 2 ? 2 : ms > 50 ? 50 : ms;
+}
+
+} // namespace plat::core

@@ -300,21 +300,51 @@ Taps makeTaps(int srcN, int dstN) {
     return t;
 }
 
-// dst[i] = Σ src[first + j] · w over taps, for n outputs; src/dst strided.
-void applyTaps(const Taps &t, const uint32_t *src, int sstep, uint32_t *dst, int dstep, int n) {
+uint32_t packTaps(uint32_t a, uint32_t r, uint32_t g, uint32_t b) {
+    return ((a >> 14) << 24) | ((r >> 14) << 16) | ((g >> 14) << 8) | (b >> 14);
+}
+
+// Horizontal pass: dst[i] = Σ src[first + j] · w over taps, for n outputs.
+void applyTaps(const Taps &t, const uint32_t *src, uint32_t *dst, int n) {
     const uint16_t *w = t.w.data();
     for (int i = 0; i < n; ++i) {
-        const uint32_t *s = src + size_t(t.first[size_t(i)]) * size_t(sstep);
+        const uint32_t *s = src + t.first[size_t(i)];
         uint32_t        a = kOne / 2, r = kOne / 2, g = kOne / 2, b = kOne / 2;
         for (int j = 0, c = t.count[size_t(i)]; j < c; ++j, ++w) {
-            const uint32_t p = s[size_t(j) * size_t(sstep)];
+            const uint32_t p = s[j];
             a += (p >> 24) * *w;
             r += ((p >> 16) & 255) * *w;
             g += ((p >> 8) & 255) * *w;
             b += (p & 255) * *w;
         }
-        dst[size_t(i) * size_t(dstep)] =
-            ((a >> 14) << 24) | ((r >> 14) << 16) | ((g >> 14) << 8) | (b >> 14);
+        dst[i] = packTaps(a, r, g, b);
+    }
+}
+
+// Vertical pass a row at a time (sequential reads, unlike walking columns):
+// out row i = Σ src row (first + j) · w, accumulated per column in `acc`.
+// The same integer sums as per column, so the same pixels.
+void applyTapsRows(const Taps &t, const uint32_t *src, int width, uint32_t *dst, int n) {
+    std::vector<uint32_t> acc(size_t(width) * 4);
+    const uint16_t       *w = t.w.data();
+    for (int i = 0; i < n; ++i) {
+        std::fill(acc.begin(), acc.end(), kOne / 2);
+        for (int j = 0, c = t.count[size_t(i)]; j < c; ++j, ++w) {
+            const uint32_t *s  = src + size_t(t.first[size_t(i)] + j) * size_t(width);
+            const uint32_t  wt = *w;
+            uint32_t       *q  = acc.data();
+            for (int x = 0; x < width; ++x, q += 4) {
+                const uint32_t p = s[x];
+                q[0] += (p >> 24) * wt;
+                q[1] += ((p >> 16) & 255) * wt;
+                q[2] += ((p >> 8) & 255) * wt;
+                q[3] += (p & 255) * wt;
+            }
+        }
+        uint32_t       *d = dst + size_t(i) * size_t(width);
+        const uint32_t *q = acc.data();
+        for (int x = 0; x < width; ++x, q += 4)
+            d[x] = packTaps(q[0], q[1], q[2], q[3]);
     }
 }
 
@@ -336,13 +366,10 @@ Bitmap resize(const BitmapView &src, int width, int height) {
         applyTaps(
             tx,
             src.pixels + size_t(y) * size_t(src.stride),
-            1,
             mid.pixels() + size_t(y) * size_t(width),
-            1,
             width
         );
-    for (int x = 0; x < width; ++x)
-        applyTaps(ty, mid.pixels() + x, width, out.pixels() + x, width, height);
+    applyTapsRows(ty, mid.pixels(), width, out.pixels(), height);
     return out;
 }
 

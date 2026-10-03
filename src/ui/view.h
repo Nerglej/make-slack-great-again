@@ -600,6 +600,7 @@ private:
     bool                               _dying = false, _textInput = false, _buttonHeld = false;
     bool                               _focusVisible = false, _frameAgain = false;
     bool                               _hoverDirty = false, _pointerInside = false, _verify = false;
+    gfx::PaintScratch                  _paintScratch; // the frame painters' working memory
     std::vector<uint32_t>              _shadow; // setVerify(): what a damage-only presenter shows
     int                                _shadowW = 0, _shadowH = 0;
     double                             _verifyMs = 0;

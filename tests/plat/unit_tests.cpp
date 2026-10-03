@@ -3,6 +3,7 @@
 #include "core/loop_core.h"
 #include "core/image_util.h"
 #include "core/input.h"
+#include "core/pacing.h"
 #include "core/transfer.h"
 #include "plat/plat.h"
 #include "plat/testing.h"
@@ -458,6 +459,16 @@ void testImageUtil() {
     CHECK(none.width == 3 && none.pixels.size() == 6 && none.pixels[5] == 0);
 }
 
+void testFrameInterval() {
+    CHECK(core::frameIntervalMs(0) == 16); // unknown: 60 Hz
+    CHECK(core::frameIntervalMs(60000) == 16);
+    CHECK(core::frameIntervalMs(59940) == 16); // rounded down: never slower than the display
+    CHECK(core::frameIntervalMs(75000) == 13);
+    CHECK(core::frameIntervalMs(144000) == 6);
+    CHECK(core::frameIntervalMs(1000000) == 2); // clamped
+    CHECK(core::frameIntervalMs(5000) == 50);
+}
+
 } // namespace
 
 int main() {
@@ -482,5 +493,6 @@ int main() {
     runCase("input: multi-click counter", testClickCounter);
     runCase("input: keys from ASCII", testKeyFromAscii);
     runCase("image: unpremultiply and scale", testImageUtil);
+    runCase("pacing: frame interval from the refresh rate", testFrameInterval);
     return plat_test::summary();
 }

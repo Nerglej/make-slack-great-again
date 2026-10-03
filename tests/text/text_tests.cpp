@@ -371,6 +371,65 @@ void glyphCache() {
     cache::setBudget(8u << 20);
 }
 
+// Eviction stress: a budget of a few pages forces constant eviction; every
+// glyph the cache hands back (fresh or found again after many evictions)
+// must match a direct rasterisation, and the entry count must stay what the
+// table really holds.
+bool sameAsRaster(FontKey f, uint32_t gid, uint32_t ppem, int phase) {
+    const cache::Glyph *g    = cache::get(f, gid, ppem, phase);
+    const cache::Glyph  copy = *g;
+    fonts::Raster       r;
+    const bool          ok = fonts::rasterize(f, gid, ppem, phase, &r) && r.w > 0 && r.h > 0;
+    if (!ok)
+        return copy.page == 0xFFFF;
+    if (copy.page == 0xFFFF || copy.w != r.w || copy.h != r.h || copy.left != r.left ||
+        copy.top != r.top || copy.color != r.color)
+        return false;
+    if (r.color) {
+        const gfx::BitmapView v = cache::colorView(copy);
+        for (int y = 0; y < r.h; ++y)
+            if (std::memcmp(
+                    v.pixels + size_t(y) * v.stride, r.argb + size_t(y) * r.pitch, size_t(r.w) * 4
+                ))
+                return false;
+    } else {
+        const gfx::Mask8 m = cache::mask(copy);
+        for (int y = 0; y < r.h; ++y)
+            if (std::memcmp(m.data + size_t(y) * m.stride, r.a8 + size_t(y) * r.pitch, size_t(r.w)))
+                return false;
+    }
+    return true;
+}
+
+void glyphCacheEvict() {
+    const FontKey f = fonts::primary(Style{}), emoji = fonts::emoji();
+    CHECK(f != fonts::kNoFont);
+    cache::setBudget(3 * 64 * 1024);
+    int      bad = 0, checks = 0;
+    uint32_t seed = 12345;
+    auto     rnd  = [&] { return seed = seed * 1103515245u + 12345u, seed >> 8; };
+    for (int round = 0; round < 6000; ++round) {
+        const uint32_t gid   = 1 + rnd() % 200;
+        const uint32_t ppem  = (10 + rnd() % 60) * 64;
+        const int      phase = int(rnd() % 4);
+        const FontKey  font  = emoji != fonts::kNoFont && round % 50 == 0 ? emoji : f;
+        bad += !sameAsRaster(font, gid, ppem, phase);
+        // Found again at once: the same entry, no second rasterisation.
+        const cache::Glyph *a = cache::get(font, gid, ppem, phase);
+        bad += a != cache::get(font, gid, ppem, phase);
+        bad += !cache::consistent();
+        ++checks;
+        if (round % 7 == 0)
+            cache::tick();
+    }
+    std::printf(
+        "  %d checks, %zu glyphs, %zu bytes\n", checks, cache::glyphCount(), cache::bytesUsed()
+    );
+    CHECK(bad == 0);
+    CHECK(cache::bytesUsed() <= 512 * 1024);
+    cache::setBudget(8u << 20);
+}
+
 // inkBounds is the box of what paint() draws from a whole-pixel origin: the
 // side bearings and the blank edges of the glyph masks are not in it.
 // inkLean: a "1"'s ink mass sits right of its ink box's centre (the flag is
@@ -591,6 +650,39 @@ std::vector<uint32_t> pixels(const Layout &l, float scale, const gfx::Color *as 
 // M6: a colour change recolours the shaped text (setColor), and a selection
 // paints white from the same shaping (paintAs): both pixel-identical to a
 // layout built in that colour, and neither builds a layout.
+// Layout::build from an rvalue takes the text over: the same layout as from
+// a copy, pixel for pixel.
+void buildMove() {
+    AttributedText t;
+    Style          bold, code;
+    bold.weight     = Weight::Bold;
+    code.mono       = true;
+    code.background = gfx::rgb(0xf0f0f0);
+    t.append("Move or copy: ", Style{});
+    t.append("the same", bold);
+    t.append(" layout.cpp \xF0\x9F\x8E\x89 wraps here and there", code);
+    LayoutOptions o;
+    o.maxWidth           = 120;
+    auto           a     = Layout::build(t, o, 1.5f);
+    AttributedText moved = t;
+    auto           b     = Layout::build(std::move(moved), o, 1.5f);
+    CHECK(
+        a->lineCount() == b->lineCount() && a->width() == b->width() && a->height() == b->height()
+    );
+    for (uint32_t off = 0; off <= t.text.size(); ++off) {
+        const gfx::RectF ca = a->caretRect(off), cb = b->caretRect(off);
+        CHECK(ca.x == cb.x && ca.y == cb.y && ca.h == cb.h);
+        CHECK(a->moveCaret(off, 1, 0) == b->moveCaret(off, 1, 0));
+        CHECK(a->wordEnd(off) == b->wordEnd(off));
+    }
+    gfx::Bitmap  pa(300, 200), pb(300, 200);
+    gfx::Painter qa(pa.view(), 1.5f), qb(pb.view(), 1.5f);
+    a->paint(qa, {3, 4});
+    b->paint(qb, {3, 4});
+    CHECK(std::memcmp(pa.pixels(), pb.pixels(), 300 * 200 * 4) == 0);
+    CHECK(layoutPlain("plain", Style{}, 1)->width() == measure("plain", Style{}, 1));
+}
+
 void recolor() {
     for (float scale : {1.f, 1.5f}) {
         Style a;
@@ -681,10 +773,12 @@ constexpr Case kCases[] = {
     {"word_select", wordSelect},
     {"malformed_utf8", malformedUtf8},
     {"glyph_cache", glyphCache},
+    {"glyph_cache_evict", glyphCacheEvict},
     {"ink_bounds", inkBounds},
     {"ink_lean", inkLean},
     {"perf", perf},
     {"recolor", recolor},
+    {"build_move", buildMove},
     {"measure_cache", measureCache},
 };
 

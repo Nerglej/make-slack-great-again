@@ -27,5 +27,8 @@ void   tick();
 void   setBudget(size_t bytes); // default 8 MB
 size_t bytesUsed();
 size_t glyphCount();
+// Tests: every entry is reachable from its home slot, unique, on a live page,
+// and the count matches. Unused by the app (dropped by the linker).
+bool   consistent();
 
 } // namespace text::cache

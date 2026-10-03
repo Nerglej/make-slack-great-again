@@ -2,6 +2,7 @@
 // scale, openUrl, XTEST hooks). Windows and present live in x11_window.cpp,
 // clipboard and XDND in x11_selection.cpp.
 #include "x11/x11_internal.h"
+#include "core/pacing.h"
 #include "linux/cursor_names.h"
 
 #include <xcb/randr.h>
@@ -434,7 +435,6 @@ void X11App::setupShm() {
 void X11App::readRefreshRate() {
     // X11 has no frame callbacks, so Frames are paced by a timer at the
     // fastest active output's refresh rate; 60 Hz when RandR can't say.
-    int hz          = 60;
     _refreshMilliHz = 0;
     {
         if (_randrMinor >= 3) {
@@ -460,14 +460,12 @@ void X11App::readRefreshRate() {
                                 double(modes[m].dot_clock) / (modes[m].htotal * modes[m].vtotal)
                             );
                 }
-                if (best >= 20 && best <= 500) {
-                    hz              = int(std::lround(best));
+                if (best >= 20 && best <= 500)
                     _refreshMilliHz = int(std::lround(best * 1000));
-                }
             }
         }
     }
-    _frameIntervalMs = std::max(2, 1000 / hz);
+    _frameIntervalMs = core::frameIntervalMs(_refreshMilliHz);
 }
 
 xcb_atom_t X11App::intern(const std::string &name) {

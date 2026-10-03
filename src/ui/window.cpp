@@ -1084,7 +1084,7 @@ void Window::onFrame(bool requested) {
         }
         _damage.clear();
         _frameAgain = false;
-        gfx::Painter p({c.pixels, c.width, c.height, c.stride}, s);
+        gfx::Painter p({c.pixels, c.width, c.height, c.stride}, s, &_paintScratch);
         _stats.viewsPainted = 0;
         for (const plat::Rect &r : rects) {
             const RectF lr{r.x / s, r.y / s, r.w / s, r.h / s};

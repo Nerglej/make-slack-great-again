@@ -73,7 +73,8 @@ void Label::setText(std::string text) {
 
 void Label::setRichText(text::AttributedText t) {
     update();
-    _text = t.text;
+    _text.clear();
+    _text.shrink_to_fit();
     _rich = std::make_unique<text::AttributedText>(std::move(t));
     updateInk();
     dropLayout();
@@ -129,7 +130,8 @@ void Label::styleChanged() {
 std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale) const {
     text::AttributedText t;
     if (_rich) {
-        t = *_rich;
+        t.text  = _rich->text; // the layout's own copy (moved in below)
+        t.spans = _rich->spans;
         resolveSpans(t);
     } else {
         t.append(_text, font(_font, _color));
@@ -143,7 +145,7 @@ std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale) const {
     o.ellipsis   = _maxLines > 0;
     o.align      = _align;
     o.lineHeight = _lineHeight;
-    return text::Layout::build(t, o, scale);
+    return text::Layout::build(std::move(t), o, scale);
 }
 
 const text::Layout *Label::layoutFor(float w) {
@@ -204,7 +206,7 @@ void Label::paint(gfx::Painter &p) {
 }
 
 void Label::setSelection(uint32_t from, uint32_t to) {
-    const uint32_t n = uint32_t(_text.size());
+    const uint32_t n = uint32_t(text().size());
     from             = std::min(from, n);
     to               = std::min(to, n);
     if (to < from)

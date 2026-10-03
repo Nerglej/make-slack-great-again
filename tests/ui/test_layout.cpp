@@ -353,3 +353,29 @@ TEST("label: selected text after inline code stays where it was drawn") {
     CHECK(std::abs(before.front() - after.front()) <= 1);
     CHECK(std::abs(before.back() - after.back()) <= 1);
 }
+
+// A rich label keeps its text once (in the rich text): text(), selection
+// clamping and the accessible name read it from there; plain text again
+// after setText.
+TEST("label: rich text is the label's text") {
+    Win                  w(400, 60);
+    auto                *l = w.root().add<ui::Label>("plain");
+    text::AttributedText a;
+    text::Style          st;
+    st.color = ui::themed(ui::C::Text);
+    a.append("rich ", st);
+    st.weight = text::Weight::Bold;
+    a.append("text", st);
+    l->setRichText(std::move(a));
+    w.frame();
+    CHECK(l->text() == "rich text");
+    CHECK(l->accessibleName() == "rich text");
+    l->setSelection(5, 100);
+    CHECK(l->selectionFrom() == 5 && l->selectionTo() == 9);
+    REQUIRE(l->textLayout() != nullptr);
+    CHECK(l->textLayout()->selectionRects(5, 9).size() == 1);
+    l->setSelection(0, 0);
+    l->setText("plain again");
+    w.frame();
+    CHECK(l->text() == "plain again");
+}

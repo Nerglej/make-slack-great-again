@@ -142,6 +142,9 @@ public:
     void        emitEvent(Event e);
     bool        frameReady() const { return _frameWanted && _configured && _visible && !_frameCb; }
     void        emitFrame();
+    // Since the last Frame, a frame callback came: the compositor paces the
+    // next one. Otherwise (nothing presented, first frame) WlApp paces it.
+    bool        callbackPaced() const { return _callbackPaced; }
     HitArea     hitTestAt(Point p) const { return _hitTest ? _hitTest(p) : HitArea::Client; }
     Cursor      cursorAt(Point p) const;
     int         cursorScale() const; // integer scale for wl_cursor theme images
@@ -173,7 +176,7 @@ public:
     void onExportHandle(const char *handle) { _exportHandle = handle ? handle : ""; }
 
     WlApp                                *app;
-    std::chrono::steady_clock::time_point lastUnpacedFrame{};
+    std::chrono::steady_clock::time_point lastFrame{}; // when the last Frame went out
     // The app's answer to the current DropEnter/DropMove (setDropAction).
     DropAction                            dropReply = DropAction::Copy;
 
@@ -220,6 +223,7 @@ private:
     bool _frameWanted      = false;
     bool _uncommittedAck   = false; // configure acked, no commit carried it yet
     bool _presentedInFrame = false;
+    bool _callbackPaced    = false; // a frame callback came since the last Frame
 
     std::vector<std::unique_ptr<ShmBuffer>> _buffers;
     ShmBuffer                              *_painting = nullptr; // between beginPaint and endPaint
@@ -296,7 +300,9 @@ public:
     void scheduleMonitorsChanged();
     bool beforeWait();
     void afterWait();
-    bool emitReadyFrames(); // true if some window still wants an unpaced frame later
+    bool emitReadyFrames(); // true if some window still wants a frame later
+    // Whether w's ready Frame may go out at `now`; else *waitMs until it may.
+    bool frameDue(WlWindow *w, std::chrono::steady_clock::time_point now, int *waitMs) const;
     void fatal(const char *what);
 
     // ── seat (wl_seat.cpp) ──────────────────────────────────────────────────

@@ -38,6 +38,10 @@ RR makeRR(float x0, float y0, float x1, float y1, float r) {
 }
 
 // ── Path ────────────────────────────────────────────────────────────────────
+void Path::clear() {
+    _cmds.clear();
+    _pts.clear();
+}
 void Path::moveTo(float x, float y) {
     _cmds.push_back(Move);
     _pts.insert(_pts.end(), {x, y});
@@ -70,7 +74,18 @@ void Path::addCircle(float cx, float cy, float r) {
 }
 
 // ── Painter state ───────────────────────────────────────────────────────────
-Painter::Painter(BitmapView target, float scale) : _target(target), _scale(scale > 0 ? scale : 1) {
+PaintScratch::~PaintScratch() {
+    delete _d;
+}
+
+PaintScratch::Data &PaintScratch::data() {
+    if (!_d)
+        _d = new Data;
+    return *_d;
+}
+
+Painter::Painter(BitmapView target, float scale, PaintScratch *scratch)
+    : _target(target), _scale(scale > 0 ? scale : 1), _lent(scratch) {
     _s.clipX1 = target.width;
     _s.clipY1 = target.height;
 }
@@ -167,16 +182,18 @@ PointF Painter::toPhysical(PointF l) const {
 }
 
 uint8_t *PainterImpl::row8(Painter &p, int which) {
-    const size_t w = size_t(p._target.width) + 2;
-    if (p._buf8.size() < 4 * w)
-        p._buf8.resize(4 * w);
-    return p._buf8.data() + size_t(which) * w;
+    const size_t          w = size_t(p._target.width) + 2;
+    std::vector<uint8_t> &b = scratch(p).buf8;
+    if (b.size() < 4 * w)
+        b.resize(4 * w);
+    return b.data() + size_t(which) * w;
 }
 
 uint32_t *PainterImpl::row32(Painter &p) {
-    if (p._buf32.size() < size_t(p._target.width) + 2)
-        p._buf32.resize(size_t(p._target.width) + 2);
-    return p._buf32.data();
+    std::vector<uint32_t> &b = scratch(p).buf32;
+    if (b.size() < size_t(p._target.width) + 2)
+        b.resize(size_t(p._target.width) + 2);
+    return b.data();
 }
 
 // ── Affine + gradients ──────────────────────────────────────────────────────

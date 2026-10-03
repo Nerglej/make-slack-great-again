@@ -60,10 +60,15 @@ bool paintIcon(
 ) {
     Reader rd{iconData::kData + iconData::kOffsets[i], iconData::kData + iconData::kOffsets[i + 1]};
     rd.u(), rd.u(); // viewBox, read by the caller
-    const float      opacity = PainterImpl::opacity(p);
-    std::vector<Seg> segs;
-    uint32_t         segsPm = 0;
-    int32_t          px = 0, py = 0;
+    const float         opacity = PainterImpl::opacity(p);
+    // Geometry in the painter's scratch: a spinner repaints this every frame.
+    PaintScratch::Data &sc      = PainterImpl::scratch(p);
+    std::vector<Seg>   &segs    = sc.segs;
+    Path               &path    = sc.path;
+    Flat               &flat    = sc.flat;
+    segs.clear();
+    uint32_t segsPm = 0;
+    int32_t  px = 0, py = 0;
     while (rd.ok && rd.p < rd.end) {
         const uint8_t flags = rd.byte();
         const float   hw    = (flags & 2) ? float(rd.u()) * k * 0.5f : 0;
@@ -76,7 +81,7 @@ bool paintIcon(
                 c = (c << 8) | rd.byte();
             pm = premultiply(c, opacity * float(tint >> 24) / 255.0f);
         }
-        Path path;
+        path.clear();
         for (bool more = true; more && rd.ok;) {
             const uint8_t ob = rd.byte(), op = ob & 7;
             const int     n  = (ob >> 3) + 1;
@@ -131,12 +136,13 @@ bool paintIcon(
             segs.clear();
         }
         segsPm = pm;
-        Flat flat;
+        flat.pts.clear();
+        flat.polys.clear();
         flatten(path, k, ox, oy, &flat);
         if (flags & 1) {
-            std::vector<Seg> fill;
-            fillSegs(flat, &fill);
-            PainterImpl::rasterize(p, fill, pm);
+            sc.fill.clear();
+            fillSegs(flat, &sc.fill);
+            PainterImpl::rasterize(p, sc.fill, pm);
         }
         if (flags & 2)
             strokeSegs(flat, hw, &segs);

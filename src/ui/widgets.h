@@ -26,8 +26,9 @@ public:
     ~Label() override;
 
     void               setText(std::string text);
-    const std::string &text() const { return _text; }
-    // Replaces the plain text; spans are copied (sentinels resolved per build).
+    const std::string &text() const { return _rich ? _rich->text : _text; }
+    // Replaces the plain text (held once, in the rich text); sentinel colours
+    // in the spans are resolved per build.
     void               setRichText(text::AttributedText t);
     void               setFont(Font f);
     void               setColor(C c);
@@ -58,7 +59,7 @@ public:
     bool        onEvent(Event &e) override;
     uint8_t     cursorAt(PointF local) const override;
     void        styleChanged() override;
-    std::string accessibleName() const override { return _text; }
+    std::string accessibleName() const override { return text(); }
 
 private:
     const text::Layout           *layoutFor(float width);
@@ -66,7 +67,7 @@ private:
     void                          dropLayout();
     void                          updateInk();
 
-    std::string                           _text;
+    std::string                           _text; // plain labels; empty for rich ones
     std::unique_ptr<text::AttributedText> _rich; // only for rich labels
     std::unique_ptr<text::Layout>         _layout;
     float                                 _layoutW = -1, _layoutScale = 0, _lineHeight = 1.4f;

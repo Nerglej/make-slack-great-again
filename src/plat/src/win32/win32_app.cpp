@@ -1,6 +1,7 @@
 // Win32 backend, app half: the event loop (MsgWaitForMultipleObjectsEx over
 // the thread's message queue), frame pacing, theme, openUrl and the
 // SendInput-based test hooks.
+#include "core/pacing.h"
 #include "win32/win32.h"
 
 #include <dwmapi.h>
@@ -169,7 +170,7 @@ bool Win32App::init(std::string *error) {
     if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &ti)) && ti.rateRefresh.uiNumerator &&
         ti.rateRefresh.uiDenominator) {
         const double hz  = double(ti.rateRefresh.uiNumerator) / ti.rateRefresh.uiDenominator;
-        _frameIntervalMs = std::clamp(int(std::lround(1000.0 / hz)), 4, 50);
+        _frameIntervalMs = core::frameIntervalMs(int(std::lround(hz * 1000)));
     }
     initSystem(); // best effort: without it only broadcasts and power/lock events are missing
     return true;

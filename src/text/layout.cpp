@@ -155,7 +155,8 @@ public:
     uint32_t                      wordEnd(uint32_t offset) const override;
     const std::vector<InlineBox> &boxes() const override { return _boxes; }
 
-    void build(const AttributedText &t, const LayoutOptions &o, float scale);
+    void
+    build(std::string text, const std::vector<Span> &spans, const LayoutOptions &o, float scale);
 
 private:
     void paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color *tint) const;
@@ -237,17 +238,19 @@ void LayoutImpl::shapeRun(
     r.g1 = uint32_t(_glyphs.size());
 }
 
-void LayoutImpl::build(const AttributedText &t, const LayoutOptions &o, float scale) {
+void LayoutImpl::build(
+    std::string text, const std::vector<Span> &spans, const LayoutOptions &o, float scale
+) {
     Scratch &sc          = scratch();
     _scale               = scale > 0 ? scale : 1;
-    _text                = t.text;
+    _text                = std::move(text);
     _maxW                = o.maxWidth * _scale;
     const std::string &s = _text;
 
     // Spans → styles (a missing or partial span list falls back to defaults).
     _styles.clear();
     _spanStart.clear();
-    for (auto &sp : t.spans) {
+    for (auto &sp : spans) {
         _styles.push_back(sp.style);
         _spanStart.push_back(sp.start);
     }
@@ -1289,7 +1292,14 @@ std::unique_ptr<Layout>
 Layout::build(const AttributedText &t, const LayoutOptions &o, float scale) {
     gBuilds.fetch_add(1, std::memory_order_relaxed);
     auto l = std::make_unique<LayoutImpl>();
-    l->build(t, o, scale);
+    l->build(t.text, t.spans, o, scale);
+    return l;
+}
+
+std::unique_ptr<Layout> Layout::build(AttributedText &&t, const LayoutOptions &o, float scale) {
+    gBuilds.fetch_add(1, std::memory_order_relaxed);
+    auto l = std::make_unique<LayoutImpl>();
+    l->build(std::move(t.text), t.spans, o, scale);
     return l;
 }
 
@@ -1299,7 +1309,7 @@ layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth) 
     t.append(utf8, s);
     LayoutOptions o;
     o.maxWidth = maxWidth;
-    return Layout::build(t, o, scale);
+    return Layout::build(std::move(t), o, scale);
 }
 
 size_t layoutBuilds() {

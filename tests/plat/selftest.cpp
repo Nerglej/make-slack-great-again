@@ -44,7 +44,8 @@ constexpr uint32_t kRight   = 0xff2040d0;
 std::unique_ptr<App>    g_app;
 std::unique_ptr<Window> g_win;
 std::vector<Event>      g_events;
-int                     g_frames = 0;
+int                     g_frames    = 0;
+bool                    g_skipPaint = false; // Frames present nothing, ask for another
 
 bool pumpUntil(const std::function<bool()> &pred, int ms) {
     const auto end = Clock::now() + std::chrono::milliseconds(ms);
@@ -64,6 +65,11 @@ const Event *find(EventType t, const std::function<bool(const Event &)> &extra =
 }
 
 void paint(Window &w) {
+    if (g_skipPaint) {
+        ++g_frames;
+        w.requestFrame(); // from inside the Frame, as an animating app does
+        return;
+    }
     Canvas    c    = w.beginPaint();
     const int capH = int(std::lround(30 * c.scale));
     for (int y = 0; y < c.height; ++y) {
@@ -98,6 +104,30 @@ void caseFirstFrame() {
     const double s = g_win->scale();
     CHECK(s >= 0.5 && s <= 4.0);
     std::printf("    size %dx%d scale %.3f\n", g_win->size().w, g_win->size().h, s);
+}
+
+// An app that asks for a frame from every Frame but presents nothing (no
+// frame callback paces it on Wayland) gets about the display rate, not a
+// busy loop.
+void caseUnpresentedFramePacing() {
+    // The backends that pace such Frames themselves (core::frameIntervalMs).
+    const std::string be = g_app->backendName();
+    if (be != "x11" && be != "wayland" && be != "win32") {
+        skip("this backend does not pace unpresented frames itself");
+        return;
+    }
+    pumpFor(100);
+    g_skipPaint      = true;
+    const int before = g_frames;
+    g_win->requestFrame();
+    pumpFor(500);
+    g_skipPaint = false;
+    const int n = g_frames - before;
+    std::printf("    %d unpresented frames in 500 ms\n", n);
+    // 60 Hz is 30; allow 20..75 Hz displays and a slow server.
+    CHECK(n >= 8 && n <= 40);
+    g_win->requestFrame(); // repaint for the next cases
+    pumpFor(100);
 }
 
 void casePresentReadback() {
@@ -1399,6 +1429,7 @@ int main(int argc, char **argv) {
 
     runCase("window maps and gets a first Frame", caseFirstFrame);
     runCase("presented pixels reach the screen", casePresentReadback);
+    runCase("unpresented frames pace to the display rate", caseUnpresentedFramePacing);
     runCase("50 ms timer fires on time", caseTimer);
     runCase("post() from a thread wakes a blocking pump", casePostFromThread);
     runCase("fd watch reports readability", caseWatchFd);

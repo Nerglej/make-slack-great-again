@@ -79,6 +79,7 @@ public:
     void close();
     // A full circle as four cubics (clockwise in y-down coordinates).
     void addCircle(float cx, float cy, float r);
+    void clear(); // empty again, capacity kept
     bool empty() const { return _cmds.empty(); }
 
     // Flattened representation the rasterizer consumes.
@@ -133,6 +134,24 @@ struct Stroke {
     float        dashOffset = 0;
 };
 
+// Working memory for painters made one after another (a window paints a new
+// Painter every frame): scratch rows, rasterizer tables and icon geometry
+// keep their capacity instead of being reallocated per painter and per fill.
+// Serves one painter at a time, on one thread.
+class PaintScratch {
+public:
+    PaintScratch() = default;
+    ~PaintScratch();
+    PaintScratch(const PaintScratch &)            = delete;
+    PaintScratch &operator=(const PaintScratch &) = delete;
+
+    struct Data; // gfx-internal (internal.h)
+    Data &data();
+
+private:
+    Data *_d = nullptr; // made on first use
+};
+
 // Painters are cheap (make one per frame). dropShadow and drawIcon keep
 // small process-wide caches (blurred masks, icon coverage), so those two are
 // for the UI thread only; everything else may run on any thread with its own
@@ -140,7 +159,8 @@ struct Stroke {
 class Painter {
 public:
     // Paints into `target` (physical pixels); logical units are multiplied by scale.
-    Painter(BitmapView target, float scale);
+    // `scratch` (optional, outlives the painter) lends reusable working memory.
+    Painter(BitmapView target, float scale, PaintScratch *scratch = nullptr);
 
     float scale() const { return _scale; }
     int   physicalWidth() const { return _target.width; }
@@ -219,10 +239,10 @@ private:
         int   parent;
     };
     std::vector<RoundClip> _roundClips;
-    // Per-painter scratch rows (coverage, clip coverage, source pixels), so
-    // painters on different threads never share buffers.
-    std::vector<uint8_t>   _buf8;
-    std::vector<uint32_t>  _buf32;
+    // Scratch rows and tables: the lent PaintScratch, else the painter's own
+    // (so painters on different threads never share buffers).
+    PaintScratch          *_lent = nullptr;
+    PaintScratch           _own;
 };
 
 // ── Images ──────────────────────────────────────────────────────────────────
