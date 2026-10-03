@@ -3,6 +3,7 @@
 
 #include "screens/common/context.h"
 #include "screens/shell/avatars.h"
+#include "screens/shell/fuzzy_match.h"
 #include "ui/ui.h"
 
 #include <cstdint>
@@ -31,11 +32,29 @@ std::vector<model::ConvRef> quickSwitchFilter(
     const model::Store &store, std::string_view query, const std::vector<model::ConvRef> &order
 );
 
+// What quickSwitchFilter scores, prepared once per Store change rather than
+// per keystroke: each name of `order`, folded (empty: no name yet).
+struct QuickSwitchName {
+    FuzzyText text;
+    bool      group = false; // a group DM, ranked a little behind
+};
+std::vector<QuickSwitchName>
+quickSwitchNames(const model::Store &store, const std::vector<model::ConvRef> &order);
+// quickSwitchFilter over prepared names (parallel to `order`): the same result.
+std::vector<model::ConvRef> quickSwitchFilter(
+    std::string_view                    query,
+    const std::vector<model::ConvRef>  &order,
+    const std::vector<QuickSwitchName> &names
+);
+
 // One workspace's tab.
 struct QuickSwitchTab {
-    std::string                 key, name, icon; // icon: a local picture ("" = the letter)
-    const model::Store         *store = nullptr;
-    std::vector<model::ConvRef> order; // quickSwitchOrder
+    std::string                  key, name, icon; // icon: a local picture ("" = the letter)
+    const model::Store          *store = nullptr;
+    std::vector<model::ConvRef>  order; // quickSwitchOrder
+    // quickSwitchNames(order), and the store's metaRevision they were made at.
+    std::vector<QuickSwitchName> names;
+    uint64_t                     namesRev = UINT64_MAX;
 };
 
 // With several workspaces a strip of their bubbles sits above the field,
@@ -66,11 +85,12 @@ public:
 private:
     class Rows;
     friend class Rows;
-    void                  applyFilter(); // re-aims the tab, then refilter()
-    void                  refilter();
-    void                  highlight(int index);
-    void                  refreshStrip();
-    std::optional<double> bestScore(const QuickSwitchTab &t, std::string_view query) const;
+    void                                       applyFilter(); // re-aims the tab, then refilter()
+    void                                       refilter();
+    void                                       highlight(int index);
+    void                                       refreshStrip();
+    std::optional<double>                      bestScore(QuickSwitchTab &t, std::string_view query);
+    static const std::vector<QuickSwitchName> &names(QuickSwitchTab &t); // brought up to date
 
     screens::Context           &_ctx;
     Avatars                    &_avatars;

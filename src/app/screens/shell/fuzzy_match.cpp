@@ -67,27 +67,54 @@ bool isLower(uint32_t c) {
     return !isUpper(c) && utf8::isWordChar(c) && !utf8::isDigit(c);
 }
 
-std::vector<uint32_t> codePoints(std::string_view s) {
-    std::vector<uint32_t> out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size();)
-        out.push_back(utf8::decode(s, i));
-    return out;
-}
+// Bonus kinds, so a prepared name keeps a byte per character.
+enum Bonus : uint8_t { kNone, kStart, kWord, kCamel, kDot };
+constexpr double kBonus[] = {0.0, kMatchStart, kMatchWord, kMatchCamel, kMatchDot};
 
 } // namespace
 
-std::optional<double> fuzzyScore(std::string_view query, std::string_view haystack) {
-    if (query.empty())
-        return 0.0;
-    if (haystack.empty())
-        return std::nullopt;
-    const std::vector<uint32_t> orig = codePoints(haystack);
-    std::vector<uint32_t>       q    = codePoints(query), h(orig.size());
-    for (uint32_t &c : q)
-        c = utf8::foldCase(c);
+FuzzyText::FuzzyText(std::string_view haystack) {
+    std::vector<uint32_t> orig;
+    orig.reserve(haystack.size());
+    for (size_t i = 0; i < haystack.size();)
+        orig.push_back(utf8::decode(haystack, i));
+    folded.resize(orig.size());
     for (size_t j = 0; j < orig.size(); ++j)
-        h[j] = utf8::foldCase(orig[j]);
+        folded[j] = utf8::foldCase(orig[j]);
+    if (orig.size() > kMaxHaystack)
+        return; // never ranked: no bonuses needed
+    bonus.resize(orig.size());
+    for (size_t j = 0; j < orig.size(); ++j) {
+        if (j == 0) {
+            bonus[j] = kStart;
+            continue;
+        }
+        const uint32_t prev = orig[j - 1], cur = orig[j];
+        bonus[j] = prev == '.'                     ? kDot
+                   : isSeparator(prev)             ? kWord
+                   : isLower(prev) && isUpper(cur) ? kCamel
+                                                   : kNone;
+    }
+}
+
+std::vector<uint32_t> fuzzyQuery(std::string_view query) {
+    std::vector<uint32_t> q;
+    q.reserve(query.size());
+    for (size_t i = 0; i < query.size();)
+        q.push_back(utf8::foldCase(utf8::decode(query, i)));
+    return q;
+}
+
+std::optional<double> fuzzyScore(std::string_view query, std::string_view haystack) {
+    return fuzzyScore(fuzzyQuery(query), FuzzyText(haystack));
+}
+
+std::optional<double> fuzzyScore(const std::vector<uint32_t> &q, const FuzzyText &hay) {
+    const std::vector<uint32_t> &h = hay.folded;
+    if (q.empty())
+        return 0.0;
+    if (h.empty())
+        return std::nullopt;
     if (q.size() > h.size())
         return std::nullopt;
     // Cheap gate: most candidates fail here and never reach the table.
@@ -100,32 +127,26 @@ std::optional<double> fuzzyScore(std::string_view query, std::string_view haysta
     if (h.size() > kMaxHaystack)
         return 0.0; // matched, but not worth ranking
 
-    const size_t        n = q.size(), m = h.size();
-    std::vector<double> bonus(m);
-    for (size_t j = 0; j < m; ++j) {
-        if (j == 0) {
-            bonus[j] = kMatchStart;
-            continue;
-        }
-        const uint32_t prev = orig[j - 1], cur = orig[j];
-        bonus[j] = prev == '.'                     ? kMatchDot
-                   : isSeparator(prev)             ? kMatchWord
-                   : isLower(prev) && isUpper(cur) ? kMatchCamel
-                                                   : 0.0;
-    }
+    const size_t                     n = q.size(), m = h.size();
     // M[j]: best score with q[i] matched exactly at h[j].
     // D[j]: best score with q[0..i] consumed somewhere within h[0..j].
-    std::vector<double> prevM(m, kMin), prevD(m, kMin), curM(m), curD(m);
+    // Kept between calls: a pick-list scores many names per keystroke.
+    thread_local std::vector<double> prevM, prevD, curM, curD;
+    prevM.assign(m, kMin);
+    prevD.assign(m, kMin);
+    curM.resize(m);
+    curD.resize(m);
     for (size_t i = 0; i < n; ++i) {
         const double gap       = i == n - 1 ? kGapTrailing : kGapInner;
         double       prevScore = kMin;
         for (size_t j = 0; j < m; ++j) {
             if (q[i] == h[j]) {
-                double s = kMin;
+                const double bonus = kBonus[hay.bonus[j]];
+                double       s     = kMin;
                 if (i == 0)
-                    s = double(j) * kGapLeading + bonus[j];
+                    s = double(j) * kGapLeading + bonus;
                 else if (j > 0)
-                    s = std::max(prevD[j - 1] + bonus[j], prevM[j - 1] + kMatchConsecutive);
+                    s = std::max(prevD[j - 1] + bonus, prevM[j - 1] + kMatchConsecutive);
                 curM[j]   = s;
                 prevScore = std::max(s, prevScore + gap);
                 curD[j]   = prevScore;

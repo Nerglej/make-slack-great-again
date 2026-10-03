@@ -1091,6 +1091,8 @@ void Store::emit(const Change &ch) {
     const bool global = ch.kind == ChangeKind::Roster || ch.kind == ChangeKind::Users;
     if (ch.kind == ChangeKind::Users)
         noteUserRevisions();
+    if (global || ch.kind == ChangeKind::Meta)
+        ++_metaRev;
     ++_dispatching;
     for (auto &s : _observers) {
         if (s.id == 0)

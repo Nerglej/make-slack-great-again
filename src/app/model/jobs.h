@@ -26,9 +26,11 @@ class App;
 
 namespace model {
 
-// work() on a short-lived worker thread, then then() on the UI thread (never
-// inside this call). Nothing is cancelled: a caller that may be gone by then
-// guards its callback (a weak alive flag).
+// work() on a worker thread, then then() on the UI thread (never inside this
+// call). Workers are reused: up to 4 finished ones wait for the next call,
+// each for 30 s. Every call starts at once, never behind another. Nothing is
+// cancelled: a caller that may be gone by then guards its callback (a weak
+// alive flag).
 void runInBackground(plat::App &app, std::function<void()> work, std::function<void()> then);
 // The app is shutting down: results still to come are dropped, never posted
 // to a loop that may be gone. Call before the plat::App is destroyed.
@@ -38,6 +40,15 @@ void stopBackground();
 // workers were started on goes while the process goes on (tests make one per
 // case): a worker posting to a destroyed App is a use-after-free.
 void waitBackground();
+
+// The pool, for tests: threads alive, of them parked, and ever started.
+struct BackgroundStats {
+    int      workers = 0, parked = 0;
+    uint64_t started = 0;
+};
+BackgroundStats backgroundStats();
+// How long a parked worker waits before it retires (tests shorten it).
+void            setBackgroundIdleRetire(int ms);
 
 class Jobs {
 public:

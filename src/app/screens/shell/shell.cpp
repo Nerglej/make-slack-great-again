@@ -37,6 +37,7 @@
 #include "screens/shell/status_dialog.h"
 #include "screens/shell/typing_indicator.h"
 #include "screens/shell/update_bar.h"
+#include "app/model/jobs.h"
 #include "app/update/updater.h"
 #include "base/process.h"
 
@@ -2508,15 +2509,34 @@ void Shell::refreshTrayIcon(int mentions, bool unread) {
         _settings.customTrayIcon && !_settings.trayIconPath.empty()
             ? _settings.trayIconPath + (_settings.trayMonochrome ? "\x01m" : "")
             : std::string();
+    _trayMentions = mentions;
+    _trayUnread   = unread;
     if (custom != _trayImagePath) {
         _trayImagePath = custom;
         _trayImage.reset();
-        std::string bytes;
-        gfx::Bitmap bmp;
-        if (!custom.empty() && file::readAll(_settings.trayIconPath, &bytes) &&
-            decodeTrayPicture(bytes, &bmp))
-            _trayImage = std::make_shared<gfx::Bitmap>(trayPicture(bmp, _settings.trayMonochrome));
+        _trayDecoding = !custom.empty();
+        if (_trayDecoding) { // read and decoded on a worker, not here
+            auto out = std::make_shared<std::shared_ptr<const gfx::Bitmap>>();
+            model::runInBackground(
+                _ctx.app.platform(),
+                [out, path = _settings.trayIconPath, mono = _settings.trayMonochrome] {
+                    std::string bytes;
+                    gfx::Bitmap bmp;
+                    if (file::readAll(path, &bytes) && decodeTrayPicture(bytes, &bmp))
+                        *out = std::make_shared<gfx::Bitmap>(trayPicture(bmp, mono));
+                },
+                [this, alive = std::weak_ptr<int>(_agentAlive), out, custom] {
+                    if (alive.expired() || custom != _trayImagePath)
+                        return; // the shell is gone, or another picture is wanted
+                    _trayImage    = std::move(*out);
+                    _trayDecoding = false;
+                    refreshTrayIcon(_trayMentions, _trayUnread);
+                }
+            );
+        }
     }
+    if (_trayDecoding)
+        return;
 #ifdef __APPLE__
     // An NSImage template, so the menu bar tints it — the plane, or a
     // monochrome custom picture; a colour picture keeps its colours. In a

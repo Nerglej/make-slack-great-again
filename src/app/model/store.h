@@ -102,6 +102,9 @@ public:
     }
     uint64_t presenceRevision() const { return _presenceRev; }
     uint64_t textRevision() const { return _textRev; }
+    // Grows with every Meta, Roster or Users change: a conversation's
+    // displayName() can change with nothing else.
+    uint64_t metaRevision() const { return _metaRev; }
 
     // ── Conversations ───────────────────────────────────────────────────────
     ConvRef             addConversation(Conversation c); // merges by id like addUser
@@ -323,7 +326,7 @@ private:
     // noteUserRevisions' memory: per user, the hashes last seen and the
     // profile revision of its last change.
     std::vector<uint64_t> _profileHash, _presenceHash, _userRev;
-    uint64_t              _profileRev = 0, _presenceRev = 0, _textRev = 0;
+    uint64_t              _profileRev = 0, _presenceRev = 0, _textRev = 0, _metaRev = 0;
 
     struct Slot {
         ObserverId id;

@@ -111,16 +111,17 @@ public:
         const std::string &key, model::Store &store, model::ConvRef conv, model::Ts ts
     );
     // "Session expired", when the window is hidden.
-    void        notifySessionExpired(const std::string &workspace);
+    void               notifySessionExpired(const std::string &workspace);
     // The error banner: a message no call waits for (a queued Claude Code
     // message that never went out), shown for a few seconds.
-    void        showError(const std::string &message);
-    ui::Label  *errorBanner() const { return _errorBanner; } // tests
+    void               showError(const std::string &message);
+    ui::Label         *errorBanner() const { return _errorBanner; } // tests
     // The parallel-usage banner: the same app keys run on another device and
     // keep interrupting the realtime connection. Stays until closed.
-    void        showParallelUsage();
-    ui::View   *parallelUsageBanner() const { return _parallelBanner; } // tests
-    plat::Tray *tray() const { return _tray.get(); }                    // tests
+    void               showParallelUsage();
+    ui::View          *parallelUsageBanner() const { return _parallelBanner; } // tests
+    plat::Tray        *tray() const { return _tray.get(); }                    // tests
+    const gfx::Bitmap *customTrayPicture() const { return _trayImage.get(); }  // tests
 
     // Navigation (also wired into the Context).
     void           open(model::ConvRef conv);
@@ -436,6 +437,10 @@ private:
     bool                      _builtEmoji = true;
     std::string               _trayImagePath; // the custom tray picture, decoded
     std::shared_ptr<const gfx::Bitmap> _trayImage;
+    // While it decodes off the UI thread the tray keeps what it shows; the
+    // last state asked for is drawn once the picture is in.
+    bool                               _trayDecoding = false, _trayUnread = false;
+    int                                _trayMentions  = 0;
     // The teammate page and what was typed to each teammate (the
     // "teammate:<role>" drafts); guards the agent flows' callbacks.
     TeammatePage                      *_teammatePage  = nullptr;

@@ -5,7 +5,6 @@
 #include "base/utf8.h"
 #include "gfx/icons_generated.h"
 #include "screens/common/avatar_initial.h"
-#include "screens/shell/fuzzy_match.h"
 #include "screens/shell/shortcuts.h"
 #include "screens/shell/sidebar.h"
 
@@ -24,17 +23,16 @@ constexpr float kListH = 300; // the list's minimum height
 
 // Issue #60: fuzzy, not substring ("xdg" lands on #xd-general). None
 // for an id we can't name yet: not something to offer.
-std::optional<double> scoreOf(const model::Store &store, ConvRef c, std::string_view q) {
-    const std::string name = store.displayName(c);
-    if (name.empty())
+std::optional<double> scoreOf(const QuickSwitchName &n, const std::vector<uint32_t> &q) {
+    if (n.text.folded.empty())
         return std::nullopt;
-    const std::optional<double> s = fuzzyScore(q, name);
+    const std::optional<double> s = fuzzyScore(q, n.text);
     if (!s)
         return std::nullopt;
     // Group DMs are named after their members, so a person matches every
     // group they are in as well as their DM — and the groups, often more
     // recent, buried it (issue #61): half a consecutive match.
-    return *s + (store.conversation(c).kind == model::ConvKind::Group ? -0.5 : 0.0);
+    return *s + (n.group ? -0.5 : 0.0);
 }
 
 // A workspace tab's bubble: the rail's 40 px bubble in a slot that
@@ -144,15 +142,28 @@ std::vector<ConvRef> quickSwitchOrder(
     return out;
 }
 
+std::vector<QuickSwitchName>
+quickSwitchNames(const model::Store &store, const std::vector<ConvRef> &order) {
+    std::vector<QuickSwitchName> out;
+    out.reserve(order.size());
+    for (ConvRef c : order)
+        out.push_back(
+            {FuzzyText(store.displayName(c)), store.conversation(c).kind == model::ConvKind::Group}
+        );
+    return out;
+}
+
 std::vector<ConvRef> quickSwitchFilter(
-    const model::Store &store, std::string_view query, const std::vector<ConvRef> &order
+    std::string_view                    query,
+    const std::vector<ConvRef>         &order,
+    const std::vector<QuickSwitchName> &names
 ) {
     // Best first; equal scores keep `order`.
-    const std::string_view                  q = str::trim(query);
+    const std::vector<uint32_t>             q = fuzzyQuery(str::trim(query));
     std::vector<std::pair<double, ConvRef>> scored;
-    for (ConvRef c : order)
-        if (const std::optional<double> sc = scoreOf(store, c, q))
-            scored.emplace_back(*sc, c);
+    for (size_t i = 0; i < order.size() && i < names.size(); ++i)
+        if (const std::optional<double> sc = scoreOf(names[i], q))
+            scored.emplace_back(*sc, order[i]);
     std::stable_sort(scored.begin(), scored.end(), [](const auto &a, const auto &b) {
         return a.first > b.first;
     });
@@ -161,6 +172,12 @@ std::vector<ConvRef> quickSwitchFilter(
     for (const auto &s : scored)
         out.push_back(s.second);
     return out;
+}
+
+std::vector<ConvRef> quickSwitchFilter(
+    const model::Store &store, std::string_view query, const std::vector<ConvRef> &order
+) {
+    return quickSwitchFilter(query, order, quickSwitchNames(store, order));
 }
 
 // The list rows, virtual (a large workspace has thousands of channels):
@@ -324,14 +341,23 @@ QuickSwitcher::QuickSwitcher(
 
 // The best score: the same key and bias as the list rows, so "the
 // workspace with the best match" is the one whose top row would rank highest.
-std::optional<double>
-QuickSwitcher::bestScore(const QuickSwitchTab &t, std::string_view query) const {
-    const std::string_view q = str::trim(query);
-    std::optional<double>  best;
-    for (ConvRef c : t.order)
-        if (const std::optional<double> s = scoreOf(*t.store, c, q); s && (!best || *s > *best))
+std::optional<double> QuickSwitcher::bestScore(QuickSwitchTab &t, std::string_view query) {
+    const std::vector<uint32_t> q = fuzzyQuery(str::trim(query));
+    std::optional<double>       best;
+    for (const QuickSwitchName &n : names(t))
+        if (const std::optional<double> s = scoreOf(n, q); s && (!best || *s > *best))
             best = s;
     return best;
+}
+
+// Names change with Meta and Users changes only (renames, a member's new
+// label): rebuilt then, not per keystroke.
+const std::vector<QuickSwitchName> &QuickSwitcher::names(QuickSwitchTab &t) {
+    if (t.namesRev != t.store->metaRevision()) {
+        t.names    = quickSwitchNames(*t.store, t.order);
+        t.namesRev = t.store->metaRevision();
+    }
+    return t.names;
 }
 
 void QuickSwitcher::applyFilter() {
@@ -394,11 +420,10 @@ std::string QuickSwitcher::emptyText() const {
 QuickSwitcher::~QuickSwitcher() = default;
 
 void QuickSwitcher::refilter() {
-    const QuickSwitchTab &tab = _tabs[size_t(_tab)];
-    const model::Store   &st  = *tab.store;
-    _results                  = quickSwitchFilter(st, _field->text(), tab.order);
+    QuickSwitchTab &tab = _tabs[size_t(_tab)];
+    _results            = quickSwitchFilter(_field->text(), tab.order, names(tab));
     // Preselect the top match so Enter always opens something.
-    _current                  = 0;
+    _current            = 0;
     _list->reset();
     _list->scrollTo(0);
     // Point at the other tabs when they hold what this

@@ -3,10 +3,12 @@
 // stamps and Settings' "Clear state", the tray picture, restarts and the
 // sample notification's outcome.
 #include "app/fake/fake_backend.h"
+#include "app/model/jobs.h"
 #include "app/mrkdwn/emoji.h"
 #include "base/utf8.h"
 #include "base/file.h"
 #include "base/i18n.h"
+#include "base/str.h"
 #include "support/test.h"
 #include "base/time.h"
 #include "screens/settings/settings_dialog.h"
@@ -25,7 +27,10 @@
 #include "app/screens/messages/thread_panel.h"
 #endif
 
+#include <algorithm>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <unistd.h>
 
 using namespace model;
@@ -134,6 +139,219 @@ TEST("fuzzy: a substring beats a scattered match, word starts beat the middle") 
     // Trailing characters cost nothing: equal prefixes tie, so the caller's
     // order (recency) decides.
     CHECK(*fuzzyScore("des", "design-review") == *fuzzyScore("des", "design-backend"));
+}
+
+namespace {
+
+// The scorer as it was before names were prepared once: everything decoded,
+// folded and weighed per call. The prepared path must match it exactly.
+std::optional<double> unpreparedScore(std::string_view query, std::string_view haystack) {
+    constexpr double kMin = -std::numeric_limits<double>::infinity();
+    const auto       sep  = [](uint32_t c) {
+        switch (c) {
+        case ' ':
+        case '-':
+        case '_':
+        case ',':
+        case '/':
+        case '\\':
+        case '@':
+        case '#':
+        case ':':
+        case '(':
+        case ')':
+        case '[':
+        case ']':
+            return true;
+        default:
+            if (utf8::isSpace(c))
+                return true;
+            if (c < 0x80)
+                return (c >= 0x21 && c <= 0x2f) || (c >= 0x3a && c <= 0x40) ||
+                       (c >= 0x5b && c <= 0x60) || (c >= 0x7b && c <= 0x7e);
+            return !utf8::isWordChar(c);
+        }
+    };
+    const auto upper = [](uint32_t c) { return utf8::foldCase(c) != c; };
+    const auto lower = [&](uint32_t c) {
+        return !upper(c) && utf8::isWordChar(c) && !utf8::isDigit(c);
+    };
+    const auto points = [](std::string_view s) {
+        std::vector<uint32_t> out;
+        for (size_t i = 0; i < s.size();)
+            out.push_back(utf8::decode(s, i));
+        return out;
+    };
+    if (query.empty())
+        return 0.0;
+    if (haystack.empty())
+        return std::nullopt;
+    const std::vector<uint32_t> orig = points(haystack);
+    std::vector<uint32_t>       q    = points(query), h(orig.size());
+    for (uint32_t &c : q)
+        c = utf8::foldCase(c);
+    for (size_t j = 0; j < orig.size(); ++j)
+        h[j] = utf8::foldCase(orig[j]);
+    if (q.size() > h.size())
+        return std::nullopt;
+    size_t qi = 0;
+    for (size_t hi = 0; hi < h.size() && qi < q.size(); ++hi)
+        if (h[hi] == q[qi])
+            ++qi;
+    if (qi != q.size())
+        return std::nullopt;
+    if (h.size() > 512)
+        return 0.0;
+    const size_t        n = q.size(), m = h.size();
+    std::vector<double> bonus(m);
+    for (size_t j = 0; j < m; ++j) {
+        if (j == 0) {
+            bonus[j] = 0.9;
+            continue;
+        }
+        const uint32_t prev = orig[j - 1], cur = orig[j];
+        bonus[j] = prev == '.' ? 0.6 : sep(prev) ? 0.8 : lower(prev) && upper(cur) ? 0.7 : 0.0;
+    }
+    std::vector<double> prevM(m, kMin), prevD(m, kMin), curM(m), curD(m);
+    for (size_t i = 0; i < n; ++i) {
+        const double gap       = i == n - 1 ? 0.0 : -0.01;
+        double       prevScore = kMin;
+        for (size_t j = 0; j < m; ++j) {
+            if (q[i] == h[j]) {
+                double s = kMin;
+                if (i == 0)
+                    s = double(j) * -0.005 + bonus[j];
+                else if (j > 0)
+                    s = std::max(prevD[j - 1] + bonus[j], prevM[j - 1] + 1.0);
+                curM[j]   = s;
+                prevScore = std::max(s, prevScore + gap);
+                curD[j]   = prevScore;
+            } else {
+                curM[j]   = kMin;
+                prevScore = prevScore + gap;
+                curD[j]   = prevScore;
+            }
+        }
+        std::swap(prevM, curM);
+        std::swap(prevD, curD);
+    }
+    return prevD[m - 1] + (n == m ? 1.0 : 0.0);
+}
+
+// quickSwitchFilter as it was: every name built and scored per keystroke.
+std::vector<ConvRef>
+unpreparedFilter(const Store &store, std::string_view query, const std::vector<ConvRef> &order) {
+    const std::string_view                  q = str::trim(query);
+    std::vector<std::pair<double, ConvRef>> scored;
+    for (ConvRef c : order) {
+        const std::string name = store.displayName(c);
+        if (name.empty())
+            continue;
+        if (const std::optional<double> s = unpreparedScore(q, name))
+            scored.emplace_back(
+                *s + (store.conversation(c).kind == ConvKind::Group ? -0.5 : 0.0), c
+            );
+    }
+    std::stable_sort(scored.begin(), scored.end(), [](const auto &a, const auto &b) {
+        return a.first > b.first;
+    });
+    std::vector<ConvRef> out;
+    for (const auto &s : scored)
+        out.push_back(s.second);
+    return out;
+}
+
+const char *const kQueries[] = {
+    "",     " ",     "a",    "e",   "z",  "des",  "dsgn", "MIRA", "mira o",
+    "lnch", "atlas", "gen",  "g-n", "ws", "ÅSA",  "å",    "rand", "random",
+    "eng",  "o, j",  "trio", ".",   "#",  "qqqq", "Jo",   "lw",   "xdg",
+};
+
+} // namespace
+
+TEST("fuzzy: a prepared name scores exactly as the plain call did") {
+    std::string long_(600, 'a');
+    long_ += "-b";
+    const char *const hay[] = {
+        "general",
+        "xd-general",
+        "Bob Builder",
+        "åsa lind",
+        "myWorkspace",
+        "design-review",
+        "a.b.c",
+        "team_ui",
+        "Mira Okafor, Jonas Weber",
+        "ÅSA",
+        "x",
+        "",
+        long_.c_str(),
+        "ΣΊΣΥΦΟΣ (ops)",
+        "über/straße",
+        "launch-atlas",
+        "Ma1nT",
+        "a  b",
+    };
+    int compared = 0;
+    for (const char *h : hay) {
+        const shell::FuzzyText prepared(h);
+        for (const char *q : kQueries) {
+            const std::optional<double> want = unpreparedScore(q, h);
+            const std::optional<double> got  = shell::fuzzyScore(shell::fuzzyQuery(q), prepared);
+            CHECK(want.has_value() == got.has_value());
+            if (want && got)
+                CHECK(*want == *got); // bit for bit, not near
+            const std::optional<double> plain = fuzzyScore(q, h);
+            CHECK(plain.has_value() == got.has_value());
+            if (plain && got)
+                CHECK(*plain == *got);
+            ++compared;
+        }
+    }
+    CHECK(compared > 400);
+}
+
+TEST("quick switcher: prepared names give the same list; renames still show") {
+    Harness    h;
+    const auto order = h.sh->sidebar().order();
+    const auto names = shell::quickSwitchNames(h.store, order);
+    REQUIRE(names.size() == order.size());
+    for (const char *q : kQueries) {
+        const auto want = unpreparedFilter(h.store, q, order);
+        CHECK(shell::quickSwitchFilter(q, order, names) == want);
+        CHECK(shell::quickSwitchFilter(h.store, q, order) == want);
+    }
+    // Through the popup, keystroke by keystroke.
+    h.sh->showQuickSwitcher();
+    pump();
+    shell::QuickSwitcher *qs = h.sh->quickSwitcher();
+    REQUIRE(qs);
+    const std::vector<ConvRef> shown = shell::quickSwitchOrder(h.store, h.sh->sidebar().visited());
+    for (const char *typed : {"m", "i", "r", "a"}) {
+        qs->field().insertText(typed);
+        CHECK(qs->results() == unpreparedFilter(h.store, qs->field().text(), shown));
+    }
+    // A channel renamed while the switcher is up (Meta): the next keystroke
+    // sees the new name.
+    qs->field().setText("zqxw");
+    CHECK(qs->results().empty());
+    const ConvRef random = h.conv("C0RANDOM");
+    h.store.updateConversation(random, [](Conversation &c) { c.name = "zqxw-room"; });
+    qs->field().setText("zqx");
+    REQUIRE(qs->results().size() == 1);
+    CHECK(qs->results()[0] == random);
+    // A person's new name (Users) renames their DM and group DMs too.
+    const ConvRef mira = h.conv("D0MIRA");
+    const UserRef u    = h.store.conversation(mira).dmUser;
+    REQUIRE(u != kNoUser);
+    h.store.user(u).displayName = "Vexilla Q";
+    h.store.usersChanged();
+    qs->field().setText("vexilla");
+    REQUIRE(!qs->results().empty());
+    CHECK(qs->results()[0] == mira);
+    CHECK(qs->results() == unpreparedFilter(h.store, "vexilla", shown));
+    qs->close();
+    pump();
 }
 
 TEST("quick switcher: fuzzy, the placeholder and the empty state") {
@@ -407,6 +625,82 @@ TEST("tray icon: fitted into the square, and the monochrome silhouette") {
     std::fill(flat.pixels(), flat.pixels() + 100, 0xff3366ccU);
     const gfx::Bitmap fm = shell::trayPicture(flat, true);
     CHECK(fm.pixels()[(n / 2) * n + n / 2] == 0xffffffffU);
+}
+
+TEST("tray icon: a custom picture is decoded off the UI thread, then drawn") {
+    const std::string a      = std::string(MSGA_TEST_ASSETS) + "/workspace.png";
+    const std::string b      = std::string(MSGA_TEST_ASSETS) + "/images/palette-v3.png";
+    const auto        expect = [](const std::string &path, bool mono) {
+        std::string bytes;
+        gfx::Bitmap bmp;
+        CHECK(file::readAll(path, &bytes));
+        CHECK(shell::decodeTrayPicture(bytes, &bmp));
+        return shell::trayPicture(bmp, mono);
+    };
+    const auto same = [](const gfx::Bitmap *got, const gfx::Bitmap &want) {
+        return got && got->width() == want.width() && got->height() == want.height() &&
+               std::equal(
+                   want.pixels(),
+                   want.pixels() + size_t(want.width()) * want.height(),
+                   got->pixels()
+               );
+    };
+    shell::Settings s;
+    s.customTrayIcon = true;
+    s.trayIconPath   = a;
+    s.trayMonochrome = false;
+    Harness h(s);
+    REQUIRE(until([&] { return h.sh->customTrayPicture() != nullptr; }));
+    CHECK(same(h.sh->customTrayPicture(), expect(a, false)));
+    plat::TestHooks::TrayProbe p;
+    REQUIRE(app().platform().testHooks()->trayProbe(*h.sh->tray(), &p));
+    CHECK(!p.iconSizes.empty());
+    // Another picture: not decoded inside the call; drawn once it is in.
+    h.settings.trayIconPath   = b;
+    h.settings.trayMonochrome = true;
+    h.sh->applySettings();
+    CHECK(h.sh->customTrayPicture() == nullptr);
+    REQUIRE(until([&] { return h.sh->customTrayPicture() != nullptr; }));
+    CHECK(same(h.sh->customTrayPicture(), expect(b, true)));
+    // A file that isn't a picture: the built-in plane, as before.
+    h.settings.trayIconPath = std::string(MSGA_TEST_ASSETS) + "/fixture.json";
+    h.sh->applySettings();
+    pump(40);
+    model::waitBackground();
+    pump(10);
+    CHECK(h.sh->customTrayPicture() == nullptr);
+    REQUIRE(app().platform().testHooks()->trayProbe(*h.sh->tray(), &p));
+    CHECK(!p.iconSizes.empty());
+    // Back to the default: at once.
+    h.settings.trayIconPath = a;
+    h.sh->applySettings();
+    h.settings.customTrayIcon = false; // turned off before the decode answers
+    h.sh->applySettings();
+    model::waitBackground();
+    pump(10);
+    CHECK(h.sh->customTrayPicture() == nullptr);
+}
+
+TEST("tray icon dialog: closed while its picture decodes, nothing answers into it") {
+    Harness    h;
+    ui::Popup *d = shell::showTrayIconDialog(
+        h.ctx, *h.win, std::string(MSGA_TEST_ASSETS) + "/workspace.png", true, nullptr
+    );
+    REQUIRE(d);
+    d->close();
+    pump();
+    model::waitBackground();
+    pump(10); // the answer finds the dialog gone
+    // Left open, it shows the picture once decoded (no crash, no hang).
+    d = shell::showTrayIconDialog(
+        h.ctx, *h.win, std::string(MSGA_TEST_ASSETS) + "/workspace.png", false, nullptr
+    );
+    REQUIRE(d);
+    model::waitBackground();
+    pump(10);
+    CHECK(findIn(d, "Convert to monochrome") != nullptr);
+    d->close();
+    pump();
 }
 
 // ── Claude Code: a teammate's "Message" ─────────────────────────────────────

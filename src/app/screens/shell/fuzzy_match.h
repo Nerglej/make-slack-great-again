@@ -13,8 +13,10 @@
 // case folding, by code point).
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace shell {
 
@@ -22,5 +24,17 @@ namespace shell {
 // higher is better, comparable only across haystacks for the same query. An
 // empty query matches everything with 0.
 std::optional<double> fuzzyScore(std::string_view query, std::string_view haystack);
+
+// The same, for a pick-list scored against query after query: each side
+// decoded and folded once (fuzzyQuery per keystroke, FuzzyText per name).
+// fuzzyScore(fuzzyQuery(q), FuzzyText(h)) == fuzzyScore(q, h), always.
+struct FuzzyText {
+    FuzzyText() = default;
+    explicit FuzzyText(std::string_view haystack);
+    std::vector<uint32_t> folded; // code points, case-folded
+    std::vector<uint8_t>  bonus;  // each one's start-of-word kind
+};
+std::vector<uint32_t> fuzzyQuery(std::string_view query); // folded code points
+std::optional<double> fuzzyScore(const std::vector<uint32_t> &query, const FuzzyText &haystack);
 
 } // namespace shell

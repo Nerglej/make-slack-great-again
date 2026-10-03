@@ -968,6 +968,7 @@ public:
         };
         choose->onClick = [this] { choose_(); };
         _reset->onClick = [this] {
+            ++_loading; // a picture still decoding is not wanted now
             _chosen.clear();
             _picture.reset();
             _resetOn = true;
@@ -986,7 +987,10 @@ public:
                 saveFailed();
         };
         if (_hasCustom)
-            _picture = decodeFile(_current);
+            decode(_current, [this](std::shared_ptr<const gfx::Bitmap> bmp) {
+                _picture = std::move(bmp);
+                refreshPreview();
+            });
         refreshPreview();
         refresh();
     }
@@ -1007,18 +1011,35 @@ public:
     }
 
 private:
-    static std::shared_ptr<gfx::Bitmap> decodeFile(const std::string &path) {
-        std::string bytes;
-        auto        bmp = std::make_shared<gfx::Bitmap>();
-        if (!file::readAll(path, &bytes) || !decodeTrayPicture(bytes, bmp.get()))
-            return nullptr;
-        return bmp;
+    // Read, decoded and fitted into the square on a worker; done(null) when
+    // it isn't a picture. Only the latest call answers.
+    void
+    decode(const std::string &path, std::function<void(std::shared_ptr<const gfx::Bitmap>)> done) {
+        const unsigned gen = ++_loading;
+        auto           out = std::make_shared<std::shared_ptr<const gfx::Bitmap>>();
+        model::runInBackground(
+            _ctx.app.platform(),
+            [out, path] {
+                std::string bytes;
+                gfx::Bitmap bmp;
+                if (file::readAll(path, &bytes) && decodeTrayPicture(bytes, &bmp))
+                    *out = std::make_shared<gfx::Bitmap>(trayPicture(bmp, false));
+            },
+            [this, alive = std::weak_ptr<int>(_alive), gen, out, done = std::move(done)] {
+                if (!alive.expired() && gen == _loading)
+                    done(std::move(*out));
+            }
+        );
     }
     void refreshPreview() {
-        _preview->set(
-            _picture ? std::make_shared<gfx::Bitmap>(trayPicture(*_picture, _mono->checked()))
-                     : nullptr
-        );
+        // The fitted picture is kept; the silhouette, a 128 px pass, is made here.
+        std::shared_ptr<gfx::Bitmap> b;
+        if (_picture) {
+            b = std::make_shared<gfx::Bitmap>(*_picture);
+            if (_mono->checked())
+                trayMonochrome(b.get());
+        }
+        _preview->set(std::move(b));
     }
     void refresh() {
         _reset->setVisible(_hasCustom || !_chosen.empty());
@@ -1038,22 +1059,23 @@ private:
         });
     }
     void load(const std::string &path) {
-        auto bmp = decodeFile(path);
-        if (!bmp) {
-            text::AttributedText t;
-            t.append(
-                tr("That file could not be read as an image."),
-                ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
-            );
-            _hint->setRichText(std::move(t));
-            return;
-        }
-        _chosen  = path;
-        _picture = std::move(bmp);
-        _resetOn = false;
-        _dirty   = true;
-        refreshPreview();
-        refresh();
+        decode(path, [this, path](std::shared_ptr<const gfx::Bitmap> bmp) {
+            if (!bmp) {
+                text::AttributedText t;
+                t.append(
+                    tr("That file could not be read as an image."),
+                    ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
+                );
+                _hint->setRichText(std::move(t));
+                return;
+            }
+            _chosen  = path;
+            _picture = std::move(bmp);
+            _resetOn = false;
+            _dirty   = true;
+            refreshPreview();
+            refresh();
+        });
     }
     void saveFailed() {
         text::AttributedText t;
@@ -1090,15 +1112,17 @@ private:
         return true;
     }
 
-    screens::Context            &_ctx;
-    std::string                  _current, _chosen;
-    std::shared_ptr<gfx::Bitmap> _picture; // decoded, before styling
-    TrayPreview                 *_preview = nullptr;
-    FormButton                  *_reset = nullptr, *_save = nullptr;
-    CheckBox                    *_mono = nullptr;
-    Label                       *_hint = nullptr;
-    bool                         _hasCustom, _resetOn = false, _dirty = false;
-    TrayIconDone                 _done;
+    screens::Context                  &_ctx;
+    std::string                        _current, _chosen;
+    std::shared_ptr<const gfx::Bitmap> _picture; // decoded and fitted, before monochrome
+    TrayPreview                       *_preview = nullptr;
+    FormButton                        *_reset = nullptr, *_save = nullptr;
+    CheckBox                          *_mono = nullptr;
+    Label                             *_hint = nullptr;
+    bool                               _hasCustom, _resetOn = false, _dirty = false;
+    TrayIconDone                       _done;
+    unsigned                           _loading = 0; // the latest decode()'s number
+    std::shared_ptr<int>               _alive   = std::make_shared<int>(0); // guards decode()
 };
 
 } // namespace

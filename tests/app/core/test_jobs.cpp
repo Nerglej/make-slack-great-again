@@ -9,6 +9,8 @@
 #endif
 
 #include <atomic>
+#include <mutex>
+#include <set>
 #include <thread>
 
 using model::Jobs;
@@ -105,6 +107,74 @@ TEST("jobs: runInBackground works on a worker, answers later on the UI thread") 
     model::runInBackground(app, nullptr, [&] { ran = true; });
     model::runInBackground(app, [] {}, nullptr);
     REQUIRE(fakeslack::pumpUntil([&] { return ran; }, 5000));
+}
+
+TEST("jobs: runInBackground reuses parked workers, never queues one behind another") {
+    plat::App &app = fakeslack::app();
+    model::setBackgroundIdleRetire(60'000);
+    // One after another: the first worker takes them all.
+    model::waitBackground();
+    int done = 0;
+    model::runInBackground(app, [] {}, [&] { ++done; });
+    REQUIRE(fakeslack::pumpUntil([&] { return done == 1; }, 5000));
+    REQUIRE(fakeslack::pumpUntil([] { return model::backgroundStats().parked > 0; }, 5000));
+    const uint64_t            started = model::backgroundStats().started;
+    std::set<std::thread::id> threads;
+    std::mutex                m;
+    for (int i = 0; i < 20; ++i) {
+        model::runInBackground(
+            app,
+            [&] {
+                std::lock_guard<std::mutex> lock(m);
+                threads.insert(std::this_thread::get_id());
+            },
+            [&] { ++done; }
+        );
+        REQUIRE(fakeslack::pumpUntil([&] { return done == 2 + i; }, 5000));
+        REQUIRE(fakeslack::pumpUntil([] { return model::backgroundStats().parked > 0; }, 5000));
+    }
+    CHECK(model::backgroundStats().started == started);
+    CHECK(threads.size() <= size_t(model::backgroundStats().workers));
+    // Twenty that all block: all run at once (one may wait on another); once
+    // done, at most four stay parked.
+    std::atomic<int>  under{0}, most{0};
+    std::atomic<bool> release{false};
+    int               answered = 0;
+    for (int i = 0; i < 20; ++i)
+        model::runInBackground(
+            app,
+            [&] {
+                const int n = ++under;
+                for (int seen = most; n > seen && !most.compare_exchange_weak(seen, n);)
+                    ;
+                while (!release)
+                    std::this_thread::yield();
+                --under;
+            },
+            [&] { ++answered; }
+        );
+    REQUIRE(fakeslack::pumpUntil([&] { return under == 20; }, 5000));
+    CHECK(model::backgroundStats().workers >= 20);
+    release = true;
+    REQUIRE(fakeslack::pumpUntil([&] { return answered == 20; }, 5000));
+    CHECK(most == 20);
+    model::waitBackground();
+    REQUIRE(fakeslack::pumpUntil([] { return model::backgroundStats().workers <= 4; }, 5000));
+    CHECK(model::backgroundStats().parked <= 4);
+}
+
+TEST("jobs: idle workers retire; a later call starts a fresh one") {
+    plat::App &app = fakeslack::app();
+    model::waitBackground();
+    model::setBackgroundIdleRetire(20); // the parked ones too
+    REQUIRE(fakeslack::pumpUntil([] { return model::backgroundStats().workers == 0; }, 5000));
+    const uint64_t started = model::backgroundStats().started;
+    bool           ran     = false;
+    model::runInBackground(app, [] {}, [&] { ran = true; });
+    REQUIRE(fakeslack::pumpUntil([&] { return ran; }, 5000));
+    CHECK(model::backgroundStats().started == started + 1);
+    REQUIRE(fakeslack::pumpUntil([] { return model::backgroundStats().workers == 0; }, 5000));
+    model::setBackgroundIdleRetire(30'000);
 }
 #endif
 
