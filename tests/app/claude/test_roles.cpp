@@ -26,7 +26,7 @@ struct TempDirs {
         setDirs({root + "/data", root + "/cache"});
     }
     ~TempDirs() {
-        removeTree(root);
+        file::removeTree(root);
         setDirs({});
     }
 };
@@ -93,6 +93,34 @@ TEST("roles: a prompt mentioning teammates says how to spawn them") {
     CHECK_STR(roleInAgentPrompt("Role: engineer. Repo: msga …"), "engineer");
     CHECK_STR(roleInAgentPrompt("  Role:Data-Analyst\nDig."), "data-analyst");
     CHECK(roleInAgentPrompt("Fix the role: engineer bug").empty());
+}
+
+TEST("roles: one mention grammar, its word boundaries Unicode's") {
+    const auto at = [](std::string_view text) {
+        const size_t i = text.find('@');
+        return mentionAt(text, i == std::string_view::npos ? 0 : i);
+    };
+    CHECK(at("ask @claude:role:engineer now").len == 21);
+    CHECK_STR(at("ask @claude:role:engineer now").roleId, "engineer");
+    CHECK(at("@claude:agent?").len == 13);
+    CHECK(at("@claude:agent?").roleId.empty()); // the Generalist
+    CHECK(at("<@claude:role:data-analyst>").len == 25);
+    // Inside a word, a path or an address: none. A letter is a letter in any
+    // script: "café@…" is an address, as "cafe@…" is.
+    CHECK(at("mail x@claude:role:engineer").len == 0);
+    CHECK(at("mail cafe@claude:role:engineer").len == 0);
+    CHECK(at("mail caf\xC3\xA9@claude:role:engineer").len == 0);
+    CHECK(at("ask \xC3\xA9 @claude:role:engineer").len == 21);
+    CHECK(at("see /x/@claude:role:engineer").len == 0);
+    // Running on into a longer word: none.
+    CHECK(at("@claude:role:engineer_x").len == 0);
+    CHECK(at("@claude:role:engineer\xC3\xA9").len == 0);
+    CHECK(at("@claude:agent-x").len == 0);
+    CHECK(at("@claude:role:").len == 0);
+    CHECK(at("@claude:role:Engineer").len == 0);
+    // The note goes by the same rule.
+    CHECK(teammateNote("ask caf\xC3\xA9@claude:role:engineer", findBuiltIn).empty());
+    CHECK_FALSE(teammateNote("ask \xC3\xA9 @claude:role:engineer", findBuiltIn).empty());
 }
 
 TEST("roles: teammates a session has no types for count when merely named") {

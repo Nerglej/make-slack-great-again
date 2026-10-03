@@ -1,7 +1,7 @@
 #include "app/claude/launcher.h"
 
 #include "app/claude/async.h"
-#include "app/claude/outputs.h" // trimmed
+#include "app/model/jobs.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/json.h"
@@ -32,17 +32,6 @@ bool isLeadingSpace(std::string_view s) {
         return false;
     size_t i = 0;
     return utf8::isSpace(utf8::decode(s, i));
-}
-
-std::vector<std::string_view> splitLines(std::string_view s) {
-    std::vector<std::string_view> out;
-    for (;;) {
-        const size_t nl = s.find('\n');
-        out.push_back(s.substr(0, nl));
-        if (nl == std::string_view::npos)
-            return out;
-        s.remove_prefix(nl + 1);
-    }
 }
 
 std::string exitedMessage(int code) {
@@ -77,7 +66,7 @@ bool startedACopy(std::string_view output) {
 std::string parseRemoveRefusal(std::string_view output, int exitCode) {
     if (exitCode == 0)
         return {};
-    const auto lines     = splitLines(output);
+    const auto lines     = str::split(output, '\n');
     // "<head> — <why>" → "<why>"
     auto       afterDash = [](std::string_view line) {
         constexpr std::string_view kDash = " — ";
@@ -91,11 +80,11 @@ std::string parseRemoveRefusal(std::string_view output, int exitCode) {
         if (str::startsWith(line, "kept ")) {
             for (size_t j = i + 1; j < lines.size(); ++j) {
                 const std::string_view next = lines[j];
-                if (trimmed(next).empty())
+                if (str::trimSpace(next).empty())
                     continue;
                 if (!isLeadingSpace(next))
                     break;
-                return std::string(trimmed(next));
+                return std::string(str::trimSpace(next));
             }
             return afterDash(line);
         }
@@ -103,14 +92,14 @@ std::string parseRemoveRefusal(std::string_view output, int exitCode) {
             return afterDash(line);
     }
     for (const std::string_view line : lines)
-        if (!trimmed(line).empty())
-            return std::string(trimmed(line));
+        if (!str::trimSpace(line).empty())
+            return std::string(str::trimSpace(line));
     return exitedMessage(exitCode);
 }
 
 std::vector<SlashCommand> parseCommandList(std::string_view output) {
     std::vector<SlashCommand> out;
-    for (const std::string_view line : splitLines(output)) {
+    for (const std::string_view line : str::split(output, '\n')) {
         json::Document doc;
         if (!doc.parse(std::string(line)))
             continue;
@@ -120,8 +109,8 @@ std::vector<SlashCommand> parseCommandList(std::string_view output) {
         for (const json::Value c : o["response"]["response"]["commands"]) {
             SlashCommand cmd;
             cmd.name  = std::string(c["name"].str());
-            cmd.desc  = std::string(trimmed(c["description"].str()));
-            cmd.usage = std::string(trimmed(c["argumentHint"].str()));
+            cmd.desc  = std::string(str::trimSpace(c["description"].str()));
+            cmd.usage = std::string(str::trimSpace(c["argumentHint"].str()));
             if (cmd.name.empty() || str::startsWith(cmd.name, "__") ||
                 str::startsWith(cmd.desc, "(removed)") || str::startsWith(cmd.desc, "Renamed to "))
                 continue; // internal, or kept only to point elsewhere
@@ -131,7 +120,7 @@ std::vector<SlashCommand> parseCommandList(std::string_view output) {
             if (isProj || isUser) {
                 cmd.desc.resize(cmd.desc.size() - (isProj ? 9 : 6));
                 // The blanks before it go too (it starts trimmed: only the end can have any).
-                cmd.desc.resize(trimmed(cmd.desc).size());
+                cmd.desc.resize(str::trimSpace(cmd.desc).size());
             }
             cmd.source = c["builtin"].boolean() ? i18n::tr("Claude Code")
                          : isProj               ? i18n::tr("Project skill")
@@ -144,7 +133,7 @@ std::vector<SlashCommand> parseCommandList(std::string_view output) {
 }
 
 Account parseAccount(std::string_view output) {
-    for (const std::string_view line : splitLines(output)) {
+    for (const std::string_view line : str::split(output, '\n')) {
         json::Document doc;
         if (!doc.parse(std::string(line)) || doc.root()["type"].str() != "control_response")
             continue;
@@ -201,29 +190,39 @@ void Launcher::commandFor(std::string &program, std::vector<std::string> &argv) 
 #endif
 }
 
+void Launcher::spawn(
+    std::vector<std::string> args, base::RunOptions o, std::function<void(base::RunResult)> done
+) {
+    std::string program;
+    commandFor(program, args);
+    runAsync(
+        _app,
+        program,
+        std::move(args),
+        std::move(o),
+        [alive = _alive, done = std::move(done)](base::RunResult r) {
+            if (*alive)
+                done(std::move(r));
+        }
+    );
+}
+
 void Launcher::run(
     std::vector<std::string>              args,
     const std::string                    &cwd,
     std::function<void(int, std::string)> done
 ) {
-    std::string program;
-    commandFor(program, args);
     base::RunOptions o;
     o.cwd         = cwd;
     o.mergeStderr = true; // stdin: the null device, never a prompt to wait on
     // Each of these returns within a second or so; a stuck one must not wedge
     // the session's queue forever.
     o.timeoutMs   = 60'000;
-    runAsync(
-        _app,
-        program,
+    spawn(
         std::move(args),
         std::move(o),
-        [alive = _alive,
-         name  = std::string(file::baseName(_claudePath)),
-         done  = std::move(done)](base::RunResult r) {
-            if (!*alive)
-                return;
+        [name = std::string(file::baseName(_claudePath)),
+         done = std::move(done)](base::RunResult r) {
             if (!r.started) {
                 done(-1, i18n::arg(i18n::tr("Couldn't start %1: %2"), name, r.output));
                 return;
@@ -236,18 +235,6 @@ void Launcher::run(
 void Launcher::listCommands(
     const std::string &cwd, std::function<void(std::vector<SlashCommand>, Account)> done
 ) {
-    std::string              program;
-    std::vector<std::string> argv = {
-        "-p",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--no-session-persistence",
-        "--strict-mcp-config",
-    };
-    commandFor(program, argv);
     base::RunOptions o;
     o.cwd         = cwd;
     // stderr is never read: discarded, it can't fill up and stall the process.
@@ -256,45 +243,34 @@ void Launcher::listCommands(
     // It answers the request, then exits at the end of its input.
     o.input = R"({"type":"control_request","request_id":"msga","request":{"subtype":"initialize"}})"
               "\n";
-    runAsync(
-        _app,
-        program,
-        std::move(argv),
+    spawn(
+        {"-p",
+         "--input-format",
+         "stream-json",
+         "--output-format",
+         "stream-json",
+         "--verbose",
+         "--no-session-persistence",
+         "--strict-mcp-config"},
         std::move(o),
-        [alive = _alive, done = std::move(done)](base::RunResult r) {
-            if (!*alive)
-                return;
+        [done = std::move(done)](base::RunResult r) {
             done(parseCommandList(r.output), parseAccount(r.output));
         }
     );
 }
 
 void Launcher::checkLogin(std::function<void(Login)> done) {
-    std::string              program;
-    std::vector<std::string> argv = {"auth", "status"};
-    commandFor(program, argv);
     base::RunOptions o;
     o.mergeStderr = false; // unread, it could fill up
     o.timeoutMs   = 15'000;
-    runAsync(
-        _app,
-        program,
-        std::move(argv),
-        std::move(o),
-        [alive = _alive, done = std::move(done)](base::RunResult r) {
-            if (!*alive)
-                return;
-            done(r.started && !r.timedOut ? parseLoginStatus(r.output, r.code) : Login::Unknown);
-        }
-    );
+    spawn({"auth", "status"}, std::move(o), [done = std::move(done)](base::RunResult r) {
+        done(r.started && !r.timedOut ? parseLoginStatus(r.output, r.code) : Login::Unknown);
+    });
 }
 
 std::string Launcher::sessionIdForShort(std::string_view shortId) const {
-    std::string text;
-    if (!file::readAll(str::concat({_paths.jobsDir(), "/", shortId, "/state.json"}), &text))
-        return {};
     json::Document doc;
-    if (!doc.parse(std::move(text)))
+    if (!doc.parse(readJobState(_paths, shortId), nullptr))
         return {};
     return std::string(doc.root()["sessionId"].str());
 }
@@ -323,26 +299,42 @@ void Launcher::waitStopped(
 void Launcher::reapLeftovers(
     const std::string &sessionId, std::function<void()> done, const std::string &jobId
 ) {
+    // Looked for on a worker: that reads every process's environment (/proc).
     const std::string shortId = jobId.empty() ? sessionId.substr(0, 8) : jobId;
-    auto              pids    = leftoverProcesses(sessionId, shortId);
-    for (const int64_t pid : strandedWorker(_paths, sessionId, shortId))
-        pids.push_back(pid);
-    if (pids.empty()) {
-        if (done)
-            done();
-        return;
-    }
-    for (const int64_t pid : pids)
-        signalProcess(pid, false);
-    // What ignores SIGTERM gets SIGKILL — looked up again, never by stale pid.
-    later(2000, [this, sessionId, shortId, done = std::move(done)] {
-        for (const int64_t pid : leftoverProcesses(sessionId, shortId))
-            signalProcess(pid, true);
-        for (const int64_t pid : strandedWorker(_paths, sessionId, shortId))
-            signalProcess(pid, true);
-        if (done)
-            done();
-    });
+    const auto        signal  = [paths = _paths, sessionId, shortId](bool force) {
+        auto pids = leftoverProcesses(sessionId, shortId);
+        for (const int64_t pid : strandedWorker(paths, sessionId, shortId))
+            pids.push_back(pid);
+        for (const int64_t pid : pids)
+            signalProcess(pid, force);
+        return !pids.empty();
+    };
+    auto any = std::make_shared<bool>(false);
+    model::runInBackground(
+        _app,
+        [signal, any] { *any = signal(false); },
+        [this, alive = _alive, signal, any, done = std::move(done)]() mutable {
+            if (!*alive)
+                return;
+            if (!*any) {
+                if (done)
+                    done();
+                return;
+            }
+            // What ignores SIGTERM gets SIGKILL — looked up again, never by
+            // stale pid.
+            later(2000, [this, signal, done = std::move(done)] {
+                model::runInBackground(
+                    _app,
+                    [signal] { signal(true); },
+                    [alive = _alive, done] {
+                        if (*alive && done)
+                            done();
+                    }
+                );
+            });
+        }
+    );
 }
 
 void Launcher::stop(
@@ -392,7 +384,7 @@ void Launcher::runNewSession(std::vector<std::string> args, const std::string &c
         const std::string shortId = parseBackgroundedShortId(out);
         const std::string id      = shortId.empty() ? std::string() : sessionIdForShort(shortId);
         if (code != 0 || id.empty()) {
-            const std::string_view text = trimmed(out);
+            const std::string_view text = str::trimSpace(out);
             done({}, text.empty() ? exitedMessage(code) : std::string(text));
             return;
         }
@@ -470,7 +462,7 @@ void Launcher::resume(
         run(std::move(args), cwd, [this, sessionId, done](int code, std::string out) {
             const std::string shortId = parseBackgroundedShortId(out);
             if (code != 0 || shortId.empty()) {
-                done({}, std::string(trimmed(out)));
+                done({}, std::string(str::trimSpace(out)));
                 return;
             }
             if (startedACopy(out)) {

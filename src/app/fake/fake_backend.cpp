@@ -515,11 +515,6 @@ void FakeBackend::search(std::string query, std::function<void(std::vector<Searc
 
 namespace {
 
-void escapeInto(std::string &out, std::string_view t) {
-    for (char c : t)
-        out += c == '<' ? "&lt;" : c == '>' ? "&gt;" : c == '&' ? "&amp;" : std::string(1, c);
-}
-
 // Canvas markdown's inline marks (**b**, _i_ / *i*, ~~s~~, `c`, [t](u)) as
 // the tags Slack's canvas HTML uses.
 std::string inlineHtml(std::string_view t) {
@@ -530,7 +525,7 @@ std::string inlineHtml(std::string_view t) {
             const size_t e = t.find('`', i + 1);
             if (e != std::string_view::npos) {
                 out += "<code>";
-                escapeInto(out, t.substr(i + 1, e - i - 1));
+                str::appendEscapedHtml(&out, t.substr(i + 1, e - i - 1));
                 out += "</code>";
                 i = e + 1;
                 continue;
@@ -541,9 +536,9 @@ std::string inlineHtml(std::string_view t) {
             const size_t end   = close == std::string_view::npos ? close : t.find(')', close);
             if (end != std::string_view::npos) {
                 out += "<a href=\"";
-                escapeInto(out, t.substr(close + 2, end - close - 2));
+                str::appendEscapedHtml(&out, t.substr(close + 2, end - close - 2));
                 out += "\">";
-                escapeInto(out, t.substr(i + 1, close - i - 1));
+                str::appendEscapedHtml(&out, t.substr(i + 1, close - i - 1));
                 out += "</a>";
                 i = end + 1;
                 continue;
@@ -565,7 +560,7 @@ std::string inlineHtml(std::string_view t) {
                 break;
             }
         if (!hit)
-            escapeInto(out, t.substr(i++, 1));
+            str::appendEscapedHtml(&out, t.substr(i++, 1));
     }
     return out;
 }
@@ -581,10 +576,9 @@ std::string canvasMarkdownHtml(std::string_view md, uint32_t *seq) {
             out += str::concat({"</", list, ">\n"});
         list.clear();
     };
-    for (size_t at = 0; at <= md.size();) {
-        const size_t     nl   = std::min(md.find('\n', at), md.size());
-        std::string_view line = str::trim(md.substr(at, nl - at));
-        at                    = nl + 1;
+    str::Splitter lines(md, '\n');
+    for (std::string_view line; lines.next(&line);) {
+        line = str::trim(line);
         if (line.empty())
             continue;
         std::string_view tag = "p", li;

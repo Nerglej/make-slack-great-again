@@ -2,8 +2,10 @@
 
 #include "app/claude/cli.h"
 #include "app/claude/common.h"
+#include "app/claude/roles.h"
 #include "app/claude/transcript.h"
 #include "app/mrkdwn/markdown.h"
+#include "app/mrkdwn/mrkdwn.h"
 #include "app/model/image_size.h"
 #include "base/file.h"
 #include "base/mime.h"
@@ -18,18 +20,6 @@ namespace claude {
 using i18n::tr;
 
 namespace {
-
-std::vector<std::string_view> splitLines(std::string_view s) {
-    std::vector<std::string_view> out;
-    size_t                        i = 0;
-    for (;;) {
-        const size_t j = s.find('\n', i);
-        out.push_back(s.substr(i, j == std::string_view::npos ? std::string_view::npos : j - i));
-        if (j == std::string_view::npos)
-            return out;
-        i = j + 1;
-    }
-}
 
 bool isWord(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
@@ -52,49 +42,8 @@ std::string_view headingText(std::string_view t) {
     return rest;
 }
 
-void replaceAll(std::string &s, std::string_view from, std::string_view to) {
-    std::string out;
-    out.reserve(s.size());
-    size_t i = 0;
-    for (;;) {
-        const size_t j = s.find(from, i);
-        if (j == std::string::npos) {
-            out.append(s, i, std::string::npos);
-            break;
-        }
-        out.append(s, i, j - i);
-        out.append(to);
-        i = j + from.size();
-    }
-    s = std::move(out);
-}
-
-// "claude:agent" / "claude:role:x" at s[i] (just past the '@'): its length,
-// 0 when it isn't one or runs on into a word.
-size_t teammateIdAt(std::string_view s, size_t i) {
-    if (s.substr(i, 7) != "claude:")
-        return 0;
-    size_t j = i + 7;
-    if (s.substr(j, 5) == "agent") {
-        j += 5;
-    } else if (s.substr(j, 5) == "role:") {
-        j += 5;
-        const size_t from = j;
-        while (j < s.size() &&
-               ((s[j] >= 'a' && s[j] <= 'z') || (s[j] >= '0' && s[j] <= '9') || s[j] == '-'))
-            ++j;
-        if (j == from)
-            return 0;
-    } else {
-        return 0;
-    }
-    if (j < s.size() && (isWord(s[j]) || s[j] == '-'))
-        return 0;
-    return j - i;
-}
-
 bool wholeTeammate(std::string_view s) {
-    return s.size() > 1 && s[0] == '@' && teammateIdAt(s, 1) == s.size() - 1;
+    return !s.empty() && mentionAt(s, 0).len == s.size();
 }
 
 // One plain (not code) piece of an escaped line: Claude's own <url>
@@ -136,27 +85,21 @@ std::string linkPlain(std::string_view part) {
                 }
             }
             // &lt;@claude:…&gt; — a raw token from before pills were unwrapped.
-            if (!rest.empty() && rest[0] == '@') {
-                const size_t n = teammateIdAt(rest, 1);
-                if (n && rest.substr(1 + n, 4) == "&gt;") {
-                    out += "<@";
-                    out.append(rest.substr(1, n));
-                    out += '>';
-                    i += 4 + 1 + n + 4;
-                    continue;
-                }
+            if (const size_t n = mentionAt(rest, 0).len; n && rest.substr(n, 4) == "&gt;") {
+                out += '<';
+                out.append(rest.substr(0, n));
+                out += '>';
+                i += 4 + n + 4;
+                continue;
             }
         }
-        // @claude:role:x, not inside a word, path or address.
+        // @claude:role:x, standing on its own.
         if (c == '@') {
-            const bool after =
-                i > 0 && (isWord(part[i - 1]) || part[i - 1] == '@' || part[i - 1] == '/' ||
-                          part[i - 1] == ':' || part[i - 1] == '.' || part[i - 1] == '-');
-            if (const size_t n = after ? 0 : teammateIdAt(part, i + 1)) {
-                out += "<@";
-                out.append(part.substr(i + 1, n));
+            if (const size_t n = mentionAt(part, i).len) {
+                out += '<';
+                out.append(part.substr(i, n));
                 out += '>';
-                i += 1 + n;
+                i += n;
                 continue;
             }
         }
@@ -209,7 +152,7 @@ std::string linkBareUrls(std::string_view escaped) {
     std::string out;
     out.reserve(escaped.size() + 32);
     bool       inFence = false;
-    const auto lines   = splitLines(escaped);
+    const auto lines   = str::split(escaped, '\n');
     for (size_t li = 0; li < lines.size(); ++li) {
         const std::string_view line = lines[li];
         if (li > 0)
@@ -360,7 +303,7 @@ std::string renderMarkdown(std::string_view markdown) {
     // Pre-pass on whole lines, outside code fences: headings have no mrkdwn
     // form, so bold them; a table is only readable aligned, so fence it
     // (monospace).
-    const auto  lines = splitLines(markdown);
+    const auto  lines = str::split(markdown, '\n');
     std::string text;
     text.reserve(markdown.size() + 16);
     bool first   = true;
@@ -404,9 +347,7 @@ std::string renderMarkdown(std::string_view markdown) {
     }
     // Claude's text is plain markdown, never Slack tokens: escape what mrkdwn
     // would read as a token or entity. The parser decodes these back.
-    replaceAll(text, "&", "&amp;");
-    replaceAll(text, "<", "&lt;");
-    replaceAll(text, ">", "&gt;");
+    text = mrkdwn::escapeEntities(text);
     // Markdown strikes only with "~~": a lone '~' is "approximately" ("~4 MB
     // on Linux, ~3 MB"), which mrkdwn would pair into a strike.
     std::string marked;
@@ -423,7 +364,7 @@ std::string renderMarkdown(std::string_view markdown) {
 }
 
 std::vector<model::Block> markdownBlocks(std::string_view markdown) {
-    const auto                lines = splitLines(markdown);
+    const auto                lines = str::split(markdown, '\n');
     std::vector<model::Block> blocks;
     std::string               text; // lines waiting to become a text block
     bool                      sawTable  = false;

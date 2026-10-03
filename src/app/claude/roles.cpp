@@ -2,7 +2,6 @@
 
 #include "app/claude/avatar_glyphs.h"
 #include "app/claude/common.h"
-#include "app/claude/outputs.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/json.h"
@@ -179,10 +178,6 @@ const std::string &nameOf(const Role &r) {
     return r.promptName.empty() ? r.name : r.promptName;
 }
 
-bool isSpaceCp(uint32_t cp) {
-    return utf8::isSpace(cp);
-}
-
 // \w as a Unicode regex has it: letters, digits, the underscore.
 bool isWordCp(uint32_t cp) {
     return cp == '_' || utf8::isWordChar(cp);
@@ -198,16 +193,12 @@ std::vector<uint32_t> codePoints(std::string_view s, bool fold) {
     return out;
 }
 
-std::string oneLine(std::string_view s) {
-    return str::simplified(s);
-}
-
 // The header line's name and id: "Data analyst (msga: data-analyst)" — or, as
 // sessions started before ids were written have it, a built-in's English
 // name alone ("Engineer"). Reads only the built-ins' table: the catalog calls
 // it from a worker thread.
 RoleMark parseHeaderLine(std::string_view line) {
-    const std::string_view t = trimmed(line);
+    const std::string_view t = str::trimSpace(line);
     if (!t.empty() && t.back() == ')') {
         constexpr std::string_view kOpen = "(msga: ";
         const size_t               at    = t.rfind(kOpen);
@@ -218,7 +209,7 @@ RoleMark parseHeaderLine(std::string_view line) {
                 return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
             });
             if (ok)
-                return {std::string(id), std::string(trimmed(t.substr(0, at)))};
+                return {std::string(id), std::string(str::trimSpace(t.substr(0, at)))};
         }
     }
     for (const Spec &s : kSpecs)
@@ -230,14 +221,12 @@ RoleMark parseHeaderLine(std::string_view line) {
 // The lines of a teammate file's header: "key: value".
 std::unordered_map<std::string, std::string> parseFields(std::string_view block) {
     std::unordered_map<std::string, std::string> out;
-    while (!block.empty()) {
-        const size_t           nl = block.find('\n');
-        const std::string_view l  = block.substr(0, nl);
-        block = nl == std::string_view::npos ? std::string_view() : block.substr(nl + 1);
+    str::Splitter                                lines(block, '\n');
+    for (std::string_view l; lines.next(&l);) {
         const size_t colon = l.find(':');
         if (colon != std::string_view::npos && colon > 0)
-            out[std::string(trimmed(l.substr(0, colon)))] =
-                std::string(trimmed(l.substr(colon + 1)));
+            out[std::string(str::trimSpace(l.substr(0, colon)))] =
+                std::string(str::trimSpace(l.substr(colon + 1)));
     }
     return out;
 }
@@ -259,10 +248,7 @@ bool parseColor(std::string_view s, uint32_t *out) {
         return false;
     uint32_t v = 0;
     for (char c : s) {
-        int d = c >= '0' && c <= '9'   ? c - '0'
-                : c >= 'a' && c <= 'f' ? c - 'a' + 10
-                : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                       : -1;
+        const int d = str::hexDigit(c);
         if (d < 0)
             return false;
         v = v << 4 | uint32_t(d);
@@ -272,7 +258,7 @@ bool parseColor(std::string_view s, uint32_t *out) {
 }
 
 bool separatorCp(uint32_t cp) {
-    return cp == '-' || isSpaceCp(cp);
+    return cp == '-' || utf8::isSpace(cp);
 }
 
 // The words of a name, split at whitespace and hyphens, case-folded.
@@ -359,12 +345,42 @@ bool idChar(char c) {
 
 } // namespace
 
+Mention mentionAt(std::string_view text, size_t i) {
+    constexpr std::string_view kAgent = "@claude:agent", kRole = "@claude:role:";
+    if (i >= text.size() || text[i] != '@' || joinedBefore(text, i))
+        return {};
+    Mention m;
+    size_t  end = 0;
+    if (text.substr(i, kAgent.size()) == kAgent) {
+        end = i + kAgent.size();
+    } else if (text.substr(i, kRole.size()) == kRole) {
+        const size_t from = i + kRole.size();
+        end               = from;
+        while (end < text.size() && idChar(text[end]))
+            ++end;
+        if (end == from)
+            return {};
+        m.roleId = std::string(text.substr(from, end - from));
+    } else {
+        return {};
+    }
+    // "(?![\w-])": not the start of a longer word.
+    if (end < text.size()) {
+        size_t         j  = end;
+        const uint32_t cp = utf8::decode(text, j);
+        if (isWordCp(cp) || cp == '-')
+            return {};
+    }
+    m.len = end - i;
+    return m;
+}
+
 std::string roleHeader(std::string_view name, std::string_view id) {
     return str::concat({kHeaderPrefix, name, " (msga: ", id, ")"});
 }
 
 std::string appendedPrompt(const Role &role) {
-    const std::string_view body = trimmed(role.prompt);
+    const std::string_view body = str::trimSpace(role.prompt);
     if (body.empty())
         return {};
     return str::concat({roleHeader(nameOf(role), role.id), "\n", body});
@@ -394,15 +410,17 @@ std::string subagentsJson(const std::vector<Role> &roles) {
     for (const Role *r : picked) {
         w.key(r->id).beginObject();
         w.key("description")
-            .value(trimmed(
-                str::concat(
-                    {nameOf(*r),
-                     ", a teammate (mentioned as @claude:role:",
-                     r->id,
-                     "). ",
-                     oneLine(r->description)}
+            .value(
+                str::trimSpace(
+                    str::concat(
+                        {nameOf(*r),
+                         ", a teammate (mentioned as @claude:role:",
+                         r->id,
+                         "). ",
+                         str::simplified(r->description)}
+                    )
                 )
-            ));
+            );
         w.key("prompt").value(appendedPrompt(*r));
         w.endObject();
     }
@@ -415,28 +433,17 @@ std::string teammateNote(
     const std::function<const Role *(std::string_view id)> &find,
     const std::vector<Role>                                &byName
 ) {
-    constexpr std::string_view kMention = "@claude:role:";
-    std::vector<std::string>   seen;
-    const auto                 isSeen = [&](std::string_view id) {
+    std::vector<std::string> seen;
+    const auto               isSeen = [&](std::string_view id) {
         return std::find(seen.begin(), seen.end(), id) != seen.end();
     };
     std::string body;
-    for (size_t at = prompt.find(kMention); at != std::string_view::npos;
-         at        = prompt.find(kMention, at + 1)) {
-        if (joinedBefore(prompt, at))
-            continue;
-        const size_t start = at + kMention.size();
-        size_t       end   = start;
-        while (end < prompt.size() && idChar(prompt[end]))
-            ++end;
-        if (end == start)
-            continue;
-        if (end < prompt.size()) {
-            size_t i = end;
-            if (isWordCp(utf8::decode(prompt, i)))
-                continue; // "(?![\w-])": a longer word, not this id
-        }
-        const std::string id(prompt.substr(start, end - start));
+    for (size_t at = prompt.find('@'); at != std::string_view::npos;
+         at        = prompt.find('@', at + 1)) {
+        Mention mention = mentionAt(prompt, at);
+        if (mention.roleId.empty())
+            continue; // none, or the Generalist: no prompt of its own to note
+        const std::string id = std::move(mention.roleId);
         if (isSeen(id))
             continue;
         seen.push_back(id);
@@ -491,25 +498,23 @@ std::string teammateNote(
 
 std::string withoutTeammateNote(std::string_view prompt) {
     const size_t open = prompt.rfind(str::concat({"\n\n", kNoteOpen}));
-    if (open == std::string_view::npos || !str::endsWith(trimmed(prompt), kNoteClose))
+    if (open == std::string_view::npos || !str::endsWith(str::trimSpace(prompt), kNoteClose))
         return std::string(prompt);
     return std::string(prompt.substr(0, open));
 }
 
 std::string roleInAgentPrompt(std::string_view prompt) {
-    for (std::string_view rest = prompt; !rest.empty();) {
-        const size_t           nl   = rest.find('\n');
-        const std::string_view line = rest.substr(0, nl);
-        rest = nl == std::string_view::npos ? std::string_view() : rest.substr(nl + 1);
+    str::Splitter lines(prompt, '\n');
+    for (std::string_view line; lines.next(&line);) {
         if (str::startsWith(line, kHeaderPrefix))
             if (RoleMark m = parseHeaderLine(line.substr(kHeaderPrefix.size())); !m.id.empty())
                 return m.id;
     }
     // "^\s*Role:\s*([A-Za-z][A-Za-z0-9-]*)\b": the line Claude writes itself.
-    std::string_view s = trimmed(prompt);
+    std::string_view s = str::trimSpace(prompt);
     if (!str::startsWith(s, "Role:"))
         return {};
-    s                = trimmed(s.substr(5));
+    s                = str::trimSpace(s.substr(5));
     const auto alpha = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
     if (s.empty() || !alpha(s[0]))
         return {};
@@ -607,6 +612,7 @@ Team::Team(std::string dir) : _dir(std::move(dir)) {
 }
 
 void Team::load() {
+    _resolved.clear();
     _roles = builtInRoles();
     std::vector<Role>           added;
     std::vector<file::DirEntry> entries;
@@ -644,9 +650,9 @@ void Team::load() {
         r.removed         = !r.builtIn && field(fields, "removed", {}) == "true";
         // The prompt: everything after the closing line.
         const size_t body = text.find('\n', close + 4);
-        r.prompt          = body == std::string::npos
-                                ? std::string()
-                                : std::string(trimmed(std::string_view(text).substr(body + 1)));
+        r.prompt = body == std::string::npos
+                       ? std::string()
+                       : std::string(str::trimSpace(std::string_view(text).substr(body + 1)));
         if (r.name.empty())
             continue;
         if (base != _roles.end()) {
@@ -682,14 +688,18 @@ const Role *Team::find(std::string_view id) const {
     return nullptr;
 }
 
-Role Team::resolve(std::string_view id, std::string_view nameHint) const {
+const Role &Team::resolve(std::string_view id, std::string_view nameHint) const {
     if (id.empty())
         return generalist();
     if (const Role *r = find(id))
         return *r;
-    // A former teammate: named as its sessions have it, in a plain grey.
-    Role r;
-    r.id = id;
+    // A former teammate: named as its sessions have it, in a plain grey —
+    // made once (its picture is a file).
+    auto [it, made] = _resolved.try_emplace(str::concat({id, "\n", nameHint}));
+    if (!made)
+        return it->second;
+    Role &r = it->second;
+    r.id    = id;
     if (!nameHint.empty()) {
         r.name = nameHint;
     } else {
@@ -711,6 +721,7 @@ bool Team::noteFormer(std::string_view id, std::string_view name) {
     if (have == name)
         return false;
     have = name;
+    _resolved.clear(); // named anew
     return true;
 }
 
@@ -756,15 +767,15 @@ std::string Team::newId(std::string_view name) const {
 
 bool Team::write(const Role &r, std::string *error) {
     std::string text = "---\n";
-    text += str::concat({"name: ", oneLine(r.name), "\n"});
-    text += str::concat({"description: ", oneLine(r.description), "\n"});
+    text += str::concat({"name: ", str::simplified(r.name), "\n"});
+    text += str::concat({"description: ", str::simplified(r.description), "\n"});
     text += str::concat({"glyph: ", r.glyph, "\n"});
     text += str::concat({"color: ", avatar_glyphs::colorName(r.color), "\n"});
     if (r.created > 0)
         text += str::concat({"created: ", str::number(r.created), "\n"});
     if (r.removed)
         text += "removed: true\n";
-    text += str::concat({"---\n", trimmed(r.prompt), "\n"});
+    text += str::concat({"---\n", str::trimSpace(r.prompt), "\n"});
     errno = 0;
     if (!file::writeAtomic(file::join(_dir, r.id + ".md"), text)) {
         if (error)
@@ -775,7 +786,7 @@ bool Team::write(const Role &r, std::string *error) {
 }
 
 std::string Team::save(Role role, std::string *error) {
-    role.name = oneLine(role.name);
+    role.name = str::simplified(role.name);
     if (role.name.empty()) {
         if (error)
             *error = i18n::tr("A teammate needs a name.");

@@ -26,10 +26,6 @@ void runAsync(
     );
 }
 
-void offThread(plat::App &app, std::function<void()> work, std::function<void()> then) {
-    model::runInBackground(app, std::move(work), std::move(then));
-}
-
 void stopAsync() {
     model::stopBackground();
 }

@@ -15,6 +15,8 @@
 #include <algorithm>
 
 #ifdef _WIN32
+#include "base/winstr.h"
+
 #include <windows.h>
 #endif
 
@@ -30,11 +32,7 @@ constexpr const char *kBase              = "https://msga.app/download/";
 constexpr int         kDownloadTimeoutMs = 10 * 60'000;
 
 #ifdef _WIN32
-std::wstring wide(std::string_view s) {
-    std::wstring w(size_t(MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0)), 0);
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), int(w.size()));
-    return w;
-}
+using base::widePath;
 #endif
 
 // Puts the verified download in place (a worker thread); "" or why not.
@@ -46,14 +44,16 @@ std::string install(const std::string &target, const std::string &bytes) {
     if (!file::writeAtomic(tmp, bytes))
         return arg(tr("Cannot write update to %1"), tmp);
     file::remove(backup);
-    if (!MoveFileExW(wide(target).c_str(), wide(backup).c_str(), MOVEFILE_REPLACE_EXISTING)) {
+    if (!MoveFileExW(
+            widePath(target).c_str(), widePath(backup).c_str(), MOVEFILE_REPLACE_EXISTING
+        )) {
         file::remove(tmp);
         return arg(
             tr("Could not move current binary \xE2\x80\x94 check file permissions on %1"), target
         );
     }
-    if (!MoveFileExW(wide(tmp).c_str(), wide(target).c_str(), MOVEFILE_REPLACE_EXISTING)) {
-        MoveFileExW(wide(backup).c_str(), wide(target).c_str(), 0); // best-effort restore
+    if (!MoveFileExW(widePath(tmp).c_str(), widePath(target).c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        MoveFileExW(widePath(backup).c_str(), widePath(target).c_str(), 0); // best-effort restore
         file::remove(tmp);
         return arg(tr("Could not place new binary at %1"), target);
     }
@@ -82,10 +82,7 @@ bool parseManifest(std::string_view text, Manifest *out) {
     if (v <= 0 || v > 1'000'000'000)
         return false;
     out->version = int(v);
-    out->sha256  = std::string(d.root()["sha256"].str());
-    for (char &c : out->sha256)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c + 32);
+    out->sha256  = str::asciiLower(d.root()["sha256"].str());
     return true;
 }
 
@@ -132,17 +129,7 @@ std::string manifestUrl() {
 bool checksumMatches(std::string_view bytes, std::string_view expectedHex) {
     if (expectedHex.empty())
         return true; // older manifests carry no hash: unchecked
-    const std::string got = crypto::hex(crypto::bytes(crypto::sha256(bytes)));
-    if (got.size() != expectedHex.size())
-        return false;
-    for (size_t i = 0; i < got.size(); ++i) {
-        char c = expectedHex[i];
-        if (c >= 'A' && c <= 'Z')
-            c = char(c + 32);
-        if (c != got[i])
-            return false;
-    }
-    return true;
+    return str::iequals(crypto::hex(crypto::bytes(crypto::sha256(bytes))), expectedHex);
 }
 
 // ── Updater ─────────────────────────────────────────────────────────────────

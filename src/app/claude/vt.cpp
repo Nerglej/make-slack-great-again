@@ -1,9 +1,10 @@
 #include "app/claude/vt.h"
 
-#include "app/claude/outputs.h" // trimmed
+#include "base/str.h"
 #include "base/utf8.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace claude {
 
@@ -64,24 +65,36 @@ int cellWidth(char32_t c) {
     return 1;
 }
 
-std::vector<int> parseParams(std::string_view s) {
-    std::vector<int> out;
-    int              v = -1; // -1 = left out: the default applies
+// A CSI's parameters: a fixed few (a sequence is at most 64 bytes, see
+// VtScreen::feed), so none is ever allocated for.
+struct Params {
+    int        v[32];
+    int        n = 0;
+    int        operator[](int i) const { return v[i]; }
+    const int *begin() const { return v; }
+    const int *end() const { return v + n; }
+};
+
+Params parseParams(std::string_view s) {
+    Params out;
+    int    v = -1; // -1 = left out: the default applies
     for (const char ch : s) {
         if (ch >= '0' && ch <= '9') {
             v = (v < 0 ? 0 : v) * 10 + (ch - '0');
             v = std::min(v, 99999);
         } else if (ch == ';' || ch == ':') {
-            out.push_back(v);
+            if (out.n < int(std::size(out.v)))
+                out.v[out.n++] = v;
             v = -1;
         }
     }
-    out.push_back(v);
+    if (out.n < int(std::size(out.v)))
+        out.v[out.n++] = v;
     return out;
 }
 
-int param(const std::vector<int> &p, size_t i, int def) {
-    return i < p.size() && p[i] > 0 ? p[i] : def;
+int param(const Params &p, int i, int def) {
+    return i < p.n && p[i] > 0 ? p[i] : def;
 }
 
 } // namespace
@@ -116,18 +129,26 @@ void VtScreen::eraseCells(int r, int from, int to) {
         _cells[r][c] = Cell{};
 }
 
+// The rows themselves move (their storage with them) and those scrolled off
+// come back blank at the other end: nothing is allocated.
 void VtScreen::scrollUp(int top, int bottom, int n) {
-    for (int i = 0; i < n; ++i) {
-        _cells.erase(_cells.begin() + top);
-        _cells.insert(_cells.begin() + bottom, std::vector<Cell>(_cols));
-    }
+    n = std::min(n, bottom - top + 1);
+    if (n <= 0)
+        return;
+    const auto first = _cells.begin() + top, last = _cells.begin() + bottom + 1;
+    std::rotate(first, first + n, last);
+    for (auto row = last - n; row != last; ++row)
+        std::fill(row->begin(), row->end(), Cell{});
 }
 
 void VtScreen::scrollDown(int top, int bottom, int n) {
-    for (int i = 0; i < n; ++i) {
-        _cells.erase(_cells.begin() + bottom);
-        _cells.insert(_cells.begin() + top, std::vector<Cell>(_cols));
-    }
+    n = std::min(n, bottom - top + 1);
+    if (n <= 0)
+        return;
+    const auto first = _cells.begin() + top, last = _cells.begin() + bottom + 1;
+    std::rotate(first, last - n, last);
+    for (auto row = first; row != first + n; ++row)
+        std::fill(row->begin(), row->end(), Cell{});
 }
 
 void VtScreen::lineFeed() {
@@ -429,14 +450,10 @@ std::string VtScreen::row(int r) const {
 
 namespace {
 
-bool startsWith(std::string_view s, std::string_view p) {
-    return s.substr(0, p.size()) == p;
-}
-
 bool isRule(std::string_view row) {
     // "──────…" — the prompt box's edges; the top one can carry the session's
     // name ("──── fix the build ─").
-    return startsWith(row, "──");
+    return str::startsWith(row, "──");
 }
 
 constexpr std::string_view kPromptMark = "❯";
@@ -451,19 +468,19 @@ int lastRule(const VtScreen &screen, int below) {
 // "  ❯ 2. Yes, and don't ask again" → the option, as the pattern
 // ^\s*(❯)?\s*(\d+)\.\s+(\S.*)$ would read it.
 bool parseOption(std::string_view row, int *number, std::string *label, bool *marked) {
-    std::string_view s = trimmed(row);
-    *marked            = startsWith(s, kPromptMark);
+    std::string_view s = str::trimSpace(row);
+    *marked            = str::startsWith(s, kPromptMark);
     if (*marked)
-        s = trimmed(s.substr(kPromptMark.size()));
+        s = str::trimSpace(s.substr(kPromptMark.size()));
     size_t digits = 0;
     while (digits < s.size() && s[digits] >= '0' && s[digits] <= '9')
         ++digits;
     if (digits == 0 || digits > 6 || digits >= s.size() || s[digits] != '.')
         return false;
     const std::string_view rest = s.substr(digits + 1);
-    if (rest.empty() || trimmed(rest).size() == rest.size())
+    if (rest.empty() || str::trimSpace(rest).size() == rest.size())
         return false; // no blank after the dot
-    const std::string_view text = trimmed(rest);
+    const std::string_view text = str::trimSpace(rest);
     if (text.empty())
         return false;
     int n = 0;
@@ -481,7 +498,7 @@ std::optional<PromptBox> findPromptBox(const VtScreen &screen) {
     const int top    = bottom < 0 ? -1 : lastRule(screen, bottom);
     if (top < 0 || bottom - top < 2)
         return std::nullopt;
-    if (!startsWith(screen.row(top + 1), kPromptMark))
+    if (!str::startsWith(screen.row(top + 1), kPromptMark))
         return std::nullopt;
     PromptBox box;
     box.top = top + 1;
@@ -494,7 +511,7 @@ std::optional<PromptBox> findPromptBox(const VtScreen &screen) {
         box.lines.push_back(std::move(line));
     }
     box.empty = std::all_of(box.lines.begin(), box.lines.end(), [](const std::string &l) {
-        return trimmed(l).empty();
+        return str::trimSpace(l).empty();
     });
     return box;
 }
@@ -519,7 +536,7 @@ std::optional<PermissionQuestion> findPermissionQuestion(const VtScreen &screen)
         if (!parseOption(row, &number, &label, &marked)) {
             if (!q.options.empty())
                 break; // past the options: "Esc to cancel · Tab to amend"
-            const std::string_view t = trimmed(row);
+            const std::string_view t = str::trimSpace(row);
             if (!t.empty()) {
                 if (!text.empty())
                     text += ' ';

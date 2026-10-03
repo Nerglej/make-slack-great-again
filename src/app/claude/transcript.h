@@ -117,8 +117,10 @@ public:
     // Epoch micros of the newest record seen (any type) — "last activity".
     int64_t                     lastActivity() const { return _lastActivity; }
     // Epoch micros of every record read, in file order — when a subagent's run
-    // began (Backend::pumpTyping).
+    // began (Backend::pumpTyping). Kept only once asked for (keepActivity:
+    // subagents' parsers), from then on.
     const std::vector<int64_t> &activity() const { return _activity; }
+    void                        keepActivity() { _keepActivity = true; }
     // Epoch micros of the latest notification that a background task (a
     // subagent: its agentId) stopped; 0 = none yet. One arrives each time it
     // stops — it may start again, on its own or for a relayed reply. A
@@ -172,6 +174,7 @@ private:
     int64_t                                  _lastMicros   = 0;
     int64_t                                  _lastActivity = 0;
     std::vector<int64_t>                     _activity;
+    bool                                     _keepActivity = false;
     std::unordered_map<std::string, int64_t> _taskStopped;        // by task id
     int                                      _openToolGroup = -1; // index into _items, -1 when none
     int         _pendingText   = -1; // index of the Pending text, -1 when none
@@ -187,8 +190,8 @@ private:
     std::string _roleName;
     std::unordered_set<std::string> _agentTypes;
     std::string                     _lineUuid; // the record being read
-    std::unordered_set<std::string>
-        _seenUuids; // every record read, so a copy's repeats are skipped
+    // Every record read (its uuid's hash), so a copy's repeats are skipped.
+    std::unordered_set<uint64_t>    _seenUuids;
 };
 
 // What msga sends the session for a reply in a subagent's thread: there is no
@@ -202,6 +205,13 @@ std::string subagentReplyPrompt(std::string_view agentId, std::string_view reply
 // and a relayed thread reply (subagentReplyPrompt) as the reply alone, its
 // subagent in `relayTo`.
 std::string typedPrompt(std::string_view prompt, std::string *relayTo = nullptr);
+
+// What someone typed, from a transcript record of type "user", as the chat
+// shows it (slash commands as "/name args", msga's additions taken off as
+// typedPrompt does); "" for what nobody typed — tool output, what Claude Code
+// tells the model, a command's terminal output, notifications and every other
+// machine-made turn. Pasted images aren't read.
+std::string promptOfRecord(const json::Value &record);
 
 // Claude Code's prompt history — history.jsonl, the list its prompt box steps
 // through with ↑ — for the sessions of folder `project`, newest first: session
@@ -240,9 +250,11 @@ bool removeFromTranscript(
 bool hasTurnSince(std::string_view path, int64_t from, int64_t afterMs = 0);
 
 // A pasted image (a prompt's base64 "image" block) saved once in msga's cache
-// (<dirs().cache>/images), named by its content hash; returns the file's path
-// ("" when it can't be saved).
-std::string cachePastedImage(std::string_view mediaType, std::string_view base64);
+// (<dirs().cache>/images), named by `key` (the record's uuid and the image's
+// place in it: found again without hashing it), else by its content hash;
+// returns the file's path ("" when it can't be saved).
+std::string
+cachePastedImage(std::string_view mediaType, std::string_view base64, std::string_view key = {});
 
 // Files sent with a message ride its prompt as "@path" mentions, which Claude
 // Code expands into attachments (an image arrives as an image) — the same in a

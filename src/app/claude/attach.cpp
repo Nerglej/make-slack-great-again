@@ -1,8 +1,8 @@
 #include "app/claude/attach.h"
 
-#include "app/claude/outputs.h" // trimmed
 #include "app/claude/pty.h"
 #include "base/file.h"
+#include "base/str.h"
 #include "base/utf8.h"
 #include "plat/plat.h"
 
@@ -75,10 +75,6 @@ void dropSelf(plat::App &app, uint64_t &linger, std::shared_ptr<T> &self) {
         app.post([self = std::move(self)] {});
 }
 
-bool startsWith(std::string_view s, std::string_view p) {
-    return s.substr(0, p.size()) == p;
-}
-
 std::string plainLines(std::string_view in) {
     std::string text;
     text.reserve(in.size());
@@ -122,23 +118,12 @@ size_t prefixUnits(std::string_view s, size_t units) {
     return i;
 }
 
-std::vector<std::string_view> splitLines(std::string_view s) {
-    std::vector<std::string_view> out;
-    for (;;) {
-        const size_t nl = s.find('\n');
-        out.push_back(s.substr(0, nl));
-        if (nl == std::string_view::npos)
-            return out;
-        s.remove_prefix(nl + 1);
-    }
-}
-
 } // namespace
 
 std::vector<std::string> AttachInput::keystrokes(std::string_view text) {
     std::vector<std::string> out;
     const std::string        plain = plainLines(text);
-    const auto               lines = splitLines(plain);
+    const auto               lines = str::split(plain, '\n');
     for (size_t i = 0; i < lines.size(); ++i) {
         std::string_view line = lines[i];
         while (!line.empty()) {
@@ -206,8 +191,8 @@ AttachInput::AttachInput(plat::App &app, std::string text, Done done)
     : _app(app), _text(std::move(text)), _done(std::move(done)), _pty(std::make_unique<Pty>(app)),
       _screen(kRows, kCols) {
     const std::string plain = plainLines(_text);
-    const auto        first = splitLines(plain).front();
-    _echo                   = std::string(trimmed(first.substr(0, prefixUnits(first, 24))));
+    const auto        first = str::split(plain, '\n').front();
+    _echo                   = std::string(str::trimSpace(first.substr(0, prefixUnits(first, 24))));
     _writes                 = keystrokes(_text);
     _pty->onOutput          = [this](std::string_view bytes) { onOutput(bytes); };
     _pty->onFinished        = [this] {
@@ -273,7 +258,8 @@ void AttachInput::settle() {
         break;
     case Phase::Echoing: {
         const auto box = findPromptBox(_screen);
-        if (!box || box->lines.empty() || !startsWith(trimmed(box->lines.front()), _echo))
+        if (!box || box->lines.empty() ||
+            !str::startsWith(str::trimSpace(box->lines.front()), _echo))
             return;
         _phase = Phase::Submitting;
         arm(_app, _limit, submitMs, [this] { onLimit(); });
@@ -287,7 +273,7 @@ void AttachInput::settle() {
         // turn it started, or whatever the box shows while the prompt is queued.
         const auto box = findPromptBox(_screen);
         if (!box || box->empty || box->lines.empty() ||
-            !startsWith(trimmed(box->lines.front()), _echo))
+            !str::startsWith(str::trimSpace(box->lines.front()), _echo))
             finish(Outcome::Sent, {});
         break;
     }
@@ -346,22 +332,6 @@ bool sameOptions(const PermissionQuestion &a, const PermissionQuestion &b) {
 }
 
 } // namespace
-
-std::shared_ptr<AttachAnswer> AttachAnswer::read(
-    plat::App                      &app,
-    const std::string              &program,
-    const std::vector<std::string> &args,
-    const std::string              &cwd,
-    Match                           match,
-    Result                          done
-) {
-    std::shared_ptr<AttachAnswer> self(
-        new AttachAnswer(app, std::move(match), 0, {}, std::move(done))
-    );
-    self->_self = self;
-    self->start(program, args, cwd);
-    return self;
-}
 
 std::shared_ptr<AttachAnswer> AttachAnswer::choose(
     plat::App                      &app,
@@ -553,9 +523,10 @@ bool questionIsFor(std::string_view needs, const PermissionQuestion &q) {
     const std::string_view     detail   = needs.substr(std::min(needs.size(), kApprove.size()));
     const size_t               colon    = detail.find(": ");
     const std::string_view     tool     = detail.substr(0, colon);
-    const std::string_view     arg =
-        colon == std::string_view::npos ? std::string_view() : trimmed(detail.substr(colon + 2));
-    const std::string text = squash(q.text);
+    const std::string_view     arg      = colon == std::string_view::npos
+                                              ? std::string_view()
+                                              : str::trimSpace(detail.substr(colon + 2));
+    const std::string          text     = squash(q.text);
     if (arg.empty()) {
         // Only the tool's label, which the question needn't repeat: "Entering
         // worktree" asks "Enter the worktree at …?" (verified 2.1.283). A word

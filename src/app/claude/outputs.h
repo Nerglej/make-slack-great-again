@@ -12,8 +12,9 @@
 // shown, under the session and the answer, so the attachment keeps showing
 // what the agent made even after the file is changed or deleted (a job's tmp
 // folder goes with the job). The copies go when the session is removed from
-// msga. An answer that names none gets an empty index: never looked through
-// again.
+// msga. An answer whose named files were none of them made in its turn gets
+// an empty index: never looked through again. One that names no file at all
+// gets nothing written (most answers): naming none, it never makes any.
 //
 // An SVG is kept as the file it is (mime image/svg+xml, no size): there is no
 // PNG encoder here to render a preview of it.
@@ -42,20 +43,17 @@ struct OutputContext {
     int64_t     date      = 0; // epoch micros: the answer
 };
 
-// The attachments of an answer: its cached copies when it has them, else the
-// files `text` names that were made during its turn, copied now. Empty when
-// there are none. File::path is the copy. Blocking (it copies): the backend
-// runs the two halves below instead.
-std::vector<model::File> outputFiles(std::string_view text, const OutputContext &ctx);
-// The copies made for the answer before, in *files (none when it named
-// none): false when they're yet to be made (makeOutputs). A small read.
-bool                     cachedOutputs(const OutputContext &ctx, std::vector<model::File> *files);
+// An answer's attachments come in two halves (File::path is the copy):
+// the copies made for the answer before, in *files (none when it made none):
+// false when they're yet to be made (makeOutputs). A small read.
+bool        cachedOutputs(const OutputContext &ctx, std::vector<model::File> *files);
 // Copies the files `text` names that were made during its turn and writes the
-// answer's index — an empty one when there are none, so it's never looked
-// for again. Reads and writes up to kMaxFiles files: off the UI thread.
-void                     makeOutputs(std::string_view text, const OutputContext &ctx);
+// answer's index — an empty one when none of them were, so it's never looked
+// for again (nothing at all when it names no file). Reads and writes up to
+// kMaxFiles files: off the UI thread.
+void        makeOutputs(std::string_view text, const OutputContext &ctx);
 // The folder holding the answer's copies and index: which answer it is.
-std::string              outputsFolder(const OutputContext &ctx);
+std::string outputsFolder(const OutputContext &ctx);
 
 // Where the copies of `convId`'s outputs live (<dirs().cache>/files/<id>),
 // and dropping them.
@@ -64,19 +62,9 @@ void        clearOutputs(std::string_view convId);
 // Drops the copies of every session not in `keep` (conversation ids).
 void        pruneOutputs(const std::vector<std::string> &keep);
 
-// ── File helpers the module shares (base/file.h lacks them) ─────────────────
+// ── A file helper the module shares (base/file.h lacks it) ──────────────────
 // `path` with '/' separators (on Windows), no "." or empty parts, ".."
 // resolved lexically, no trailing '/' but on a root.
-std::string      cleanPath(std::string_view path);
-// Deletes a file or a whole folder; symlinks are removed, never followed.
-// True when nothing is left at `path`.
-bool             removeTree(std::string_view path);
-// Last modification, epoch microseconds; -1 when missing.
-int64_t          modifiedMicros(std::string_view path);
-// Size and last modification (epoch microseconds) in one look; false (both
-// -1) when missing.
-bool             fileStat(std::string_view path, int64_t *size, int64_t *mtimeMicros);
-// Unicode whitespace off both ends.
-std::string_view trimmed(std::string_view s);
+std::string cleanPath(std::string_view path);
 
 } // namespace claude

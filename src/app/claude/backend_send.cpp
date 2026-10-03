@@ -27,10 +27,6 @@ using model::Ts;
 
 namespace {
 
-std::string trimmedCopy(std::string_view s) {
-    return std::string(str::trim(s));
-}
-
 // A teammate pill arrives as the Slack-style <@claude:role:x> token; Claude
 // knows its teammates as the bare "@claude:role:x".
 std::string unwrapPills(std::string_view text) {
@@ -38,24 +34,13 @@ std::string unwrapPills(std::string_view text) {
     out.reserve(text.size());
     size_t i = 0;
     while (i < text.size()) {
-        if (text.substr(i, 9) == "<@claude:") {
-            const size_t close = text.find('>', i);
-            if (close != std::string_view::npos) {
-                const std::string_view id = text.substr(i + 2, close - i - 2);
-                bool                   ok = id == "claude:agent";
-                if (!ok && str::startsWith(id, "claude:role:") && id.size() > 12) {
-                    ok = true;
-                    for (char c : id.substr(12))
-                        ok = ok && ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-');
-                }
-                if (ok) {
-                    out += '@';
-                    out.append(id);
-                    i = close + 1;
-                    continue;
-                }
+        if (text[i] == '<')
+            if (const size_t n = mentionAt(text, i + 1).len;
+                n && text.substr(i + 1 + n, 1) == ">") {
+                out.append(text.substr(i + 1, n));
+                i += n + 2;
+                continue;
             }
-        }
         out += text[i++];
     }
     return out;
@@ -150,7 +135,7 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
     Tracked          *target    = t; // who gets the message
     Ts                relayRoot = 0; // a reply in a subagent's thread
     std::string       shown;
-    const std::string body = trimmedCopy(text);
+    const std::string body(str::trim(text));
     const bool        btw  = body == "/btw" || str::startsWith(body, "/btw ") ||
                              str::startsWith(body, "/btw\n") || str::startsWith(body, "/btw\t");
     const auto        fail = [&](const std::string &why) {
@@ -180,7 +165,7 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
         // A side question: a branch of the session, which itself isn't
         // touched — so it can be asked while Claude is busy, or of a
         // terminal's session.
-        const std::string question = trimmedCopy(std::string_view(body).substr(4));
+        const std::string question(str::trim(std::string_view(body).substr(4)));
         if (question.empty())
             reason = tr("Type your question after /btw.");
         else if (t->info.sessionId.empty())
@@ -447,14 +432,16 @@ void Backend::readApproval(Tracked &t) {
     std::string              program;
     std::vector<std::string> argv;
     _launcher->attachCommand(t.info.sessionId, program, argv);
-    // Its done may run before read() returns (`attach` didn't start).
-    const auto ran    = std::make_shared<bool>(false);
-    const auto handle = AttachAnswer::read(
+    // Its done may run before choose() returns (`attach` didn't start).
+    const auto ran = std::make_shared<bool>(false);
+    const auto handle = AttachAnswer::choose( // option 0: the question only read
         _app,
         program,
         argv,
         t.info.cwd,
         [needs](const PermissionQuestion &q) { return questionIsFor(needs, q); },
+        0,
+        {},
         [this, alive = _alive, ran, convId, needs](
             AttachAnswer::Outcome outcome, std::optional<PermissionQuestion> q, std::string detail
         ) {
@@ -616,13 +603,14 @@ void Backend::dispatch(Tracked &t) {
                 // there, and keep it away — deleted with its worktrees if msga's.
                 if (sessionId.empty())
                     return;
-                if (fresh || startedByMsga(sessionId)) {
-                    const auto cleanup = std::make_shared<Cleanup>();
+                const auto cleanup = std::make_shared<Cleanup>();
+                if (fresh)
                     removeOwned(sessionId, {}, cwd, true, cleanup);
-                    release(cleanup);
-                } else {
-                    stopRemoved(sessionId, cwd);
-                }
+                else
+                    removeIfOwned(sessionId, {}, cwd, true, cleanup, [this, sessionId, cwd] {
+                        stopRemoved(sessionId, cwd);
+                    });
+                release(cleanup);
                 return;
             }
             t->launching = false;
@@ -811,6 +799,7 @@ void Backend::launchFork(Tracked &parent, const std::string &question, Done done
             f.announcedAsThread = true;
             f.announcedInit     = true;
             f.announced.clear();
+            ++f.announcedGen;
             scheduleSaveKnown();
             scheduleRefresh();
         }

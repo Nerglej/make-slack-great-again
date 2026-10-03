@@ -45,12 +45,9 @@ inline constexpr int kApprovalRetryMs     = 4'000;  // between them
 inline constexpr int kApprovalSlowRetryMs = 30'000; // and after them, for as long as it waits
 
 int64_t     nowMs();
-// A file's size, or -1 when there is none (yet).
-int64_t     sizeOf(const std::string &path);
-// Modification time in epoch ms (0 when missing).
-int64_t     mtimeMs(const std::string &path);
-// Birth time (or, where the OS has none, modification time) in epoch ms.
-int64_t     bornMs(const std::string &path);
+// `path` from its start into `parser`, a megabyte at a time, as far as it
+// reads now: the bytes fed (-1 when it can't be read). Blocking: a worker's.
+int64_t     feedTranscript(const std::string &path, TranscriptParser &parser);
 std::string loginName();
 // A background session stopped on a permission prompt: it reads "working" +
 // "approve Bash: …" (verified 2026-09-25). Only its terminal can answer that
@@ -106,6 +103,9 @@ struct Backend::Visible {
     uint64_t                              contentFp = 0;
     uint64_t                              fp        = 0; // fingerprint(make()): applyReactions
 
+    // An item listed unrendered (visibleList's renderFrom) has neither: `index`
+    // is the item's, Backend::realize renders it.
+    bool                  rendered() const { return own || src; }
     const model::Message &base() const { return own ? *own : (*src)[index].msg; }
 };
 
@@ -152,9 +152,27 @@ struct Backend::Tracked {
     bool                      lastBusy          = false;
     int64_t     busySinceMs = 0;     // epoch ms the turn under way began (pumpTyping); 0 = not busy
     bool        wasLive     = false; // listed or sending at the previous refresh
-    // What the list shows of it (syncMeta): only pushed when it changed.
-    std::string shownSig;
+    // Its user as last pushed (syncMeta): only pushed when it changed.
     std::string userSig;
+    // `announced` changes (announcedGen), and what syncMeta counted in it as of
+    // which change and read mark.
+    uint64_t    announcedGen = 0, countedGen = 0;
+    model::Ts   countedRead = -1;
+    uint32_t    unread = 0, mentions = 0;
+    model::Ts   latest    = 0;
+    uint64_t    syncedKey = 0; // syncKey() after the last sync
+    // Where its Subagent items are in parser.items(), as of subagentsKey
+    // (the parser's revision, items and offset then).
+    std::vector<size_t>                subagentItems;
+    uint64_t                           subagentsKey = 0;
+    // Its transcript read anew: `p` holds its first `from` bytes (none: from
+    // the start), nothing rendered of it yet.
+    void                               restart(TranscriptParser &&p = {}, int64_t from = 0);
+    // The whole transcript is being read on a worker (parseOnWorker,
+    // Backend::remove): nothing is read here meanwhile, nothing synced; then
+    // these run.
+    bool                               parsing = false;
+    std::vector<std::function<void()>> afterParse;
 
     // Sending: messages wait here while Claude is on a turn, and go out one
     // per turn. Each is shown as a message of msga's own from the moment it's

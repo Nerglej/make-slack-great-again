@@ -39,6 +39,7 @@
 #include "app/claude/attach.h"
 #include "app/claude/common.h"
 #include "app/claude/roster.h"
+#include "base/process.h"
 
 #include <cstdint>
 #include <functional>
@@ -176,6 +177,11 @@ private:
     // The program to start for the CLI with `argv` (on Windows an npm install's
     // batch script goes through cmd.exe).
     void commandFor(std::string &program, std::vector<std::string> &argv) const;
+    // The CLI with `args` run to its end on a worker (base::run); done(result)
+    // on the loop, unless the Launcher is gone by then.
+    void spawn(
+        std::vector<std::string> args, base::RunOptions o, std::function<void(base::RunResult)> done
+    );
     // Runs the CLI with `args` (stdout and stderr merged, no stdin, 60 s at
     // most): done(code, output); code -1 when it didn't start or was killed.
     void

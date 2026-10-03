@@ -4,12 +4,12 @@
 // search (see backend.h).
 #include "app/claude/backend.h"
 
-#include "app/claude/async.h"
 #include "app/claude/backend_internal.h"
 #include "app/claude/catalog.h"
 #include "app/claude/common.h"
 #include "app/claude/outputs.h"
 #include "app/claude/worktrees.h"
+#include "app/model/jobs.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/json.h"
@@ -80,17 +80,16 @@ void Backend::hideSession(const std::string &convId, const std::shared_ptr<Clean
         Hidden h;
         h.atMs                    = nowMs();
         h.transcript              = transcript;
-        h.seenSize                = sizeOf(transcript);
+        h.seenSize                = file::size(transcript);
         _hidden[t.info.sessionId] = h;
         _convOf.erase(t.info.sessionId);
-        if (startedByMsga(t.info.sessionId))
-            removeOwned(
-                t.info.sessionId,
-                t.info.jobId,
-                t.info.cwd,
-                t.info.kind == SessionInfo::Kind::Background,
-                cleanup
-            );
+        removeIfOwned(
+            t.info.sessionId,
+            t.info.jobId,
+            t.info.cwd,
+            t.info.kind == SessionInfo::Kind::Background,
+            cleanup
+        );
     }
     clearOutputs(convId); // the copies of the files it made
     forgetCaches(t);
@@ -121,7 +120,8 @@ void Backend::hideSession(const std::string &convId, const std::shared_ptr<Clean
 
 namespace {
 
-// Whether a transcript, or one of its subagents', has `needle`.
+// Whether a transcript, or one of its subagents', has `needle` (read in
+// chunks, each overlapping the last by the needle's length).
 bool transcriptHas(const std::string &path, std::string_view needle) {
     if (path.empty())
         return false;
@@ -132,25 +132,37 @@ bool transcriptHas(const std::string &path, std::string_view needle) {
         for (const auto &e : entries)
             if (!e.isDir && str::endsWith(e.name, ".jsonl"))
                 files.push_back(subagents + "/" + e.name);
-    for (const std::string &f : files) {
-        std::string bytes;
-        if (file::readAll(f, &bytes) && bytes.find(needle) != std::string::npos)
-            return true;
-    }
+    constexpr size_t kChunk = 1 << 20;
+    std::string      bytes;
+    for (const std::string &f : files)
+        for (int64_t at = 0;; at += int64_t(kChunk)) {
+            if (!file::readRange(f, at, kChunk + needle.size(), &bytes))
+                break;
+            if (bytes.find(needle) != std::string::npos)
+                return true;
+            if (bytes.size() <= kChunk)
+                break;
+        }
     return false;
 }
 
-} // namespace
+// The sessions a removed one may have been started from: every other one
+// msga knows (its session id, and its transcript — "" = to be looked for).
+struct Candidate {
+    std::string sessionId, transcript;
+};
 
-bool Backend::startedByMsga(const std::string &sessionId) const {
-    std::unordered_set<std::string> seen;
-    return startedByMsga(sessionId, seen);
-}
-
-bool Backend::startedByMsga(
-    const std::string &sessionId, std::unordered_set<std::string> &seen
-) const {
-    if (_launchedHere.count(sessionId))
+// Whether msga started session `sessionId` — or a session it started did,
+// any number of steps back (as far as 16 sessions). On a worker: it reads
+// the candidates' transcripts.
+bool startedByMsga(
+    const std::string               &sessionId,
+    const std::vector<Candidate>    &candidates,
+    const std::vector<std::string>  &launchedHere,
+    const Paths                     &paths,
+    std::unordered_set<std::string> &seen
+) {
+    if (std::find(launchedHere.begin(), launchedHere.end(), sessionId) != launchedHere.end())
         return true;
     if (seen.count(sessionId) || seen.size() > 16)
         return false;
@@ -158,23 +170,74 @@ bool Backend::startedByMsga(
     // Claude Code records no parent either: a session a session of msga's
     // started with `claude --bg` has the CLI's answer in its parent's
     // transcript, the Bash tool's output "backgrounded · <short id>".
-    const std::string needle   = "backgrounded \xc2\xb7 " + sessionId.substr(0, 8);
-    const auto        parentOf = [&](const std::string &other, const std::string &transcript) {
-        return other != sessionId && transcriptHas(transcript, needle) &&
-               startedByMsga(other, seen);
-    };
-    for (const auto &[id, t] : _sessions)
-        if (!t->info.sessionId.empty() &&
-            parentOf(
-                t->info.sessionId,
-                t->transcriptPath.empty() ? _paths.findTranscript(t->info.sessionId)
-                                          : t->transcriptPath
-            ))
-            return true;
-    for (const auto &[sid, h] : _hidden)
-        if (parentOf(sid, h.transcript))
+    const std::string needle = "backgrounded \xc2\xb7 " + sessionId.substr(0, 8);
+    for (const Candidate &c : candidates)
+        if (c.sessionId != sessionId &&
+            transcriptHas(
+                c.transcript.empty() ? paths.findTranscript(c.sessionId) : c.transcript, needle
+            ) &&
+            startedByMsga(c.sessionId, candidates, launchedHere, paths, seen))
             return true;
     return false;
+}
+
+} // namespace
+
+void Backend::removeIfOwned(
+    const std::string              &sessionId,
+    const std::string              &jobId,
+    const std::string              &cwd,
+    bool                            background,
+    const std::shared_ptr<Cleanup> &cleanup,
+    std::function<void()>           otherwise
+) {
+    if (_launchedHere.count(sessionId)) {
+        removeOwned(sessionId, jobId, cwd, background, cleanup);
+        return;
+    }
+    // Asked on a worker about the sessions msga knows as they are now: the
+    // tracked ones, then the hidden ones.
+    struct Ask {
+        std::string              sessionId, jobId, cwd;
+        bool                     background = false, owned = false;
+        std::shared_ptr<Cleanup> cleanup;
+        std::function<void()>    otherwise;
+        std::vector<Candidate>   candidates;
+        std::vector<std::string> launched;
+        Paths                    paths;
+    };
+    auto ask        = std::make_shared<Ask>();
+    ask->sessionId  = sessionId;
+    ask->jobId      = jobId;
+    ask->cwd        = cwd;
+    ask->background = background;
+    ask->cleanup    = cleanup;
+    ask->otherwise  = std::move(otherwise);
+    ask->launched.assign(_launchedHere.begin(), _launchedHere.end());
+    ask->paths = _paths;
+    for (const auto &[id, t] : _sessions)
+        if (!t->info.sessionId.empty())
+            ask->candidates.push_back({t->info.sessionId, t->transcriptPath});
+    for (const auto &[sid, h] : _hidden)
+        ask->candidates.push_back({sid, h.transcript});
+    ++cleanup->pending; // its worktrees wait for the answer
+    model::runInBackground(
+        _app,
+        [ask] {
+            std::unordered_set<std::string> seen;
+            ask->owned =
+                startedByMsga(ask->sessionId, ask->candidates, ask->launched, ask->paths, seen);
+        },
+        [this, alive = _alive, ask] {
+            if (!*alive)
+                return;
+            if (ask->owned)
+                removeOwned(ask->sessionId, ask->jobId, ask->cwd, ask->background, ask->cleanup);
+            else if (ask->otherwise)
+                ask->otherwise();
+            release(ask->cleanup);
+        }
+    );
 }
 
 void Backend::stopRemoved(const std::string &sessionId, const std::string &cwd) {
@@ -182,7 +245,7 @@ void Backend::stopRemoved(const std::string &sessionId, const std::string &cwd) 
         Hidden h;
         h.atMs             = nowMs();
         h.transcript       = _paths.findTranscript(sessionId);
-        h.seenSize         = sizeOf(h.transcript);
+        h.seenSize         = file::size(h.transcript);
         _hidden[sessionId] = h;
     }
     _hidden[sessionId].stopping = true;
@@ -196,7 +259,7 @@ void Backend::stopRemoved(const std::string &sessionId, const std::string &cwd) 
             h->second.atMs     = nowMs();
             if (h->second.transcript.empty())
                 h->second.transcript = _paths.findTranscript(sessionId);
-            h->second.seenSize = sizeOf(h->second.transcript);
+            h->second.seenSize = file::size(h->second.transcript);
             saveKnown();
         }
     });
@@ -213,7 +276,7 @@ void Backend::removeOwned(
         Hidden h;
         h.atMs             = nowMs();
         h.transcript       = _paths.findTranscript(sessionId);
-        h.seenSize         = sizeOf(h.transcript);
+        h.seenSize         = file::size(h.transcript);
         _hidden[sessionId] = h;
     }
     // The job's worktree is read now: `claude rm` drops the job.
@@ -229,20 +292,41 @@ void Backend::removeOwned(
             h->second.atMs     = nowMs();
             if (h->second.transcript.empty())
                 h->second.transcript = _paths.findTranscript(sessionId);
-            h->second.seenSize = sizeOf(h->second.transcript);
+            h->second.seenSize = file::size(h->second.transcript);
             transcript         = h->second.transcript;
             saveKnown();
         }
-        if (transcript.empty())
-            transcript = _paths.findTranscript(sessionId);
-        for (auto &ref : worktreesOfTranscript(transcript))
-            addWorktree(refs, std::move(ref));
-        for (auto &ref : refs) {
-            if (ref.origin.empty())
-                ref.origin = cwd; // where to find its repository, if it's gone
-            addWorktree(cleanup->refs, std::move(ref));
-        }
-        release(cleanup);
+        // The transcript's worktrees, read on a worker (all of it is read).
+        struct Look {
+            std::string              transcript, sessionId, cwd;
+            Paths                    paths;
+            std::vector<WorktreeRef> refs;
+            std::shared_ptr<Cleanup> cleanup;
+        };
+        auto look = std::make_shared<Look>(
+            Look{std::move(transcript), sessionId, cwd, _paths, std::move(refs), cleanup}
+        );
+        model::runInBackground(
+            _app,
+            [look] {
+                auto entered = worktreesOfTranscript(
+                    look->transcript.empty() ? look->paths.findTranscript(look->sessionId)
+                                             : look->transcript
+                );
+                for (auto &ref : entered)
+                    addWorktree(look->refs, std::move(ref));
+            },
+            [this, alive = _alive, look] {
+                if (!*alive)
+                    return;
+                for (auto &ref : look->refs) {
+                    if (ref.origin.empty())
+                        ref.origin = look->cwd; // where to find its repository, if it's gone
+                    addWorktree(look->cleanup->refs, std::move(ref));
+                }
+                release(look->cleanup);
+            }
+        );
     };
     if (!background) { // a terminal's: nothing to stop, and a live one's
         stopped();     // worktree is kept (it's in use)
@@ -312,7 +396,7 @@ void Backend::release(const std::shared_ptr<Cleanup> &cleanup) {
 
 void Backend::findAgentSessions(std::function<void(std::vector<FoundSession>)> done) {
     auto entries = std::make_shared<std::vector<CatalogEntry>>();
-    offThread(
+    model::runInBackground(
         _app,
         [entries, dir = _paths.projectsDir()] { *entries = scanCatalog(dir); },
         [this, alive = _alive, entries, done] {
@@ -321,15 +405,15 @@ void Backend::findAgentSessions(std::function<void(std::vector<FoundSession>)> d
             std::vector<FoundSession> out;
             for (const CatalogEntry &e : *entries) {
                 FoundSession f;
-                f.id            = e.sessionId;
-                f.title         = e.title;
-                f.folder        = e.cwd;
-                const Role mate = _team.resolve(e.role, e.roleName);
-                f.role          = mate.id;
-                f.avatar        = mate.avatar;
-                f.firstPrompt   = e.firstPrompt;
-                f.lastPrompt    = e.lastPrompt;
-                f.lastActiveMs  = e.modifiedMs;
+                f.id             = e.sessionId;
+                f.title          = e.title;
+                f.folder         = e.cwd;
+                const Role &mate = _team.resolve(e.role, e.roleName);
+                f.role           = mate.id;
+                f.avatar         = mate.avatar;
+                f.firstPrompt    = e.firstPrompt;
+                f.lastPrompt     = e.lastPrompt;
+                f.lastActiveMs   = e.modifiedMs;
                 if (const Tracked *t = find(convIdFor(e.sessionId))) {
                     // A /btw branch is found in its parent.
                     const Tracked *shown = asThread(*t) ? find(t->forkOf) : t;
@@ -615,7 +699,7 @@ std::vector<std::pair<std::string, std::string>> Backend::conversationStatus(Tra
     };
     add(N_("Version"), t.parser.version());
     add(N_("Session name"), shownTitle(t));
-    const Role mate = roleFor(t);
+    const Role &mate = roleFor(t);
     add(N_("Teammate"),
         mate.removed || mate.former ? i18n::arg(tr("%1 (no longer on the team)"), mate.name)
                                     : mate.name);
@@ -672,7 +756,7 @@ std::vector<std::string> Backend::folderPromptHistory(const std::string &dir) {
 // by it).
 const TranscriptItem *Backend::deletableItem(Tracked &t, Ts ts) {
     const bool drivenElsewhere = t.info.running && t.info.kind == SessionInfo::Kind::Interactive;
-    if (asThread(t) || t.info.sessionId.empty() || drivenElsewhere || busy(t) ||
+    if (t.parsing || asThread(t) || t.info.sessionId.empty() || drivenElsewhere || busy(t) ||
         awaitsApproval(t.info) || !t.outbox.empty() ||
         (t.info.running && statusHasShell(t.info.status)))
         return nullptr;
@@ -734,19 +818,47 @@ void Backend::remove(ConvRef conv, Ts ts) {
         LOG_WARN("claude", "%s can't be deleted now", model::formatTs(ts).c_str());
         return;
     }
-    std::string error;
-    if (!removeFromTranscript(t->transcriptPath, item->uuid, &error)) {
-        LOG_WARN("claude", "delete failed: %s", error.c_str());
-        reportError(error);
-        return;
-    }
-    // Read afresh: the file was rewritten, not appended to.
-    t->parser = {};
-    t->offset = 0;
-    t->rendered.clear();
-    tail(*t);
-    sync(*t);
-    syncMeta(*t);
+    // Rewritten, then read afresh (it was rewritten, not appended to), on a
+    // worker: the whole transcript goes through both. Nothing is read here
+    // meanwhile.
+    struct Job {
+        std::string      convId, path, uuid, error;
+        bool             ok = false;
+        TranscriptParser parser;
+        int64_t          offset = -1;
+    };
+    auto job    = std::make_shared<Job>();
+    job->convId = t->convId;
+    job->path   = t->transcriptPath;
+    job->uuid   = item->uuid;
+    t->parsing  = true;
+    model::runInBackground(
+        _app,
+        [job] {
+            job->ok = removeFromTranscript(job->path, job->uuid, &job->error);
+            if (job->ok)
+                job->offset = feedTranscript(job->path, job->parser);
+        },
+        [this, alive = _alive, job] {
+            if (!*alive)
+                return;
+            Tracked *t = find(job->convId);
+            if (!t)
+                return;
+            t->parsing = false;
+            if (!job->ok) {
+                LOG_WARN("claude", "delete failed: %s", job->error.c_str());
+                reportError(job->error);
+            } else {
+                t->restart(std::move(job->parser), std::max<int64_t>(job->offset, 0));
+            }
+            tail(*t);
+            sync(*t);
+            syncMeta(*t);
+            for (auto &then : std::exchange(t->afterParse, {}))
+                then();
+        }
+    );
 }
 
 // ── Reactions ───────────────────────────────────────────────────────────────

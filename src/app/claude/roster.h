@@ -128,21 +128,24 @@ strandedWorker(const Paths &paths, std::string_view sessionId, std::string_view 
 // SIGTERM, or SIGKILL when `force`. Not on Windows.
 void signalProcess(int64_t pid, bool force);
 
-// Each job's state.json as parsed when it last changed (size and mtime), so a
-// scan that runs every few seconds reads only the jobs that did.
+// Each job's state.json and each sessions/<pid>.json as parsed when it last
+// changed (size and mtime), so a scan that runs every few seconds reads only
+// the files that did.
 struct JobStateCache {
     struct Entry {
         int64_t                    size = -1, mtimeMicros = -1;
-        std::optional<SessionInfo> job; // parseBackgroundJob's
+        std::optional<SessionInfo> job; // parseBackgroundJob's / parseInteractiveSession's
     };
-    std::unordered_map<std::string, Entry> byJob; // by job folder name
+    using Files = std::unordered_map<std::string, Entry>;
+    Files byJob;     // by job folder name
+    Files bySession; // by sessions/<pid>.json path
 };
 
 // Every session currently listed by the two directories. Interactive sessions
 // whose process is gone are left out (their pid file is stale). `live`: also
 // every live process's own entry (sessions/<pid>.json, interactive sessions
-// and background workers alike). `jobs`: state.json files read before, kept
-// (and pruned) there.
+// and background workers alike). `jobs`: the files read before, kept (and
+// pruned) there.
 std::vector<SessionInfo> scanSessions(
     const Paths &paths, std::vector<SessionInfo> *live = nullptr, JobStateCache *jobs = nullptr
 );

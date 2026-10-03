@@ -94,6 +94,11 @@ std::vector<std::string> lines(const std::string &text) {
     return out;
 }
 
+int64_t mtimeMicros(const std::string &path) {
+    file::Stat st;
+    return file::stat(path, &st) ? st.mtimeMicros : -1;
+}
+
 bool contains(std::string_view hay, std::string_view needle) {
     return hay.find(needle) != std::string_view::npos;
 }
@@ -801,6 +806,11 @@ TEST("render: a teammate mention renders as a mention") {
     }));
     CHECK(mentions("```\n@claude:role:engineer\n```").empty());
     CHECK(mentions("mail x@claude:role:engineer").empty());
+    // Word boundaries are Unicode's (roles.h mentionAt): after "é" it's an
+    // address too, after a space a mention.
+    CHECK(mentions("mail caf\xC3\xA9@claude:role:engineer").empty());
+    CHECK(mentions("caf\xC3\xA9 @claude:role:engineer") == V{"claude:role:engineer"});
+    CHECK(mentions("@claude:role:engineer\xC3\xA9").empty());
     // A composer pill's raw token (older prompts hold it) is the mention too,
     // with no extra brackets.
     CHECK(mentions("start an <@claude:role:engineer> subagent") == V{"claude:role:engineer"});
@@ -971,17 +981,20 @@ TEST("backend: a session not opened yet announces its answers, once") {
 
 TEST("backend: a session title names the teammates it mentions") {
     FakeClaudeHome home;
-    home.writeSession("idle", "Ask @claude:role:engineer and @claude:agent");
+    home.writeSession(
+        "idle", "Ask @claude:role:engineer and @claude:agent, not caf\xC3\xA9@claude:role:engineer"
+    );
     home.append(prompt("hi", "2026-09-25T10:00:00.000Z"));
 
     Rig rig;
     REQUIRE(rig.listedCount() == 1);
     const ConvRef ref = rig.ref("S1");
     REQUIRE(ref != kNoConv);
-    CHECK_STR(rig.store.conversation(ref).name, "Ask @Engineer and @Generalist");
+    const std::string want = "Ask @Engineer and @Generalist, not caf\xC3\xA9@claude:role:engineer";
+    CHECK_STR(rig.store.conversation(ref).name, want);
     const model::User *u = rig.user("claude:S1");
     REQUIRE(u);
-    CHECK_STR(u->name, "Ask @Engineer and @Generalist");
+    CHECK_STR(u->name, want);
 }
 
 TEST(
@@ -1797,11 +1810,16 @@ TEST("backend: deleting a message in a session") {
     CHECK_FALSE(rig.backend->canDeleteMessage(conv, 1000001));
 
     rig.changes.clear();
-    const Ts gone = msgs[2].ts;
+    const Ts       gone  = msgs[2].ts;
+    const uint64_t read0 = rig.backend->counters().bytesRead;
     rig.backend->remove(conv, gone);
-    CHECK(std::any_of(rig.changes.begin(), rig.changes.end(), [&](const model::Change &c) {
-        return c.kind == model::ChangeKind::Remove && c.conv == conv && c.ts == gone;
+    // Rewritten and read again on a worker: none of it on the UI thread.
+    CHECK(rig.wait([&] {
+        return std::any_of(rig.changes.begin(), rig.changes.end(), [&](const model::Change &c) {
+            return c.kind == model::ChangeKind::Remove && c.conv == conv && c.ts == gone;
+        });
     }));
+    CHECK(rig.backend->counters().bytesRead == read0);
     const auto &left = rig.load(conv);
     REQUIRE(left.size() == 4);
     CHECK_STR(plain(left[1]), "Kept.");
@@ -2010,6 +2028,11 @@ TEST("backend: a live transcript is read as it grows, only what was appended") {
     CHECK(n.bytesRead == read0);
     CHECK(n.renders == renders0);
     CHECK(n.copies == copies0);
+    // A refresh that finds nothing changed in it doesn't sync it at all.
+    const uint64_t syncs0 = n.syncs;
+    home.writeSession("busy"); // the same again: watched, so a refresh
+    rig.pump(1500);
+    CHECK(n.syncs == syncs0);
 
     // Half a record, then the rest: only those bytes are read, and the
     // record shows once it's whole.
@@ -2032,6 +2055,98 @@ TEST("backend: a live transcript is read as it grows, only what was appended") {
         const auto &m = rig.messages(conv);
         return m.size() == 1 && plain(m[0]) == "fresh start";
     }));
+}
+
+TEST("backend: a long session opened renders its newest page only") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    std::string records;
+    for (int i = 0; i < 300; ++i) {
+        const int64_t ms = 1'790'000'000'000 + int64_t(i) * 10'000;
+        records += prompt("question " + str::number(i), isoAt(ms)) +
+                   assistantText("answer " + str::number(i), isoAt(ms + 1000)) +
+                   turnEnd(isoAt(ms + 2000));
+    }
+    home.append(records);
+
+    Rig           rig;
+    const ConvRef conv = rig.ref("S1");
+    const auto   &n    = rig.backend->counters();
+    REQUIRE(rig.load(conv).size() == 200); // a page of the 600 messages
+    CHECK(n.renders == 200);
+    CHECK_STR(plain(rig.messages(conv).back()), "answer 299");
+    CHECK(rig.store.conversation(conv).hasMoreBefore);
+
+    // The page before: those are rendered then.
+    bool done = false;
+    rig.backend->loadHistory(conv, rig.messages(conv).front().ts, [&](bool, const std::string &) {
+        done = true;
+    });
+    REQUIRE(rig.wait([&] { return done; }));
+    CHECK(rig.messages(conv).size() == 400);
+    CHECK(n.renders == 400);
+}
+
+TEST("backend: a long transcript found after the first scan is read on a worker") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    home.append(prompt("hi", "2026-09-25T10:00:00.000Z"));
+    Rig            rig;
+    const auto    &n     = rig.backend->counters();
+    const uint64_t read0 = n.bytesRead;
+
+    // Another session starts in a terminal, resuming a long one (> 1 MB).
+    std::string       records;
+    const std::string filler(900, 'x');
+    for (int i = 0; records.size() < (3u << 19); ++i) {
+        const int64_t ms = 1'790'000'000'000 + int64_t(i) * 10'000;
+        records += prompt("q" + str::number(i) + " " + filler, isoAt(ms)) +
+                   assistantText("a" + str::number(i), isoAt(ms + 1000)) +
+                   turnEnd(isoAt(ms + 2000));
+    }
+    writeFile(home.dir + "/projects/-src-app/S2.jsonl", records);
+    json::Writer w;
+    w.beginObject();
+    w.key("pid").value(int64_t(getpid()));
+    w.key("sessionId").value("S2");
+    w.key("cwd").value("/src/app");
+    w.key("status").value("idle");
+    w.key("entrypoint").value("cli");
+    w.endObject();
+    file::writeAtomic(home.dir + "/sessions/2.json", w.str());
+
+    REQUIRE(rig.wait([&] { return rig.listed("S2"); }));
+    const ConvRef conv = rig.ref("S2");
+    REQUIRE(rig.load(conv).size() == 200);
+    CHECK_STR(plain(rig.messages(conv).back()).substr(0, 1), "a");
+    CHECK(n.bytesRead == read0); // all of it read on the worker
+    // Its history is no news: nothing to read, no badge.
+    CHECK(rig.store.conversation(conv).unread == 0);
+}
+
+TEST("backend: a transcript under a non-ASCII folder is read") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    // Not -src-app: the session's transcript is found by its id.
+    writeFile(
+        home.dir + "/projects/-home-j\xC3\xB6ran-app/S1.jsonl",
+        prompt("hej", "2026-09-25T10:00:00.000Z") +
+            assistantText("Hej Jöran!", "2026-09-25T10:00:01.000Z") +
+            turnEnd("2026-09-25T10:00:02.000Z")
+    );
+    Rig           rig;
+    const ConvRef conv = rig.ref("S1");
+    REQUIRE(conv != kNoConv);
+    const auto &msgs = rig.load(conv);
+    REQUIRE(msgs.size() == 2);
+    CHECK_STR(plain(msgs[1]), "Hej Jöran!");
+    // …and it's followed as it grows (its size and time looked at each tick).
+    appendFile(
+        home.dir + "/projects/-home-j\xC3\xB6ran-app/S1.jsonl",
+        prompt("again", "2026-09-25T10:01:00.000Z")
+    );
+    home.writeSession("busy");
+    CHECK(rig.wait([&] { return rig.messages(conv).size() == 3; }));
 }
 
 TEST("backend: a subagent's thread follows its transcript, reading what it appends") {
@@ -2088,7 +2203,7 @@ TEST("backend: known-sessions.json is written only when what it says changes") {
     REQUIRE(conv != kNoConv);
     CHECK(rig.wait([&] { return file::exists(known); }));
     rig.pump(2500); // the first scan's save, if one is still to come
-    const int64_t written = modifiedMicros(known);
+    const int64_t written = mtimeMicros(known);
     REQUIRE(written > 0);
 
     // Refreshes that change nothing msga keeps write nothing.
@@ -2098,11 +2213,11 @@ TEST("backend: known-sessions.json is written only when what it says changes") {
     }
     home.writeSession("idle");
     rig.pump(3000); // past the save timer
-    CHECK(modifiedMicros(known) == written);
+    CHECK(mtimeMicros(known) == written);
 
     // Something it keeps changes: written.
     rig.backend->setStarred(conv, true);
-    CHECK(rig.wait([&] { return modifiedMicros(known) != written; }));
+    CHECK(rig.wait([&] { return mtimeMicros(known) != written; }));
     CHECK(contains(readText(known), "\"starred\":true"));
 }
 
@@ -2137,7 +2252,15 @@ printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
     const std::string parent           = "aaaa1111-0000-4000-8000-000000000001";
     const std::string child            = "bbbb2222-0000-4000-8000-000000000002";
     const std::string other            = "cccc3333-0000-4000-8000-000000000003";
+    const std::string helper           = "dddd4444-0000-4000-8000-000000000004";
     const std::string parentTranscript = home.dir + "/projects/-src-app/" + parent + ".jsonl";
+    // …and one of its subagents ran `claude --bg`, which started `helper`.
+    writeFile(
+        Paths::subagentTranscript(parentTranscript, "agent7"),
+        "{\"type\":\"user\",\"timestamp\":\"2026-09-25T10:00:02.000Z\",\"message\":{\"role\":"
+        "\"user\",\"content\":[{\"tool_use_id\":\"t2\",\"type\":\"tool_result\",\"content\":"
+        "\"backgrounded \xc2\xb7 dddd4444\\n  claude agents\"}]}}\n"
+    );
     // The session msga started ran `claude --bg`, which started `child`.
     writeFile(
         parentTranscript,
@@ -2148,7 +2271,7 @@ printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
     );
     std::vector<int64_t> workers;
     int                  n = 0;
-    for (const std::string &sid : {parent, child, other}) {
+    for (const std::string &sid : {parent, child, other, helper}) {
         const std::string short8 = sid.substr(0, 8);
         home.writeJob(
             short8,
@@ -2183,7 +2306,7 @@ printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
     };
 
     Rig rig(Credentials{cli});
-    REQUIRE(rig.listedCount() == 3);
+    REQUIRE(rig.listedCount() == 4);
 
     // Started elsewhere: it only leaves the list.
     rig.backend->leave(rig.ref(other));
@@ -2201,6 +2324,16 @@ printf '%s\n' "$*" >> "$CLAUDE_CONFIG_DIR/calls.log"
     CHECK(isProcessAlive(workers[2]));
     CHECK(!contains(home.text("calls.log"), "stop"));
     CHECK(rmCalls() == 1);
+
+    // Started by a subagent of msga's session: deleted too. Which it is was
+    // found by reading transcripts on a worker, none of it on the UI thread.
+    const uint64_t read0 = rig.backend->counters().bytesRead;
+    rig.backend->leave(rig.ref(helper));
+    CHECK_FALSE(rig.listed(helper)); // gone from the list at once
+    REQUIRE(rig.wait([&] { return contains(home.text("calls.log"), "rm dddd4444"); }, 5000));
+    CHECK(rig.wait([&] { return !isProcessAlive(workers[3]); }, 16000));
+    CHECK(rig.backend->counters().bytesRead == read0);
+    CHECK(rmCalls() == 2);
 }
 
 TEST("backend: removing a session msga started deletes every worktree it used") {

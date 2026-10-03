@@ -6,6 +6,8 @@
 #include <cstring>
 
 #ifdef _WIN32
+#include "base/winstr.h"
+
 #include <thread>
 #include <windows.h>
 #else
@@ -33,21 +35,9 @@ using CreatePseudoConsoleFn = HRESULT(WINAPI *)(COORD, HANDLE, HANDLE, DWORD, HP
 using ClosePseudoConsoleFn  = void(WINAPI *)(HPCON_);
 constexpr DWORD_PTR kAttributePseudoConsole = 0x00020016; // PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
 
-std::wstring wide(std::string_view s) {
-    std::wstring w(
-        size_t(MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0)), L'\0'
-    );
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), int(w.size()));
-    return w;
-}
-
-std::wstring nativeSeparators(std::wstring s) {
-    std::replace(s.begin(), s.end(), L'/', L'\\');
-    return s;
-}
-
 // CommandLineToArgvW rules: quotes around anything with blanks or quotes,
-// backslashes doubled only before a quote.
+// backslashes doubled only before a quote. (base/process.cpp has the same
+// rules for base::run, not exported.)
 std::wstring quoteArg(const std::wstring &a) {
     const bool plain = a.find_first_of(L" \t\n\v\"") == std::wstring::npos;
     if (!a.empty() && plain)
@@ -169,9 +159,9 @@ bool Pty::start(
         _error = "UpdateProcThreadAttribute failed";
         return false;
     }
-    std::wstring cmd = quoteArg(nativeSeparators(wide(program)));
+    std::wstring cmd = quoteArg(base::widePath(program));
     for (const std::string &a : args)
-        cmd += L' ' + quoteArg(wide(a));
+        cmd += L' ' + quoteArg(base::wide(a));
     // Our environment, with TERM for the program: a block of "K=V\0" strings.
     std::wstring envBlock;
     if (wchar_t *env = GetEnvironmentStringsW()) {
@@ -182,7 +172,7 @@ bool Pty::start(
     }
     envBlock.append(L"TERM=xterm-256color").push_back(L'\0');
     envBlock.push_back(L'\0');
-    const std::wstring dir = nativeSeparators(wide(cwd));
+    const std::wstring dir = base::widePath(cwd);
     const BOOL         ok  = CreateProcessW(
         nullptr,
         cmd.data(),

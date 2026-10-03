@@ -1,7 +1,6 @@
-// Blocking work (a CLI run, a directory scan, a git command) off the UI
-// thread: each call runs on a short-lived worker thread and hands its result
-// to the loop with plat::App::post. Callbacks run on the UI thread, never
-// re-entrantly from inside the call.
+// A CLI run (a git command, `claude …`) off the UI thread, on a
+// model::runInBackground worker; its result goes to the loop. Callbacks run
+// on the UI thread, never re-entrantly from inside the call.
 //
 // Nothing is cancelled: a caller that may be gone by then guards its callback
 // (a shared alive flag, as SlackBackend does).
@@ -29,11 +28,8 @@ void runAsync(
     RunDone                  done
 );
 
-// work() on a worker thread, then then() on the loop.
-void offThread(plat::App &app, std::function<void()> work, std::function<void()> then);
-
-// The app is shutting down: results still to come are dropped, never posted
-// to a loop that may be gone. Call before the plat::App is destroyed.
+// The app is shutting down: model::stopBackground (other work off the UI
+// thread goes through model::runInBackground directly).
 void stopAsync();
 
 } // namespace claude

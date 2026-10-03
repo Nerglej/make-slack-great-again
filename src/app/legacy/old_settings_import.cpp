@@ -125,33 +125,6 @@ void windowGeometry(std::string_view b, Settings *s) {
     s->maximized   = maximized;
 }
 
-std::string lower(std::string s) {
-    for (char &c : s)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c + 32);
-    return s;
-}
-
-// Percent-decoding: "%3A" → ':' (malformed escapes stay as they are).
-std::string percentDecoded(std::string_view s) {
-    const auto hex = [](char c) {
-        return c >= '0' && c <= '9'   ? c - '0'
-               : c >= 'a' && c <= 'f' ? c - 'a' + 10
-               : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                      : -1;
-    };
-    std::string out;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size() && hex(s[i + 1]) >= 0 && hex(s[i + 2]) >= 0) {
-            out += char(hex(s[i + 1]) << 4 | hex(s[i + 2]));
-            i += 2;
-        } else {
-            out += s[i];
-        }
-    }
-    return out;
-}
-
 bool isKnownService(std::string_view key) {
     return str::startsWith(key, "slack:") || str::startsWith(key, "claude-code:");
 }
@@ -288,7 +261,7 @@ void importOldSettings(
     constexpr std::string_view kZen = "zenMode/";
     for (auto it = old.lower_bound(kZen); it != old.end() && str::startsWith(it->first, kZen); ++it)
         if (it->second.toBool(false))
-            s->zenWorkspaces.push_back(percentDecoded(it->first.substr(kZen.size())));
+            s->zenWorkspaces.push_back(str::percentDecode(it->first.substr(kZen.size())));
     s->lastAttachDir = at(appStore, "composer/lastAttachDir").text();
 }
 
@@ -376,7 +349,8 @@ void importOldWorkspaceIcons(const Map &old, const std::string &iconDir) {
             continue;
         // The new name: <lower(id)>-<ms>.img (shell_dialogs.cpp's iconFiles).
         const std::string to = file::join(
-            iconDir, str::concat({lower(r.id), "-", str::number(base::nowMicros() / 1000), ".img"})
+            iconDir,
+            str::concat({str::asciiLower(r.id), "-", str::number(base::nowMicros() / 1000), ".img"})
         );
         if (!file::copy(from, to))
             LOG_WARN("legacy", "could not copy the workspace icon %s", from.c_str());

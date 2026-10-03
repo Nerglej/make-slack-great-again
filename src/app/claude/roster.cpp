@@ -1,6 +1,5 @@
 #include "app/claude/roster.h"
 
-#include "app/claude/outputs.h"
 #include "base/file.h"
 #include "base/json.h"
 #include "base/process.h"
@@ -48,21 +47,9 @@ int64_t isoToMs(std::string_view iso) {
     return base::parseIsoMicros(iso) / 1000;
 }
 
-std::string userHome() {
-#ifdef _WIN32
-    std::string home = base::env("USERPROFILE");
-    for (char &c : home)
-        if (c == '\\')
-            c = '/';
-    return home;
-#else
-    return base::env("HOME");
-#endif
-}
-
 std::string configDir() {
     const std::string env = base::env("CLAUDE_CONFIG_DIR");
-    return env.empty() ? userHome() + "/.claude" : env;
+    return env.empty() ? base::homeDir() + "/.claude" : env;
 }
 
 // The *.json files directly in `dir`, as full paths.
@@ -413,13 +400,48 @@ void applyWorker(SessionInfo &job, const SessionInfo &worker) {
         job.name = worker.name;
 }
 
+namespace {
+
+// `path` parsed with `parse`, or as it was the last time when its size and
+// modification time are the same (kept in `seen`, from `old` when there is one).
+std::optional<SessionInfo> cachedParse(
+    const std::string &key,
+    const std::string &path,
+    std::optional<SessionInfo> (*parse)(std::string_view),
+    JobStateCache::Files *old,
+    JobStateCache::Files &seen
+) {
+    if (!old)
+        return parse(readSmallFile(path));
+    JobStateCache::Entry e;
+    file::Stat           st;
+    if (file::stat(path, &st)) {
+        e.size        = st.size;
+        e.mtimeMicros = st.mtimeMicros;
+    }
+    const auto was = old->find(key);
+    if (was != old->end() && e.size >= 0 && was->second.size == e.size &&
+        was->second.mtimeMicros == e.mtimeMicros)
+        e.job = std::move(was->second.job);
+    else
+        e.job = parse(readSmallFile(path));
+    std::optional<SessionInfo> s = e.job;
+    seen.emplace(key, std::move(e));
+    return s;
+}
+
+} // namespace
+
 std::vector<SessionInfo>
 scanSessions(const Paths &paths, std::vector<SessionInfo> *live, JobStateCache *cache) {
     std::vector<SessionInfo>                     out;
     std::unordered_map<std::string, SessionInfo> workers;      // background workers, by session id
     std::unordered_map<std::string, SessionInfo> workersOfJob; // …and by job, when they name it
+    JobStateCache seen; // what the cache keeps: the files still there
     for (const std::string &f : jsonFiles(paths.sessionsDir())) {
-        auto s = parseInteractiveSession(readSmallFile(f));
+        auto s = cachedParse(
+            f, f, parseInteractiveSession, cache ? &cache->bySession : nullptr, seen.bySession
+        );
         if (!s || !isProcessAlive(s->pid))
             continue;
         if (live)
@@ -436,26 +458,16 @@ scanSessions(const Paths &paths, std::vector<SessionInfo> *live, JobStateCache *
     const std::string           jobsDir = paths.jobsDir();
     std::vector<file::DirEntry> jobs;
     file::listDir(jobsDir, &jobs);
-    JobStateCache seen; // what the cache keeps: the jobs still there
     for (const auto &d : jobs) {
         if (!d.isDir)
             continue;
-        const std::string          state = str::concat({jobsDir, "/", d.name, "/state.json"});
-        std::optional<SessionInfo> s;
-        if (cache) {
-            JobStateCache::Entry e;
-            fileStat(state, &e.size, &e.mtimeMicros);
-            const auto old = cache->byJob.find(d.name);
-            if (old != cache->byJob.end() && e.size >= 0 && old->second.size == e.size &&
-                old->second.mtimeMicros == e.mtimeMicros)
-                e.job = old->second.job;
-            else
-                e.job = parseBackgroundJob(readSmallFile(state));
-            s = e.job;
-            seen.byJob.emplace(d.name, std::move(e));
-        } else {
-            s = parseBackgroundJob(readSmallFile(state));
-        }
+        std::optional<SessionInfo> s = cachedParse(
+            d.name,
+            str::concat({jobsDir, "/", d.name, "/state.json"}),
+            parseBackgroundJob,
+            cache ? &cache->byJob : nullptr,
+            seen.byJob
+        );
         if (!s)
             continue;
         // A session both listed as interactive and as a job (a job attached in a
@@ -483,7 +495,9 @@ scanSessions(const Paths &paths, std::vector<SessionInfo> *live, JobStateCache *
 bool isFolderTrusted(std::string_view dir) {
     const std::string env = base::env("CLAUDE_CONFIG_DIR");
     std::string       data;
-    if (!file::readAll(env.empty() ? userHome() + "/.claude.json" : env + "/.claude.json", &data))
+    if (!file::readAll(
+            env.empty() ? base::homeDir() + "/.claude.json" : env + "/.claude.json", &data
+        ))
         return false;
     json::Document doc;
     if (!doc.parse(std::move(data), nullptr))

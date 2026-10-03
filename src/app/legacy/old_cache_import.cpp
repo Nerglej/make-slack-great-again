@@ -190,15 +190,10 @@ std::vector<std::string> readLines(const std::string &path) {
     std::vector<std::string> out;
     if (!file::readAll(path, &text))
         return out;
-    for (size_t at = 0; at < text.size();) {
-        size_t end = text.find('\n', at);
-        if (end == std::string::npos)
-            end = text.size();
-        if (const std::string_view line = str::trim(std::string_view(text).substr(at, end - at));
-            !line.empty())
+    str::Splitter lines(text, '\n');
+    for (std::string_view line; lines.next(&line);)
+        if (line = str::trim(line); !line.empty())
             out.emplace_back(line);
-        at = end + 1;
-    }
     return out;
 }
 

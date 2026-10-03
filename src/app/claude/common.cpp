@@ -20,14 +20,7 @@ const Dirs &dirs() {
 }
 
 std::string homeRelative(std::string_view path) {
-#ifdef _WIN32
-    std::string home = base::env("USERPROFILE");
-    for (char &c : home)
-        if (c == '\\')
-            c = '/';
-#else
-    const std::string home = base::env("HOME");
-#endif
+    const std::string home = base::homeDir();
     if (!home.empty() && path.substr(0, home.size()) == home &&
         (path.size() == home.size() || path[home.size()] == '/'))
         return "~" + std::string(path.substr(home.size()));

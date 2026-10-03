@@ -790,7 +790,9 @@ TEST("terminal: a permission question is read, then answered by its option") {
     };
 
     auto read = run([&](AttachAnswer::Result done) {
-        return AttachAnswer::read(*app, fakeAttachProgram(), {}, {}, isRm, std::move(done));
+        return AttachAnswer::choose(
+            *app, fakeAttachProgram(), {}, {}, isRm, 0, {}, std::move(done)
+        );
     });
     REQUIRE(read.outcome);
     CHECK(*read.outcome == AttachAnswer::Outcome::Done);
@@ -814,12 +816,14 @@ TEST("terminal: a permission question is read, then answered by its option") {
     // Another session's question: not this one.
     auto notThis = run([&](AttachAnswer::Result done) {
         AttachInput::setAttachTimeoutMs(1500);
-        return AttachAnswer::read(
+        return AttachAnswer::choose(
             *app,
             fakeAttachProgram(),
             {},
             {},
             [](const PermissionQuestion &q) { return questionIsFor("approve Bash: git push", q); },
+            0,
+            {},
             std::move(done)
         );
     });

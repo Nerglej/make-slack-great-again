@@ -523,6 +523,7 @@ TEST("transcript: the subagent types a session offers are read") {
 
 TEST("transcript: a background task's stop notifications are noted") {
     TranscriptParser p;
+    p.keepActivity(); // as a subagent's parser does
     // Queued, delivered mid-turn, delivered as a turn of its own: the latest counts.
     p.feed(taskStopped("agent42", "2026-09-25T10:00:05.000Z"));
     CHECK(p.taskStoppedAt("agent42") == 1790330405000000);

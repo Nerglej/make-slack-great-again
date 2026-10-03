@@ -28,14 +28,6 @@ bool isExecutable(const std::string &path) {
 #endif
 }
 
-std::string homeDir() {
-#ifdef _WIN32
-    return base::env("USERPROFILE");
-#else
-    return base::env("HOME");
-#endif
-}
-
 std::string nativeSeparators(std::string path) {
 #ifdef _WIN32
     for (char &c : path)
@@ -80,8 +72,8 @@ std::string findClaudeExecutable() {
         if (std::string p = base::findExecutable(n); !p.empty())
             return p;
     // A GUI app often starts with a thinner PATH than a login shell, so also
-    // try where the installers put the binary.
-    const std::string        home = homeDir();
+    // try where the installers put the binary ('/'-separated home, see below).
+    const std::string        home = base::homeDir();
     std::vector<std::string> extra;
     if (!home.empty()) {
         extra.push_back(home + "/.local/bin");
@@ -96,7 +88,9 @@ std::string findClaudeExecutable() {
 #endif
     for (const char *n : names)
         for (const std::string &dir : extra) {
-            const std::string p = file::join(dir, n);
+            // Native separators: cmd.exe, which starts an npm install's
+            // claude.cmd (Launcher), takes a '/' for a switch.
+            const std::string p = nativeSeparators(file::join(dir, n));
             if (isExecutable(p))
                 return p;
         }

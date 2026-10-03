@@ -16,17 +16,6 @@
 #include <cstring>
 #include <unordered_set>
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#else
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
-
 namespace claude {
 
 namespace {
@@ -61,17 +50,9 @@ std::string_view prettyTypeOf(std::string_view name, std::string_view mime) {
     return "File";
 }
 
-std::string homeDir() {
-#ifdef _WIN32
-    return cleanPath(base::env("USERPROFILE"));
-#else
-    return base::env("HOME");
-#endif
-}
-
 std::string expandHome(std::string_view token) {
     if (str::startsWith(token, "~/"))
-        return str::concat({homeDir(), token.substr(1)});
+        return str::concat({base::homeDir(), token.substr(1)});
     return std::string(token);
 }
 
@@ -182,45 +163,6 @@ bool copyInto(
     return true;
 }
 
-#ifdef _WIN32
-std::wstring wide(std::string_view s) {
-    std::wstring w;
-    if (s.empty())
-        return w;
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    w.resize(size_t(n));
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    for (auto &c : w)
-        if (c == L'/')
-            c = L'\\';
-    return w;
-}
-
-bool removeTreeW(const std::wstring &path) {
-    const DWORD a = GetFileAttributesW(path.c_str());
-    if (a == INVALID_FILE_ATTRIBUTES)
-        return true;
-    if (a & FILE_ATTRIBUTE_READONLY)
-        SetFileAttributesW(path.c_str(), a & ~DWORD(FILE_ATTRIBUTE_READONLY));
-    if (!(a & FILE_ATTRIBUTE_DIRECTORY))
-        return DeleteFileW(path.c_str());
-    if (!(a & FILE_ATTRIBUTE_REPARSE_POINT)) { // a junction or link: only itself goes
-        WIN32_FIND_DATAW d;
-        HANDLE           h = FindFirstFileW((path + L"\\*").c_str(), &d);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                const wchar_t *n = d.cFileName;
-                if (n[0] == L'.' && (!n[1] || (n[1] == L'.' && !n[2])))
-                    continue;
-                removeTreeW(path + L"\\" + n);
-            } while (FindNextFileW(h, &d));
-            FindClose(h);
-        }
-    }
-    return RemoveDirectoryW(path.c_str());
-}
-#endif
-
 } // namespace
 
 std::string cleanPath(std::string_view in) {
@@ -265,92 +207,6 @@ std::string cleanPath(std::string_view in) {
     if (out.empty())
         out = ".";
     return out;
-}
-
-bool removeTree(std::string_view path) {
-#ifdef _WIN32
-    return removeTreeW(wide(path)) || !file::exists(path);
-#else
-    const std::string p(path);
-    struct stat       st;
-    if (::lstat(p.c_str(), &st) != 0)
-        return true; // nothing there
-    if (!S_ISDIR(st.st_mode))
-        return ::unlink(p.c_str()) == 0;
-    if (DIR *d = ::opendir(p.c_str())) {
-        while (const dirent *e = ::readdir(d)) {
-            const char *n = e->d_name;
-            if (n[0] == '.' && (!n[1] || (n[1] == '.' && !n[2])))
-                continue;
-            removeTree(file::join(p, n));
-        }
-        ::closedir(d);
-    }
-    return ::rmdir(p.c_str()) == 0;
-#endif
-}
-
-int64_t modifiedMicros(std::string_view path) {
-#ifdef _WIN32
-    WIN32_FILE_ATTRIBUTE_DATA d;
-    if (!GetFileAttributesExW(wide(path).c_str(), GetFileExInfoStandard, &d))
-        return -1;
-    // FILETIME: 100 ns ticks since 1601.
-    const uint64_t ft =
-        (uint64_t(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime;
-    return int64_t(ft / 10) - 11644473600LL * 1000000;
-#else
-    struct stat st;
-    if (::stat(std::string(path).c_str(), &st) != 0)
-        return -1;
-#ifdef __APPLE__
-    return int64_t(st.st_mtimespec.tv_sec) * 1000000 + st.st_mtimespec.tv_nsec / 1000;
-#else
-    return int64_t(st.st_mtim.tv_sec) * 1000000 + st.st_mtim.tv_nsec / 1000;
-#endif
-#endif
-}
-
-bool fileStat(std::string_view path, int64_t *size, int64_t *mtimeMicros) {
-    *size        = -1;
-    *mtimeMicros = -1;
-#ifdef _WIN32
-    WIN32_FILE_ATTRIBUTE_DATA d;
-    if (!GetFileAttributesExW(wide(path).c_str(), GetFileExInfoStandard, &d))
-        return false;
-    const uint64_t ft =
-        (uint64_t(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime;
-    *mtimeMicros = int64_t(ft / 10) - 11644473600LL * 1000000;
-    *size        = int64_t((uint64_t(d.nFileSizeHigh) << 32) | d.nFileSizeLow);
-#else
-    struct stat st;
-    if (::stat(std::string(path).c_str(), &st) != 0)
-        return false;
-    *size = int64_t(st.st_size);
-#ifdef __APPLE__
-    *mtimeMicros = int64_t(st.st_mtimespec.tv_sec) * 1000000 + st.st_mtimespec.tv_nsec / 1000;
-#else
-    *mtimeMicros = int64_t(st.st_mtim.tv_sec) * 1000000 + st.st_mtim.tv_nsec / 1000;
-#endif
-#endif
-    return true;
-}
-
-std::string_view trimmed(std::string_view s) {
-    size_t b = 0, e = s.size();
-    while (b < e) {
-        size_t i = b;
-        if (!utf8::isSpace(utf8::decode(s, i)))
-            break;
-        b = i;
-    }
-    while (e > b) {
-        size_t p = utf8::prevBoundary(s, e), i = p;
-        if (!utf8::isSpace(utf8::decode(s, i)))
-            break;
-        e = p;
-    }
-    return s.substr(b, e - b);
 }
 
 std::vector<std::string> mentionedFiles(std::string_view text, std::string_view cwd) {
@@ -449,13 +305,17 @@ bool cachedOutputs(const OutputContext &ctx, std::vector<model::File> *files) {
 void makeOutputs(std::string_view text, const OutputContext &ctx) {
     if (ctx.convId.empty() || ctx.messageKey.empty() || dirs().cache.empty())
         return;
+    const std::vector<std::string> named = mentionedFiles(text, ctx.cwd);
+    if (named.empty())
+        return; // names no file (most answers): nothing to write down, cheap to look again
     const std::string        dir = messageDir(ctx);
     std::vector<std::string> made;
-    for (const std::string &path : mentionedFiles(text, ctx.cwd)) {
-        const int64_t mtime = modifiedMicros(path);
-        if (mtime < ctx.turnStart - kSlackMicros || mtime > ctx.date + kSlackMicros)
+    for (const std::string &path : named) {
+        file::Stat st;
+        if (!file::stat(path, &st) || st.mtimeMicros < ctx.turnStart - kSlackMicros ||
+            st.mtimeMicros > ctx.date + kSlackMicros)
             continue; // made before this turn, or changed since the answer
-        if (file::size(path) > kMaxFileBytes)
+        if (st.size > kMaxFileBytes)
             continue;
         made.push_back(path);
         if (int(made.size()) == kMaxFiles)
@@ -472,22 +332,13 @@ void makeOutputs(std::string_view text, const OutputContext &ctx) {
     file::writeAtomic(file::join(dir, kIndex), w.take());
 }
 
-std::vector<model::File> outputFiles(std::string_view text, const OutputContext &ctx) {
-    std::vector<model::File> files;
-    if (!cachedOutputs(ctx, &files)) {
-        makeOutputs(text, ctx);
-        cachedOutputs(ctx, &files);
-    }
-    return files;
-}
-
 std::string outputsDir(std::string_view convId) {
     return str::concat({dirs().cache, "/files/", safeName(convId)});
 }
 
 void clearOutputs(std::string_view convId) {
     if (!convId.empty() && !dirs().cache.empty())
-        removeTree(outputsDir(convId));
+        file::removeTree(outputsDir(convId));
 }
 
 void pruneOutputs(const std::vector<std::string> &keep) {
@@ -501,7 +352,7 @@ void pruneOutputs(const std::vector<std::string> &keep) {
     file::listDir(root, &entries);
     for (const file::DirEntry &e : entries)
         if (e.isDir && !kept.count(e.name))
-            removeTree(file::join(root, e.name));
+            file::removeTree(file::join(root, e.name));
 }
 
 } // namespace claude

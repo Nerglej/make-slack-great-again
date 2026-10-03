@@ -74,7 +74,7 @@ TEST("worktrees: the worktrees a session used are found in its records") {
     CHECK((seen[1] == WorktreeRef{"/r/w/c", "wt-c", ""}));
     CHECK((seen[2] == WorktreeRef{"/r/w/d", "wt-d", ""}));
     CHECK(worktreesOfTranscript(dir + "/none.jsonl").empty());
-    removeTree(dir);
+    file::removeTree(dir);
 
     CHECK(pathWithin("/r/w/b/src", "/r/w/b"));
     CHECK(pathWithin("/r/w/b", "/r/w/b/"));
@@ -225,5 +225,5 @@ TEST("worktrees: removing a session deletes every worktree it used, and only tho
     reapWorktrees(*app, {}, nullptr, [&](std::vector<std::string>) { empty = true; });
     CHECK_FALSE(empty);
     CHECK(waitFor(*app, [&] { return empty; }, 5'000));
-    removeTree(work);
+    file::removeTree(work);
 }

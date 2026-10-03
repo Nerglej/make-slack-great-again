@@ -175,5 +175,5 @@ TEST("catalog: every session is found, newest first, a big one read at its ends"
 
     CatalogEntry missing;
     CHECK_FALSE(readCatalogEntry(projects + "/nope.jsonl", missing));
-    removeTree(root);
+    file::removeTree(root);
 }

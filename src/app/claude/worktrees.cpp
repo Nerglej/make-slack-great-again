@@ -2,6 +2,7 @@
 
 #include "app/claude/async.h"
 #include "app/claude/outputs.h"
+#include "app/model/jobs.h"
 #include "base/file.h"
 #include "base/json.h"
 #include "base/log.h"
@@ -147,9 +148,9 @@ void deleteFolder(ReapPtr r, const std::string &mainDir, const List &list, const
         pruneThenBranch(r, mainDir, list, ref);
         return;
     }
-    offThread(
+    model::runInBackground(
         *r->app,
-        [path = ref.path] { removeTree(path); },
+        [path = ref.path] { file::removeTree(path); },
         [r, mainDir, list, ref] { pruneThenBranch(r, mainDir, list, ref); }
     );
 }
@@ -323,10 +324,8 @@ bool worktreeInUse(const Paths &paths, std::string_view path) {
 
 std::vector<WorktreeEntry> parseWorktreeList(std::string_view porcelain) {
     std::vector<WorktreeEntry> out;
-    while (!porcelain.empty()) {
-        const size_t     nl   = porcelain.find('\n');
-        std::string_view line = porcelain.substr(0, nl);
-        porcelain = nl == std::string_view::npos ? std::string_view() : porcelain.substr(nl + 1);
+    str::Splitter              lines(porcelain, '\n');
+    for (std::string_view line; lines.next(&line);) {
         if (!line.empty() && line.back() == '\r')
             line.remove_suffix(1);
         if (str::startsWith(line, "worktree "))

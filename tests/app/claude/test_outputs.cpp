@@ -24,7 +24,7 @@ struct TempDirs {
         setDirs({root + "/data", root + "/cache"});
     }
     ~TempDirs() {
-        removeTree(root);
+        file::removeTree(root);
         setDirs({});
     }
 };
@@ -55,6 +55,17 @@ const char kSvg[] = R"(<svg xmlns="http://www.w3.org/2000/svg" width="240" heigh
 
 void setModified(const std::string &path, int64_t micros) {
     base::test::setModifiedTime(path, micros / 1000000);
+}
+
+// An answer's attachments as the backend gets them: the copies made before,
+// else made now.
+std::vector<model::File> outputFiles(std::string_view text, const OutputContext &ctx) {
+    std::vector<model::File> files;
+    if (!cachedOutputs(ctx, &files)) {
+        makeOutputs(text, ctx);
+        cachedOutputs(ctx, &files);
+    }
+    return files;
 }
 
 } // namespace
@@ -203,5 +214,17 @@ TEST("outputs: paths are cleaned (separators, empty parts, . and ..)") {
     CHECK_STR(cleanPath("a/../../b"), "../b");
     CHECK_STR(cleanPath("./"), ".");
     CHECK_STR(str::simplified("  fix \t the\nbuild "), "fix the build");
-    CHECK_STR(trimmed("  x y \n"), "x y");
+}
+
+TEST("outputs: an answer that names no file writes nothing down") {
+    TempDirs      tmp;
+    OutputContext ctx;
+    ctx.convId     = "outputs-test";
+    ctx.messageKey = "u3";
+    ctx.date       = base::nowMicros();
+    ctx.turnStart  = ctx.date - 60'000'000;
+    makeOutputs("Done: the build passes now.", ctx);
+    std::vector<model::File> cached;
+    CHECK_FALSE(cachedOutputs(ctx, &cached)); // looked for again, cheaply, next time
+    CHECK_FALSE(file::exists(outputsFolder(ctx)));
 }

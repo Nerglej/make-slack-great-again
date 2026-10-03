@@ -1,7 +1,7 @@
 #include "app/claude/transcript.h"
 
 #include "app/claude/common.h"
-#include "app/claude/outputs.h" // trimmed, cleanPath
+#include "app/claude/outputs.h" // cleanPath
 #include "app/claude/roles.h"
 
 #include "base/crypto.h"
@@ -12,6 +12,7 @@
 #include "base/utf8.h"
 
 #include <algorithm>
+#include <mutex>
 
 namespace claude {
 namespace {
@@ -23,21 +24,16 @@ bool isSpace(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
 }
 
-// Unicode whitespace off both ends.
-std::string_view trim(std::string_view s) {
-    return trimmed(s);
-}
-
 bool isDigit(char c) {
     return c >= '0' && c <= '9';
 }
 
 // The first line, trimmed, at most `maxLen` code points ("…" marks a cut).
 std::string oneLine(std::string_view in, size_t maxLen = 100) {
-    std::string_view s = trim(in);
+    std::string_view s = str::trimSpace(in);
     std::string      out;
     if (const size_t nl = s.find('\n'); nl != std::string_view::npos)
-        out = str::concat({trim(s.substr(0, nl)), " …"});
+        out = str::concat({str::trimSpace(s.substr(0, nl)), " …"});
     else
         out = std::string(s);
     if (utf8::countCodePoints(out) > maxLen) {
@@ -59,7 +55,7 @@ std::string_view tagContent(std::string_view s, std::string_view tag) {
         return {};
     const size_t from = a + open.size();
     const size_t b    = s.find(close, from);
-    return trim(b == std::string_view::npos ? s.substr(from) : s.substr(from, b - from));
+    return str::trimSpace(b == std::string_view::npos ? s.substr(from) : s.substr(from, b - from));
 }
 
 // "<abc-def>" at the start: a tag Claude Code wraps its injections in.
@@ -79,7 +75,7 @@ bool startsWithTag(std::string_view s) {
 // What a typed prompt shows as — empty for the system text Claude Code records
 // as "user" turns (command output, notifications, reminders, interruptions).
 std::string cleanPrompt(std::string_view raw) {
-    const std::string_view s = trim(raw);
+    const std::string_view s = str::trimSpace(raw);
     if (s.empty())
         return {};
     if (str::startsWith(s, "<command-name>")) {
@@ -123,7 +119,7 @@ std::string stripAnsi(std::string_view s) {
 // A local command's output ("<local-command-stdout>…</local-command-stdout>"),
 // terminal colours stripped, into *out; false when `raw` isn't command output.
 bool commandOutput(std::string_view raw, std::string *out) {
-    const std::string_view s = trim(raw);
+    const std::string_view s = str::trimSpace(raw);
     for (const std::string_view tag : {"local-command-stdout", "local-command-stderr"}) {
         if (s.size() < tag.size() + 2 || s[0] != '<' || s.substr(1, tag.size()) != tag ||
             s[tag.size() + 1] != '>')
@@ -233,7 +229,7 @@ std::string summarizeToolInput(std::string_view toolName, const json::Value &inp
     if (s.empty()) {
         // Anything else: its first string argument says the most.
         for (const json::Value v : input)
-            if (v.isString() && !trim(v.str()).empty()) {
+            if (v.isString() && !str::trimSpace(v.str()).empty()) {
                 s = v.str();
                 break;
             }
@@ -245,7 +241,7 @@ std::string summarizeToolInput(std::string_view toolName, const json::Value &inp
 
 void TranscriptParser::feed(std::string_view bytes) {
     const auto line = [this](std::string_view l) {
-        l = trim(l);
+        l = str::trimSpace(l);
         if (l.empty())
             return;
         handleLine(l);
@@ -376,7 +372,7 @@ bool TranscriptParser::addPeerMessage(const json::Value &origin, int64_t micros,
     } else {
         item.peerName = std::string(origin["name"].str());
     }
-    item.text = std::string(trim(text));
+    item.text = std::string(str::trimSpace(text));
     if (item.text.empty())
         return true; // nothing to show, but still nobody's prompt
     if (newTurn)
@@ -392,7 +388,7 @@ bool TranscriptParser::addPeerMessage(const json::Value &origin, int64_t micros,
 
 void TranscriptParser::addCommandOutput(std::string_view output, int64_t micros) {
     closeToolGroup();
-    const std::string_view text = trim(output);
+    const std::string_view text = str::trimSpace(output);
     if (!text.empty()) {
         TranscriptItem item;
         item.kind = TranscriptItem::Kind::AssistantText;
@@ -416,7 +412,7 @@ void TranscriptParser::noteTaskStopped(std::string_view taskId, int64_t micros) 
 
 void TranscriptParser::noteTaskNotification(std::string_view text, int64_t micros) {
     // Only a notification itself: its <result> may quote anything.
-    if (micros <= 0 || !str::startsWith(trim(text), "<task-notification>"))
+    if (micros <= 0 || !str::startsWith(str::trimSpace(text), "<task-notification>"))
         return;
     constexpr std::string_view kOpen = "<task-id>", kClose = "</task-id>";
     for (size_t at = text.find(kOpen); at != std::string_view::npos; at = text.find(kOpen, at)) {
@@ -425,7 +421,7 @@ void TranscriptParser::noteTaskNotification(std::string_view text, int64_t micro
         if (end == std::string_view::npos)
             break;
         if (end > at && text.substr(end, kClose.size()) == kClose)
-            noteTaskStopped(trim(text.substr(at, end - at)), micros);
+            noteTaskStopped(str::trimSpace(text.substr(at, end - at)), micros);
         at = end;
     }
 }
@@ -439,12 +435,12 @@ void TranscriptParser::handleLine(std::string_view line) {
     _lineUuid                   = o["uuid"].str();
     // A copy of a session starts with the records it was copied from, same
     // uuids and all — the ones read already, from the session it continues.
-    if (!_lineUuid.empty() && !_seenUuids.insert(_lineUuid).second)
+    if (!_lineUuid.empty() && !_seenUuids.insert(crypto::fnv1a(_lineUuid)).second)
         return;
     const int64_t micros = base::parseIsoMicros(o["timestamp"].str());
     if (micros > _lastActivity)
         _lastActivity = micros;
-    if (micros > 0)
+    if (micros > 0 && _keepActivity)
         _activity.push_back(micros);
 
     if (const std::string_view v = o["version"].str(); !v.empty())
@@ -459,7 +455,7 @@ void TranscriptParser::handleLine(std::string_view line) {
         return;
     }
     if (type == "ai-title") {
-        _aiTitle = trim(o["aiTitle"].str());
+        _aiTitle = str::trimSpace(o["aiTitle"].str());
         return;
     }
     if (type == "system") {
@@ -534,7 +530,7 @@ void TranscriptParser::handleUser(
     if (o["isMeta"].boolean()) {
         // /context also writes its report as markdown for the model, right
         // after the terminal drawing: that reads far better here.
-        const std::string_view md = trim(content.str());
+        const std::string_view md = str::trimSpace(content.str());
         if (_commandOutput >= 0 && _commandOutput == int(_items.size()) - 1 && !md.empty() &&
             md[0] != '<') {
             _items[size_t(_commandOutput)].text = md;
@@ -595,7 +591,14 @@ void TranscriptParser::handleUser(
                 // A pasted image rides the prompt as base64.
                 const json::Value src = b["source"];
                 if (src["type"].str() == "base64") {
-                    std::string path = cachePastedImage(src["media_type"].str(), src["data"].str());
+                    // Keyed by the record: read again (a copy, a re-read), it's
+                    // found without hashing megabytes of base64.
+                    const std::string key =
+                        _lineUuid.empty()
+                            ? std::string()
+                            : str::concat({_lineUuid, "-", str::number(int64_t(images.size()))});
+                    std::string path =
+                        cachePastedImage(src["media_type"].str(), src["data"].str(), key);
                     if (!path.empty())
                         images.push_back(std::move(path));
                 }
@@ -608,7 +611,7 @@ void TranscriptParser::handleUser(
         addCommandOutput(output, micros); // e.g. what /compact says when done
         return;
     }
-    const bool isCommand = str::startsWith(trim(text), "<command-name>");
+    const bool isCommand = str::startsWith(str::trimSpace(text), "<command-name>");
     text                 = cleanPrompt(text);
     // /compact records the prompt as typed, then again as the command it ran.
     if (isCommand && !_items.empty() && _items.back().kind == TranscriptItem::Kind::UserPrompt &&
@@ -617,7 +620,7 @@ void TranscriptParser::handleUser(
     if (!images.empty()) {
         // The images are attached; drop their "[Image #3]" placeholders (and
         // the "[Image: source: …]" lines some clients add) from the text.
-        text = std::string(trim(dropImagePlaceholders(text)));
+        text = std::string(str::trimSpace(dropImagePlaceholders(text)));
     }
     if (text.empty() && images.empty())
         return;
@@ -650,7 +653,7 @@ void TranscriptParser::handleAssistant(
     // Claude Code's stand-in answer to a turn that asked for none (after a
     // command's output) — not something Claude said.
     if (model == "<synthetic>" && content.size() == 1 &&
-        trim(content[0]["text"].str()) == "No response requested.")
+        str::trimSpace(content[0]["text"].str()) == "No response requested.")
         return;
     // An API error Claude Code reports as the answer (verified 2.1.283):
     // {"type":"assistant","isApiErrorMessage":true,"error":"authentication_failed",…}.
@@ -661,7 +664,7 @@ void TranscriptParser::handleAssistant(
     for (const json::Value b : content) {
         const std::string_view bt = b["type"].str();
         if (bt == "text") {
-            const std::string_view text = trim(b["text"].str());
+            const std::string_view text = str::trimSpace(b["text"].str());
             if (text.empty())
                 continue;
             // Two texts in a row within one turn: the earlier one wasn't the end.
@@ -689,7 +692,7 @@ void TranscriptParser::handleAssistant(
             openTurn(micros);
             if (call.name == "SubagentHandback") {
                 // A subagent's report to its session: its answer, in its thread.
-                const std::string_view report = trim(input["message"].str());
+                const std::string_view report = str::trimSpace(input["message"].str());
                 if (!report.empty()) {
                     closeToolGroup();
                     TranscriptItem item;
@@ -731,13 +734,20 @@ void TranscriptParser::handleAssistant(
 
 // ── Images and files ────────────────────────────────────────────────────────
 
-std::string cachePastedImage(std::string_view mediaType, std::string_view base64) {
+std::string
+cachePastedImage(std::string_view mediaType, std::string_view base64, std::string_view key) {
     if (!str::startsWith(mediaType, "image/") || base64.empty())
         return {};
     std::string ext = str::asciiLower(mediaType.substr(6));
     if (ext == "jpeg")
         ext = "jpg";
-    const std::string path = str::concat({dirs().cache, "/images/", sha1Hex(base64), ".", ext});
+    const bool        usable = !key.empty() && std::all_of(key.begin(), key.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+               c == '-';
+    });
+    const std::string path   = str::concat(
+        {dirs().cache, "/images/", usable ? std::string(key) : sha1Hex(base64), ".", ext}
+    );
     if (file::exists(path))
         return path;
     std::string bytes;
@@ -771,7 +781,7 @@ std::string withAttachments(std::string_view text, const std::vector<std::string
         const bool spaced = std::any_of(p.begin(), p.end(), isSpace);
         mentions += spaced ? str::concat({"@\"", p, "\""}) : str::concat({"@", p});
     }
-    const std::string_view body = trim(text);
+    const std::string_view body = str::trimSpace(text);
     // A slash command keeps its place at the start (it goes by `--resume`,
     // never typed, so the mentions may end it).
     if (str::startsWith(body, "/"))
@@ -817,7 +827,7 @@ std::string takeAttachments(std::string_view prompt, std::vector<std::string> *p
         i = at + 1 + end;
     }
     text.append(prompt.substr(std::min(i, prompt.size())));
-    const std::string_view trimmed = trim(text);
+    const std::string_view trimmed = str::trimSpace(text);
     return trimmed == kFilesOnly ? std::string() : std::string(trimmed);
 }
 
@@ -848,6 +858,35 @@ std::string typedPrompt(std::string_view prompt, std::string *relayTo) {
     return std::string(t.substr(j + mid.size()));
 }
 
+std::string promptOfRecord(const json::Value &o) {
+    // As TranscriptParser::handleUser reads a prompt, less what it keeps
+    // track of besides.
+    if (o["isMeta"].boolean() || o["isCompactSummary"].boolean())
+        return {};
+    const json::Value origin = o["origin"];
+    if (origin.isObject() && origin["kind"].str() != "human")
+        return {};
+    const json::Value content = o["message"]["content"];
+    std::string       text;
+    if (content.isString()) {
+        text = content.str();
+    } else {
+        for (const json::Value b : content) {
+            const std::string_view bt = b["type"].str();
+            if (bt == "tool_result")
+                return {};
+            if (bt == "text") {
+                if (!text.empty())
+                    text += '\n';
+                text += b["text"].str();
+            }
+        }
+    }
+    if (std::string output; commandOutput(text, &output))
+        return {};
+    return takeAttachments(typedPrompt(cleanPrompt(text)), nullptr);
+}
+
 std::string subagentReplyPrompt(std::string_view agentId, std::string_view reply) {
     return str::concat(
         {"The user replied in the thread of subagent ",
@@ -859,27 +898,29 @@ std::string subagentReplyPrompt(std::string_view agentId, std::string_view reply
     );
 }
 
-std::vector<std::string> promptHistory(
-    std::string_view historyPath,
-    std::string_view pasteDir,
-    std::string_view project,
-    std::string_view sessionId,
-    int              max
-) {
-    std::string data;
-    if (!file::readAll(historyPath, &data))
-        return {};
-    const std::string        dir = cleanPath(project);
-    std::vector<std::string> own, others; // oldest first
-    const std::string_view   all(data);
-    for (size_t start = 0; start < all.size();) {
-        size_t nl = all.find('\n', start);
-        if (nl == std::string_view::npos)
-            nl = all.size();
-        const std::string_view line = all.substr(start, nl - start);
-        start                       = nl + 1;
-        if (line.find("\"display\"") == std::string_view::npos)
-            continue; // skip the parse for what can't be an entry
+namespace {
+
+// A history entry of one folder: whose, and the prompt as it comes back.
+struct HistoryEntry {
+    std::string sessionId, text;
+};
+
+// Folder `dir`'s entries in `data` (history.jsonl), oldest first.
+std::vector<HistoryEntry>
+historyOf(std::string_view data, std::string_view pasteDir, const std::string &dir) {
+    // A line of the folder's has its name in it, as JSON writes it: lines
+    // without are never parsed (most, in a history of many folders).
+    std::string            needle;
+    const std::string_view name = file::baseName(dir);
+    if (!name.empty() && name.find_first_of("\"\\") == std::string_view::npos &&
+        std::none_of(name.begin(), name.end(), [](char c) { return uint8_t(c) < 0x20; }))
+        needle = name;
+    std::vector<HistoryEntry> out;
+    str::Splitter             lines(data, '\n');
+    for (std::string_view line; lines.next(&line);) {
+        if (line.find("\"display\"") == std::string_view::npos ||
+            (!needle.empty() && line.find(needle) == std::string_view::npos))
+            continue; // skip the parse for what can't be an entry of the folder
         json::Document doc;
         if (!doc.parse(std::string(line), nullptr))
             continue;
@@ -919,12 +960,57 @@ std::vector<std::string> promptHistory(
         }
         // A pasted image can't come back as text, and "[Image #1]" alone would
         // only confuse the next prompt.
-        text = std::string(trim(typedPrompt(dropImageMarks(text))));
-        if (text.empty())
-            continue;
-        const bool mine = !sessionId.empty() && o["sessionId"].str() == sessionId;
-        (mine ? own : others).push_back(std::move(text));
+        text = std::string(str::trimSpace(typedPrompt(dropImageMarks(text))));
+        if (!text.empty())
+            out.push_back({std::string(o["sessionId"].str()), std::move(text)});
     }
+    return out;
+}
+
+// What history.jsonl said last of the folder asked for last: read again only
+// for another folder, or once it changed (its size or modification time).
+struct HistoryCache {
+    std::mutex                lock;
+    std::string               path, pasteDir, folder;
+    int64_t                   size = -1, mtime = -1;
+    std::vector<HistoryEntry> entries;
+};
+
+HistoryCache &historyCache() {
+    static HistoryCache cache;
+    return cache;
+}
+
+} // namespace
+
+std::vector<std::string> promptHistory(
+    std::string_view historyPath,
+    std::string_view pasteDir,
+    std::string_view project,
+    std::string_view sessionId,
+    int              max
+) {
+    file::Stat st;
+    if (!file::stat(historyPath, &st))
+        return {};
+    const std::string           dir   = cleanPath(project);
+    HistoryCache               &cache = historyCache();
+    std::lock_guard<std::mutex> hold(cache.lock);
+    if (cache.path != historyPath || cache.pasteDir != pasteDir || cache.folder != dir ||
+        cache.size != st.size || cache.mtime != st.mtimeMicros) {
+        std::string data;
+        if (!file::readAll(historyPath, &data))
+            return {};
+        cache.path     = historyPath;
+        cache.pasteDir = pasteDir;
+        cache.folder   = dir;
+        cache.size     = st.size;
+        cache.mtime    = st.mtimeMicros;
+        cache.entries  = historyOf(data, pasteDir, dir);
+    }
+    std::vector<std::string> own, others; // oldest first
+    for (const HistoryEntry &e : cache.entries)
+        (!sessionId.empty() && e.sessionId == sessionId ? own : others).push_back(e.text);
     std::vector<std::string> out;
     for (const std::vector<std::string> *part : {&own, &others}) {
         for (auto it = part->crbegin(); it != part->crend() && int(out.size()) < max; ++it)
@@ -975,15 +1061,10 @@ bool hasTurnSince(std::string_view path, int64_t from, int64_t afterMs) {
     std::string data;
     if (!file::readRange(path, from, size_t(-1) >> 1, &data))
         return false;
-    const std::string_view all(data);
-    for (size_t start = 0; start < all.size();) {
-        size_t nl = all.find('\n', start);
-        if (nl == std::string_view::npos)
-            nl = all.size();
-        const std::string_view line = all.substr(start, nl - start);
-        start                       = nl + 1;
+    str::Splitter lines(data, '\n');
+    for (std::string_view line; lines.next(&line);) {
         json::Document doc;
-        if (!doc.parse(std::string(line), nullptr))
+        if (line.empty() || !doc.parse(std::string(line), nullptr))
             continue;
         const json::Value      rec  = doc.root();
         const std::string_view type = rec["type"].str();
@@ -1007,16 +1088,9 @@ bool removeFromTranscript(std::string_view path, std::string_view uuid, std::str
     std::string data;
     if (uuid.empty() || !file::readAll(path, &data))
         return fail(str::concat({"can't read ", path}));
-    std::vector<std::string_view> lines;
-    for (size_t start = 0; start <= data.size();) {
-        size_t nl = data.find('\n', start);
-        if (nl == std::string::npos)
-            nl = data.size();
-        lines.push_back(std::string_view(data).substr(start, nl - start));
-        start = nl + 1;
-    }
-    if (!lines.empty() && lines.back().empty())
-        lines.pop_back();
+    std::vector<std::string_view> lines = str::split(data, '\n');
+    if (lines.back().empty())
+        lines.pop_back();                           // after the last newline
     std::vector<json::Document> docs(lines.size()); // empty for a line that isn't JSON
     int                         target = -1;
     for (size_t i = 0; i < lines.size(); ++i) {

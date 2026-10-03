@@ -78,6 +78,19 @@ std::string teammateNote(
 );
 // `prompt` without the note, as the transcript has it back.
 std::string withoutTeammateNote(std::string_view prompt);
+
+// A teammate mention at text[i] (its '@'): "@claude:agent" (the Generalist)
+// or "@claude:role:<id>" ([a-z0-9-]+), standing on its own — not inside a
+// word, a path or an address (no word character nor one of "@/:.-" before
+// it), nor running on into a longer word (no word character nor '-' after
+// it). Word characters are Unicode's (\w): "café@claude:role:x" is none.
+// The one grammar for mentions: rendered, titles, the composer's pills,
+// teammateNote. A token "<@claude:…>" is this with '<' before and '>' after.
+struct Mention {
+    size_t      len = 0; // from the '@' on; 0 = no mention here
+    std::string roleId;  // "" = the Generalist (claude:agent)
+};
+Mention     mentionAt(std::string_view text, size_t i);
 // The teammate a subagent was spawned as, from its Agent call's prompt: our
 // header line (a teammateNote fallback), or a leading "Role: engineer" line
 // Claude wrote itself; "" = none.
@@ -117,8 +130,9 @@ public:
     // nullptr when unknown.
     const Role              *find(std::string_view id) const;
     // `id` as shown: a known role, a former teammate (named `nameHint`, or as
-    // noted before), or the Generalist for "".
-    Role                     resolve(std::string_view id, std::string_view nameHint = {}) const;
+    // noted before), or the Generalist for "". Valid until the team or its
+    // formers change (save, remove, restore, noteFormer).
+    const Role              &resolve(std::string_view id, std::string_view nameHint = {}) const;
     // Remembers what a transcript calls a role nobody here knows; true when
     // that's news.
     bool                     noteFormer(std::string_view id, std::string_view name);
@@ -139,9 +153,12 @@ private:
     std::string avatarFor(const Role &role) const;
     std::string newId(std::string_view name) const;
 
-    std::string                                  _dir;
-    std::vector<Role>                            _roles;
-    std::unordered_map<std::string, std::string> _formers;
+    std::string                                   _dir;
+    std::vector<Role>                             _roles;
+    std::unordered_map<std::string, std::string>  _formers;
+    // Former teammates as resolve() made them, by id + '\n' + name hint
+    // (node-based: references stay valid as more are added).
+    mutable std::unordered_map<std::string, Role> _resolved;
 };
 
 } // namespace claude

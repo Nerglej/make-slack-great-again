@@ -124,15 +124,15 @@ private:
 // terminal would: through `claude attach`, picking one of the numbered options
 // Claude Code shows (see PermissionQuestion). Which options there are is only
 // on the screen — the job's state says "approve Bash: …" and no more — so the
-// question is read first (read), and an option is picked by its number and
-// label (choose). Nothing is pressed unless the screen shows that question
+// question is read first (choose with number 0), and an option is picked by
+// its number and label. Nothing is pressed unless the screen shows that question
 // with that option: "❯" is moved onto it with the arrow keys, and Enter goes
 // only once "❯" is seen there — never a key that could pick something else.
 // Lifetime as AttachInput's.
 class AttachAnswer {
 public:
     enum class Outcome : uint8_t {
-        Done,     // read: the question is passed on; choose: answered, the question went
+        Done,     // number 0: the question is passed on; else answered, the question went
         NotReady, // nothing answered: no such question on screen, or `attach` failed
         Failed,   // Enter was pressed but the question stayed
     };
@@ -141,14 +141,8 @@ public:
     using Result =
         std::function<void(Outcome, std::optional<PermissionQuestion>, std::string detail)>;
 
-    static std::shared_ptr<AttachAnswer> read(
-        plat::App                      &app,
-        const std::string              &program,
-        const std::vector<std::string> &args,
-        const std::string              &cwd,
-        Match                           match,
-        Result                          done
-    );
+    // Option `number` ("label" on screen) picked; number 0 = nothing pressed,
+    // the question only read.
     static std::shared_ptr<AttachAnswer> choose(
         plat::App                      &app,
         const std::string              &program,

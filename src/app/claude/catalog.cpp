@@ -3,6 +3,7 @@
 #include "app/claude/outputs.h"
 #include "app/claude/roles.h"
 #include "app/claude/roster.h"
+#include "app/claude/transcript.h"
 #include "base/file.h"
 #include "base/json.h"
 #include "base/str.h"
@@ -28,58 +29,11 @@ std::string oneLine(std::string_view s) {
     return out;
 }
 
-// What someone typed, from a "user" record — not tool output, not what Claude
-// Code tells the model, not a command's terminal output. "" when it's none.
-std::string typedPrompt(json::Value o) {
-    if (o["isMeta"].boolean() || o["isCompactSummary"].boolean() || o["isSidechain"].boolean())
-        return {};
-    const json::Value origin = o["origin"];
-    if (origin.isObject() && origin["kind"].str() != "human")
-        return {};
-    const json::Value content = o["message"]["content"];
-    std::string       text;
-    if (content.isString()) {
-        text = content.str();
-    } else {
-        for (json::Value b : content) {
-            const std::string_view t = b["type"].str();
-            if (t == "tool_result")
-                return {};
-            if (t == "text") {
-                text += b["text"].str();
-                text += ' ';
-            }
-        }
-    }
-    const std::string_view     t        = trimmed(text);
-    // "<command-name>/compact</command-name>…" is how a slash command is kept.
-    constexpr std::string_view kCommand = "<command-name>";
-    if (str::startsWith(t, kCommand)) {
-        const size_t end = t.find("</command-name>");
-        return end != std::string_view::npos && end > 0
-                   ? std::string(str::trim(t.substr(kCommand.size(), end - kCommand.size())))
-                   : std::string();
-    }
-    if (str::startsWith(t, "<"))
-        return {}; // caveats, command output, task notifications
-    return oneLine(t);
-}
-
-// Calls `read` for each line of `bytes`, less the first when it may have been
-// cut (a tail).
-template <class F>
-void eachLine(std::string_view bytes, bool skipFirst, F &&read) {
-    bool first = true;
-    while (true) {
-        const size_t           nl   = bytes.find('\n');
-        const std::string_view line = bytes.substr(0, nl);
-        if (!(first && skipFirst))
-            read(line);
-        first = false;
-        if (nl == std::string_view::npos)
-            break;
-        bytes.remove_prefix(nl + 1);
-    }
+// What someone typed, from a "user" record, on one line; "" when it's none
+// (as the session's chat has it: promptOfRecord). A sidechain is a
+// subagent's, not the session's.
+std::string typedLine(const json::Value &o) {
+    return o["isSidechain"].boolean() ? std::string() : oneLine(promptOfRecord(o));
 }
 
 } // namespace
@@ -97,7 +51,7 @@ bool catalogEntryFrom(std::string_view head, std::string_view tail, CatalogEntry
         if (e.cwd.empty())
             e.cwd = o["cwd"].str();
         if (type == "user") {
-            std::string p = typedPrompt(o);
+            std::string p = typedLine(o);
             if (p.empty())
                 return;
             if (fromHead && e.firstPrompt.empty())
@@ -115,8 +69,13 @@ bool catalogEntryFrom(std::string_view head, std::string_view tail, CatalogEntry
                 e.lastPrompt = std::move(p);
         }
     };
-    eachLine(head, false, [&](std::string_view l) { read(l, true); });
-    eachLine(tail, true, [&](std::string_view l) { read(l, false); });
+    str::Splitter    headLines(head, '\n'), tailLines(tail, '\n');
+    std::string_view line;
+    while (headLines.next(&line))
+        read(line, true);
+    tailLines.next(&line); // the tail's first line may have been cut
+    while (tailLines.next(&line))
+        read(line, false);
     if (e.firstPrompt.empty() && e.lastPrompt.empty())
         return false;
     // Recorded with the first request, so near the start — a long line may be
@@ -148,7 +107,8 @@ bool readCatalogEntry(const std::string &transcriptPath, CatalogEntry &e) {
     const std::string abs = cleanPath(file::absolute(transcriptPath));
     e.sessionId           = Paths::transcriptSessionId(abs);
     e.transcriptPath      = abs;
-    e.modifiedMs          = modifiedMicros(abs) / 1000;
+    file::Stat st;
+    e.modifiedMs = file::stat(abs, &st) ? st.mtimeMicros / 1000 : 0;
     return catalogEntryFrom(head, tail, e);
 }
 
