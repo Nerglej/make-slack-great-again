@@ -4,7 +4,7 @@ A fast native Slack client built in C++, on its own platform, network and graphi
 
 ## About
 
-msga is primarily a Slack client. That is its main focus and its most complete backend. It also runs your **Claude Code** sessions: every Claude Code session on your computer shows up as a direct message with its own assistant, with a status dot, unread state and notifications. Both use the same Slack-like UI and sit side by side in the same workspace rail.
+msga is a Slack client first and foremost. Channels, DMs, threads, reactions, files and notifications all work the way you expect from Slack, in a window that starts instantly and needs a fraction of the memory of the official app. As a side feature, msga can also show your Claude Code sessions in the same workspace rail, each one as a direct message.
 
 Everything below the UI is msga's own code: a thin OS layer for windows, input and desktop services (Wayland and X11 on Linux, AppKit on macOS, Win32 on Windows), an HTTP and WebSocket client (WinHTTP on Windows, NSURLSession on macOS, msga's own client over Mbed TLS on Linux), and a CPU renderer with FreeType and HarfBuzz for text. The first goal is a small binary that uses few resources.
 
@@ -28,16 +28,16 @@ On macOS you can also install with Homebrew: `brew install --cask punarinta/msga
 
 ## Connecting to Slack
 
-Grab a [prebuilt build](#download) and you can connect Slack straight away. Click **+** (Add workspace) in the rail and choose **Slack**. There are two ways to sign in:
+Grab a [prebuilt build](https://msga.app/#download) and you can connect Slack straight away. Click **+** (Add workspace) in the rail and choose **Slack**. There are two ways to sign in:
 
 - **Slack session (recommended).** Click *Sign in with Chrome* (or Chromium, Brave, Edge or Vivaldi, whichever you have) and log in to Slack the normal way. msga picks the session up from a private, throwaway browser profile and closes the window. There is nothing to register, nothing to build and no tokens to copy, and everything runs on your own account's limits. New messages arrive by polling, as there is no live push in this mode. (Already have the Slack desktop app on Linux? *Import from local Slack* takes its session in one click. You can also paste the session cookie by hand.)
 - **Your own Slack app.** Register a free Slack app for live message push (Socket Mode), then paste its client ID, client secret and app-level token into **Settings → System → Slack connection**.
 
-Both are covered step by step in the **[Slack setup guide](docs/SETUP_SLACK.md)**. Most people want session sign-in, because it needs no setup at all.
+Both are covered step by step in the **[Slack setup guide](https://github.com/punarinta/make-slack-great-again/blob/master/docs/SETUP_SLACK.md)**. Most people want session sign-in, because it needs no setup at all.
 
 ## Connecting Claude Code
 
-Click **+** (Add workspace) in the rail and choose **Claude Code**. msga needs a working [Claude Code](https://claude.com/claude-code) install. If `claude` has never been run on this computer, run it once in a terminal first.
+Click **+** (Add workspace) in the rail and choose **Claude Code**. msga needs a working [Claude Code](https://claude.com/product/claude-code) install. If `claude` has never been run on this computer, run it once in a terminal first.
 
 msga reads the sessions from Claude Code's own state, so sessions you started in a terminal show up too (read-only while a terminal drives them). What you send from msga runs as a Claude Code background session, which keeps working if msga quits. Sessions can be started with a role from your team (the built-in specialists or teammates you add), and when you remove a session that msga started, msga cleans up its git worktrees as well.
 
@@ -47,7 +47,7 @@ You can build msga yourself, for example to bake your own Slack app keys into th
 
 ### Step 1. Add Slack app keys (optional)
 
-To build in your own Slack app's keys, follow the **[Slack setup guide](docs/SETUP_SLACK.md)**: create a Slack app with its scopes, Socket Mode and events. The guide ends by writing the keys into `credentials.cmake` (copy `credentials.cmake.example`; the file is gitignored). The same file takes an optional GIPHY key for the GIF picker. Keys pasted in **Settings → System** take precedence over the built-in ones.
+To build in your own Slack app's keys, follow the **[Slack setup guide](https://github.com/punarinta/make-slack-great-again/blob/master/docs/SETUP_SLACK.md)**: create a Slack app with its scopes, Socket Mode and events. The guide ends by writing the keys into `credentials.cmake` (copy `credentials.cmake.example`; the file is gitignored). The same file takes an optional GIPHY key for the GIF picker. Keys pasted in **Settings → System** take precedence over the built-in ones.
 
 The app version lives in `version.cmake` (tracked in git). Increment `MSGA_VERSION` there before each public release.
 
@@ -118,8 +118,8 @@ Both build scripts take the same options:
 
 `scripts/release.sh` (Linux, macOS) and `scripts\release.ps1` (Windows) make a stripped release-flags build for the machine you're on, always from a clean configure with no tests. They write to `build-release/` and print the per-module size report. `release.ps1` links the exe fully static, like the shipped one.
 
-For the source layout and the size rules, see [src/README.md](src/README.md).
+For the source layout and the size rules, see [src/README.md](https://github.com/punarinta/make-slack-great-again/blob/master/src/README.md).
 
 ## License
 
-msga is free software under the [GNU General Public License v3.0 or later](LICENSE). The third-party code it uses is listed in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+msga is free software under the [GNU General Public License v3.0 or later](https://github.com/punarinta/make-slack-great-again/blob/master/LICENSE). The third-party code it uses is listed in [THIRD_PARTY_LICENSES](https://github.com/punarinta/make-slack-great-again/blob/master/THIRD_PARTY_LICENSES).
