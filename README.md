@@ -35,6 +35,16 @@ Grab a [prebuilt build](https://msga.app/#download) and you can connect Slack st
 
 Both are covered step by step in the **[Slack setup guide](https://github.com/punarinta/make-slack-great-again/blob/master/docs/SETUP_SLACK.md)**. Most people want session sign-in, because it needs no setup at all.
 
+## Coming from slk?
+
+[slk](https://github.com/gammons/slk) is a great Slack client if you live in a terminal. If you want the same speed in a desktop window, msga is the closest thing:
+
+- **No Slack desktop app needed.** msga signs in through your browser, so the Electron app doesn't have to be installed to hold a session.
+- **Images where you expect them.** Images, animated GIFs and custom emoji are drawn in the window on every platform, whatever your terminal supports.
+- **Even smaller.** 4.3 MB on Linux, 3.8 MB on Windows, a 2.2 MB DMG on macOS. One file each.
+
+The full side-by-side is at **[slk vs msga](https://msga.app/blog/slk-vs-msga/)**.
+
 ## Connecting Claude Code
 
 Click **+** (Add workspace) in the rail and choose **Claude Code**. msga needs a working [Claude Code](https://claude.com/product/claude-code) install. If `claude` has never been run on this computer, run it once in a terminal first.
