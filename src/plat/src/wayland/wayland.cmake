@@ -9,6 +9,14 @@
 # wl_testhooks.cpp are only built with PLAT_TEST_HOOKS.
 
 pkg_check_modules(PLAT_WAYLAND REQUIRED IMPORTED_TARGET wayland-client wayland-cursor)
+# A from-source libwayland's .pc carries Cflags: -pthread (distro ones don't),
+# which would reach every target linking plat and break the test trees' shared
+# PCH under Clang. The headers don't need it; Threads::Threads links pthreads.
+get_target_property(_plat_wl_opts PkgConfig::PLAT_WAYLAND INTERFACE_COMPILE_OPTIONS)
+if(_plat_wl_opts)
+    list(REMOVE_ITEM _plat_wl_opts -pthread)
+    set_target_properties(PkgConfig::PLAT_WAYLAND PROPERTIES INTERFACE_COMPILE_OPTIONS "${_plat_wl_opts}")
+endif()
 
 if(NOT PLAT_WAYLAND_PROTOCOLS_DIR)
     pkg_get_variable(PLAT_WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
