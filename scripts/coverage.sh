@@ -63,9 +63,13 @@ fi
 # From inside the build dir, so the .gcno/.gcda compilation paths resolve.
 # --filter keeps our own sources (system headers, the FetchContent deps and
 # generated code all live outside src/); the excludes drop the vendored code in
-# src/third_party and the tests themselves.
+# src/third_party and the tests themselves. --gcov-object-directory pins gcov's
+# working directory to the build dir: without it, a gcov run that fails from
+# --root makes gcovr retry from every parent of the .gcda up to /, leaving
+# name##hash.gcov files in ~/src, ~ and wherever else gcov got to write.
 ( cd "$BUILD_DIR" && gcovr --root "$PROJECT_ROOT" \
     --gcov-executable "${GCOV[*]}" \
+    --gcov-object-directory "$BUILD_DIR" \
     --filter "${PROJECT_ROOT}/src/" \
     --exclude "${PROJECT_ROOT}/src/third_party/" \
     --exclude "${PROJECT_ROOT}/tests/" \
