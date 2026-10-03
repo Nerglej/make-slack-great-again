@@ -56,7 +56,8 @@ struct BrowseListData {
 
 class BrowseList : private BrowseListData, public ui::VirtualList {
 public:
-    using Item = BrowseListData::Item;
+    using Item                   = BrowseListData::Item;
+    static constexpr float kRowH = 60; // every row's height
     explicit BrowseList(Avatars &avatars);
     ~BrowseList() override;
 

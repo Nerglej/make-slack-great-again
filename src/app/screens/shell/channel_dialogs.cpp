@@ -55,6 +55,8 @@ private:
 
 // ── Find a channel ──────────────────────────────────────────────────────────
 
+constexpr int kVisibleRows = 6; // the lists' height, in rows
+
 class ChannelFinder final : public Dialog {
 public:
     ChannelFinder(
@@ -67,7 +69,7 @@ public:
         : Dialog(std::string(), 720), _ctx(ctx), _channel(std::move(channel)),
           _person(std::move(person)), _create(std::move(create)) {
         // A bare card: its own chrome, the lists edge to edge.
-        content()->style().spacing(0).minH = 520;
+        content()->style().spacing(0);
 
         // ── Top bar: search + Create Channel + close ──
         auto *top = content()->add<View>();
@@ -103,9 +105,9 @@ public:
             };
         content()->add<Separator>(false, C::FormDivider);
 
-        // ── The two lists ──
-        auto *stack                         = content()->add<View>();
-        stack->style().stack().flex(1).minH = 400;
+        // ── The two lists: whole rows, none cut at the bottom ──
+        auto *stack = content()->add<View>();
+        stack->style().stack().height(kVisibleRows * BrowseList::kRowH).noShrink();
         for (int i = 0; i < 2; ++i) {
             _lists[i]              = stack->add<BrowseList>(avatars);
             _lists[i]->onActivated = [this, i](const std::string &id) { activated(i, id); };

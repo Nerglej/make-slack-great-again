@@ -23,7 +23,7 @@ namespace shell {
 namespace {
 
 // The browse list's metrics.
-constexpr float kRowH = 60, kAvatar = 36, kRowPadH = 24;
+constexpr float kRowH = BrowseList::kRowH, kAvatar = 36, kRowPadH = 24;
 
 std::string lowered(std::string_view s) {
     return utf8::foldCase(s);
