@@ -1445,6 +1445,73 @@ TEST("composer: a middle click attaches the primary selection's picture or files
 #endif
 
 #ifdef MSGA_HAVE_MESSAGES
+// The heap allocations counter (test_messages.cpp, same binary).
+void   countAllocs(bool on);
+size_t testAllocs();
+
+// M11: a keystroke in the picker or the composer's ":" list neither copies
+// nor sorts the workspace's custom emoji (a Grid workspace has thousands);
+// a change of the set still shows up in both.
+TEST("pickers: typing costs nothing per custom emoji; a changed set shows up") {
+    Harness     h;
+    auto       *ep   = screens::EmojiPicker::show(*h.win, {400, 700, 20, 20}, h.ctx, nullptr);
+    const char *qs[] = {"qz", "qzx", "qzxv", "qzx", "qz", "zqx"};
+    auto        type = [&] {
+        countAllocs(true);
+        const size_t before = testAllocs();
+        for (int round = 0; round < 5; ++round)
+            for (const char *q : qs) {
+                ep->filter(q);
+                CHECK(shell::emojiCompletions(h.store, q).empty());
+            }
+        countAllocs(false);
+        return testAllocs() - before;
+    };
+    pump();
+    ep->filter("x"); // anything built lazily on a first search
+    const size_t few = type();
+    // Long names and URLs: a copy of one would allocate.
+    for (int i = 0; i < 5000; ++i) {
+        const std::string n = "workspace_party_emoji_" + std::to_string(i);
+        h.store.setCustomEmoji(n, "https://emoji.example/" + n + ".png");
+        h.store.setCustomEmoji(n + "_alias", "alias:" + n);
+    }
+    const uint64_t rev = h.store.customEmojiRevision();
+    ep->filter("x"); // the new names folded, once
+    CHECK(type() == few);
+    CHECK(h.store.customEmojiRevision() == rev);
+    // Added, removed, renamed: the next keystroke sees the new set.
+    ep->filter("party_emoji_4999");
+    REQUIRE(ep->cellCount() == 1);
+    CHECK_STR(ep->cellName(0), "workspace_party_emoji_4999");
+    h.store.setCustomEmoji("qzxv_new", "https://emoji.example/new.png");
+    ep->filter("qzxv");
+    REQUIRE(ep->cellCount() == 1);
+    CHECK_STR(ep->cellName(0), "qzxv_new");
+    auto r = shell::emojiCompletions(h.store, "qzxv");
+    REQUIRE(r.size() == 1);
+    CHECK_STR(r[0].name, "qzxv_new");
+    std::unordered_map<std::string, std::string> all = h.store.customEmoji();
+    all.erase("qzxv_new");
+    all["qzxv_renamed"] = "https://emoji.example/new.png";
+    h.store.replaceCustomEmoji(std::move(all));
+    ep->filter("qzxv");
+    REQUIRE(ep->cellCount() == 1);
+    CHECK_STR(ep->cellName(0), "qzxv_renamed");
+    r = shell::emojiCompletions(h.store, "qzxv");
+    REQUIRE(r.size() == 1);
+    CHECK_STR(r[0].name, "qzxv_renamed");
+    // The same set again (a reload) is no change.
+    const uint64_t same = h.store.customEmojiRevision();
+    h.store.replaceCustomEmoji(h.store.customEmoji());
+    h.store.setCustomEmoji("qzxv_renamed", "https://emoji.example/new.png");
+    CHECK(h.store.customEmojiRevision() == same);
+    h.win->closeAllPopups();
+    pump();
+}
+#endif
+
+#ifdef MSGA_HAVE_MESSAGES
 TEST("pickers: the emoji picks and skin tone are kept in Settings") {
     Harness h;
     auto   *ep = screens::EmojiPicker::show(*h.win, {400, 700, 20, 20}, h.ctx, nullptr);

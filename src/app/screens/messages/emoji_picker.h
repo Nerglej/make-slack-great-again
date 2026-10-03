@@ -57,10 +57,11 @@ private:
     EmojiGrid                   *_grid   = nullptr;
     std::vector<ui::Clickable *> _tabs;
     std::vector<int>             _tabSection;
-    // The workspace emoji names and their folded forms, for the search
-    // (rebuilt only when the workspace's set changes).
-    std::vector<std::pair<std::string, std::string>> _customFolded;
-    bool                                             _searching = false;
+    // The workspace emoji names folded, by Store::customEmojiImages index,
+    // for the search (rebuilt only when the workspace's set changes).
+    std::vector<std::string>     _customFolded;
+    uint64_t                     _customRev = ~uint64_t(0);
+    bool                         _searching = false;
 };
 
 } // namespace screens

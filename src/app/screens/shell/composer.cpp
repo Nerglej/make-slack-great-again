@@ -230,11 +230,7 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
     emoji::forEach([&](std::string_view n, const std::string &) {
         return consider(n, false), true;
     });
-    std::vector<std::string_view> custom;
-    for (const auto &[name, value] : store.customEmoji())
-        custom.push_back(name);
-    std::sort(custom.begin(), custom.end());
-    for (std::string_view n : custom)
+    for (std::string_view n : store.customEmojiNames())
         consider(n, true);
     std::vector<EmojiCompletion> out;
     for (auto &t : tiers)

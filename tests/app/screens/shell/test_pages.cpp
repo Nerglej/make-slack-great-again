@@ -827,9 +827,9 @@ TEST("emoji picker: the search finds what a fold-per-name search finds; recents 
     REQUIRE(ep != nullptr);
     for (const char *q : {"par", "SMILE", "Zed", "+1", "flag-", "x"}) {
         std::vector<std::string> want;
-        for (const auto &[name, image] : h.store.customEmojiImages())
-            if (utf8::containsFolded(name, q))
-                want.push_back(name);
+        for (const auto &c : h.store.customEmojiImages())
+            if (utf8::containsFolded(c.name, q))
+                want.emplace_back(c.name);
         emoji::forEach([&](std::string_view n, const std::string &) {
             if (utf8::containsFolded(n, q))
                 want.emplace_back(n);

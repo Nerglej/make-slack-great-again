@@ -172,6 +172,7 @@ TEST("slack read: connect fills users, conversations, unread, stars, emoji, grou
     if (!haveServer())
         return;
     Env e;
+    e.store.setCustomEmoji("gone", "https://e/gone.png"); // cached, since removed
     REQUIRE(e.connect());
     CHECK_STR(e.store.workspaceName, "Lumen");
     CHECK_STR(e.store.user(e.store.me).id, "UME");
@@ -209,6 +210,11 @@ TEST("slack read: connect fills users, conversations, unread, stars, emoji, grou
     CHECK(!e.store.conversation(e.conv("C1")).starred);
     REQUIRE(pumpUntil([&] { return !e.store.emojiFor("yay").image.empty(); }, 3000));
     CHECK_STR(e.store.emojiFor("yay").image, "https://e/party.png");
+    CHECK_FALSE(e.store.emojiFor("gone").resolved()); // emoji.list is the whole set
+    REQUIRE(e.store.customEmojiNames().size() == 2);
+    CHECK(e.store.customEmojiNames()[0] == "party" && e.store.customEmojiNames()[1] == "yay");
+    REQUIRE(e.store.customEmojiImages().size() == 1);
+    CHECK(e.store.customEmojiImages()[0].name == "party");
     REQUIRE(pumpUntil([&] { return e.store.myGroups.size() == 1; }, 3000));
     CHECK_STR(e.store.myGroups[0], "S1");
     REQUIRE(pumpUntil([&] { return e.be->selfPresence().loaded; }, 3000));

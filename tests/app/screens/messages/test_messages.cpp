@@ -50,17 +50,19 @@ using namespace screens;
 using Kind = MessageList::ItemKind;
 
 // Heap allocations on this thread while counting (ImageCache lookups must
-// make none). The replacement operator new serves the whole test binary.
+// make none). The replacement operator new serves the whole test binary, and
+// the other suites in it count with these too (test_shell_ui.cpp).
 namespace {
 thread_local bool   tCountAllocs = false;
 std::atomic<size_t> gAllocs{0};
-void                countAllocs(bool on) {
+} // namespace
+
+void countAllocs(bool on) {
     tCountAllocs = on;
 }
 size_t testAllocs() {
     return gAllocs.load();
 }
-} // namespace
 
 void *operator new(size_t n) {
     if (tCountAllocs)

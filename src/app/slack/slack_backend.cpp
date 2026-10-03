@@ -901,9 +901,12 @@ void SlackBackend::Read::loadEmoji() {
             LOG_WARN("slack", "emoji.list: %s", err.c_str());
             return;
         }
-        // name → image URL, or "alias:other" (resolved by the Store).
+        // name → image URL, or "alias:other" (resolved by the Store). The
+        // whole set: one removed since the last load goes.
+        std::unordered_map<std::string, std::string> all;
         for (const json::Value e : doc.root()["emoji"])
-            s.setCustomEmoji(std::string(e.key()), std::string(e.str()));
+            all.emplace(std::string(e.key()), std::string(e.str()));
+        s.replaceCustomEmoji(std::move(all));
         s.usersChanged(); // repaint: emoji in names, statuses and messages
         if (cache)
             cache->emojiChanged();

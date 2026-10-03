@@ -272,8 +272,18 @@ public:
     // ── Custom emoji ────────────────────────────────────────────────────────
     // name → image path/URL, or "alias:other".
     void setCustomEmoji(std::string name, std::string value);
-    // Every custom emoji that is an image (not an alias), sorted by name.
-    std::vector<std::pair<std::string, std::string>>    customEmojiImages() const;
+    // The whole set at once (emoji.list): a name not in it is gone.
+    void replaceCustomEmoji(std::unordered_map<std::string, std::string> all);
+    struct CustomEmoji {
+        std::string_view name, image;
+    };
+    // Every custom emoji that is an image (not an alias), sorted by name, and
+    // every name (aliases too), sorted: built once per change of the set and
+    // valid until the next one (a revision later).
+    const std::vector<CustomEmoji>      &customEmojiImages() const;
+    const std::vector<std::string_view> &customEmojiNames() const;
+    // Grows with every change of the set.
+    uint64_t                             customEmojiRevision() const { return _emojiRev; }
     // Everything set above, aliases included (the workspace cache saves it).
     const std::unordered_map<std::string, std::string> &customEmoji() const { return _customEmoji; }
     // The marks as kept (the workspace cache saves them).
@@ -312,6 +322,13 @@ private:
     std::unordered_map<std::string, ConvRef>     _convIndex;
     std::vector<std::vector<Typing>>             _typing; // by ConvRef
     std::unordered_map<std::string, std::string> _customEmoji;
+    // The sorted views of _customEmoji, rebuilt on first use after a change.
+    mutable std::vector<CustomEmoji>             _emojiImages;
+    mutable std::vector<std::string_view>        _emojiNames;
+    mutable bool                                 _emojiSorted = true;
+    uint64_t                                     _emojiRev    = 0;
+    void                                         customEmojiChanged();
+    void                                         sortCustomEmoji() const;
     std::vector<Mark>                            _mutedThreads, _reminders; // few: linear is fine
     std::vector<SavedItem>                       _saved;
     std::vector<ScheduledItem>                   _scheduled;

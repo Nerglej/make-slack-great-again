@@ -135,6 +135,7 @@ void Store::clear() {
     _convIndex.clear();
     _typing.clear();
     _customEmoji.clear();
+    customEmojiChanged();
     myGroups.clear();
     workspaceId.clear();
     workspaceName.clear();
@@ -1008,18 +1009,53 @@ const std::vector<Typing> &Store::typing(ConvRef ref) const {
     return ref < _typing.size() ? _typing[ref] : kNoTyping;
 }
 
-std::vector<std::pair<std::string, std::string>> Store::customEmojiImages() const {
-    std::vector<std::pair<std::string, std::string>> out;
-    for (const auto &[name, value] : _customEmoji)
+void Store::customEmojiChanged() {
+    _emojiSorted = false;
+    ++_emojiRev;
+    ++_textRev;
+}
+
+void Store::sortCustomEmoji() const {
+    if (_emojiSorted)
+        return;
+    _emojiSorted = true;
+    _emojiImages.clear();
+    _emojiNames.clear();
+    _emojiNames.reserve(_customEmoji.size());
+    for (const auto &[name, value] : _customEmoji) {
+        _emojiNames.push_back(name);
         if (value.compare(0, 6, "alias:") != 0)
-            out.emplace_back(name, value);
-    std::sort(out.begin(), out.end());
-    return out;
+            _emojiImages.push_back({name, value});
+    }
+    std::sort(_emojiNames.begin(), _emojiNames.end());
+    std::sort(_emojiImages.begin(), _emojiImages.end(), [](const auto &a, const auto &b) {
+        return a.name < b.name;
+    });
+}
+
+const std::vector<Store::CustomEmoji> &Store::customEmojiImages() const {
+    sortCustomEmoji();
+    return _emojiImages;
+}
+
+const std::vector<std::string_view> &Store::customEmojiNames() const {
+    sortCustomEmoji();
+    return _emojiNames;
 }
 
 void Store::setCustomEmoji(std::string name, std::string value) {
-    _customEmoji[std::move(name)] = std::move(value);
-    ++_textRev;
+    auto [it, added] = _customEmoji.try_emplace(std::move(name));
+    if (!added && it->second == value)
+        return; // a reload of the same set changes nothing
+    it->second = std::move(value);
+    customEmojiChanged();
+}
+
+void Store::replaceCustomEmoji(std::unordered_map<std::string, std::string> all) {
+    if (all == _customEmoji)
+        return;
+    _customEmoji = std::move(all);
+    customEmojiChanged();
 }
 
 Store::EmojiGlyph Store::emojiFor(std::string_view name) const {
