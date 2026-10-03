@@ -356,6 +356,18 @@ void strokeWith(Painter &p, const Path &path, const Stroke &st, uint32_t pm, con
 
 } // namespace
 
+void fillMask(const Path &path, FillRule rule, uint8_t *mask, int x, int y, int w, int h) {
+    if (path.empty() || w <= 0 || h <= 0)
+        return;
+    Painter p({nullptr, w, h, w}, 1); // only its clip and scratch rows are used
+    PainterImpl::placeTarget(p, x, y);
+    Flat f;
+    flatten(path, 1, 0, 0, &f);
+    std::vector<Seg> segs;
+    fillSegs(f, &segs);
+    PainterImpl::rasterize(p, segs, 0xffffffffu, rule, nullptr, mask);
+}
+
 void Painter::fillPath(const Path &path, Color c) {
     fillPath(path, c, FillRule::NonZero);
 }

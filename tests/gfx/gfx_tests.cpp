@@ -4,13 +4,46 @@
 #include "gfx/icons_generated.h"
 #include "gfx/internal.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 
 using namespace gfx;
+
+// Live heap bytes, for the allocation checks (svglayers). The replacement
+// operator new serves the whole test binary.
+namespace {
+constexpr size_t kHeapHeader = alignof(std::max_align_t);
+size_t           g_heapLive = 0, g_heapPeak = 0, g_heapLargest = 0;
+bool             g_heapTrack = false;
+} // namespace
+
+void *operator new(size_t n) {
+    char *p = static_cast<char *>(std::malloc(n + kHeapHeader));
+    if (!p)
+        std::abort(); // no exceptions in this build
+    std::memcpy(p, &n, sizeof n);
+    g_heapLive += n;
+    if (g_heapTrack)
+        g_heapPeak = std::max(g_heapPeak, g_heapLive), g_heapLargest = std::max(g_heapLargest, n);
+    return p + kHeapHeader;
+}
+void operator delete(void *q) noexcept {
+    if (!q)
+        return;
+    char  *p = static_cast<char *>(q) - kHeapHeader;
+    size_t n;
+    std::memcpy(&n, p, sizeof n);
+    g_heapLive -= n;
+    std::free(p);
+}
+void operator delete(void *q, size_t) noexcept {
+    operator delete(q);
+}
 
 namespace {
 
@@ -1487,19 +1520,95 @@ void testCover() {
     CHECK(!renderSvgCover("not svg", 8, 8, &r));
 }
 
+void testSvgLayers() {
+    // Group opacity and clip-path render through a layer sized to what the
+    // group paints. Opacity 0.999 and a clip covering everything composite
+    // unchanged, so the result must equal the bare content, bit for bit: a
+    // layer cut short (miter tips, square caps, nesting) would show.
+    const char *shapes[] = {
+        "<path d='M3540 2610 L3600 2500 L3660 2610' fill='none' stroke='#2060c0' "
+        "stroke-width='40' stroke-miterlimit='10'/>",
+        "<line x1='3420' y1='2420' x2='3480' y2='2440' stroke='#c02020' stroke-width='40' "
+        "stroke-linecap='square'/>",
+        "<circle cx='3700' cy='2700' r='37.3' fill='url(#g)' stroke='#208020' stroke-width='9'/>",
+    };
+    const std::string head =
+        "<svg xmlns='http://www.w3.org/2000/svg' width='4000' height='3000'>"
+        "<defs><linearGradient id='g'><stop offset='0' stop-color='#f80'/>"
+        "<stop offset='1' stop-color='#08f' stop-opacity='0.5'/></linearGradient>"
+        "<clipPath id='all'><rect width='4000' height='3000'/></clipPath></defs>";
+    std::string bareSvg = head, layeredSvg = head; // each shape in its own layers
+    for (const char *sh : shapes) {
+        bareSvg += sh;
+        layeredSvg +=
+            std::string("<g opacity='0.999'><g clip-path='url(#all)'><g opacity='0.999'>") + sh +
+            "</g></g></g>";
+    }
+    const int W = 1000, H = 750; // drawn at a quarter: the shapes sit near the far corner
+    Bitmap    bare, layered;
+    CHECK(renderSvgOwn(bareSvg + "</svg>", W, H, &bare));
+    CHECK(renderSvgOwn(layeredSvg + "</svg>", W, H, &layered));
+    CHECK(countNonZero(bare) > 1000);
+    CHECK(bare.width() == layered.width() && bare.height() == layered.height());
+    int diff = 0;
+    for (int i = 0; i < W * H && bare.width() == layered.width(); ++i)
+        diff += bare.pixels()[i] != layered.pixels()[i];
+    CHECK(diff == 0);
+
+    // Memory: a small clipped, translucent group on a large canvas allocates
+    // in proportion to the group, not the canvas (a canvas-sized layer and
+    // mask would be 48 MB each here).
+    const std::string small =
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4000 3000'>"
+        "<clipPath id='c'><circle cx='3900' cy='2900' r='40'/></clipPath>"
+        "<g opacity='0.5' clip-path='url(#c)'><rect x='3700' y='2700' width='300' height='300' "
+        "fill='red'/><rect x='3900' y='2800' width='100' height='200' fill='blue'/></g></svg>";
+    Bitmap big;
+    g_heapPeak = g_heapLive, g_heapLargest = 0, g_heapTrack = true;
+    const size_t before = g_heapLive;
+    CHECK(renderSvgOwn(small, 4000, 3000, &big));
+    g_heapTrack         = false;
+    const size_t canvas = size_t(4000) * 3000 * 4; // the output itself
+    CHECK(g_heapLargest == canvas);
+    std::printf(
+        "  layered 4000x3000 render: %zu bytes beyond the output\n", g_heapPeak - before - canvas
+    );
+    CHECK(g_heapPeak - before < canvas + 256 * 1024);
+    // Inside the circle: red, and blue covering it (not blended with it) at
+    // half opacity; outside: nothing.
+    CHECK(near(px(big, 3870, 2900), 0x80ff0000u, 3));
+    CHECK(near(px(big, 3920, 2900), 0x800000ffu, 3));
+    CHECK(px(big, 3800, 2800) == 0 && px(big, 3920, 2950) == 0);
+}
+
 struct Group {
     const char *name;
     void (*fn)();
 };
 const Group kGroups[] = {
-    {"blend", testBlend},           {"fill", testFill},       {"clip", testClip},
-    {"roundrect", testRoundRect},   {"path", testPath},       {"stroke", testStroke},
-    {"bitmap", testBitmap},         {"blit", testBlit},       {"gradient", testGradient},
-    {"shadow", testShadow},         {"decode", testDecode},   {"anim", testAnim},
-    {"animbudget", testAnimBudget}, {"snapped", testSnapped}, {"icons", testIcons},
-    {"paint2", testPaint2},         {"svg", testSvg},         {"svgsize", testSvgSize},
-    {"svgfuzz", testSvgFuzz},       {"cover", testCover},     {"resizeaxes", testResizeAxes},
+    {"blend", testBlend},
+    {"fill", testFill},
+    {"clip", testClip},
+    {"roundrect", testRoundRect},
+    {"path", testPath},
+    {"stroke", testStroke},
+    {"bitmap", testBitmap},
+    {"blit", testBlit},
+    {"gradient", testGradient},
+    {"shadow", testShadow},
+    {"decode", testDecode},
+    {"anim", testAnim},
+    {"animbudget", testAnimBudget},
+    {"snapped", testSnapped},
+    {"icons", testIcons},
+    {"paint2", testPaint2},
+    {"svg", testSvg},
+    {"svgsize", testSvgSize},
+    {"svgfuzz", testSvgFuzz},
+    {"cover", testCover},
+    {"resizeaxes", testResizeAxes},
     {"scratch", testScratch},
+    {"svglayers", testSvgLayers},
 };
 
 } // namespace

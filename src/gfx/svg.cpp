@@ -12,7 +12,9 @@
 // opacities, fill-rule, clip-rule, stroke width/caps/joins/miterlimit/dashes,
 // transform, display/visibility, linear + radial gradients (units, transform,
 // spread, href inheritance; the radial focal point is ignored), clipPath
-// (userSpaceOnUse). Group opacity and clipping render through a layer.
+// (userSpaceOnUse). Group opacity and clipping render through a layer the
+// size of what the group paints (a geometry-only pass measures it first),
+// clipped through an 8-bit coverage mask.
 // Skipped: text, images, filters, masks, patterns, markers, CSS <style>.
 //
 // Limits: 4 MB input, 200k nodes, depth 64, 8 nested uses, 3 nested layers,
@@ -821,6 +823,11 @@ struct Ctx {
     int      w, h;
     float    vw, vh; // viewport, for percentages
     int      visits = 0, useDepth = 0, layers = 0;
+    // The current target's rect in output pixels (a layer covers only part).
+    int      tx = 0, ty = 0, tw = w, th = h;
+    // Measuring: paint nothing, grow the device-space bounds instead.
+    bool     measure = false;
+    float    bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
 
     [[gnu::noinline]] float lx(sv s, float def = 0) const { return length(s, vw, def); }
     [[gnu::noinline]] float ly(sv s, float def = 0) const { return length(s, vh, def); }
@@ -998,6 +1005,16 @@ bool gradient(Ctx &c, int n, const Builder &bb, const Affine &ctm, float opacity
     return !g->stops.empty();
 }
 
+// Grows the measured bounds by the path's points (curves stay inside their
+// control points), `pad` around them.
+void grow(Ctx &c, const Path &path, float pad) {
+    const std::vector<float> &v = path.pts();
+    for (size_t i = 0; i + 1 < v.size(); i += 2) {
+        c.bx0 = std::fmin(c.bx0, v[i] - pad), c.bx1 = std::fmax(c.bx1, v[i] + pad);
+        c.by0 = std::fmin(c.by0, v[i + 1] - pad), c.by1 = std::fmax(c.by1, v[i + 1] + pad);
+    }
+}
+
 void fillOrStroke(Ctx &c, const Builder &b, const Style &s, const Affine &ctm, bool fill) {
     const Paint &pt = fill ? s.fill : s.stroke;
     const float  op = (fill ? s.fillOp : s.strokeOp) * s.alpha;
@@ -1016,6 +1033,10 @@ void fillOrStroke(Ctx &c, const Builder &b, const Style &s, const Affine &ctm, b
         for (int i = 0; i < s.ndash; ++i)
             dash[i] = s.dash[i] * k;
         st.dashes = dash, st.dashCount = s.ndash, st.dashOffset = s.dashOff * k;
+    }
+    if (c.measure) { // miter tips reach miterLimit × half width, square caps √2 ×
+        grow(c, b.path, fill ? 0 : st.width * 0.5f * std::fmax(st.miterLimit, 1.5f));
+        return;
     }
     if (pt.kind == 1) {
         const Color col = withAlpha(pt.c, op);
@@ -1081,16 +1102,14 @@ void renderChildren(Ctx &c, int n, const Style &s, const Affine &ctm, int depth)
         renderNode(c, k, s, ctm, depth + 1);
 }
 
-// Coverage of a clipPath as the alpha of a white bitmap (union of its shapes).
-bool clipMask(Ctx &c, int clip, const Affine &ctm, Bitmap *mask) {
+// Coverage of a clipPath (the union of its shapes) into the 8-bit `mask` for
+// the output rect (mx, my, mw × mh); without a mask, measures its bounds.
+// False when unsupported: render unclipped.
+bool clipMask(Ctx &c, int clip, const Affine &ctm, uint8_t *mask, int mx, int my, int mw, int mh) {
     if (c.d.get(clip, KClipUnits) == "objectBoundingBox")
-        return false; // not supported: render unclipped
-    *mask = Bitmap(c.w, c.h);
-    Painter      mp(mask->view(), 1);
-    Painter     *saved = c.p;
-    const Affine m     = mul(ctm, transform(c.d.get(clip, KTransform)));
-    c.p                = &mp;
-    Style base;
+        return false;
+    const Affine m = mul(ctm, transform(c.d.get(clip, KTransform)));
+    Style        base;
     for (int k = c.d.nodes[size_t(clip)].first; k >= 0; k = c.d.nodes[size_t(k)].next) {
         int shape = k;
         if (c.d.nodes[size_t(k)].tag == TUse) { // a use of a plain shape
@@ -1108,54 +1127,22 @@ bool clipMask(Ctx &c, int clip, const Affine &ctm, Bitmap *mask) {
             b.m =
                 mul(mul(b.m, Affine{1, 0, 0, 1, c.lx(c.d.get(k, KX)), c.ly(c.d.get(k, KY))}),
                     transform(c.d.get(shape, KTransform)));
-        if (shapeGeometry(c, shape, b))
-            mp.fillPath(b.path, 0xffffffffu, s.clipRule);
+        if (!shapeGeometry(c, shape, b))
+            continue;
+        if (mask)
+            fillMask(b.path, s.clipRule, mask, mx, my, mw, mh);
+        else
+            grow(c, b.path, 0);
     }
-    c.p = saved;
     return true;
 }
 
-void renderNode(Ctx &c, int n, const Style &parent, const Affine &ctm, int depth) {
+// The element's own content: what a layer, if any, captures. Returns the
+// transform its clip-path applies in.
+Affine renderBody(Ctx &c, int n, const Style &s, Affine m, int depth) {
     const Doc  &d   = c.d;
     const Node &nd  = d.nodes[size_t(n)];
     const Tag   tag = Tag(nd.tag);
-    if (++c.visits > kMaxVisits)
-        return;
-    if (tag == TOther || tag == TDefs || tag == TLinear || tag == TRadial || tag == TStop ||
-        tag == TClip || tag == TSymbol || depth > kMaxDepth + kMaxUse * 2 ||
-        d.get(n, KDisplay) == "none")
-        return;
-    Style  s = computeStyle(c, n, parent);
-    Affine m = mul(ctm, transform(d.get(n, KTransform)));
-
-    // Group opacity and clip-path need an offscreen layer; without the budget
-    // for one, opacity folds into the children (overlaps then show through)
-    // and the clip is dropped.
-    const float op   = opacityOf(d.get(n, KOpacity), 1);
-    int         clip = -1;
-    if (sv cp = trim(d.get(n, KClipPath)); cp.substr(0, 5) == "url(#") {
-        const size_t e = cp.find(')');
-        clip           = d.byId(cp.substr(5, e == sv::npos ? sv::npos : e - 5));
-        if (clip >= 0 && d.nodes[size_t(clip)].tag != TClip)
-            clip = -1;
-    }
-    if (op <= 0)
-        return;
-    const bool leaf      = tag != TG && tag != TA && tag != TSwitch && tag != TSvg && tag != TUse;
-    const bool needLayer = clip >= 0 || (op < 1 && (!leaf || (s.fill.kind && s.stroke.kind)));
-    Bitmap     layer, mask;
-    Painter   *outer = c.p;
-    std::unique_ptr<Painter> lp;
-    const bool useLayer = needLayer && c.layers < kMaxLayers && int64_t(c.w) * c.h <= (16 << 20);
-    if (useLayer) {
-        layer = Bitmap(c.w, c.h);
-        lp    = std::make_unique<Painter>(layer.view(), 1);
-        c.p   = lp.get();
-        ++c.layers;
-    } else {
-        s.alpha *= op;
-    }
-
     if (tag == TUse) {
         const sv  href   = d.get(n, KHref);
         const int target = href.size() > 1 && href[0] == '#' ? d.byId(href.substr(1)) : -1;
@@ -1194,7 +1181,7 @@ void renderNode(Ctx &c, int n, const Style &parent, const Affine &ctm, int depth
                         ));
         }
         renderChildren(c, n, s, m, depth);
-    } else if (!leaf) {
+    } else if (tag == TG || tag == TA || tag == TSwitch) {
         renderChildren(c, n, s, m, depth);
     } else if (s.visible) {
         Builder b;
@@ -1205,23 +1192,99 @@ void renderNode(Ctx &c, int n, const Style &parent, const Affine &ctm, int depth
             fillOrStroke(c, b, s, m, false);
         }
     }
+    return m;
+}
+
+void renderNode(Ctx &c, int n, const Style &parent, const Affine &ctm, int depth) {
+    const Doc  &d   = c.d;
+    const Node &nd  = d.nodes[size_t(n)];
+    const Tag   tag = Tag(nd.tag);
+    if (++c.visits > kMaxVisits)
+        return;
+    if (tag == TOther || tag == TDefs || tag == TLinear || tag == TRadial || tag == TStop ||
+        tag == TClip || tag == TSymbol || depth > kMaxDepth + kMaxUse * 2 ||
+        d.get(n, KDisplay) == "none")
+        return;
+    Style  s = computeStyle(c, n, parent);
+    Affine m = mul(ctm, transform(d.get(n, KTransform)));
+
+    // Group opacity and clip-path need an offscreen layer; without the budget
+    // for one, opacity folds into the children (overlaps then show through)
+    // and the clip is dropped.
+    const float op   = opacityOf(d.get(n, KOpacity), 1);
+    int         clip = -1;
+    if (sv cp = trim(d.get(n, KClipPath)); cp.substr(0, 5) == "url(#") {
+        const size_t e = cp.find(')');
+        clip           = d.byId(cp.substr(5, e == sv::npos ? sv::npos : e - 5));
+        if (clip >= 0 && d.nodes[size_t(clip)].tag != TClip)
+            clip = -1;
+    }
+    if (op <= 0)
+        return;
+    const bool leaf      = tag != TG && tag != TA && tag != TSwitch && tag != TSvg && tag != TUse;
+    const bool needLayer = clip >= 0 || (op < 1 && (!leaf || (s.fill.kind && s.stroke.kind)));
+    bool       useLayer  = needLayer && !c.measure && c.layers < kMaxLayers;
+    int        lx = 0, ly = 0, lw = 0, lh = 0; // the layer, in output pixels
+    if (useLayer) {
+        // Measure what the group paints (and its clip lets through), padded
+        // for anti-aliasing and kept inside the current target.
+        const int visits = c.visits;
+        c.measure        = true;
+        c.bx0 = c.by0 = 1e30f, c.bx1 = c.by1 = -1e30f;
+        const Affine cm = renderBody(c, n, s, m, depth);
+        c.measure       = false;
+        float x0 = c.bx0, y0 = c.by0, x1 = c.bx1, y1 = c.by1;
+        c.bx0 = c.by0 = 1e30f, c.bx1 = c.by1 = -1e30f;
+        if (clip >= 0 && clipMask(c, clip, cm, nullptr, 0, 0, 0, 0))
+            x0 = std::fmax(x0, c.bx0), y0 = std::fmax(y0, c.by0), x1 = std::fmin(x1, c.bx1),
+            y1 = std::fmin(y1, c.by1);
+        lx = std::max(c.tx, floori(x0) - 1), ly = std::max(c.ty, floori(y0) - 1);
+        lw = std::min(c.tx + c.tw, ceili(x1) + 1) - lx,
+        lh = std::min(c.ty + c.th, ceili(y1) + 1) - ly;
+        if (lw <= 0 || lh <= 0)
+            return; // nothing shows; the measuring counted the visits rendering would
+        c.visits = visits;
+        useLayer = int64_t(lw) * lh <= (16 << 20);
+    }
+    Bitmap                   layer;
+    Painter                 *outer = c.p;
+    const int                otx = c.tx, oty = c.ty, otw = c.tw, oth = c.th;
+    std::unique_ptr<Painter> lp;
+    if (useLayer) {
+        layer = Bitmap(lw, lh);
+        lp    = std::make_unique<Painter>(layer.view(), 1);
+        PainterImpl::placeTarget(*lp, lx, ly); // same coordinates as the output
+        c.p  = lp.get();
+        c.tx = lx, c.ty = ly, c.tw = lw, c.th = lh;
+        ++c.layers;
+    } else {
+        s.alpha *= op;
+    }
+
+    m = renderBody(c, n, s, m, depth);
 
     if (useLayer) {
         --c.layers;
-        c.p                 = outer;
-        const bool       cm = clip >= 0 && clipMask(c, clip, m, &mask);
+        c.p  = outer;
+        c.tx = otx, c.ty = oty, c.tw = otw, c.th = oth;
+        std::vector<uint8_t> mask;
+        if (clip >= 0) {
+            mask.assign(size_t(lw) * size_t(lh), 0);
+            if (!clipMask(c, clip, m, mask.data(), lx, ly, lw, lh))
+                mask.clear();
+        }
         // Composite the layer: × opacity × clip coverage, source-over.
         const uint32_t   a  = uint32_t(op * 255 + 0.5f);
         const BitmapView lv = layer.view();
-        for (int y = 0; y < c.h; ++y) {
-            uint32_t       *row = lv.pixels + size_t(y) * size_t(c.w);
-            const uint32_t *mr  = cm ? mask.pixels() + size_t(y) * size_t(c.w) : nullptr;
-            for (int x = 0; x < c.w; ++x) {
-                const uint32_t f = mr ? div255((mr[x] >> 24) * a) : a;
+        for (int y = 0; y < lh; ++y) {
+            uint32_t      *row = lv.pixels + size_t(y) * size_t(lw);
+            const uint8_t *mr  = mask.empty() ? nullptr : mask.data() + size_t(y) * size_t(lw);
+            for (int x = 0; x < lw; ++x) {
+                const uint32_t f = mr ? div255(mr[x] * a) : a;
                 row[x]           = f >= 255 ? row[x] : mulPx(row[x], f);
             }
         }
-        c.p->blitColor(lv, 0, 0);
+        c.p->blitColor(lv, lx, ly);
     }
 }
 

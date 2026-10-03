@@ -112,8 +112,8 @@ void PainterImpl::span(Painter &p, int y, int x0, int x1, const uint8_t *cov, ui
     if (x1 <= x0 || !pm)
         return;
     const uint8_t *m = clipMask(p, y, x0, x1, cov);
-    uint32_t      *d = p._target.pixels + size_t(y) * size_t(p._target.stride) + x0;
-    const int      n = x1 - x0;
+    uint32_t *d = p._target.pixels + size_t(y - p._oy) * size_t(p._target.stride) + (x0 - p._ox);
+    const int n = x1 - x0;
     if (!m) {
         if ((pm >> 24) == 255) {
             for (int i = 0; i < n; ++i)
@@ -139,8 +139,8 @@ void PainterImpl::spanPx(
     if (x1 <= x0 || !alpha)
         return;
     const uint8_t *m = clipMask(p, y, x0, x1, cov);
-    uint32_t      *d = p._target.pixels + size_t(y) * size_t(p._target.stride) + x0;
-    const int      n = x1 - x0;
+    uint32_t *d = p._target.pixels + size_t(y - p._oy) * size_t(p._target.stride) + (x0 - p._ox);
+    const int n = x1 - x0;
     for (int i = 0; i < n; ++i) {
         uint32_t s = src[i];
         uint32_t a = m ? (alpha == 255 ? m[i] : div255(uint32_t(m[i]) * alpha)) : alpha;
@@ -344,7 +344,12 @@ void shaderRow(const Shader &s, int y, int x0, int x1, uint32_t *out) {
 }
 
 void PainterImpl::rasterize(
-    Painter &p, const std::vector<Seg> &segs, uint32_t pm, FillRule rule, const Shader *shader
+    Painter                &p,
+    const std::vector<Seg> &segs,
+    uint32_t                pm,
+    FillRule                rule,
+    const Shader           *shader,
+    uint8_t                *a8
 ) {
     if (segs.empty() || !pm)
         return;
@@ -473,7 +478,11 @@ void PainterImpl::rasterize(
         }
         std::fill(cov.begin() + lo, cov.begin() + hi + 1, 0.0f);
         std::fill(diff.begin() + lo, diff.begin() + hi + 2, 0.0f);
-        if (shader) {
+        if (a8) {
+            uint8_t *d = a8 + size_t(y - p._oy) * size_t(p._target.stride) + (x0 + lo - p._ox);
+            for (int i = 0; i < hi - lo; ++i)
+                d[i] = uint8_t(out[i] + div255(uint32_t(d[i]) * (255u - out[i])));
+        } else if (shader) {
             uint32_t *px = row32(p);
             shaderRow(*shader, y, x0 + lo, x0 + hi, px);
             spanPx(p, y, x0 + lo, x0 + hi, out, px, 255);

@@ -231,6 +231,7 @@ private:
         int   roundClip = -1; // index into _roundClips, -1 = none
     };
     BitmapView         _target;
+    int                _ox = 0, _oy = 0; // physical position of the target's first pixel
     float              _scale;
     State              _s;
     std::vector<State> _stack;

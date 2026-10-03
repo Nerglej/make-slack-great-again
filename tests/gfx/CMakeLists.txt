@@ -6,6 +6,6 @@ target_compile_definitions(gfx_tests PRIVATE
     MSGA_TEST_ASSETS="${MSGA_TEST_ASSETS}"
     GFX_REPO_ART="${MSGA_ROOT}/gfx")
 foreach(t blend fill clip roundrect path stroke bitmap blit gradient shadow decode anim animbudget snapped icons
-        paint2 svg svgsize svgfuzz cover resizeaxes scratch)
+        paint2 svg svgsize svgfuzz cover resizeaxes scratch svglayers)
     add_test(NAME gfx_${t} COMMAND gfx_tests ${t})
 endforeach()

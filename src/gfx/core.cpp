@@ -90,6 +90,12 @@ Painter::Painter(BitmapView target, float scale, PaintScratch *scratch)
     _s.clipY1 = target.height;
 }
 
+void PainterImpl::placeTarget(Painter &p, int x, int y) {
+    p._ox = x, p._oy = y;
+    p._s.clipX0 = x, p._s.clipY0 = y;
+    p._s.clipX1 = x + p._target.width, p._s.clipY1 = y + p._target.height;
+}
+
 void Painter::save() {
     _stack.push_back(_s);
 }

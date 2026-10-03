@@ -109,6 +109,11 @@ struct Shader {
 bool makeShader(const Gradient &g, const Affine &physToLogical, float opacity, Shader *out);
 void shaderRow(const Shader &s, int y, int x0, int x1, uint32_t *out);
 
+// Unions the coverage of `path` (physical pixels) into `mask`, w × h bytes
+// standing for the pixels from (x, y) on: the alpha a fillPath with opaque
+// white would leave there.
+void fillMask(const Path &path, FillRule rule, uint8_t *mask, int x, int y, int w, int h);
+
 // gfx's own SVG renderer (svg.cpp); renderSvg() tries the OS first where
 // there is one. Exposed for tests on every platform.
 bool       renderSvgOwn(std::string_view svg, int width, int height, Bitmap *out);
@@ -150,13 +155,21 @@ struct PainterImpl {
     static const uint8_t *clipMask(Painter &p, int y, int x0, int x1, const uint8_t *cov);
     // outer minus inner (inner may be null), clipped.
     static void           fillRR(Painter &p, const RR &outer, const RR *inner, uint32_t pm);
+    // With `a8`, coverage is unioned into that 8-bit mask (laid out like the
+    // target, stride in bytes) instead of blending pm: the alpha a white
+    // source-over fill would leave.
     static void           rasterize(
         Painter                &p,
         const std::vector<Seg> &segs,
         uint32_t                pm,
         FillRule                rule   = FillRule::NonZero,
-        const Shader           *shader = nullptr
+        const Shader           *shader = nullptr,
+        uint8_t                *a8     = nullptr
     );
+    // Places a new painter's target at physical (x, y) instead of (0, 0)
+    // and clips to it: a part of a larger surface, drawn in that surface's
+    // coordinates (so the geometry is the same, bit for bit).
+    static void   placeTarget(Painter &p, int x, int y);
     static Affine physToLogical(const Painter &p) {
         const float k = 1 / p._scale;
         return {k, 0, 0, k, -p._s.tx, -p._s.ty};
