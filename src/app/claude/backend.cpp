@@ -29,6 +29,9 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace claude {
 
@@ -2134,6 +2137,12 @@ void Backend::firstScan(Done done) {
             _connecting = false;
             _started    = true;
             refresh();
+#if defined(__GLIBC__)
+            // Parsing the whole transcripts peaks at well over 100 MB on the
+            // worker, nearly all of it freed by now but kept by that thread's
+            // malloc arena; hand the pages back to the system.
+            model::runInBackground(_app, [] { malloc_trim(0); }, [] {});
+#endif
             // File watching can miss what a look in between saw already; a
             // slow sweep catches whatever it missed.
             _safetyPoll = _app.addTimer(10'000, true, [this, alive = _alive] {
