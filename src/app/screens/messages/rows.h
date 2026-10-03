@@ -1,7 +1,7 @@
 // The rows of a MessageList (internal to screens/messages). A row is rebuilt
-// from the Store on every bind; only ~20 exist at a time (VirtualList
-// recycles them per kind), so building children per bind is cheap and keeps
-// no second copy of any message.
+// from the Store on every bind; ~20 are on screen and a few dozen more kept
+// built off screen for scrolling back (VirtualList::setKeep), the rest
+// recycled per kind. A row holds views, never a second copy of a message.
 #pragma once
 
 #include "app/screens/messages/image_cache.h"
@@ -53,6 +53,9 @@ public:
     ~MessageRow() override;
 
     void                            bind(const MessageList::Item &item);
+    // Shown again as built (the list kept it, its message unchanged): false
+    // when its text went stale with the clock (a reminder due, the day).
+    bool                            reuse();
     Ts                              ts() const { return _ts; }
     // The message's text labels a selection runs over, in order.
     const std::vector<RichLabel *> &selectionLabels() const { return _sel; }
@@ -119,6 +122,8 @@ private:
     ui::View                     *_attachCard = nullptr; // the hovered attachment card
     int                           _attach     = -1;      // … its index
     Ts                            _ts         = 0;
+    int64_t                       _dueAt      = 0; // an upcoming reminder (secs)
+    int64_t                       _day        = 0; // local day when built
     bool                          _reminded   = false;
     int                           _kind;
     bool                          _pending = false, _overDismiss = false;

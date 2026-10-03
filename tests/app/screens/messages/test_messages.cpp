@@ -445,6 +445,73 @@ TEST("users: a presence flip re-binds no row; a name re-binds only the rows show
     CHECK(e.list->rowBinds() == binds + 2 + 3);
 }
 
+TEST("rows: scrolling back over seen messages rebuilds nothing; edits and reactions do") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 7200;
+    std::vector<model::Message> ms;
+    for (int i = 0; i < 60; ++i)
+        ms.push_back(
+            msg(model::UserRef(i % 2),
+                t0 + i * 61,
+                i % 3 ? "*bold* and _italic_ with <https://x.test|a link>" : "plain words")
+        );
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    ui::VirtualList &l = e.list->list();
+    REQUIRE(l.pinned());
+    // Up a screen and a half (those rows built once), then back down —
+    // twice: rows built in the overscan paint (avatar letters) on the next.
+    Ts seen = 0;
+    for (int i = 0; i < 2; ++i) {
+        l.scrollTo(l.scrollOffset() - 900);
+        pump(8);
+        seen = e.list->items()[size_t(l.firstVisible() + 2)].ts;
+        REQUIRE(e.row(seen) != nullptr);
+        l.scrollToBottom();
+        pump(8);
+        REQUIRE(e.row(seen) == nullptr);
+    }
+
+    // Back up and down again: no bind (so no mrkdwn parse), no shaping.
+    const int    binds  = e.list->rowBinds();
+    const size_t shaped = text::layoutBuilds();
+    l.scrollTo(l.scrollOffset() - 900);
+    pump(8);
+    CHECK(e.row(seen) != nullptr);
+    l.scrollToBottom();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds);
+    CHECK(text::layoutBuilds() == shaped);
+
+    // Edited and reacted to while off screen: those two rows, rebuilt.
+    e.store.updateMessage(c, seen, [](model::Message &m) {
+        m.text   = "edited words";
+        m.edited = true;
+    });
+    const Ts other = seen + 61 * 1000000;
+    e.store.setReaction(c, other, "tada", 1, true);
+    pump(8);
+    CHECK(e.list->rowBinds() == binds);
+    l.scrollTo(l.scrollOffset() - 900);
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 2);
+    auto *edited = static_cast<MessageRow *>(e.row(seen));
+    REQUIRE(edited != nullptr && !edited->selectionLabels().empty());
+    CHECK(edited->selectionLabels()[0]->text().find("edited words") != std::string::npos);
+    // A name change re-binds the rows showing it, kept ones too.
+    l.scrollToBottom();
+    pump(8);
+    e.store.user(1).displayName = "Mira O.";
+    e.store.usersChanged();
+    pump(8);
+    const int named = e.list->rowBinds();
+    CHECK(named > binds + 2);
+    l.scrollTo(l.scrollOffset() - 900);
+    pump(8);
+    CHECK(e.list->rowBinds() > named);
+}
+
 TEST("dates: separators say Today, Yesterday, then the date") {
     Env                   e(false);
     const int64_t         now = base::nowSecs();

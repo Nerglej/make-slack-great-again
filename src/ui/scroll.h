@@ -114,7 +114,8 @@ private:
 
 // ── VirtualList ─────────────────────────────────────────────────────────────
 // A list of `count()` rows of variable, lazily measured height. Only rows in
-// (or just outside) the viewport exist as views; they are recycled per kind.
+// (or just outside) the viewport exist as views; they are recycled per kind,
+// and with setKeep the last few scrolled out stay built for scrolling back.
 //
 // Scroll position is an anchor (an item index and the pixel offset of the
 // viewport top into it) rather than a pixel offset, so:
@@ -142,6 +143,14 @@ public:
         virtual void                  unbind(View &row, int index) {}
         // Height guess for a row never measured; 0 = the running average.
         virtual float                 estimateHeight(int index) const { return 0; }
+        // What item `index` is (non-zero), for keeping its row as built
+        // (setKeep): a row scrolled out stays bound, hidden, and comes back
+        // for the same key without bind() — until itemsChanged(), reset() or
+        // removal says the item changed. 0: rebound every time.
+        virtual uint64_t              key(int index) const { return 0; }
+        // A kept row coming back instead of bind(): refresh what may have
+        // moved on without a model change; false = bind() it after all.
+        virtual bool                  reuse(View &row, int index) { return true; }
     };
 
     enum class ItemAlign : uint8_t { Start, Center, End, Nearest };
@@ -155,6 +164,9 @@ public:
     void setBottomAligned(bool on);
     void setOverscan(float px) { _overscan = px; }
     void setGap(float px); // vertical space between rows
+    // Rows scrolled out kept bound (Adapter::key), at most `rows`, the least
+    // recently shown dropped first; 0 (the default) keeps none.
+    void setKeep(size_t rows) { _keep = rows; }
 
     // ── Model changes ───────────────────────────────────────────────────────
     void itemsInserted(int index, int n);
@@ -204,14 +216,16 @@ private:
 
 private:
     struct Live {
-        int   index;
-        int   kind;
-        View *view;
-        bool  dirty; // needs bind()
+        int      index;
+        int      kind;
+        View    *view;
+        bool     dirty; // needs bind()
+        uint64_t key;   // Adapter::key when bound
     };
     struct Pooled {
-        int   kind;
-        View *view;
+        int      kind;
+        View    *view;
+        uint64_t key; // still bound to this item (0: a spare)
     };
 
     float  heightOf(int i) const;
@@ -224,6 +238,9 @@ private:
     float  averageHeight() const;
     View  *acquire(int index, bool *fresh);
     void   release(size_t liveIdx);
+    void   trimPool();
+    void   dropKept(int index, int k);
+    void   unkeepAll();
     size_t findLive(int index) const;
     bool   normalize();   // keep the anchor inside its item; returns false at the top edge
     bool   clampBottom(); // true when the content end reached the viewport bottom
@@ -241,7 +258,8 @@ private:
     mutable std::vector<int>   _fenU;
     mutable bool               _fenDirty = true;
     std::vector<Live>          _live; // sorted by index
-    std::vector<Pooled>        _pool;
+    std::vector<Pooled>        _pool; // oldest first
+    size_t                     _keep      = 0;
     int                        _anchorIdx = 0, _measured = 0;
     float     _anchorOff = 0, _measuredSum = 0, _width = -1, _overscan = 120, _gap = 0;
     float     _subpixel  = 0; // scroll remainder below one physical pixel

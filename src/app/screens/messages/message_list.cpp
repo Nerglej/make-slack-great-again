@@ -306,6 +306,10 @@ RichLabel *labelAt(const MessageRow &row, float wy, uint32_t *base) {
 
 } // namespace
 
+namespace {
+constexpr size_t kKeptRows = 48; // built rows kept off screen (VirtualList::setKeep)
+} // namespace
+
 // ── Adapter ─────────────────────────────────────────────────────────────────
 
 class MessageList::Adapter final : public ui::VirtualList::Adapter {
@@ -332,6 +336,13 @@ public:
             return std::make_unique<DividerRow>();
         return std::make_unique<MessageRow>(_l, k);
     }
+    // A message row is its message's: kept while the list says nothing
+    // about it changing (Store updates, users, inline threads, previews).
+    uint64_t key(int i) const override {
+        const Item &it = _l._items[size_t(i)];
+        return it.kind == Kind::Message || it.kind == Kind::System ? uint64_t(it.ts) : 0;
+    }
+    bool reuse(ui::View &row, int) override { return static_cast<MessageRow &>(row).reuse(); }
     void bind(ui::View &row, int i) override {
         const Item &it = _l._items[size_t(i)];
         if (it.kind == Kind::Day)
@@ -511,6 +522,9 @@ MessageList::MessageList(Context &ctx)
     _list->setStickToBottom(true);
     _list->setBottomAligned(true);
     _list->setOverscan(200);
+    // Rows scrolled out stay built (parsed, shaped) for scrolling back: a
+    // couple of screens' worth; every change to a message re-binds its row.
+    _list->setKeep(kKeptRows);
     _list->setBackground(C::Surface); // opaque: scrolling blits instead of repainting
     _state          = add<ListState>();
     _list->onScroll = [this] {

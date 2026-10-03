@@ -1022,6 +1022,8 @@ void MessageRow::bind(const MessageList::Item &item) {
     _pinText.clear();
     _savedText.clear();
     _reminded               = false;
+    _dueAt                  = 0;
+    _day                    = base::localDay(base::nowSecs());
     _ts                     = item.ts;
     const model::Message *m = _list.message(item.ts);
     if (!m)
@@ -1032,6 +1034,17 @@ void MessageRow::bind(const MessageList::Item &item) {
     else
         buildMessage(*m, _kind == kRowGrouped);
     _list.applySelection(*this);
+}
+
+bool MessageRow::reuse() {
+    const int64_t now = base::nowSecs();
+    if ((_dueAt && now >= _dueAt) || base::localDay(now) != _day)
+        return false;
+    _attachCard  = nullptr;
+    _attach      = -1;
+    _overDismiss = false;
+    _list.applySelection(*this);
+    return true;
 }
 
 void MessageRow::buildSystem(const model::Message &m) {
@@ -1098,6 +1111,8 @@ void MessageRow::buildMessage(const model::Message &m, bool grouped) {
                        : std::string(tr("Pinned"));
     const int64_t due = st.reminderAt(_list.conversation(), m.ts);
     _reminded         = due != 0;
+    if (_reminded && due > base::nowSecs())
+        _dueAt = due; // the strip turns "past due" then
     if (_reminded)
         _savedText = due <= base::nowSecs()
                          ? std::string(tr("Reminder \xE2\x80\x94 past due"))

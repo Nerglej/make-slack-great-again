@@ -8,10 +8,16 @@ namespace {
 
 // Rows are plain boxes whose height comes from a vector the test mutates.
 struct Rows : ui::VirtualList::Adapter {
-    std::vector<float> h;
-    int                created = 0, binds = 0;
+    std::vector<float>    h;
+    std::vector<uint64_t> keys; // Adapter::key per row (empty: none)
+    int                   created = 0, binds = 0, reuses = 0;
     explicit Rows(int n, float height = 30) : h(size_t(n), height) {}
-    int                       count() const override { return int(h.size()); }
+    int      count() const override { return int(h.size()); }
+    uint64_t key(int i) const override { return keys.empty() ? 0 : keys[size_t(i)]; }
+    bool     reuse(ui::View &, int) override {
+        ++reuses;
+        return true;
+    }
     std::unique_ptr<ui::View> create(int) override {
         ++created;
         return std::make_unique<Box>();
@@ -154,6 +160,74 @@ TEST("vlist: rows are recycled while scrolling far") {
     CHECK(l.rows.created < 40);
     CHECK(l.list->liveCount() < 30);
     CHECK(l.rows.binds > 100);
+}
+
+TEST("vlist: kept rows come back unbound; changes, removal and reset drop them") {
+    ListWin l(1000, false);
+    for (int i = 0; i < 1000; ++i)
+        l.rows.keys.push_back(uint64_t(i + 1));
+    l.list->setKeep(20);
+    l.list->scrollToItem(500, ui::VirtualList::ItemAlign::Start, false);
+    l.frame();
+    const int shown = l.list->liveCount();
+    // Down a viewport and back: the rows of 500… return as they were.
+    l.list->scrollBy(400);
+    l.frame();
+    const int binds = l.rows.binds, reuses = l.rows.reuses;
+    l.list->scrollBy(-400);
+    l.frame();
+    REQUIRE(l.list->viewFor(500) != nullptr);
+    CHECK(l.rows.binds == binds);
+    CHECK(l.rows.reuses - reuses >= 10);
+    CHECK(near(l.yOf(500), 0));
+
+    // A changed row scrolled out is bound again when it comes back.
+    l.list->scrollBy(400);
+    l.frame();
+    REQUIRE(l.list->viewFor(501) == nullptr);
+    l.rows.h[501] = 50;
+    l.list->itemsChanged(501, 1);
+    int b = l.rows.binds;
+    l.list->scrollBy(-400);
+    l.frame();
+    CHECK(l.rows.binds == b + 1);
+    CHECK(near(l.yOf(502) - l.yOf(501), 50));
+
+    // A removed item's row is not handed to a new item under its key.
+    l.list->scrollBy(400);
+    l.frame();
+    l.rows.h.erase(l.rows.h.begin() + 505);
+    l.rows.keys.erase(l.rows.keys.begin() + 505);
+    l.list->itemsRemoved(505, 1);
+    l.rows.h.insert(l.rows.h.begin() + 505, 30.f);
+    l.rows.keys.insert(l.rows.keys.begin() + 505, uint64_t(506));
+    l.list->itemsInserted(505, 1);
+    b = l.rows.binds;
+    l.list->scrollBy(-400);
+    l.frame();
+    CHECK(l.rows.binds == b + 1);
+
+    // After a reset nothing kept is trusted.
+    b = l.rows.binds;
+    l.list->reset();
+    l.list->scrollToItem(500, ui::VirtualList::ItemAlign::Start, false);
+    l.frame();
+    CHECK(l.rows.binds >= b + shown - 1);
+}
+
+TEST("vlist: kept rows stay bounded while scrolling far") {
+    ListWin l(10000);
+    for (int i = 0; i < 10000; ++i)
+        l.rows.keys.push_back(uint64_t(i + 1));
+    l.list->setKeep(16);
+    for (int i = 0; i < 200; ++i) {
+        l.list->scrollBy(-97);
+        l.frame(1);
+    }
+    CHECK(l.rows.binds > 100);
+    CHECK(l.list->liveCount() < 30);
+    CHECK(l.list->childCount() <= size_t(l.list->liveCount()) + 16 + 8 + 2);
+    CHECK(l.rows.created < 30 + 16 + 8);
 }
 
 TEST("vlist: variable heights with estimates keep a sane scrollbar extent") {

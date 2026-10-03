@@ -177,23 +177,36 @@ int VirtualList::indexOf(const View *row) const {
 }
 
 View *VirtualList::acquire(int index, bool *fresh) {
-    const int kind = _adapter->kind(index);
-    View     *v    = nullptr;
-    for (size_t i = _pool.size(); i-- > 0;)
-        if (_pool[i].kind == kind) {
-            v = _pool[i].view;
-            _pool.erase(_pool.begin() + ptrdiff_t(i));
-            break;
-        }
-    if (v)
+    const int      kind = _adapter->kind(index);
+    const uint64_t key  = _keep ? _adapter->key(index) : 0;
+    // The row kept for this item, else a spare (the newest), else the
+    // least recently kept row of the kind.
+    size_t         pick = kNone;
+    if (key)
+        for (size_t i = 0; i < _pool.size() && pick == kNone; ++i)
+            if (_pool[i].kind == kind && _pool[i].key == key)
+                pick = i;
+    const bool kept = pick != kNone;
+    for (size_t i = _pool.size(); pick == kNone && i-- > 0;)
+        if (_pool[i].kind == kind && !_pool[i].key)
+            pick = i;
+    for (size_t i = 0; pick == kNone && i < _pool.size(); ++i)
+        if (_pool[i].kind == kind)
+            pick = i;
+    View *v = nullptr;
+    if (pick != kNone) {
+        v = _pool[pick].view;
+        _pool.erase(_pool.begin() + ptrdiff_t(pick));
         v->setVisible(true);
-    else
+    } else {
         v = adopt(_adapter->create(kind));
+    }
     auto it = std::lower_bound(_live.begin(), _live.end(), index, [](const Live &l, int i) {
         return l.index < i;
     });
-    _live.insert(it, Live{index, kind, v, false});
-    _adapter->bind(*v, index);
+    _live.insert(it, Live{index, kind, v, false, key});
+    if (!kept || !_adapter->reuse(*v, index))
+        _adapter->bind(*v, index);
     *fresh = true;
     return v;
 }
@@ -202,15 +215,57 @@ void VirtualList::release(size_t li) {
     const Live l = _live[li];
     _live.erase(_live.begin() + ptrdiff_t(li));
     _adapter->unbind(*l.view, l.index);
-    size_t same = 0;
-    for (const Pooled &p : _pool)
-        same += p.kind == l.kind;
-    if (same >= kPoolPerKind) {
-        remove(l.view); // destroyed: bounded memory after a tall viewport
-        return;
-    }
     l.view->setVisible(false);
-    _pool.push_back({l.kind, l.view});
+    _pool.push_back({l.kind, l.view, l.dirty ? 0 : l.key});
+    trimPool();
+}
+
+// Bounded memory after a tall viewport or a long scroll: at most _keep kept
+// rows (the least recently shown stop being kept), and kPoolPerKind spares
+// per kind besides (the oldest are destroyed).
+void VirtualList::trimPool() {
+    size_t kept = 0;
+    for (const Pooled &p : _pool)
+        kept += p.key != 0;
+    for (size_t i = 0; kept > _keep && i < _pool.size(); ++i)
+        if (_pool[i].key) {
+            _pool[i].key = 0;
+            --kept;
+        }
+    for (size_t i = _pool.size(); i-- > 0;) {
+        if (_pool[i].key)
+            continue;
+        size_t newer = 0;
+        for (size_t j = i + 1; j < _pool.size(); ++j)
+            newer += _pool[j].kind == _pool[i].kind && !_pool[j].key;
+        if (newer >= kPoolPerKind) {
+            View *v = _pool[i].view;
+            _pool.erase(_pool.begin() + ptrdiff_t(i));
+            remove(v);
+        }
+    }
+}
+
+// Items [index, index + k) changed: their kept rows (if any) are stale.
+void VirtualList::dropKept(int index, int k) {
+    bool any = false;
+    for (const Pooled &p : _pool)
+        any = any || p.key;
+    if (!any)
+        return;
+    const int n = int(_h.size());
+    for (int i = std::max(0, index); i < std::min(n, index + k); ++i)
+        if (const uint64_t key = _adapter->key(i))
+            for (Pooled &p : _pool)
+                if (p.key == key)
+                    p.key = 0;
+    trimPool();
+}
+
+void VirtualList::unkeepAll() {
+    for (Pooled &p : _pool)
+        p.key = 0;
+    trimPool();
 }
 
 float VirtualList::measureItem(int i) {
@@ -229,6 +284,7 @@ float VirtualList::measureItem(int i) {
         v = _live[li].view;
         if (_live[li].dirty) {
             _live[li].dirty = false;
+            _live[li].key   = _keep ? _adapter->key(i) : 0;
             _adapter->bind(*v, i);
         }
     }
@@ -334,6 +390,7 @@ void VirtualList::layout() {
         _fenDirty    = true;
         while (!_live.empty())
             release(_live.size() - 1);
+        unkeepAll();
         _contentDirty = true;
     }
     if (W != _width) {
@@ -667,6 +724,7 @@ void VirtualList::itemsInserted(int index, int k) {
     index       = std::clamp(index, 0, n);
     _h.insert(_h.begin() + index, size_t(k), 0.f);
     _fenDirty = true;
+    dropKept(index, k); // an item back under a key a removed one had
     for (Live &l : _live)
         if (l.index >= index)
             l.index += k;
@@ -687,6 +745,7 @@ void VirtualList::itemsRemoved(int index, int k) {
     for (size_t li = _live.size(); li-- > 0;)
         if (_live[li].index >= index && _live[li].index < index + k) {
             _live[li].view->update();
+            _live[li].dirty = true; // gone: not kept
             release(li);
         }
     for (Live &l : _live)
@@ -725,6 +784,10 @@ void VirtualList::itemsChanged(int index, int k) {
         if (li != kNone)
             _live[li].dirty = true;
     }
+    if (size_t(k) > 2 * _keep)
+        unkeepAll(); // a change to every row: no key to look up
+    else
+        dropKept(index, k);
     // Stale heights keep their magnitude as the estimate: offsets unchanged.
     invalidateLayout();
 }
@@ -732,6 +795,7 @@ void VirtualList::itemsChanged(int index, int k) {
 void VirtualList::reset() {
     while (!_live.empty())
         release(_live.size() - 1);
+    unkeepAll();
     _h.assign(size_t(std::max(0, _adapter->count())), 0.f);
     _measured     = 0;
     _measuredSum  = 0;
