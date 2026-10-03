@@ -393,6 +393,10 @@ void Client::Impl::deliver(RequestId id, Response resp) {
 // ends — and a leak check would flag them).
 static std::atomic<int> g_liveClients{0};
 
+void releaseCaches() {
+    detail::releaseCaches();
+}
+
 Client::Client(plat::App &app) : _impl(std::make_shared<Impl>(app)) {
     g_liveClients.fetch_add(1, std::memory_order_relaxed);
 }

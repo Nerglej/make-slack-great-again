@@ -293,6 +293,11 @@ int main(int argc, char **argv) {
     app->setUserTextScale(settings.fontScale());
     settings.applyPalettes();
 
+    // Destroyed after everything below, so every Client and WebSocket is gone.
+    struct NetCaches {
+        ~NetCaches() { net::releaseCaches(); }
+    } netCaches;
+
     // The demo workspace, or the signed-in one (Accounts swaps it in behind
     // the proxy the screens hold).
     model::Store          store;

@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,6 +18,16 @@
 namespace net::detail {
 
 int64_t nowMs(); // monotonic
+
+// A process-wide object that is never destroyed (workers may outlive static
+// destructors), kept in static storage rather than on the heap so that what
+// releaseCaches() empties leaves nothing behind.
+template <class T>
+T &immortal() {
+    alignas(T) static unsigned char mem[sizeof(T)];
+    static T *const                 p = new (mem) T;
+    return *p;
+}
 
 using str::iequals; // ASCII case-insensitive
 
@@ -99,5 +110,11 @@ std::string hostHeader(const Url &url);
 // DNS cache), and TLS handshakes that resumed a cached session.
 int64_t dnsLookups();
 int64_t tlsResumptions();
+
+// releaseCaches() (transport.h): Streams alive, then the pieces it frees
+// once none is.
+int  liveStreams();
+void releaseDns();
+void releaseTls();
 
 } // namespace net::detail

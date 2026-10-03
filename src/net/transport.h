@@ -85,6 +85,9 @@ void setWorkerIdleMs(int ms);
 
 // Drops idle kept-alive connections (Client destructor of the last client).
 void closeIdleConnections();
+// net::releaseCaches(): idle connections, then (POSIX, when no stream is
+// open) the TLS sessions and settings, the CA store and the DNS cache.
+void releaseCaches();
 
 struct WsMessage {
     enum Kind : uint8_t { Text, Binary, Closed } kind = Text;

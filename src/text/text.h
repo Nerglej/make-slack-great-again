@@ -23,6 +23,9 @@ namespace text {
 // Must be called once before anything else (discovers fonts, builds or loads
 // the font index cache). False (with *error) if no usable font exists.
 bool init(std::string *error = nullptr);
+// At exit (ui::App's destructor): frees the fonts and shaping state. Nothing
+// here may be used afterwards, short of init() again.
+void shutdown();
 
 enum class Weight : uint16_t { Regular = 400, Medium = 500, Semibold = 600, Bold = 700 };
 

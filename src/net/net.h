@@ -124,6 +124,11 @@ private:
     std::shared_ptr<Impl> _impl;
 };
 
+// At exit, after every Client and WebSocket is gone: frees the process-wide
+// connection state (kept-alive connections, TLS sessions, the CA store, the
+// DNS cache), so that leak checkers see what is really left.
+void releaseCaches();
+
 // ── Helpers (pure, any thread) ─────────────────────────────────────────────
 
 struct Url {

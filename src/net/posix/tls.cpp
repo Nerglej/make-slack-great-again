@@ -223,36 +223,48 @@ int caCallback(void *ctx, const mbedtls_x509_crt *child, mbedtls_x509_crt **out)
 }
 
 // Built on the first TLS connection, then shared read-only by every thread
-// (an mbedtls_ssl_config may serve many contexts at once). Never freed:
-// sessions may still be closing while static destructors run.
-Shared *shared() {
-    static Shared *const s = [] {
-        auto *sh = new Shared;
-        mbedtls_ssl_config_init(&sh->conf);
-        if (psa_crypto_init() != PSA_SUCCESS)
-            return sh;
-        loadSystemCas(&sh->cas);
-        if (sh->cas.entries.empty())
-            return sh;
-        if (mbedtls_ssl_config_defaults(
-                &sh->conf,
-                MBEDTLS_SSL_IS_CLIENT,
-                MBEDTLS_SSL_TRANSPORT_STREAM,
-                MBEDTLS_SSL_PRESET_DEFAULT
-            ) != 0)
-            return sh;
-        mbedtls_ssl_conf_authmode(&sh->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-        mbedtls_ssl_conf_ca_cb(&sh->conf, caCallback, sh);
-        mbedtls_ssl_conf_rng(&sh->conf, mbedtls_psa_get_random, MBEDTLS_PSA_RANDOM_STATE);
-        // TLS 1.3 tickets come after the handshake; mbedTLS hands them over
-        // only when asked to (tlsRead/tlsWrite then keep them).
-        mbedtls_ssl_conf_tls13_enable_signal_new_session_tickets(
-            &sh->conf, MBEDTLS_SSL_TLS1_3_SIGNAL_NEW_SESSION_TICKETS_ENABLED
-        );
-        sh->ok = true;
+// (an mbedtls_ssl_config may serve many contexts at once). Never destroyed:
+// sessions may still be closing while static destructors run. releaseTls()
+// frees it once no stream is left; the next connection builds it again.
+struct SharedSlot {
+    std::mutex mutex;
+    Shared    *s = nullptr; // in mem
+    alignas(Shared) unsigned char mem[sizeof(Shared)];
+};
+
+Shared *build(void *mem) {
+    auto *sh = new (mem) Shared;
+    mbedtls_ssl_config_init(&sh->conf);
+    if (psa_crypto_init() != PSA_SUCCESS)
         return sh;
-    }();
-    return s;
+    loadSystemCas(&sh->cas);
+    if (sh->cas.entries.empty())
+        return sh;
+    if (mbedtls_ssl_config_defaults(
+            &sh->conf,
+            MBEDTLS_SSL_IS_CLIENT,
+            MBEDTLS_SSL_TRANSPORT_STREAM,
+            MBEDTLS_SSL_PRESET_DEFAULT
+        ) != 0)
+        return sh;
+    mbedtls_ssl_conf_authmode(&sh->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_ca_cb(&sh->conf, caCallback, sh);
+    mbedtls_ssl_conf_rng(&sh->conf, mbedtls_psa_get_random, MBEDTLS_PSA_RANDOM_STATE);
+    // TLS 1.3 tickets come after the handshake; mbedTLS hands them over
+    // only when asked to (tlsRead/tlsWrite then keep them).
+    mbedtls_ssl_conf_tls13_enable_signal_new_session_tickets(
+        &sh->conf, MBEDTLS_SSL_TLS1_3_SIGNAL_NEW_SESSION_TICKETS_ENABLED
+    );
+    sh->ok = true;
+    return sh;
+}
+
+Shared *shared() {
+    SharedSlot                 &slot = immortal<SharedSlot>();
+    std::lock_guard<std::mutex> lock(slot.mutex);
+    if (!slot.s)
+        slot.s = build(slot.mem);
+    return slot.s;
 }
 
 std::string hexCode(int code) {
@@ -298,8 +310,7 @@ struct SessionCache {
 };
 
 SessionCache &sessions() {
-    static SessionCache *const c = new SessionCache; // never destroyed, like shared()
-    return *c;
+    return immortal<SessionCache>();
 }
 
 std::atomic<int64_t> g_resumed{0};
@@ -451,6 +462,25 @@ long result(TlsConn *c, int rc, short *want, std::string *error) {
 
 int64_t tlsResumptions() {
     return g_resumed.load(std::memory_order_relaxed);
+}
+
+void releaseTls() {
+    std::vector<SessionCache::Entry> old;
+    {
+        SessionCache               &sc = sessions();
+        std::lock_guard<std::mutex> lock(sc.mutex);
+        old.swap(sc.entries);
+    }
+    for (const auto &e : old)
+        freeSession(e.session);
+    SharedSlot                 &slot = immortal<SharedSlot>();
+    std::lock_guard<std::mutex> lock(slot.mutex);
+    if (!slot.s)
+        return;
+    mbedtls_ssl_config_free(&slot.s->conf);
+    slot.s->~Shared();
+    slot.s = nullptr;
+    mbedtls_psa_crypto_free();
 }
 
 TlsConn *tlsNew(int fd, const Url &url, std::string *error) {

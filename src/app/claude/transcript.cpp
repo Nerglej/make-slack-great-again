@@ -244,22 +244,32 @@ std::string summarizeToolInput(std::string_view toolName, const json::Value &inp
 // ── The parser ──────────────────────────────────────────────────────────────
 
 void TranscriptParser::feed(std::string_view bytes) {
-    _partial.append(bytes);
-    const std::string_view all(_partial);
-    size_t                 start = 0;
-    for (;;) {
-        const size_t nl = all.find('\n', start);
-        if (nl == std::string_view::npos)
-            break;
-        const std::string_view line = trim(all.substr(start, nl - start));
-        if (!line.empty()) {
-            handleLine(line);
-            while (_revs.size() < _items.size())
-                _revs.push_back(++_rev);
+    const auto line = [this](std::string_view l) {
+        l = trim(l);
+        if (l.empty())
+            return;
+        handleLine(l);
+        while (_revs.size() < _items.size())
+            _revs.push_back(++_rev);
+    };
+    // Only an unfinished last line is kept between calls: a whole transcript
+    // (tens of MB, the first scan feeds every session's at once) is parsed in
+    // place rather than copied first.
+    if (!_partial.empty()) {
+        const size_t nl = bytes.find('\n');
+        if (nl == std::string_view::npos) {
+            _partial.append(bytes);
+            return;
         }
-        start = nl + 1;
+        _partial.append(bytes.substr(0, nl));
+        line(_partial);
+        std::string().swap(_partial);
+        bytes.remove_prefix(nl + 1);
     }
-    _partial.erase(0, start);
+    size_t start = 0;
+    for (size_t nl; (nl = bytes.find('\n', start)) != std::string_view::npos; start = nl + 1)
+        line(bytes.substr(start, nl - start));
+    _partial.assign(bytes.substr(start));
 }
 
 uint64_t TranscriptParser::revision(size_t index) const {

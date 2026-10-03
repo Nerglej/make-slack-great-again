@@ -128,8 +128,7 @@ struct DnsCache {
 };
 
 DnsCache &dnsCache() {
-    static DnsCache *const c = new DnsCache; // never destroyed: workers may outlive statics
-    return *c;
+    return immortal<DnsCache>();
 }
 
 std::atomic<int64_t> g_dnsLookups{0};
@@ -338,13 +337,30 @@ int64_t dnsLookups() {
     return g_dnsLookups.load(std::memory_order_relaxed);
 }
 
-Stream::Stream() = default;
+void releaseDns() {
+    DnsCache                   &c = dnsCache();
+    std::lock_guard<std::mutex> lock(c.mutex);
+    std::vector<DnsEntry>().swap(c.entries);
+}
+
+namespace {
+std::atomic<int> g_liveStreams{0};
+}
+
+int liveStreams() {
+    return g_liveStreams.load(std::memory_order_acquire);
+}
+
+Stream::Stream() {
+    g_liveStreams.fetch_add(1, std::memory_order_relaxed);
+}
 
 Stream::~Stream() {
     if (_tls)
         tlsFree(_tls);
     if (_fd >= 0)
         ::close(_fd);
+    g_liveStreams.fetch_sub(1, std::memory_order_release);
 }
 
 bool Stream::open(const Url &url, const Waiter &w, std::string *error) {

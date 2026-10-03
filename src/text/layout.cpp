@@ -99,10 +99,14 @@ struct Scratch {
     std::vector<Piece>    linePieces;
     hb_buffer_t          *buf = nullptr;
 };
-Scratch &scratch() {
+// Outside Scratch: shutdown() may run after Scratch's static destructor (an
+// App that is itself a static), and a plain pointer is still valid then.
+hb_buffer_t *g_buf = nullptr;
+Scratch     &scratch() {
     static Scratch s;
-    if (!s.buf)
-        s.buf = hb_buffer_create();
+    if (!g_buf)
+        g_buf = hb_buffer_create();
+    s.buf = g_buf;
     return s;
 }
 
@@ -1286,6 +1290,12 @@ void AttributedText::append(std::string_view utf8, const Style &s) {
 
 bool init(std::string *error) {
     return fonts::init(error);
+}
+
+void shutdown() {
+    hb_buffer_destroy(g_buf); // the vectors go with Scratch's static destructor
+    g_buf = nullptr;
+    fonts::shutdown();
 }
 
 std::unique_ptr<Layout>

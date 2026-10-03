@@ -542,6 +542,10 @@ void closeIdleConnections() {
     }];
 }
 
+void releaseCaches() {
+    closeIdleConnections();
+}
+
 std::unique_ptr<WsConn> makeWsConn() {
     return std::make_unique<MacWsConn>();
 }

@@ -346,6 +346,26 @@ bool init(std::string *error) {
     return true;
 }
 
+void shutdown() {
+    if (!g)
+        return;
+    for (Loaded &L : g->loaded) {
+        for (auto &[w, f] : L.var)
+            hb_font_destroy(f);
+        hb_font_destroy(L.hbDefault);
+        hb_face_destroy(L.hbFace); // before the mapping its blob borrows
+        if (L.ft)
+            FT_Done_Face(L.ft);
+    }
+    if (g->ft)
+        FT_Done_FreeType(g->ft);
+    for (const FileMap &m : g->maps)
+        if (m.p)
+            unmapFile(m.p, m.n);
+    delete g;
+    g = nullptr;
+}
+
 FontKey primary(const Style &s) {
     return resolveIn(uint32_t(s.mono ? g->mono : g->ui), uint16_t(s.weight), s.italic);
 }

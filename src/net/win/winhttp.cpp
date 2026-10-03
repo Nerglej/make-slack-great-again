@@ -710,6 +710,8 @@ void perform(
 // which other clients may still be using.
 void closeIdleConnections() {}
 
+void releaseCaches() {}
+
 std::unique_ptr<WsConn> makeWsConn() {
     return std::make_unique<WinWsConn>();
 }

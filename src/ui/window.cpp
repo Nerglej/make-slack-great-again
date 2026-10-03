@@ -1269,6 +1269,8 @@ std::unique_ptr<App> App::create(std::string *error) {
 App::~App() {
     if (s_instance == this)
         s_instance = nullptr;
+    // The app's views are gone by now (the windows close before their App).
+    text::shutdown();
 }
 
 void App::handle(const plat::Event &e) {

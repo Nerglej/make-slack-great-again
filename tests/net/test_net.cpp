@@ -1026,6 +1026,26 @@ TEST("tls: a reconnect resumes the session (TLS 1.3 and 1.2)") {
     const net::Response r = get("https://127.0.0.1:" + std::to_string(u.port) + "/plain");
     CHECK_STR(r.error, "tls: hostname mismatch");
 }
+
+// At exit nothing is open: the name cache, the TLS sessions and settings go,
+// and a later request simply starts over (a fresh lookup, a full handshake).
+TEST("releaseCaches: frees what was cached, and requests still work after") {
+    NEED_SERVER();
+    const std::string url = "http://localhost:" + std::to_string(srv.port) + "/closehdr";
+    CHECK(get(url).status == 200); // the name is cached now
+    if (!srv.tlsBase.empty())
+        CHECK_STR(get(srv.tlsBase + "/tls-session").error, ""); // and a session kept
+    REQUIRE(net::detail::liveStreams() == 0);
+    net::releaseCaches();
+    const int64_t before = net::detail::dnsLookups();
+    CHECK(get(url).status == 200);
+    CHECK(net::detail::dnsLookups() == before + 1);
+    if (srv.tlsBase.empty())
+        return skip("local TLS", srv.tlsWhy.empty() ? "no TLS server" : srv.tlsWhy);
+    const net::Response again = get(srv.tlsBase + "/tls-session");
+    CHECK_STR(again.error, "");
+    CHECK_STR(again.body, "new");
+}
 #endif
 
 // ── WebSocket ───────────────────────────────────────────────────────────────

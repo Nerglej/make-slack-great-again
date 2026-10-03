@@ -30,8 +30,7 @@ struct Pool {
 };
 
 Pool &pool() {
-    static Pool *const p = new Pool; // never destroyed: workers may outlive statics
-    return *p;
+    return immortal<Pool>();
 }
 
 // Expired streams are moved out under the lock and closed outside it (a TLS
@@ -406,6 +405,16 @@ void closeIdleConnections() {
         std::lock_guard<std::mutex> lock(p.mutex);
         idle.swap(p.idle);
     }
+}
+
+void releaseCaches() {
+    closeIdleConnections();
+    // A stream still open (a Client or WebSocket that outlives the call) may
+    // yet resolve, resume or verify through these: then they stay.
+    if (liveStreams() != 0)
+        return;
+    releaseDns();
+    releaseTls();
 }
 
 } // namespace net::detail

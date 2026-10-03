@@ -36,6 +36,8 @@ inline FontKey makeKey(uint32_t face, uint32_t wght, bool bold, bool oblique) {
 }
 
 bool init(std::string *error);
+// Frees every loaded face and file mapping (text::shutdown).
+void shutdown();
 
 // The UI family (or mono when s.mono) in the requested weight/italic.
 FontKey primary(const Style &s);
