@@ -953,8 +953,11 @@ CocoaWindow::~CocoaWindow() {
     window.delegate                = nil;
     [window orderOut:nil];
     [window close];
-    if (presented)
-        CGImageRelease(presented);
+    if (_painting >= 0)
+        IOSurfaceUnlock(_surfaces[_painting].surface, 0, nullptr);
+    for (CocoaSurface &c : _surfaces)
+        if (c.surface)
+            CFRelease(c.surface);
     app->forget(this);
 }
 
@@ -1252,60 +1255,166 @@ void CocoaWindow::deliverFrameIfDue() {
     app->noteWork();
 }
 
+namespace {
+
+constexpr uint32_t kOpaqueBlack = 0xff000000;
+
+plat::Rect clipTo(plat::Rect r, int w, int h) {
+    const int x0 = std::max(0, r.x), y0 = std::max(0, r.y);
+    const int x1 = std::min(w, r.x + r.w), y1 = std::min(h, r.y + r.h);
+    return {x0, y0, std::max(0, x1 - x0), std::max(0, y1 - y0)};
+}
+
+// BGRA, premultiplied: plat's ARGB32 in little-endian memory order.
+IOSurfaceRef createSurface(int w, int h) {
+    const size_t  bpr   = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, size_t(w) * 4);
+    NSDictionary *props = @{
+        (__bridge NSString *)kIOSurfaceWidth : @(w),
+        (__bridge NSString *)kIOSurfaceHeight : @(h),
+        (__bridge NSString *)kIOSurfaceBytesPerElement : @4,
+        (__bridge NSString *)kIOSurfaceBytesPerRow : @(bpr),
+        (__bridge NSString *)kIOSurfaceAllocSize : @(bpr * size_t(h)),
+        (__bridge NSString *)kIOSurfacePixelFormat : @(uint32_t('BGRA')),
+    };
+    IOSurfaceRef s = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+    // Untagged surfaces are shown as display-native colour; the canvas is sRGB.
+    if (s)
+        IOSurfaceSetValue(s, CFSTR("IOSurfaceColorSpace"), kCGColorSpaceSRGB);
+    return s;
+}
+
+uint32_t *rowAt(IOSurfaceRef s, int y) {
+    return reinterpret_cast<uint32_t *>(
+        static_cast<uint8_t *>(IOSurfaceGetBaseAddress(s)) + size_t(y) * IOSurfaceGetBytesPerRow(s)
+    );
+}
+
+void copyRect(IOSurfaceRef dst, IOSurfaceRef src, plat::Rect r) {
+    for (int y = r.y; y < r.y + r.h; ++y)
+        std::memcpy(rowAt(dst, y) + r.x, rowAt(src, y) + r.x, size_t(r.w) * 4);
+}
+
+} // namespace
+
+// Painting goes straight into an IOSurface that the layer then shows, so a
+// frame copies only what other frames changed since this surface was last
+// presented, not the whole window. The surface on screen is never written:
+// each frame paints into another one the window server no longer reads.
 Canvas CocoaWindow::beginPaint() {
     const double s = scale();
     const Size   l = size();
     const int    w = std::max(1, int(std::lround(l.w * s))),
                  h = std::max(1, int(std::lround(l.h * s)));
-    if (w != _pw || h != _ph || _back.empty()) {
-        // Keep what fits of the old frame: undamaged pixels must survive.
-        std::vector<uint32_t> nb(size_t(w) * h, 0xff000000);
-        for (int y = 0; y < std::min(h, _ph); ++y)
-            std::memcpy(&nb[size_t(y) * w], &_back[size_t(y) * _pw], size_t(std::min(w, _pw)) * 4);
-        _back.swap(nb);
-        _pw = w;
-        _ph = h;
+    if (_painting < 0) {
+        // Drop surfaces of another size (the layer keeps its own reference to
+        // the one it shows) and idle ones beyond a double-buffered pair.
+        int kept = 0;
+        for (int i = 0; i < kMaxSurfaces; ++i) {
+            CocoaSurface &c = _surfaces[i];
+            if (!c.surface)
+                continue;
+            if (i != _front &&
+                (c.width != w || c.height != h || (kept >= 2 && !IOSurfaceIsInUse(c.surface)))) {
+                CFRelease(c.surface);
+                c = {};
+            } else {
+                ++kept;
+            }
+        }
+        // An idle surface of the right size, else a new one, else (every slot
+        // taken and still read by the window server) any but the front.
+        int pick = -1, empty = -1, busy = -1;
+        for (int i = 0; i < kMaxSurfaces; ++i) {
+            const CocoaSurface &c = _surfaces[i];
+            if (i == _front)
+                continue;
+            if (!c.surface)
+                empty = empty < 0 ? i : empty;
+            else if (!IOSurfaceIsInUse(c.surface))
+                pick = pick < 0 ? i : pick;
+            else
+                busy = busy < 0 ? i : busy;
+        }
+        if (pick < 0 && empty >= 0) {
+            IOSurfaceRef n = createSurface(w, h);
+            if (!n)
+                return {};
+            _surfaces[empty] = {n, w, h, true, {}};
+            pick             = empty;
+        }
+        if (pick < 0)
+            pick = busy;
+        if (pick < 0)
+            return {};
+
+        // Bring it up to date with the newest frame, so the canvas always
+        // holds what is on screen and a partial repaint is correct.
+        CocoaSurface       &p   = _surfaces[pick];
+        const CocoaSurface *src = _front >= 0 ? &_surfaces[_front] : nullptr;
+        IOSurfaceLock(p.surface, 0, nullptr);
+        if (src)
+            IOSurfaceLock(src->surface, kIOSurfaceLockReadOnly, nullptr);
+        if (p.staleAll) {
+            // Keep what fits of the old frame: undamaged pixels must survive.
+            const int cw = src ? std::min(w, src->width) : 0;
+            const int ch = src ? std::min(h, src->height) : 0;
+            for (int y = 0; y < h; ++y) {
+                uint32_t *row  = rowAt(p.surface, y);
+                const int keep = y < ch ? cw : 0;
+                if (keep)
+                    std::memcpy(row, rowAt(src->surface, y), size_t(keep) * 4);
+                std::fill(row + keep, row + w, kOpaqueBlack);
+            }
+        } else if (src) {
+            for (Rect r : p.stale) {
+                r = clipTo(r, w, h);
+                if (r.w > 0 && r.h > 0)
+                    copyRect(p.surface, src->surface, r);
+            }
+        }
+        if (src)
+            IOSurfaceUnlock(src->surface, kIOSurfaceLockReadOnly, nullptr);
+        p.stale.clear();
+        p.staleAll = false;
+        _painting  = pick;
     }
-    return {_back.data(), _pw, _ph, _pw, s};
+    const CocoaSurface &p = _surfaces[_painting];
+    return {
+        static_cast<uint32_t *>(IOSurfaceGetBaseAddress(p.surface)),
+        p.width,
+        p.height,
+        int(IOSurfaceGetBytesPerRow(p.surface) / 4),
+        s
+    };
 }
 
-void CocoaWindow::endPaint(const std::vector<Rect> &) {
-    if (_back.empty())
+void CocoaWindow::endPaint(const std::vector<Rect> &damage) {
+    if (_painting < 0)
         return;
-    @autoreleasepool {
-        // The compositor may read the image long after this returns, so it
-        // gets its own copy; _back stays ours for the next partial repaint.
-        // (Follow-up: IOSurface double-buffering would drop this memcpy.)
-        CFDataRef data = CFDataCreate(
-            nullptr, reinterpret_cast<const UInt8 *>(_back.data()), CFIndex(_back.size() * 4)
-        );
-        CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
-        CFRelease(data);
-        CGColorSpaceRef cs  = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-        CGImageRef      img = CGImageCreate(
-            size_t(_pw),
-            size_t(_ph),
-            8,
-            32,
-            size_t(_pw) * 4,
-            cs,
-            CGBitmapInfo(kCGImageAlphaPremultipliedFirst) | kCGBitmapByteOrder32Little,
-            provider,
-            nullptr,
-            false,
-            kCGRenderingIntentDefault
-        );
-        CGColorSpaceRelease(cs);
-        CGDataProviderRelease(provider);
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES]; // no implicit cross-fade
-        view.layer.contentsScale = scale();
-        view.layer.contents      = (__bridge id)img;
-        [CATransaction commit];
-        if (presented)
-            CGImageRelease(presented);
-        presented = img;
+    const int done = _painting;
+    _painting      = -1;
+    IOSurfaceUnlock(_surfaces[done].surface, 0, nullptr);
+
+    // Other surfaces now lack whatever this frame painted.
+    const bool whole = damage.empty();
+    for (int i = 0; i < kMaxSurfaces; ++i) {
+        CocoaSurface &o = _surfaces[i];
+        if (i == done || !o.surface)
+            continue;
+        if (whole || o.stale.size() + damage.size() > 32) {
+            o.staleAll = true;
+            o.stale.clear();
+        } else if (!o.staleAll) {
+            o.stale.insert(o.stale.end(), damage.begin(), damage.end());
+        }
     }
+    _front = done;
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES]; // no implicit cross-fade
+    view.layer.contentsScale = scale();
+    view.layer.contents      = (__bridge id)_surfaces[done].surface;
+    [CATransaction commit];
 }
 
 // ── attention ───────────────────────────────────────────────────────────────

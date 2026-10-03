@@ -23,6 +23,7 @@ target_compile_definitions(plat PRIVATE PLAT_HAS_COCOA)
 target_link_libraries(plat PUBLIC
     "-framework AppKit"
     "-framework QuartzCore"
+    "-framework IOSurface"
     "-framework CoreGraphics"
     "-framework Carbon"
     "-framework UniformTypeIdentifiers"

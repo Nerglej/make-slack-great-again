@@ -5,6 +5,7 @@
 #pragma once
 
 #import <AppKit/AppKit.h>
+#import <IOSurface/IOSurfaceRef.h>
 
 #include "core/backends.h"
 #include "core/loop_core.h"
@@ -101,6 +102,17 @@ NSDragOperation operationFromAction(DropAction a);
 DropAction      preferredAction(uint32_t actions); // Copy, else Move, else Link
 
 // ── Window (cocoa_window.mm) ────────────────────────────────────────────────
+
+// One IOSurface the window paints into and hands to its layer. A window keeps
+// a small ring of these; `stale` tracks which parts of it are older than the
+// newest presented frame, so a partial repaint can start from correct pixels.
+struct CocoaSurface {
+    IOSurfaceRef      surface = nullptr;
+    int               width = 0, height = 0; // physical
+    bool              staleAll = true;
+    std::vector<Rect> stale; // physical rects newer frames painted that this one lacks
+};
+
 class CocoaWindow final : public Window {
 public:
     CocoaWindow(CocoaApp *app, const WindowDesc &desc);
@@ -150,6 +162,11 @@ public:
     void  moved();                      // windowDidMove:
     Point viewPoint(NSEvent *ev) const; // logical, top-left origin
 
+    // The surface the layer shows (nullptr before the first paint).
+    IOSurfaceRef presentedSurface() const {
+        return _front >= 0 ? _surfaces[_front].surface : nullptr;
+    }
+
     CocoaApp                     *app;
     NSWindow                     *window   = nil;
     PlatView                     *view     = nil;
@@ -160,8 +177,7 @@ public:
     bool                          framePending     = false;
     CFAbsoluteTime                frameRequestedAt = 0; // oldest unanswered requestFrame
     bool                          pointerInside    = false;
-    bool                          swallowUp[5]     = {};      // press was non-client
-    CGImageRef                    presented        = nullptr; // last frame handed to the layer
+    bool                          swallowUp[5]     = {};               // press was non-client
     DropAction                    dropReply        = DropAction::Copy; // answer to DropEnter/Move
     // The press/drag that a startDrag() from a PointerDown/Move handler
     // hands to AppKit's drag session; cleared on release.
@@ -172,15 +188,20 @@ public:
 private:
     void startFrameClock();
 
-    id                    _displayLink  = nil; // CADisplayLink (macOS 14+), paused when idle
-    PlatFrameTarget      *_frameTarget  = nil;
-    Cursor                _cursor       = Cursor::Arrow;
-    bool                  _cursorHidden = false; // we owe NSCursor one unhide
-    std::vector<uint32_t> _back;                 // persistent canvas (keeps undamaged pixels)
-    int                   _pw = 0, _ph = 0;
-    Size                  _lastSize{};
-    double                _lastScale  = 0;
-    bool                  _lastZoomed = false, _lastMini = false, _lastFull = false;
+    id               _displayLink  = nil; // CADisplayLink (macOS 14+), paused when idle
+    PlatFrameTarget *_frameTarget  = nil;
+    Cursor           _cursor       = Cursor::Arrow;
+    bool             _cursorHidden = false; // we owe NSCursor one unhide
+    Size             _lastSize{};
+    double           _lastScale  = 0;
+    bool             _lastZoomed = false, _lastMini = false, _lastFull = false;
+
+    // Paint target ring; the canvas is the locked surface, so no separate
+    // back buffer exists.
+    static constexpr int kMaxSurfaces = 4;
+    CocoaSurface         _surfaces[kMaxSurfaces];
+    int                  _front    = -1; // on the layer: the newest presented frame
+    int                  _painting = -1; // locked, between beginPaint and endPaint
 };
 
 // ── Tray (cocoa_tray.mm) ────────────────────────────────────────────────────

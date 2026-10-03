@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 using plat::cocoa::CocoaApp;
 
@@ -853,9 +854,9 @@ bool CocoaApp::readPixel(Window &win, int x, int y, uint32_t *argb) {
                 oy              = int(std::lround((w.window.frame.size.height - NSMaxY(vr)) * k));
             }
         }
-        if (!img && w.presented) {
-            // Fallback: the image we last handed to the compositor. Proves
-            // the CGImage/format path, not that it reached the screen.
+        if (IOSurfaceRef s = w.presentedSurface(); !img && s) {
+            // Fallback: the surface we last handed to the compositor. Proves
+            // the surface/format path, not that it reached the screen.
             static bool told = false;
             if (!told) {
                 told = true;
@@ -865,7 +866,15 @@ bool CocoaApp::readPixel(Window &win, int x, int y, uint32_t *argb) {
                     "(grant Screen Recording to read composited pixels)\n"
                 );
             }
-            img = w.presented;
+            const bool ok = x >= 0 && y >= 0 && size_t(x) < IOSurfaceGetWidth(s) &&
+                            size_t(y) < IOSurfaceGetHeight(s);
+            if (ok) {
+                IOSurfaceLock(s, kIOSurfaceLockReadOnly, nullptr);
+                const auto *base = static_cast<const uint8_t *>(IOSurfaceGetBaseAddress(s));
+                std::memcpy(argb, base + size_t(y) * IOSurfaceGetBytesPerRow(s) + size_t(x) * 4, 4);
+                IOSurfaceUnlock(s, kIOSurfaceLockReadOnly, nullptr);
+            }
+            return ok;
         }
         if (!img)
             return false;
