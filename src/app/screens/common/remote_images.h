@@ -23,7 +23,7 @@
 // queue behind a channel full of screenshots); the rest wait in order, and a
 // URL asked for twice is fetched once. A failed URL (no answer, an error
 // status, or bytes that are not an image — Slack's sign-in page instead of a
-// file) is not asked for again for kCooldownMs (old ImageCache::markFailed);
+// file) is not asked for again for kCooldownMs;
 // setAuth() forgets those failures, since a workspace signing in is the
 // usual cure.
 //
@@ -86,7 +86,7 @@ public:
     // cleared like the pictures (flat folders), `kept` only count (walked
     // recursively). Paths may not exist yet.
     void    coverDirs(std::vector<std::string> blobs, std::vector<std::string> kept);
-    // A file just written into a blob folder (the old noteBytesWritten).
+    // A file just written into a blob folder.
     void    noteWritten(const std::string &path);
     // Settings → Storage: the disk bound (sweeps when it shrinks).
     void    setLimitMb(int mb);

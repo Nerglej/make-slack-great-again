@@ -333,18 +333,18 @@ void isolate() {
     // speakers or the microphone. Audio tests point it at fake helpers of
     // their own.
     setEnv("MSGA_TEST_ISOLATED", "1");
-    setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/next-test-audio");
+    setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/msga-test-audio");
     setEnv("PLAT_BACKEND", "headless");
 #ifndef _WIN32
-    setEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/next-test-bus");
-    setEnv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/nonexistent/next-test-sysbus");
+    setEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/msga-test-bus");
+    setEnv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/nonexistent/msga-test-sysbus");
     unsetEnv("DISPLAY");
     unsetEnv("WAYLAND_DISPLAY");
 #endif
     const char *home = std::getenv("HOME");
     std::string h    = home && std::strstr(home, "test-home") ? home : "";
     if (h.empty()) {
-        h = newTempDir("next-test-home-", {});
+        h = newTempDir("msga-test-home-", {});
         if (h.empty())
             return;
         setEnv("HOME", h);

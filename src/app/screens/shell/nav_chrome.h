@@ -1,6 +1,6 @@
 // The dark nav column's shared looks:
 //  - the vertical gradient the rail, the sidebar and its footer share
-//    (Th::navGradient: ~12% lighter at the window's top edge, ~10% darker at
+//    (~12% lighter at the window's top edge, ~10% darker at
 //    its bottom, so sibling views line up and scrolling rows never move it);
 //  - NavGhostButton: the translucent white chrome of the rail's "+" and gear
 //    and the footer's presence toggle.

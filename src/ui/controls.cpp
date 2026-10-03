@@ -863,9 +863,9 @@ bool SectionList::onEvent(Event &e) {
 namespace {
 
 constexpr float kCardRadius = 12, kCardPadH = 28, kCardPadV = 24, kHeaderGap = 16;
-constexpr Color kCardScrim = 0x8c000000; // AppDialog: rgba(0,0,0,140), both themes
+constexpr Color kCardScrim = 0x8c000000; // rgba(0,0,0,140), both themes
 
-// AppDialog's card: surface.raised, radius 12; presses on it stay inside.
+// A dialog's card: surface.raised, radius 12; presses on it stay inside.
 class Card final : public View {
 public:
     void paint(gfx::Painter &p) override {
@@ -907,7 +907,7 @@ Dialog::Dialog(std::string title, float cardWidth, Scroll scroll) : _w(cardWidth
     setPaintOutset(0);
     style().dir = Dir::None;
     // Not a layout boundary: the card is as tall as its content, so content
-    // that appears or wraps anew (AppDialog::updateCard) must resize it.
+    // that appears or wraps anew must resize it.
     _panel      = add<Card>();
     _panel->style().padding(kCardPadH, kCardPadV, kCardPadH, kCardPadV).spacing(0);
     auto *head = _panel->add<View>();

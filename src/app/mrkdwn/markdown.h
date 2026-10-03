@@ -1,5 +1,5 @@
-// Markdown → Slack mrkdwn: msga's MarkdownCompose (the composer's text on the
-// way out, and Claude Code's answers on the way in).
+// Markdown → Slack mrkdwn: the composer's text on the way out, and Claude
+// Code's answers on the way in.
 //
 // People type CommonMark by habit; Slack speaks mrkdwn and does not
 // translate, so the official client (and msga) convert on the way out:

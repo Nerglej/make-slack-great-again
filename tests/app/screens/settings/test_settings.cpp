@@ -683,7 +683,7 @@ TEST(
             app().pump(5);
         CHECK_STR(log(), theme + "/bell.oga\n" + theme + "/bell.oga\n");
     }
-    base::test::setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/next-test-audio");
+    base::test::setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/msga-test-audio");
     if (oldData.empty())
         base::test::unsetEnv("XDG_DATA_HOME");
     else

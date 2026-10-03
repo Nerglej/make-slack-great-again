@@ -3953,9 +3953,6 @@ msgstr "ダウンロードした更新ファイルが破損しています（チ
 #~ msgid "Choose a tray icon"
 #~ msgstr "トレイアイコンを選択"
 
-#~ msgid "GIF search needs the network layer, which msga-next does not have yet."
-#~ msgstr "GIF 検索にはネットワーク機能が必要ですが、msga-next にはまだありません。"
-
 #~ msgid "Saved. Restart msga to apply."
 #~ msgstr "保存しました。反映するには msga を再起動してください。"
 

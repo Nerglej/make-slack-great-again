@@ -46,7 +46,7 @@ std::string friendlyBrowserError(const std::string &reason) {
     return tr("Browser sign-in didn't work.");
 }
 
-// StyledButton::Variant::Link: link-coloured text that acts on a click.
+// A link button: link-coloured text that acts on a click.
 Label *linkButton(View *parent, std::string text, std::function<void()> fn) {
     text::Style st = pxFont(13, text::Weight::Regular, themed(C::FormLink));
     st.linkId      = 1;

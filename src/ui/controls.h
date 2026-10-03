@@ -33,8 +33,7 @@
 
 namespace ui {
 
-// Height of the compact form controls (Ui::kControlHeightSmall) and of the
-// normal ones (Ui::kControlHeight).
+// Height of the compact form controls and of the normal ones.
 constexpr float kFormSmallH = 30, kFormNormalH = 38;
 
 // ── CheckBox / Radio ────────────────────────────────────────────────────────
@@ -265,7 +264,7 @@ private:
 // reliable modality). Two frames:
 //   Dialog(w, h)          the Settings window: a fixed w × h panel with a
 //                         1-px border and an 8-px radius over rgba(0,0,0,150);
-//   Dialog(title, cardW)  AppDialog: a 12-px card as tall as its content
+//   Dialog(title, cardW)  a dialog: a 12-px card as tall as its content
 //                         (cardW 0: clamp(window − 80, min(480, …), 560)),
 //                         28/24 padding, a bold ×1.45 title and a round close
 //                         button over rgba(0,0,0,140), a soft 40-px shadow;

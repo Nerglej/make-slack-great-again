@@ -23,7 +23,7 @@ constexpr float kShadow = 8, kRadius = 8, kPad = 16, kAv = 72, kAvRadius = 8, kA
 constexpr float kBtnH = 36, kGap = 6, kDot = 8, kDotGap = 8;
 constexpr int   kCopiedMs = 1200;
 
-// The Th::c() colours the card uses, light then dark.
+// The theme colours the card uses, light then dark.
 enum Tone : uint8_t {
     Raised,
     BorderStrong,

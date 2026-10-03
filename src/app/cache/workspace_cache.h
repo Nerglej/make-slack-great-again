@@ -51,8 +51,8 @@ namespace cache {
 
 class WorkspaceCache {
 public:
-    static constexpr int kMaxMessages  = 50;   // per conversation (old kMaxMessages)
-    static constexpr int kWriteDelayMs = 1000; // old scheduleSaveUnreads / scheduleSaveUsers
+    static constexpr int kMaxMessages  = 50;   // per conversation
+    static constexpr int kWriteDelayMs = 1000; // batched writes, at most one a second
 
     // `dir` is this workspace's directory (dirFor); "" keeps nothing.
     WorkspaceCache(plat::App &app, model::Store &store, std::string dir);

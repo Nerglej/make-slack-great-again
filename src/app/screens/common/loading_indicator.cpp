@@ -8,7 +8,7 @@ namespace {
 
 constexpr int      kIntervalMs = 160;
 constexpr float    kGapDeg     = 3;
-// Th::c().loader a–d: the same in every theme.
+// The loader's four colours: the same in every theme.
 constexpr uint32_t kColors[4]  = {0xedae2f, 0x2fb27c, 0x38bced, 0xdc1a59};
 
 } // namespace

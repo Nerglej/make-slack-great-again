@@ -1,4 +1,4 @@
-// The message dialogs, on ui::AppDialog:
+// The message dialogs, on ui::Dialog:
 //
 //   Delete message   "This action cannot be undone.", the message, Cancel /
 //                    Delete (danger) → Backend::remove

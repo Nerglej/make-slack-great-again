@@ -1637,7 +1637,7 @@ TEST("image: the disk cache stays under its limit, least recently used first") {
 }
 
 TEST("image: the limit covers the audio and file downloads and counts the workspaces' data") {
-    // The old CacheEvictor: everything counts, only blobs go, oldest first.
+    // The cache sweep: everything counts, only blobs go, oldest first.
     const std::string root = tempDir("cachesweep");
     const std::string blob(400 * 1024, 'x');
     const std::string images = file::join(root, "images"), audio = file::join(root, "audio"),

@@ -526,7 +526,7 @@ void SlackBackend::connect(Done done) {
 }
 
 void SlackBackend::Read::startLoads() {
-    // Session::start's order: self presence, conversations (then emoji), stars,
+    // In this order: self presence, conversations (then emoji), stars,
     // users, user groups, saved items.
     connectPending = 2;
     connectError.clear();

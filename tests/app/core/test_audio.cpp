@@ -51,7 +51,7 @@ struct Scratch {
         base::test::setEnv("PLAT_AUDIO_HELPERS", dir);
     }
     ~Scratch() {
-        base::test::setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/next-test-audio");
+        base::test::setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/msga-test-audio");
         std::string cmd = "rm -rf '" + dir + "'";
         (void)!std::system(cmd.c_str());
     }
@@ -532,7 +532,7 @@ TEST("audio: the OS player loads the chime and knows its length") {
     PlayerProbe probe;
     probe.attach(*p);
     p->load(chimePath());
-    base::test::setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/next-test-audio");
+    base::test::setEnv("PLAT_AUDIO_HELPERS", "/nonexistent/msga-test-audio");
     REQUIRE(pumpUntil([&] { return probe.loaded || probe.failed; }, 5000));
     CHECK(probe.loaded);
     CHECK(p->durationMs() >= 395 && p->durationMs() <= 405);

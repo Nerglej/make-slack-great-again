@@ -182,7 +182,7 @@ TEST("slack write: a broadcast reply carries thread_ts and reply_broadcast") {
     CHECK(!replies->front().pending && replies->front().threadTs == e.old);
 }
 
-TEST("slack write: replying in a thread follows it (msga's markThreadFollowed)") {
+TEST("slack write: replying in a thread follows it") {
     if (!haveServer())
         return;
     Env      e;
@@ -437,7 +437,7 @@ TEST("slack write: an upload goes URL, bytes, complete, then replaces the pendin
     REQUIRE(m);
     CHECK(!m->pending && m->ts != local);
     CHECK(e.store.conversation(e.general).messages.size() == 2);
-    // A failed upload: the ghost goes and msga's banner says so.
+    // A failed upload: the ghost goes and the banner says so.
     std::vector<std::string> errors;
     e.be->onError = [&](const std::string &msg) { errors.push_back(msg); };
     script("files.completeUploadExternal", R"([{"ok":false,"error":"not_in_channel"}])");
@@ -549,7 +549,7 @@ TEST("slack write: save and remind use saved.*; a rejection rolls back") {
     CHECK_STR(add["item_id"].str(), "C1");
     CHECK(add["ts"].str() == model::formatTs(e.old));
     CHECK_STR(add["date_due"].str(), "1900000000");
-    std::vector<std::string> errors; // msga's banner says why the tint went
+    std::vector<std::string> errors; // the banner says why the tint went
     e.be->onError = [&](const std::string &m) { errors.push_back(m); };
     script("saved.add", R"([{"ok":false,"error":"not_allowed"}])");
     e.be->setSaved(e.general, e.old, true);
@@ -790,7 +790,7 @@ TEST("slack write: pins, stars, leave, members, DMs") {
     CHECK_STR(log.get("conversations.close")["form"]["channel"].str(), "D1");
     CHECK_STR(log.get("conversations.members", 1)["form"]["cursor"].str(), "page2");
     CHECK_STR(log.get("conversations.open")["form"]["users"].str(), "UMIRA");
-    // A refusal reaches the error banner as is (msga's showNetworkError).
+    // A refusal reaches the error banner as is.
     std::string banner;
     e.be->onError = [&](const std::string &m) { banner = m; };
     script("conversations.open", R"([{"ok":false,"error":"cannot_dm_bot"}])");
@@ -847,7 +847,7 @@ TEST("slack write: status, profile and photo") {
     CHECK(set["ctype"].str().substr(0, 19) == "multipart/form-data");
     CHECK_STR(set["auth"].str(), "Bearer xoxc-test");
     CHECK(set["len"].integer() > int64_t(std::string_view("not really a png").size()));
-    // msga: a failure also reaches the banner, with the re-auth hint.
+    // A failure also reaches the banner, with the re-auth hint.
     std::vector<std::string> errors;
     e.be->onError = [&](const std::string &m) { errors.push_back(m); };
     script("users.profile.set", R"([{"ok":false,"error":"missing_scope"}])");
@@ -991,7 +991,7 @@ TEST("slack write: downloadFile fetches with the workspace's credentials, writes
         return;
     const char       *t = std::getenv("TMPDIR");
     const std::string dir =
-        file::join(t && *t ? t : "/tmp", "msga-next-test-download-" + std::to_string(getpid()));
+        file::join(t && *t ? t : "/tmp", "msga-test-download-" + std::to_string(getpid()));
     REQUIRE(file::makeDirs(dir));
     const std::string to = file::join(dir, "photo.bin");
     {

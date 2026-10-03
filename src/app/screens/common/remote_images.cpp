@@ -23,7 +23,7 @@ namespace {
 constexpr int     kFirstSweepMs    = 15000;
 constexpr int     kSweepEveryMs    = 30 * 60 * 1000;
 constexpr int64_t kSweepAfterBytes = int64_t(32) << 20;
-constexpr int64_t kDefaultLimit    = int64_t(250) << 20; // CacheEvictor::kDefaultCapMb
+constexpr int64_t kDefaultLimit    = int64_t(250) << 20;
 
 double nowMs() {
     using namespace std::chrono;
@@ -46,7 +46,7 @@ int64_t treeBytes(const std::string &dir) {
     return n;
 }
 
-// The old CacheEvictor::sweep: while everything (the blob folders and the
+// The cache sweep: while everything (the blob folders and the
 // kept ones) is over `limit`, deletes the least recently used blob. The
 // blob bytes left. Worker thread.
 int64_t sweepDirs(
@@ -242,8 +242,7 @@ struct RemoteImages::Impl {
         pump(self);
     }
 
-    // CacheEvictor::noteBytesWritten: a burst of downloads sweeps before
-    // the next periodic sweep would.
+    // A burst of downloads sweeps before the next periodic sweep would.
     static void written(const std::shared_ptr<Impl> &self, int64_t n) {
         self->disk += n;
         self->sinceSweep += n;

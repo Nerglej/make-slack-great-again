@@ -66,7 +66,7 @@ public:
     )
         : Dialog(std::string(), 720), _ctx(ctx), _channel(std::move(channel)),
           _person(std::move(person)), _create(std::move(create)) {
-        // AppDialog's Custom chrome: no title row, the card's own margins.
+        // Custom chrome: no title row, the card's own margins.
         panel()->child(0)->setVisible(false);
         panel()->style().padding(0);
         content()->style().spacing(0).minH = 520;

@@ -15,7 +15,7 @@ constexpr float kBarZone   = 12;    // px from the right edge that belong to the
 constexpr float kBarMargin = 2;
 constexpr float kMinThumb  = 24;
 constexpr float kBarWide   = 10; // hovered/dragged thumb width
-constexpr float kThinW     = 4;  // setThinThumb: VirtualListWidget::kScrollW
+constexpr float kThinW     = 4;  // setThinThumb
 constexpr float kThinMin   = 20; // … and its minimum thumb height
 #ifndef __APPLE__
 // px/ms below which a lift does not fling (macOS sends its own Momentum events)

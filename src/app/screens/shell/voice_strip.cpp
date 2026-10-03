@@ -20,7 +20,7 @@ using ui::C;
 
 namespace {
 
-constexpr float kH       = 30; // Ui::kControlHeightSmall
+constexpr float kH       = 30; // ui::kFormSmallH
 constexpr float kDot     = 8;  // recording dot diameter
 constexpr float kMeterH  = 16; // tallest meter bar
 constexpr float kBarW    = 2;

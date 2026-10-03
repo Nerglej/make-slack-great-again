@@ -107,7 +107,7 @@ bool Popup::onEvent(Event &e) {
 // Metrics, colours and drawing: 36-px rows, 26-px section
 // headers, 9-px separators, 12-px side padding, a 16-px check column when
 // any row is checked, an 8-px radius card with a soft halo, a faint full-width
-// hover wash, and its own palette (Th::c().contextMenu) in both themes.
+// hover wash, and its own palette in both themes.
 
 namespace {
 constexpr float kItemH    = 36;

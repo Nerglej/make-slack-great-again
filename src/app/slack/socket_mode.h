@@ -11,7 +11,7 @@
 // holder) and every backend registers as a sink. Every event goes to every
 // sink; a sink drops what is not its workspace's.
 //
-// Recovery, as in msga:
+// Recovery:
 //   - one connect cycle at a time (a single-flight guard), exponential
 //     backoff (1 s … 30 s) reset only after a connection proved durable
 //     (60 s) — an evicted socket must not reconnect once a second;

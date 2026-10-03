@@ -1,13 +1,12 @@
-// SlackBackend's write side (see slack_backend.h): msga's PublicBackend
-// write methods together with the optimistic half of its Session.
+// SlackBackend's write side (see slack_backend.h): the Web API write calls
+// together with their optimistic Store updates.
 //
 // Every change lands in the Store first and the Web API call follows; a
 // definitive rejection puts the old state back. A transport failure says
-// nothing about whether a write landed, so it never rolls back (msga's
-// kAmbiguousWriteFailure) — except for a send, which reconciles: Slack has
-// no idempotency key, so a post that may or may not have arrived is looked
-// for in recent history before it is ever posted again (the old app's
-// duplicate-message bug was a blind retransmit).
+// nothing about whether a write landed, so it never rolls back — except for
+// a send, which reconciles: Slack has no idempotency key, so a post that may
+// or may not have arrived is looked for in recent history before it is ever
+// posted again (a blind retransmit would duplicate the message).
 #include "app/model/image_size.h"
 #include "app/model/jobs.h"
 #include "app/model/timers.h"
@@ -32,8 +31,8 @@ using model::Ts;
 
 namespace {
 
-constexpr int kDeleteRetries   = 6; // msga's kMaxDeleteRetries
-constexpr int kUploadScans     = 6; // msga's kMaxUploadReconcileRetries
+constexpr int kDeleteRetries   = 6;
+constexpr int kUploadScans     = 6; // history scans for a finished upload
 constexpr int kUploadTimeoutMs = 300000;
 
 // A lowercase UUIDv4, the web client's client_msg_id (drafts.create
@@ -56,7 +55,7 @@ std::string clientMsgId() {
     return s;
 }
 
-// The send/delete/upload retry backoff (msga's _sendRetryDelayMs).
+// The send/delete/upload retry backoff.
 int backoff(int attempt) {
     return retryBackoffMs(attempt);
 }
@@ -67,7 +66,7 @@ bool transient(const std::string &e) {
     return isTransportError(e) || e == "ratelimited";
 }
 
-// msga's isMethodUnavailable: the endpoint itself is refused for this token
+// The endpoint itself is refused for this token
 // (an internal method on OAuth, a missing scope), not a passing failure.
 bool methodUnavailable(const std::string &e) {
     static const char *const kCodes[] = {
@@ -98,7 +97,7 @@ void addParam(std::string &form, std::string_view k, std::string_view v) {
 }
 
 // Slack entity-escapes bare & < > in stored text; unescape both sides so a
-// sent text compares equal to its stored form (msga's unescapedText).
+// sent text compares equal to its stored form.
 std::string unescaped(std::string_view t) {
     static const struct {
         std::string_view from;
@@ -121,8 +120,8 @@ std::string unescaped(std::string_view t) {
     return std::string(str::trim(out));
 }
 
-// The pending copy's file card, from the local file (msga's uploadFiles:
-// images preview straight from disk).
+// The pending copy's file card, from the local file (images preview
+// straight from disk).
 model::File localFile(const std::string &path) {
     model::File f;
     f.id                  = "pending:" + path;
@@ -136,7 +135,7 @@ model::File localFile(const std::string &path) {
     return f;
 }
 
-// msga's friendlySendError: Slack's code in words where there are some.
+// Slack's code in words where there are some.
 std::string friendlySendError(const std::string &e) {
     static const struct {
         const char *code, *text;
@@ -160,7 +159,7 @@ std::string friendlySendError(const std::string &e) {
     return e;
 }
 
-// msga's withReauthHint: a missing scope is fixed by signing in again.
+// A missing scope is fixed by signing in again.
 std::string withReauthHint(std::string message, const std::string &err) {
     if (err == "missing_scope")
         message +=
@@ -168,7 +167,7 @@ std::string withReauthHint(std::string message, const std::string &err) {
     return message;
 }
 
-// msga's parseDndMinutes: "30", "45m", "2h", "1h 30m", "1 hour" → minutes;
+// "30", "45m", "2h", "1h 30m", "1 hour" → minutes;
 // "off" / "end" / "resume" → 0; anything else (an empty argument too) → -1.
 int parseDndMinutes(std::string_view args) {
     const std::string a = str::asciiLower(str::trim(args));
@@ -277,7 +276,7 @@ struct SlackBackend::Write {
     // Only for writes that are safe to repeat (reactions, pins, stars, mark,
     // leave, files.delete — "already so" is fine): they ride the read path,
     // so a lost connection, a gateway page or a 429 is retried with backoff
-    // like msga's idempotent queue did, instead of landing only locally.
+    // instead of landing only locally.
     void write(
         std::string_view      method,
         std::string           form,
@@ -344,10 +343,9 @@ struct SlackBackend::Write {
         );
     }
 
-    // My reaction on one message and emoji, one call at a time (msga's
-    // single queue kept them in order): a retried add must never land after
-    // the remove that followed it. While one is out, only the latest wanted
-    // state is kept and sent once it answers, if it differs.
+    // My reaction on one message and emoji, one call at a time, in order: a
+    // retried add must never land after the remove that followed it. While one is out, only the
+    // latest wanted state is kept and sent once it answers, if it differs.
     struct Reaction {
         ConvRef     conv;
         Ts          ts;
@@ -417,9 +415,9 @@ struct SlackBackend::Write {
             return nullptr;
         }
         if (thread)
-            b.followThread(conv, thread); // msga's markThreadFollowed, on send
+            b.followThread(conv, thread); // replying follows the thread
         // Only messages newer than the newest the server gave us can be this
-        // one (msga's sinceTs); a fresh conversation falls back to the clock.
+        // one; a fresh conversation falls back to the clock.
         const Ts latest = store().conversation(conv).latest;
         st->oldest      = latest ? model::formatTs(latest) : str::number(base::nowSecs() - 60);
         model::Message m;
@@ -540,8 +538,8 @@ struct SlackBackend::Write {
         LOG_WARN("slack", "send failed: %s", err.c_str());
         if (!st->undone) {
             store().removeMessage(st->conv, st->local);
-            // msga's EvSendFailed: the ghost goes and the banner says why
-            // (the text is not put back in the composer).
+            // A failed send: the ghost goes and the banner says why (the text
+            // is not put back in the composer).
             if (b.onError)
                 b.onError(
                     st->withFiles
@@ -673,7 +671,7 @@ struct SlackBackend::Write {
         );
     }
 
-    // msga's reconcileUpload: my newest message carrying one of the file ids
+    // My newest message carrying one of the file ids
     // replaces the pending copy; a share lags history, hence the retries.
     void scanUpload(SendPtr st) {
         std::string form;
@@ -774,7 +772,7 @@ struct SlackBackend::Write {
                 LOG_WARN("slack", "saved.%s: %s", on ? "add" : "delete", err.c_str());
                 if (methodUnavailable(err))
                     savedUnavailable = true;
-                // msga's banner: why the tint (or the Saved row) just changed back.
+                // The banner says why the tint (or the Saved row) just changed back.
                 if (b.onError) {
                     const bool  reminder = on ? due > 0 : (wasItemDue > 0 || wasDue > 0);
                     const char *what =
@@ -1028,7 +1026,7 @@ void SlackBackend::react(ConvRef conv, Ts ts, std::string_view name, bool add) {
     _write->react(conv, ts, std::string(name), add);
 }
 
-// msga's Session::downloadFile: the bytes with the workspace's token (and,
+// The bytes with the workspace's token (and,
 // for session auth, its d cookie), then written to disk on a worker. Slack
 // answers a request it doesn't accept with its sign-in page (HTML, 200):
 // that is a failure, not the file.
@@ -1331,8 +1329,8 @@ void SlackBackend::scheduledGone(
 }
 
 void SlackBackend::userTyping(ConvRef, Ts) {
-    // users.typing is gone from the Web API (msga's sendTyping is a no-op
-    // too); official clients send typing over their RTM socket.
+    // users.typing is gone from the Web API, so this is a no-op; official
+    // clients send typing over their RTM socket.
 }
 
 // ── Read cursors ────────────────────────────────────────────────────────────
@@ -1352,7 +1350,7 @@ void SlackBackend::markRead(ConvRef conv, Ts ts) {
 }
 
 void SlackBackend::markThreadRead(ConvRef conv, Ts root, Ts ts) {
-    // A thread's own read cursor (msga's markThreadRead): an internal
+    // A thread's own read cursor: an internal
     // method, session tokens only; best effort.
     if (conv >= _store.conversationCount() || !root || ts <= 0)
         return;
@@ -1400,9 +1398,8 @@ void SlackBackend::setStarred(ConvRef conv, bool starred) {
     );
 }
 
-// Mute and the notification level are msga's own: Slack's per-channel prefs
-// aren't reachable over the public API, so the old app kept them locally
-// (Session::setNotificationLevel / setConvMuted) and so does the Store.
+// Mute and the notification level are kept locally, in the Store: Slack's
+// per-channel prefs aren't reachable over the public API.
 void SlackBackend::setMuted(ConvRef conv, bool muted) {
     if (conv < _store.conversationCount())
         _store.updateConversation(conv, [muted](model::Conversation &c) { c.muted = muted; });
@@ -1478,8 +1475,8 @@ void SlackBackend::openDm(model::UserRef user, std::function<void(ConvRef)> done
                 }
             } else {
                 LOG_WARN("slack", "conversations.open: %s", err.c_str());
-                // msga's Session::openDm: People, "Message", /dm — the
-                // banner says why (showNetworkError, the raw error).
+                // People, "Message", /dm — the banner says why (the raw
+                // error).
                 if (onError && !err.empty())
                     onError(err);
             }
@@ -1488,8 +1485,8 @@ void SlackBackend::openDm(model::UserRef user, std::function<void(ConvRef)> done
         });
 }
 
-// msga's joinChannel: conversations.join, then the channel is a member one
-// (the old app reloaded the roster; only the membership changes).
+// conversations.join, then the channel is a member one (only the
+// membership changes; the roster is not reloaded).
 void SlackBackend::joinChannel(ConvRef conv, ConvDone done) {
     if (conv >= _store.conversationCount()) {
         _write->post([done] {
@@ -1520,7 +1517,7 @@ void SlackBackend::joinChannel(ConvRef conv, ConvDone done) {
         });
 }
 
-// msga's createChannel: conversations.create; the answer is the new channel.
+// conversations.create; the answer is the new channel.
 void SlackBackend::createChannel(std::string name, bool isPrivate, ConvDone done) {
     api("conversations.create",
         net::formEncode({{"name", name}, {"is_private", isPrivate ? "true" : "false"}}),
@@ -1580,7 +1577,7 @@ void SlackBackend::setPresence(bool away, Done done) {
                 _store.user(_store.me).active = !away;
                 _store.usersChanged();
             }
-            // msga's Session::setPresence: the rich snapshot (manual_away…)
+            // The rich snapshot (manual_away…)
             // only comes from the server — re-poll instead of guessing, and
             // answer once it is in, so the footer settles on the new state.
             refreshSelfPresence([done] {
@@ -1638,7 +1635,7 @@ void SlackBackend::loadMyProfile(std::function<void(MyProfile)> done) {
 void SlackBackend::updateProfile(
     std::string name, std::string email, std::string phone, Done done
 ) {
-    // Only the fields that changed (msga's profile dialog): an unchanged
+    // Only the fields that changed: an unchanged
     // email would still need the admin rights to set it.
     const MyProfile &was = _write->profile;
     const bool       all = !_write->profileLoaded;
@@ -1679,7 +1676,7 @@ void SlackBackend::updateProfile(
     );
 }
 
-// msga's Session: a failed profile or photo change also reaches the error
+// A failed profile or photo change also reaches the error
 // banner, with the re-auth hint for a missing scope; `done` hears it as well.
 SlackBackend::Done SlackBackend::bannerOnFailure(const char *what, Done done) {
     return [this, alive = _alive, what, done = std::move(done)](bool ok, const std::string &err) {
@@ -1767,7 +1764,7 @@ void SlackBackend::search(std::string query, std::function<void(std::vector<Sear
 }
 
 // ── Channel canvases ────────────────────────────────────────────────────────
-// msga's PublicBackend canvas calls. The Store follows each answer: the
+// The canvas calls. The Store follows each answer: the
 // conversation's canvasId / canvasTitle, which the header's tab shows.
 
 namespace {
@@ -1981,11 +1978,11 @@ void SlackBackend::deleteCanvas(const std::string &fileId, Done done) {
         });
 }
 
-// ── Slash commands (msga's Session::runCommand) ─────────────────────────────
+// ── Slash commands ──────────────────────────────────────────────────────────
 
 namespace {
 
-// msga's CommonCommands for Slack (nativeCommands), in its order.
+// The built-in commands for Slack, in menu order.
 const struct {
     const char *name, *desc, *usage;
 } kNativeCommands[] = {
@@ -2003,7 +2000,7 @@ const struct {
 } // namespace
 
 // The workspace's own commands (commands.list) first, then the built-ins it
-// doesn't already have (msga's command merge). Every one runs here: none is
+// doesn't already have. Every one runs here: none is
 // posted as a message.
 std::vector<model::Backend::Command> SlackBackend::commands(ConvRef) {
     std::vector<Command> out = serverCommands();
@@ -2029,15 +2026,15 @@ model::Backend::LocalResult SlackBackend::runLocalCommand(
 ) {
     LocalResult       r;
     const std::string cmd    = str::asciiLower(name);
-    // Every answer that isn't immediate reaches the error banner (msga's
-    // errorHub); success says nothing.
+    // Every answer that isn't immediate reaches the error banner; success
+    // says nothing.
     auto              failed = [this](std::string message) {
         if (onError)
             onError(message);
     };
     if (cmd == "shrug") {
         static constexpr std::string_view kShrug = "\xC2\xAF\\_(\xE3\x83\x84)_/\xC2\xAF";
-        // Typed in a thread: the reply goes there (msga's sendMessage(…, root)).
+        // Typed in a thread: the reply goes there.
         send(
             conv,
             args.empty() ? std::string(kShrug) : str::concat({args, " ", kShrug}),
@@ -2138,7 +2135,7 @@ model::Backend::LocalResult SlackBackend::runLocalCommand(
     return r;
 }
 
-// msga's setDndSnooze: dnd.setSnooze for a number of minutes, dnd.endSnooze
+// dnd.setSnooze for a number of minutes, dnd.endSnooze
 // for 0; my User shows it at once (the dnd_updated_user echo agrees).
 void SlackBackend::setDndSnooze(int minutes, Done done) {
     api(minutes > 0 ? "dnd.setSnooze" : "dnd.endSnooze",
@@ -2158,7 +2155,7 @@ void SlackBackend::setDndSnooze(int minutes, Done done) {
         });
 }
 
-// ── Bot buttons (msga's pressBotButton; slack-bot-button-press.md) ─────────
+// ── Bot buttons (slack-bot-button-press.md) ─────────────────────────────────
 // blocks.actions — internal, session tokens only — as the web client sends
 // it: the app's bot id as service_id, the button, the message as container.
 // Never retried (a press is not idempotent).
@@ -2215,7 +2212,7 @@ void SlackBackend::pressButton(ConvRef conv, Ts ts, const std::string &buttonId,
         });
 }
 
-// ── The account's Slack theme (msga's loadSidebarTheme) ─────────────────────
+// ── The account's Slack theme ───────────────────────────────────────────────
 
 void SlackBackend::loadSidebarTheme(std::function<void(SidebarTheme, std::string)> done) {
     if (!_creds.sessionAuth()) {

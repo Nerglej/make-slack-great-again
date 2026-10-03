@@ -725,7 +725,7 @@ void WorkspaceCache::flush() {
         if (!msgs[c] || c >= s.conversationCount())
             continue;
         // The newest kMaxMessages confirmed ones (a pending copy must not
-        // come back as a ghost after a restart — old Session::cacheMessages).
+        // come back as a ghost after a restart).
         const model::Conversation          &cv = s.conversation(c);
         std::vector<const model::Message *> keep;
         bool                                older = cv.hasMoreBefore;

@@ -40,7 +40,7 @@ const void *testKeychain = nullptr;
 namespace {
 
 // Set the first time the keychain refuses a write this process: a locked
-// keychain must not turn into a prompt per call (old SecretStore latch).
+// keychain must not turn into a prompt per call.
 bool g_refused = false;
 
 CFStringRef cfString(std::string_view s) {
