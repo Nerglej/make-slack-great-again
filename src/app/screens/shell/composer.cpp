@@ -2085,7 +2085,7 @@ void Composer::updatePickList() {
         int added = 0;
         for (model::UserRef u = 0; u < st.userCount() && added < 50; ++u) {
             const model::User &user = st.user(u);
-            if (user.placeholder)
+            if (user.placeholder || user.deleted)
                 continue;
             const std::string label(user.label());
             if (!query.empty() && !utf8::containsFolded(label, query) &&
