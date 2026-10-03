@@ -535,7 +535,7 @@ TEST("visited: opening a conversation is saved; the stamps keep it listed after 
     REQUIRE(d);
     d->showPage(settings::SettingsDialog::Page::Storage);
     pump();
-    auto *clear = static_cast<ui::FormButton *>(d->find("Clear state"));
+    auto *clear = static_cast<ui::Button *>(d->find("Clear state"));
     REQUIRE(clear);
     clear->onClick();
     pump();
@@ -574,7 +574,7 @@ TEST("settings: \"Save and restart\" restarts; the sample notification reports b
     pump();
     ui::View *save = d->find("Save and restart");
     REQUIRE(save);
-    static_cast<ui::FormButton *>(save)->onClick(); // nothing changed
+    static_cast<ui::Button *>(save)->onClick(); // nothing changed
     pump();
     CHECK(d->find("No changes to save.") != nullptr);
     CHECK_FALSE(quit);

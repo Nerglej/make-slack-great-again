@@ -204,7 +204,8 @@ ThreadsPage::Card::Card(ThreadsPage &page, FollowedThread item)
     _latest = _item.root.latestReply;
     for (const model::Message &m : _item.latestReplies)
         _latest = std::max(_latest, m.ts);
-    _replyBtn = _body->add<FormButton>(tr("Reply in thread…"), FormButton::Kind::Secondary);
+    _replyBtn =
+        _body->add<Button>(tr("Reply in thread…"), Button::Kind::Secondary, Button::Form::Small);
     _replyBtn->setFocusable(false);
     _replyBtn->style().alignSelf(Align::Start).margins(0, 4, 0, 0);
     _replyBtn->onClick = [this] { showComposer(); };
@@ -345,7 +346,8 @@ ThreadsPage::ThreadsPage(
     _status->setVisible(false);
     _list = content->add<View>();
     _list->style().spacing(24);
-    _more = content->add<FormButton>(tr("Show more threads"), FormButton::Kind::Secondary);
+    _more =
+        content->add<Button>(tr("Show more threads"), Button::Kind::Secondary, Button::Form::Small);
     _more->setFocusable(false);
     _more->style().alignSelf(Align::Start);
     _more->setVisible(false);

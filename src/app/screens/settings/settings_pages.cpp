@@ -198,9 +198,8 @@ void SettingsDialog::buildAi() {
            "configure.")
     );
     _p->aiList = group(_content, 4);
-    auto *add  = button(
-        _content, tr("Add OpenAI-compatible server\xE2\x80\xA6"), FormButton::Kind::Secondary
-    );
+    auto *add =
+        button(_content, tr("Add OpenAI-compatible server\xE2\x80\xA6"), Button::Kind::Secondary);
     add->onClick = [this] { showAiEditor({}); };
 
     // The inline editor (hidden until Connect / Edit / Add).
@@ -250,7 +249,8 @@ void SettingsDialog::buildAi() {
     body(modelRow, tr("Model"))->style().width(kAiLabelW).noShrink();
     _p->aiModel = modelRow->add<TextField>(tr("Model name"));
     _p->aiModel->style().flex(1);
-    auto *fetch     = modelRow->add<FormButton>(tr("Fetch models"), FormButton::Kind::Secondary);
+    auto *fetch =
+        modelRow->add<Button>(tr("Fetch models"), Button::Kind::Secondary, Button::Form::Small);
     _p->aiFetch     = fetch;
     _p->aiModelPick = ed->add<Dropdown>(std::vector<std::string>(), 0);
     indented(_p->aiModelPick);
@@ -269,11 +269,12 @@ void SettingsDialog::buildAi() {
     _p->aiProbe->setVisible(false);
 
     auto *actions = row(ed);
-    auto *test    = actions->add<FormButton>(tr("Test connection"), FormButton::Kind::Secondary);
-    _p->aiTest    = test;
+    auto *test =
+        actions->add<Button>(tr("Test connection"), Button::Kind::Secondary, Button::Form::Small);
+    _p->aiTest = test;
     actions->add<View>()->style().flex(1);
-    auto *cancel = actions->add<FormButton>(tr("Cancel"), FormButton::Kind::Ghost);
-    auto *save   = actions->add<FormButton>(tr("Save"), FormButton::Kind::Primary);
+    auto *cancel = actions->add<Button>(tr("Cancel"), Button::Kind::Ghost, Button::Form::Small);
+    auto *save   = actions->add<Button>(tr("Save"), Button::Kind::Primary, Button::Form::Small);
     // Both ask the server for its models (the key and URL as typed, saved or
     // not); without the LLM layer (tests) they show disabled.
     test->setEnabled(_ctx.ai != nullptr);
@@ -375,13 +376,15 @@ void SettingsDialog::refreshAiList() {
         top->add<Label>(p.name, Font::ControlBold, C::FormText);
         top->add<View>()->style().flex(1);
         if (p.preset() && !p.connected()) {
-            auto *c    = top->add<FormButton>(tr("Connect"), FormButton::Kind::Primary);
+            auto *c = top->add<Button>(tr("Connect"), Button::Kind::Primary, Button::Form::Small);
             c->onClick = [this, id] { showAiEditor(id); };
         } else {
-            auto *e    = top->add<FormButton>(tr("Edit"), FormButton::Kind::Secondary);
+            auto *e    = top->add<Button>(tr("Edit"), Button::Kind::Secondary, Button::Form::Small);
             e->onClick = [this, id] { showAiEditor(id); };
-            auto *drop = top->add<FormButton>(
-                p.preset() ? tr("Disconnect") : tr("Remove"), FormButton::Kind::Danger
+            auto *drop = top->add<Button>(
+                p.preset() ? tr("Disconnect") : tr("Remove"),
+                Button::Kind::Danger,
+                Button::Form::Small
             );
             drop->onClick = [this, id] {
                 _p->aiError->setText({});
@@ -669,7 +672,7 @@ void SettingsDialog::buildStorage() {
         tr("When the cache grows past this limit, the least recently\n"
            "viewed images are deleted first.")
     );
-    auto *clear    = button(_content, tr("Clear cache"), FormButton::Kind::Danger);
+    auto *clear    = button(_content, tr("Clear cache"), Button::Kind::Danger);
     clear->onClick = [this, clear] {
         clear->setEnabled(false);
 #ifdef MSGA_HAVE_MESSAGES
@@ -694,7 +697,7 @@ void SettingsDialog::buildStorage() {
         tr("Sidebar visit history used to decide which conversations are shown.\n"
            "Clear this to let the app re-analyse activity from scratch on next load.")
     );
-    auto *state    = button(_content, tr("Clear state"), FormButton::Kind::Danger);
+    auto *state    = button(_content, tr("Clear state"), Button::Kind::Danger);
     // The visit stamps go; the sidebar re-seeds at once.
     state->onClick = [this, state] {
         state->setEnabled(false);
@@ -740,7 +743,7 @@ void SettingsDialog::buildSystem() {
             tr("When off, msga never contacts the update server on its own \xE2\x80\x94 use "
                "the\nbutton below to look for a new version.")
         );
-        auto *checkBtn = button(g, tr("Check for updates"), FormButton::Kind::Primary);
+        auto *checkBtn = button(g, tr("Check for updates"), Button::Kind::Primary);
         _p->updStatus  = caption(g, {});
         auto *last     = g->add<Label>(
             arg(tr("Last checked: %1"), timeAgo(_s.lastUpdateCheck)),
@@ -877,9 +880,8 @@ void SettingsDialog::buildSystem() {
             tr("Add a workspace using your existing Slack session. New messages "
                "arrive by polling \xE2\x80\x94 there's no live push in this mode.")
         );
-        auto *import = button(
-            _p->sessionBox, tr("Import Slack session\xE2\x80\xA6"), FormButton::Kind::Primary
-        );
+        auto *import =
+            button(_p->sessionBox, tr("Import Slack session\xE2\x80\xA6"), Button::Kind::Primary);
         import->setEnabled(bool(_hooks.importSlackSession));
         import->onClick = [this] {
             if (_hooks.importSlackSession)
@@ -897,7 +899,7 @@ void SettingsDialog::buildSystem() {
                     n)
             );
             auto *conv =
-                button(_p->sessionBox, tr("Convert them to session"), FormButton::Kind::Secondary);
+                button(_p->sessionBox, tr("Convert them to session"), Button::Kind::Secondary);
             conv->setEnabled(bool(_hooks.convertToSession));
             conv->onClick = [this] {
                 if (_hooks.convertToSession)
@@ -929,7 +931,7 @@ void SettingsDialog::buildSystem() {
         _p->credXapp->setText(_s.slackAppToken);
         _p->credStatus = caption(box, {});
         _p->credStatus->setVisible(false);
-        auto *save    = button(box, tr("Save and restart"), FormButton::Kind::Primary);
+        auto *save    = button(box, tr("Save and restart"), Button::Kind::Primary);
         save->onClick = [this] {
             const std::string id(str::trim(_p->credId->text()));
             const std::string secret(str::trim(_p->credSecret->text()));
@@ -973,7 +975,7 @@ void SettingsDialog::buildSystem() {
         _p->giphyStatus = caption(g, {});
         _p->giphyStatus->setVisible(false);
         g->add<View>()->style().height(4);
-        auto *save    = button(g, tr("Save"), FormButton::Kind::Primary);
+        auto *save    = button(g, tr("Save"), Button::Kind::Primary);
         save->onClick = [this] {
             _s.giphyKey = std::string(str::trim(_p->giphy->text()));
             _p->giphyStatus->setText(_s.giphyKey.empty() ? tr("Key cleared.") : tr("Key saved."));
@@ -1034,7 +1036,7 @@ void SettingsDialog::buildAbout() {
 
     heading(_content, tr("Found a bug?"));
     caption(_content, tr("Report it on GitHub so it can be tracked and fixed."));
-    auto *bug    = button(_content, tr("Report a bug"), FormButton::Kind::Danger);
+    auto *bug    = button(_content, tr("Report a bug"), Button::Kind::Danger);
     bug->onClick = [this] {
         if (_ctx.openUrl)
             _ctx.openUrl(kIssuesUrl);

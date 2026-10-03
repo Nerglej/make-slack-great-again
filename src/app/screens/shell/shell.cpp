@@ -710,7 +710,9 @@ public:
         _title   = title;
         _tagline = col->add<Label>("[make slack great again]");
         _tagline->style().margins(0, 8, 0, 0);
-        login = col->add<FormButton>(tr("Log in to workspace"), FormButton::Kind::Primary, false);
+        login = col->add<Button>(
+            tr("Log in to workspace"), Button::Kind::Primary, Button::Form::Normal
+        );
         login->style().margins(0, 16 + 12, 0, 0);
         styleChanged();
     }
@@ -732,7 +734,7 @@ public:
         g.append("]", dim);
         _tagline->setRichText(std::move(g));
     }
-    FormButton *login = nullptr;
+    Button *login = nullptr;
 
 private:
     Label *_title = nullptr, *_tagline = nullptr;

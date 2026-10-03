@@ -84,7 +84,7 @@ private:
     ui::Label                *_description = nullptr;
     ui::Label                *_empty       = nullptr;
     ui::Label                *_folderLabel = nullptr;
-    ui::FormButton           *_folderBtn   = nullptr;
+    ui::Button               *_folderBtn   = nullptr;
     BrowseList               *_list        = nullptr;
     model::Store::ObserverId  _observer    = 0;
     plat::TimerId             _timer       = 0;

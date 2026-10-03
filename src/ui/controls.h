@@ -11,7 +11,8 @@
 //   TextField    a one-line input, small or normal (optionally masked with a
 //                show/hide eye, a leading icon, a length counter)
 //   TextArea     a fixed-height multi-line input
-//   FormButton   primary / secondary / danger / ghost, normal or small
+//   Button::Form the form look of Button (widgets.h): primary / secondary /
+//                danger / ghost, normal or small
 //   SectionList  a vertical list of page names (a settings dialog's left side)
 //   Dialog       an in-window modal: a dimmed backdrop over the whole window
 //                with a centred card, either Settings' fixed panel or the
@@ -207,28 +208,6 @@ private:
     bool        _multi;
 };
 
-// ── FormButton ──────────────────────────────────────────────────────────────
-class FormButton : public Clickable {
-public:
-    enum class Kind : uint8_t { Primary, Secondary, Danger, Ghost };
-    FormButton(std::string label, Kind k = Kind::Primary, bool small = true);
-    ~FormButton() override;
-    void               setLabel(std::string s);
-    const std::string &label() const { return _label; }
-
-    SizeF       measureContent(float availW, float availH) override;
-    void        paint(gfx::Painter &p) override;
-    void        paintOver(gfx::Painter &p) override;
-    void        styleChanged() override;
-    std::string accessibleName() const override { return _label; }
-
-private:
-    std::string                   _label;
-    std::unique_ptr<text::Layout> _l;
-    Kind                          _kind;
-    bool                          _small, _lEnabled = true;
-};
-
 // ── SectionList ─────────────────────────────────────────────────────────────
 // A column of page names with one selected. Up/Down/Home/End move the
 // selection when focused. Paints its own sunken background (rounded at the
@@ -293,9 +272,9 @@ public:
     ScrollView *scroller() const { return _scroll; } // null: Scroll::Disabled or untitled
 
     // [leading] stretch [secondary] [primary]; secondary rejects.
-    View *addButtonRow(FormButton *primary, FormButton *secondary, View *leading = nullptr);
+    View          *addButtonRow(Button *primary, Button *secondary, View *leading = nullptr);
     // A Normal-size button for addButtonRow (which adopts it).
-    static FormButton             *makeButton(std::string label, FormButton::Kind k);
+    static Button *makeButton(std::string label, Button::Kind k);
     // A confirmation dialog: `title`, `text` as a 15-px paragraph in
     // `textColor` (a themed() sentinel or a colour), whatever `extra` adds
     // below it, then [Cancel] [confirmLabel]. Confirming accepts (onAccepted
@@ -304,7 +283,7 @@ public:
         std::string                               title,
         std::string                               text,
         std::string                               confirmLabel,
-        FormButton::Kind                          kind,
+        Button::Kind                              kind,
         Color                                     textColor,
         const std::function<void(View *content)> &extra = {}
     );

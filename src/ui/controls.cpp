@@ -662,87 +662,52 @@ void TextField::paint(gfx::Painter &p) {
     }
 }
 
-// ── FormButton ──────────────────────────────────────────────────────────────
+// ── Button: the form look ───────────────────────────────────────────────────
+// Button's Form style (widgets.h), kept with the other form controls.
 
-static Font formButtonFont(FormButton::Kind k, bool small) {
-    const bool filled = k == FormButton::Kind::Primary || k == FormButton::Kind::Danger;
-    return small ? (filled ? Font::ControlBold : Font::Control)
-                 : (filled ? Font::Heading : Font::Field);
-}
-
-FormButton::FormButton(std::string label, Kind k, bool small)
-    : _label(std::move(label)), _kind(k), _small(small) {
+void Button::applyForm() {
     const float r = metric(M::RadiusM);
-    switch (k) {
+    switch (_kind) {
     case Kind::Primary:
-        setLook({C::Accent, C::AccentHover, C::AccentPressed, C::None, r});
+        _look = {C::Accent, C::AccentHover, C::AccentPressed, C::None, r};
         break;
     case Kind::Secondary:
-        setLook({C::FormBg, C::FormSunken, C::FormHighlightStrong, C::None, r});
+        _look = {C::FormBg, C::FormSunken, C::FormHighlightStrong, C::None, r};
         break;
     case Kind::Danger:
-        setLook({C::DangerFill, C::DangerFillHover, C::DangerFillHover, C::None, r});
+        _look = {C::DangerFill, C::DangerFillHover, C::DangerFillHover, C::None, r};
         break;
-    case Kind::Ghost:
-        setLook({C::FormHighlight, C::FormHighlightStrong, C::FormHighlightStrong, C::None, r});
+    default: // Ghost
+        _look = {C::FormHighlight, C::FormHighlightStrong, C::FormHighlightStrong, C::None, r};
         break;
     }
-    const float pad = small ? 12 : 18;
-    style().padding(pad, 0).noShrink();
+    const bool small  = _form == Form::Small;
+    const bool filled = _kind == Kind::Primary || _kind == Kind::Danger;
+    _text             = filled ? C::AccentText : C::FormText;
+    style().padding(small ? 12 : 18, 0).noShrink();
     style().h = small ? kFormSmallH : kFormNormalH;
 }
 
-FormButton::~FormButton() = default;
-
-void FormButton::setLabel(std::string s) {
-    if (s == _label)
-        return;
-    _label = std::move(s);
-    _l.reset();
-    invalidateLayout();
-    update();
-}
-
-void FormButton::styleChanged() {
-    _l.reset();
-    update();
-}
-
-SizeF FormButton::measureContent(float, float) {
-    // The enabled state only changes the colour: recoloured, not reshaped.
-    const bool filled = _kind == Kind::Primary || _kind == Kind::Danger;
-    const C    c      = !enabled() ? C::FormTextFaint : filled ? C::AccentText : C::FormText;
-    if (!_l)
-        _l = layoutText(_label, formButtonFont(_kind, _small), c, windowScale());
-    else if (_lEnabled != enabled())
-        _l->setColor(color(c));
-    _lEnabled = enabled();
-    return {std::ceil(_l->width()), std::ceil(_l->height())};
-}
-
-void FormButton::paint(gfx::Painter &p) {
-    const bool en = enabled();
-    if (!en && (_kind == Kind::Primary || _kind == Kind::Danger))
-        p.fillRoundRect(bounds(), metric(M::RadiusM), color(C::FormHighlightStrong));
+void Button::paintForm(gfx::Painter &p) {
+    if (!enabled() && (_kind == Kind::Primary || _kind == Kind::Danger))
+        p.fillRoundRect(bounds(), _look.radius, color(C::FormHighlightStrong));
     else
         Clickable::paint(p);
     if (_kind == Kind::Secondary)
-        innerStroke(p, bounds(), metric(M::RadiusM), color(C::FormDividerStrong));
-    measureContent(0, 0); // (re)builds the label for the enabled state
+        innerStroke(p, bounds(), _look.radius, color(C::FormDividerStrong));
+    const text::Layout *l = labelLayout(); // recoloured for the enabled state
+    if (!l)
+        return;
     // Centre the capitals, not the line box: the font's ascent leaves more
     // room above the caps than its descent does below the baseline, so a
     // box-centred label sits visibly low.
-    const float cap = text::metrics(font(formButtonFont(_kind, _small)), windowScale()).capHeight;
+    const float cap = text::metrics(font(labelFont()), windowScale()).capHeight;
     p.save();
     p.clipRect(bounds());
-    _l->paint(
-        p, snapPx({std::floor((width() - _l->width()) / 2), (height() + cap) / 2 - _l->baseline(0)})
+    l->paint(
+        p, snapPx({std::floor((width() - l->width()) / 2), (height() + cap) / 2 - l->baseline(0)})
     );
     p.restore();
-}
-
-void FormButton::paintOver(gfx::Painter &p) {
-    paintFocusRing(*this, p, bounds(), metric(M::RadiusM));
 }
 
 // ── SectionList ─────────────────────────────────────────────────────────────
@@ -941,15 +906,15 @@ Dialog::Dialog(std::string title, float cardWidth, Scroll scroll) : _w(cardWidth
         _content->style().padding(kCardPadH, 0, kCardPadH, kCardPadV);
 }
 
-FormButton *Dialog::makeButton(std::string label, FormButton::Kind k) {
-    return new FormButton(std::move(label), k, false); // adopted by addButtonRow
+Button *Dialog::makeButton(std::string label, Button::Kind k) {
+    return new Button(std::move(label), k, Button::Form::Normal); // adopted by addButtonRow
 }
 
 std::unique_ptr<Dialog> Dialog::confirm(
     std::string                               title,
     std::string                               text,
     std::string                               confirmLabel,
-    FormButton::Kind                          kind,
+    Button::Kind                              kind,
     Color                                     textColor,
     const std::function<void(View *content)> &extra
 ) {
@@ -958,13 +923,13 @@ std::unique_ptr<Dialog> Dialog::confirm(
     if (extra)
         extra(d->content());
     auto *ok = makeButton(std::move(confirmLabel), kind);
-    d->addButtonRow(ok, makeButton(i18n::tr("Cancel"), FormButton::Kind::Secondary));
+    d->addButtonRow(ok, makeButton(i18n::tr("Cancel"), Button::Kind::Secondary));
     Dialog *raw = d.get();
     ok->onClick = [raw] { raw->accept(); };
     return d;
 }
 
-View *Dialog::addButtonRow(FormButton *primary, FormButton *secondary, View *leading) {
+View *Dialog::addButtonRow(Button *primary, Button *secondary, View *leading) {
     auto *row = _content->add<View>();
     row->style().row().spacing(8).items(Align::Center);
     if (leading)

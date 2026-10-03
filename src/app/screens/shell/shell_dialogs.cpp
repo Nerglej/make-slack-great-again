@@ -31,7 +31,7 @@ using model::ConvRef;
 using model::kNoConv;
 using model::kNoUser;
 using model::UserRef;
-using V = FormButton::Kind;
+using V = Button::Kind;
 using i18n::tr;
 
 namespace shell {
@@ -653,7 +653,7 @@ private:
     Dropdown                                *_wsPicker = nullptr;
     ConvSelector                            *_picker   = nullptr;
     Composer                                *_composer = nullptr;
-    FormButton                              *_fwd      = nullptr;
+    Button                                  *_fwd      = nullptr;
 };
 
 // ── Workspace icon ──────────────────────────────────────────────────────────
@@ -760,8 +760,9 @@ public:
         auto *row = content()->add<View>();
         row->style().row().spacing(8).items(Align::Center);
         row->add<View>()->style().flex(1);
-        auto *choose = row->add<FormButton>(tr("Choose image\xE2\x80\xA6"), V::Secondary, false);
-        _reset       = row->add<FormButton>(tr("Use default"), V::Ghost, false);
+        auto *choose =
+            row->add<Button>(tr("Choose image\xE2\x80\xA6"), V::Secondary, Button::Form::Normal);
+        _reset = row->add<Button>(tr("Use default"), V::Ghost, Button::Form::Normal);
         row->add<View>()->style().flex(1);
         _hint = styledLabel(
             content(),
@@ -885,7 +886,7 @@ private:
     Avatars                                 &_avatars;
     std::string                              _id, _defaultIcon; // the workspace's
     IconPreview                             *_preview = nullptr;
-    FormButton                              *_reset = nullptr, *_save = nullptr;
+    Button                                  *_reset = nullptr, *_save = nullptr;
     Label                                   *_hint = nullptr;
     std::string                              _chosen;
     bool                                     _hasCustom, _resetOn = false, _dirty = false;
@@ -948,8 +949,9 @@ public:
         auto *row = content()->add<View>();
         row->style().row().spacing(8).items(Align::Center);
         row->add<View>()->style().flex(1);
-        auto *choose = row->add<FormButton>(tr("Choose image\xE2\x80\xA6"), V::Secondary, false);
-        _reset       = row->add<FormButton>(tr("Use default"), V::Ghost, false);
+        auto *choose =
+            row->add<Button>(tr("Choose image\xE2\x80\xA6"), V::Secondary, Button::Form::Normal);
+        _reset = row->add<Button>(tr("Use default"), V::Ghost, Button::Form::Normal);
         row->add<View>()->style().flex(1);
         _hint = styledLabel(
             content(),
@@ -1116,7 +1118,7 @@ private:
     std::string                        _current, _chosen;
     std::shared_ptr<const gfx::Bitmap> _picture; // decoded and fitted, before monochrome
     TrayPreview                       *_preview = nullptr;
-    FormButton                        *_reset = nullptr, *_save = nullptr;
+    Button                            *_reset = nullptr, *_save = nullptr;
     CheckBox                          *_mono = nullptr;
     Label                             *_hint = nullptr;
     bool                               _hasCustom, _resetOn = false, _dirty = false;

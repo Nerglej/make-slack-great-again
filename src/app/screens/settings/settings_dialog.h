@@ -85,14 +85,13 @@ public:
 
 private:
     // Building blocks (settings_dialog.cpp).
-    ui::Label *heading(ui::View *parent, const char *text);
-    ui::Label *caption(ui::View *parent, std::string_view text, ui::C c = ui::C::FormTextMuted);
-    ui::Label *body(ui::View *parent, std::string_view text, ui::C c = ui::C::FormText);
-    ui::Label *link(ui::View *parent, std::string text, std::string url);
-    ui::View  *group(ui::View *parent, float gap = 8);
-    ui::View  *row(ui::View *parent, float gap = 8);
-    ui::FormButton *
-    button(ui::View *parent, const char *label, ui::FormButton::Kind kind, bool small = true);
+    ui::Label    *heading(ui::View *parent, const char *text);
+    ui::Label    *caption(ui::View *parent, std::string_view text, ui::C c = ui::C::FormTextMuted);
+    ui::Label    *body(ui::View *parent, std::string_view text, ui::C c = ui::C::FormText);
+    ui::Label    *link(ui::View *parent, std::string text, std::string url);
+    ui::View     *group(ui::View *parent, float gap = 8);
+    ui::View     *row(ui::View *parent, float gap = 8);
+    ui::Button   *button(ui::View *parent, const char *label, ui::Button::Kind kind);
     ui::CheckBox *check(ui::View *parent, const char *label, bool *field, bool draft);
     ui::RadioGroup *
     radios(ui::View *parent, std::initializer_list<const char *> options, int *field);

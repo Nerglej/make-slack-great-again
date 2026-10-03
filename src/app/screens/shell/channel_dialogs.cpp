@@ -15,7 +15,7 @@ using i18n::tr;
 using model::ConvKind;
 using model::ConvRef;
 using model::UserRef;
-using V = FormButton::Kind;
+using V = Button::Kind;
 
 namespace shell {
 
@@ -82,8 +82,9 @@ public:
             tr("Search for channels"), TextField::Size::Normal, uint16_t(Icon::Search)
         );
         _search->style().flex(1).minW = 200;
-        auto *createBtn =
-            top->add<FormButton>(tr("Create Channel"), V::Primary, false); // this casing on purpose
+        auto *createBtn               = top->add<Button>(
+            tr("Create Channel"), V::Primary, Button::Form::Normal
+        ); // this casing on purpose
         createBtn->setFocusable(false);
         createBtn->onClick = [this] {
             auto cb = _create;
@@ -238,8 +239,8 @@ public:
         row2->style().row().items(Align::Center).spacing(12).margins(0, 12, 0, 0);
         styledLabel(row2, tr("Step 2 of 2"), muted);
         row2->add<View>()->style().flex(1);
-        FormButton *back = makeButton(tr("Back"), V::Secondary);
-        FormButton *make = makeButton(tr("Create"), V::Primary);
+        Button *back = makeButton(tr("Back"), V::Secondary);
+        Button *make = makeButton(tr("Create"), V::Primary);
         row2->adopt(std::unique_ptr<View>(back));
         row2->adopt(std::unique_ptr<View>(make));
         back->onClick = [this] { showStep(1); };
@@ -277,7 +278,7 @@ private:
     std::function<void(const std::string &, bool)> _done;
     View                                          *_page1 = nullptr, *_page2 = nullptr;
     TextField                                     *_name       = nullptr;
-    FormButton                                    *_next       = nullptr;
+    Button                                        *_next       = nullptr;
     Label                                         *_subtitle   = nullptr;
     RadioGroup                                    *_visibility = nullptr;
 };

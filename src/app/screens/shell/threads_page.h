@@ -89,7 +89,7 @@ private:
     ui::ScrollView                 *_scroll = nullptr;
     ui::Label                      *_status = nullptr;
     ui::View                       *_list   = nullptr; // the cards
-    ui::FormButton                 *_more   = nullptr;
+    ui::Button                     *_more   = nullptr;
     std::vector<Card *>             _cards;
     std::string                     _statusText, _nextCursor;
     bool                            _loading    = false;
@@ -128,7 +128,7 @@ private:
     model::Ts                      _latest = 0; // newest reply shown
     ui::View                      *_body = nullptr, *_replies = nullptr;
     ui::View                      *_moreReplies = nullptr, *_newPill = nullptr;
-    ui::FormButton                *_replyBtn = nullptr;
+    ui::Button                    *_replyBtn = nullptr;
     Composer                      *_composer = nullptr;
 };
 

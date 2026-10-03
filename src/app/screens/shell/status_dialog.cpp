@@ -118,14 +118,14 @@ StatusDialog::StatusDialog(screens::Context &ctx) : Dialog(tr("Set a status"), k
     }
 
     const auto &me       = ctx.store().user(ctx.store().me);
-    FormButton *clearBtn = nullptr;
+    Button     *clearBtn = nullptr;
     if (!me.statusText.empty() || !me.statusEmoji.empty()) {
-        clearBtn          = makeButton(tr("Clear status"), FormButton::Kind::Ghost);
+        clearBtn          = makeButton(tr("Clear status"), Button::Kind::Ghost);
         clearBtn->onClick = [this] { clearStatus(); };
     }
-    auto *save    = makeButton(tr("Save"), FormButton::Kind::Primary);
+    auto *save    = makeButton(tr("Save"), Button::Kind::Primary);
     save->onClick = [this] { this->save(); };
-    addButtonRow(save, makeButton(tr("Cancel"), FormButton::Kind::Secondary), clearBtn)
+    addButtonRow(save, makeButton(tr("Cancel"), Button::Kind::Secondary), clearBtn)
         ->style()
         .margins(0, 12, 0, 0);
 
@@ -284,9 +284,9 @@ ProfileDialog::ProfileDialog(screens::Context &ctx, Avatars &avatars)
     };
     _status = card->add<Label>("", Font::Caption, C::FormTextMuted);
     _status->setVisible(false);
-    _save          = makeButton(tr("Save changes"), FormButton::Kind::Primary);
+    _save          = makeButton(tr("Save changes"), Button::Kind::Primary);
     _save->onClick = [this] { save(); };
-    addButtonRow(_save, makeButton(tr("Cancel"), FormButton::Kind::Secondary))
+    addButtonRow(_save, makeButton(tr("Cancel"), Button::Kind::Secondary))
         ->style()
         .margins(0, 8, 0, 0);
 

@@ -1,4 +1,4 @@
-// The dialog kit: the titled ui::Dialog, FormButton and TextField, the date
+// The dialog kit: the titled ui::Dialog, the form Button and TextField, the date
 // and time fields and check box, and the tooltip (above, arrowed, and at once where a view asks for
 // it).
 #include "harness.h"
@@ -31,8 +31,8 @@ TEST("popup: the titled dialog — 560-wide card, Escape, backdrop and buttons")
     Win   w(1000, 700);
     int   accepted = 0, rejected = 0;
     auto  d   = std::make_unique<ui::Dialog>("Delete message");
-    auto *del = ui::Dialog::makeButton("Delete", ui::FormButton::Kind::Danger);
-    d->addButtonRow(del, ui::Dialog::makeButton("Cancel", ui::FormButton::Kind::Secondary));
+    auto *del = ui::Dialog::makeButton("Delete", ui::Button::Kind::Danger);
+    d->addButtonRow(del, ui::Dialog::makeButton("Cancel", ui::Button::Kind::Secondary));
     d->onAccepted   = [&] { ++accepted; };
     d->onRejected   = [&] { ++rejected; };
     ui::Dialog *raw = d.get();
@@ -55,7 +55,7 @@ TEST("popup: the titled dialog — 560-wide card, Escape, backdrop and buttons")
     w.click(10, 10);
     CHECK(rejected == 2 && w.w->topPopup() == nullptr);
     auto  d3 = std::make_unique<ui::Dialog>("Delete message");
-    auto *b3 = ui::Dialog::makeButton("Delete", ui::FormButton::Kind::Danger);
+    auto *b3 = ui::Dialog::makeButton("Delete", ui::Button::Kind::Danger);
     d3->addButtonRow(b3, nullptr);
     d3->onAccepted = [&] { ++accepted; };
     ui::Dialog *r3 = d3.get();
@@ -73,8 +73,8 @@ TEST("popup: a titled card taller than the window scrolls; its buttons stay reac
     auto d        = std::make_unique<ui::Dialog>("Profile");
     for (int i = 0; i < 12; ++i)
         d->content()->add<Box>(0, 60); // 12 × 60 + gaps: far past 400 − 80
-    auto *ok = ui::Dialog::makeButton("Save", ui::FormButton::Kind::Primary);
-    d->addButtonRow(ok, ui::Dialog::makeButton("Cancel", ui::FormButton::Kind::Secondary));
+    auto *ok = ui::Dialog::makeButton("Save", ui::Button::Kind::Primary);
+    d->addButtonRow(ok, ui::Dialog::makeButton("Cancel", ui::Button::Kind::Secondary));
     d->onAccepted   = [&] { ++accepted; };
     ui::Dialog *raw = d.get();
     ok->onClick     = [raw] { raw->accept(); };
@@ -103,7 +103,7 @@ TEST("popup: a titled card taller than the window scrolls; its buttons stay reac
     CHECK(accepted == 1);
     // One that fits doesn't scroll, nor is it any taller than its content.
     auto  small = std::make_unique<ui::Dialog>("Reminder");
-    auto *b     = ui::Dialog::makeButton("OK", ui::FormButton::Kind::Primary);
+    auto *b     = ui::Dialog::makeButton("OK", ui::Button::Kind::Primary);
     small->addButtonRow(b, nullptr);
     ui::Dialog *s2 = small.get();
     w.w->showPopup(std::move(small));
@@ -234,17 +234,19 @@ TEST("controls: StyledLineEdit's sizes, leading icon and length counter") {
 // The label's capitals sit in the middle of the button: centring the line
 // box instead put "Save" a couple of pixels low (the ascent above the caps
 // is larger than the descent below the baseline).
-TEST("controls: a FormButton's label is vertically centred on its capitals") {
+TEST("controls: a form Button's label is vertically centred on its capitals") {
     for (double scale : {1.0, 1.5}) {
         Win w(300, 120);
         plat::testing_internal::setHeadlessScale(w.native(), scale);
         auto *col = w.root().add<ui::View>();
         col->style().padding(20).spacing(10).items(ui::Align::Start);
-        auto *normal = col->add<ui::FormButton>("SHE", ui::FormButton::Kind::Primary, false);
-        auto *small  = col->add<ui::FormButton>("SHE", ui::FormButton::Kind::Primary);
+        auto *normal =
+            col->add<ui::Button>("SHE", ui::Button::Kind::Primary, ui::Button::Form::Normal);
+        auto *small =
+            col->add<ui::Button>("SHE", ui::Button::Kind::Primary, ui::Button::Form::Small);
         w.frame();
         const float sc = w.w->scale();
-        for (ui::FormButton *b : {normal, small}) {
+        for (ui::Button *b : {normal, small}) {
             const ui::RectF r  = b->windowRect();
             const int       x0 = int(std::ceil(r.x * sc)), x1 = int((r.x + r.w) * sc);
             const int       y0 = int(std::ceil(r.y * sc)), y1 = int((r.y + r.h) * sc);
@@ -267,6 +269,69 @@ TEST("controls: a FormButton's label is vertically centred on its capitals") {
             CHECK(std::abs(above - below) <= 1); // at most a device pixel of rounding
         }
     }
+}
+
+// The form style of ui::Button (dialogs, settings): its heights, paddings
+// and fills in every state, and the grey fill of a disabled filled one. A
+// pixel left of the label shows the fill (inside Secondary's inner stroke);
+// a disabled one is matched against a disabled view in its expected fill
+// (disabled views paint dimmed).
+TEST("controls: a form Button's sizes and state fills") {
+    using K = ui::Button::Kind;
+    using C = ui::C;
+    using F = ui::Button::Form;
+    static const struct {
+        K kind;
+        C bg, hover, pressed, disabled;
+    } kKinds[] = {
+        {K::Primary, C::Accent, C::AccentHover, C::AccentPressed, C::FormHighlightStrong},
+        {K::Secondary, C::FormBg, C::FormSunken, C::FormHighlightStrong, C::FormBg},
+        {K::Danger, C::DangerFill, C::DangerFillHover, C::DangerFillHover, C::FormHighlightStrong},
+        {K::Ghost,
+         C::FormHighlight,
+         C::FormHighlightStrong,
+         C::FormHighlightStrong,
+         C::FormHighlight},
+    };
+    for (ui::ThemeMode m : {ui::ThemeMode::Light, ui::ThemeMode::Dark}) {
+        app().setThemeMode(m);
+        for (double scale : {1.0, 1.5})
+            for (const auto &k : kKinds)
+                for (F form : {F::Small, F::Normal}) {
+                    Win w(300, 140);
+                    plat::testing_internal::setHeadlessScale(w.native(), scale);
+                    auto *col = w.root().add<ui::View>();
+                    col->style().padding(20).spacing(10).items(ui::Align::Start);
+                    auto *b   = col->add<ui::Button>("Save", k.kind, form);
+                    auto *ref = col->add<ui::View>();
+                    ref->style().size(40, 20);
+                    ref->setBackground(k.disabled);
+                    ref->setEnabled(false);
+                    w.frame();
+                    const bool      small = form == F::Small;
+                    const ui::RectF r = b->windowRect(), rr = ref->windowRect();
+                    CHECK(b->frame().h == (small ? ui::kFormSmallH : ui::kFormNormalH));
+                    CHECK(b->style().pad.l == (small ? 12 : 18));
+                    const float sc = w.w->scale();
+                    auto        at = [&](float x, float y) {
+                        uint32_t px = 0;
+                        hooks().readPixel(w.native(), int(x * sc), int(y * sc), &px);
+                        return px;
+                    };
+                    const float x = r.x + 6, y = r.y + r.h / 2;
+                    // Every fill token is opaque in both themes.
+                    CHECK(at(x, y) == ui::color(k.bg));
+                    w.move(x, y);
+                    CHECK(at(x, y) == ui::color(k.hover));
+                    w.press();
+                    CHECK(at(x, y) == ui::color(k.pressed));
+                    w.release();
+                    b->setEnabled(false);
+                    w.frame();
+                    CHECK(at(x, y) == at(rr.x + 20, rr.y + 10));
+                }
+    }
+    app().setThemeMode(ui::ThemeMode::System);
 }
 
 // M10: the calendar shapes its labels once; hovering days repaints only the

@@ -19,9 +19,9 @@ namespace screens {
 using i18n::arg;
 using i18n::tr;
 using ui::Align;
+using ui::Button;
 using ui::C;
-using ui::FormButton;
-using V = ui::FormButton::Kind;
+using V = ui::Button::Kind;
 
 namespace {
 
@@ -328,7 +328,7 @@ private:
     ui::ScrollView          *_list   = nullptr;
     ui::Label               *_empty  = nullptr;
     ui::CheckBox            *_note   = nullptr;
-    FormButton              *_move   = nullptr;
+    Button                  *_move   = nullptr;
     std::vector<ThreadRow *> _rows;
     std::vector<Ts>          _roots;
     int                      _sel = -1;

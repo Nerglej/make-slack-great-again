@@ -898,7 +898,7 @@ TEST("settings: Test connection and Fetch models ask the server for its models")
 
     url->setText(base + "/v1/");
     key->setText("sk-local");
-    static_cast<ui::FormButton *>(test)->onClick(); // no pumping: the answer is still out
+    static_cast<ui::Button *>(test)->onClick(); // no pumping: the answer is still out
     CHECK(d.find("Connecting\xE2\x80\xA6") != nullptr);
     CHECK_FALSE(test->enabled()); // until the answer
     const auto reached = [&] {

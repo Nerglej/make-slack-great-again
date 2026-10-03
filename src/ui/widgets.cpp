@@ -398,7 +398,7 @@ bool Clickable::onEvent(Event &e) {
 
 // ── Button ──────────────────────────────────────────────────────────────────
 
-Button::Button(std::string label, Kind k) : _label(std::move(label)), _kind(k) {
+Button::Button(std::string label, Kind k, Form f) : _label(std::move(label)), _kind(k), _form(f) {
     applyKind();
 }
 
@@ -410,19 +410,23 @@ Button::Button(gfx::Icon icon, std::string tooltip, Kind k) : _icon(uint16_t(ico
 Button::~Button() = default;
 
 void Button::applyKind() {
+    if (_form != Form::None)
+        return applyForm();
     Look   l;
     Style &s = style();
     l.radius = metric(M::RadiusM);
     s.noShrink();
     switch (_kind) {
     case Kind::Primary:
-        l.bg      = C::Accent;
-        l.hover   = C::AccentHover;
-        l.pressed = C::AccentHover;
-        _text     = C::AccentText;
+    case Kind::Danger: {
+        const bool danger = _kind == Kind::Danger;
+        l.bg              = danger ? C::DangerFill : C::Accent;
+        l.hover = l.pressed = danger ? C::DangerFillHover : C::AccentHover;
+        _text               = C::AccentText;
         s.padding(12, 0);
         s.h = metric(M::ControlH);
         break;
+    }
     case Kind::Secondary:
         setBorder(C::BorderStrong);
         setBackground(C::None, l.radius);
@@ -491,23 +495,34 @@ void Button::stateChanged() {
         _layout.reset();
 }
 
+Font Button::labelFont() const {
+    const bool filled = _kind == Kind::Primary || _kind == Kind::Danger;
+    switch (_form) {
+    case Form::Small:
+        return filled ? Font::ControlBold : Font::Control;
+    case Form::Normal:
+        return filled ? Font::Heading : Font::Field;
+    case Form::None:
+        break;
+    }
+    if (_kind == Kind::Tab)
+        return checked() ? Font::SmallBold : Font::Small;
+    return filled ? Font::BodyBold : Font::Body;
+}
+
 const text::Layout *Button::labelLayout() {
     if (_label.empty())
         return nullptr;
     C c = _text;
     if (_kind == Kind::Tab)
         c = checked() ? C::Text : C::TextMuted;
+    else if (_form != Form::None && !enabled())
+        c = C::FormTextFaint;
     if (!_layout) {
-        Font f = Font::Body;
-        if (_kind == Kind::Tab) {
-            f           = checked() ? Font::SmallBold : Font::Small;
-            _layoutBold = checked();
-        } else if (_kind == Kind::Primary) {
-            f = Font::BodyBold;
-        }
-        _layout = layoutPlain(_label, font(f, c), windowScale());
+        _layoutBold = checked(); // only a tab's font follows it
+        _layout     = layoutPlain(_label, font(labelFont(), c), windowScale());
     } else {
-        _layout->setColor(color(c));
+        _layout->setColor(color(c)); // state colours: recoloured, not reshaped
     }
     return _layout.get();
 }
@@ -521,6 +536,8 @@ SizeF Button::measureContent(float, float) {
 }
 
 void Button::paint(gfx::Painter &p) {
+    if (_form != Form::None)
+        return paintForm(p);
     Clickable::paint(p);
     const text::Layout *l     = labelLayout();
     const float         iw    = _icon != kNoIcon ? _iconSize : 0;

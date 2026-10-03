@@ -13,7 +13,7 @@ namespace shell {
 
 using namespace ui;
 using i18n::tr;
-using V = FormButton::Kind;
+using V = Button::Kind;
 
 namespace {
 
@@ -83,13 +83,16 @@ public:
                      "uses your account's own rate limits, so it avoids the shared-key timeouts. "
                      "New messages arrive by polling (there's no live push this way).")
         );
-        _browserBtn =
-            c->add<FormButton>(i18n::arg(tr("Sign in with %1"), browser), V::Primary, false);
+        _browserBtn = c->add<Button>(
+            i18n::arg(tr("Sign in with %1"), browser), V::Primary, Button::Form::Normal
+        );
         _browserBtn->setVisible(canBrowser);
         _browserBtn->onClick = [this] { startBrowserLogin(); };
 
-        _importBtn = c->add<FormButton>(
-            tr("Import from local Slack"), canBrowser ? V::Secondary : V::Primary, false
+        _importBtn = c->add<Button>(
+            tr("Import from local Slack"),
+            canBrowser ? V::Secondary : V::Primary,
+            Button::Form::Normal
         );
         _importBtn->setVisible(canLocal);
         _importBtn->onClick = [this] { tryLocalImport(); };
@@ -286,8 +289,8 @@ private:
     screens::Context                    &_ctx;
     net::Client                         &_client;
     SessionImportHooks                   _hooks;
-    FormButton                          *_browserBtn = nullptr, *_importBtn = nullptr;
-    FormButton                          *_submit       = nullptr;
+    Button                              *_browserBtn = nullptr, *_importBtn = nullptr;
+    Button                              *_submit       = nullptr;
     Label                               *_manualToggle = nullptr, *_steps = nullptr;
     Label                               *_status = nullptr;
     TextField                           *_cookie = nullptr, *_workspace = nullptr;

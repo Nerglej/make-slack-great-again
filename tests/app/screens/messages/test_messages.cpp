@@ -2017,7 +2017,7 @@ TEST("actions: Summarize down without an AI provider says so and links to the se
             "Summaries need an AI provider. Connect one in Settings \xE2\x86\x92 AI assistance."
         ) != nullptr
     );
-    auto *open = static_cast<ui::FormButton *>(findNamed(dlg, "Open settings"));
+    auto *open = static_cast<ui::Button *>(findNamed(dlg, "Open settings"));
     REQUIRE(open != nullptr);
     open->onClick();
     pump(4);
@@ -2082,7 +2082,7 @@ TEST(
     CHECK(user.find("Heads up: I'm moving") == std::string_view::npos); // another channel
 
     // Copy: the Markdown on the clipboard, "Copied" for a moment.
-    auto *copy = static_cast<ui::FormButton *>(findNamed(dlg, "Copy"));
+    auto *copy = static_cast<ui::Button *>(findNamed(dlg, "Copy"));
     REQUIRE(copy != nullptr);
     copy->onClick();
     CHECK_STR(copy->label(), "Copied");

@@ -231,7 +231,7 @@ showSummaryDialog(Context &ctx, ui::Window &w, const std::string &markdown, Summ
         o.color = C::FormText;
         buildBody(ctx, scroll->content(), mrkdwn::convertOutgoing(markdown), o, scroll);
         // Escape and the header's × close it; Copy is the one button.
-        auto *copy    = d->makeButton(tr("Copy"), ui::FormButton::Kind::Primary);
+        auto *copy    = d->makeButton(tr("Copy"), ui::Button::Kind::Primary);
         auto  alive   = std::make_shared<char>(0); // lives as long as the button
         copy->onClick = [&ctx, copy, alive, markdown] {
             ctx.app.platform().setClipboardText(markdown);
@@ -248,7 +248,7 @@ showSummaryDialog(Context &ctx, ui::Window &w, const std::string &markdown, Summ
             d->content(), markdown, ui::pxFont(15, text::Weight::Regular, ui::color(C::FormText))
         );
         if (kind == SummaryKind::NoProvider) {
-            auto *open    = d->makeButton(tr("Open settings"), ui::FormButton::Kind::Primary);
+            auto *open    = d->makeButton(tr("Open settings"), ui::Button::Kind::Primary);
             open->onClick = [raw] { raw->accept(); };
             d->onAccepted = [&ctx] {
                 if (ctx.openAiSettings)

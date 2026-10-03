@@ -447,7 +447,7 @@ void CanvasPage::confirmDelete() {
         tr("The canvas will be deleted for everyone in the conversation.\nThis action cannot be "
            "undone."),
         tr("Delete canvas"),
-        FormButton::Kind::Danger,
+        Button::Kind::Danger,
         themed(C::TextMuted)
     );
     d->onAccepted = [this, alive = std::weak_ptr<bool>(_alive)] {

@@ -16,12 +16,12 @@ public:
     UpdateBar();
     void                  showUpdateReady();
     std::function<void()> onRestart; // the button
-    ui::FormButton       *button() const { return _btn; }
+    ui::Button           *button() const { return _btn; }
     void                  paint(gfx::Painter &p) override;
 
 private:
-    ui::Label      *_label = nullptr;
-    ui::FormButton *_btn   = nullptr;
+    ui::Label  *_label = nullptr;
+    ui::Button *_btn   = nullptr;
 };
 
 } // namespace shell

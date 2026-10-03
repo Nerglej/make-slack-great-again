@@ -16,7 +16,7 @@ using namespace ui;
 using gfx::Icon;
 using i18n::tr;
 using AgentRole = model::Backend::AgentRole;
-using V         = FormButton::Kind;
+using V         = Button::Kind;
 
 namespace shell {
 
@@ -139,7 +139,8 @@ public:
             tr("Search for sessions"), TextField::Size::Normal, uint16_t(Icon::Search)
         );
         _search->style().flex(1).minW = 200;
-        auto *createBtn = top->add<FormButton>(tr("Create a session"), V::Primary, false);
+        auto *createBtn =
+            top->add<Button>(tr("Create a session"), V::Primary, Button::Form::Normal);
         createBtn->setFocusable(false);
         createBtn->onClick = [this] {
             auto cb = _create;
@@ -363,8 +364,8 @@ public:
         styledLabel(content(), std::move(about), hint);
 
         // ── Buttons ──
-        _save = makeButton(role.id.empty() ? tr("Add teammate") : tr("Save"), V::Primary);
-        FormButton *restore = nullptr;
+        _save           = makeButton(role.id.empty() ? tr("Add teammate") : tr("Save"), V::Primary);
+        Button *restore = nullptr;
         if (role.builtIn && role.edited) {
             restore          = makeButton(tr("Restore default"), V::Ghost);
             restore->onClick = [this] {
@@ -431,7 +432,7 @@ private:
     Image                                       *_preview = nullptr;
     TextField                                   *_name = nullptr, *_desc = nullptr;
     TextField                                   *_prompt = nullptr;
-    FormButton                                  *_save   = nullptr;
+    Button                                      *_save   = nullptr;
     std::vector<GlyphSwatch *>                   _glyphs, _colors;
 };
 

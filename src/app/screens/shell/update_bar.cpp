@@ -14,7 +14,7 @@ UpdateBar::UpdateBar() {
     _label = add<Label>("", Font::SmallSemibold, C::UpdateBannerText);
     _label->setMaxLines(1);
     _label->style().flex(1);
-    _btn          = add<FormButton>("", FormButton::Kind::Danger, true);
+    _btn          = add<Button>("", Button::Kind::Danger, Button::Form::Small);
     _btn->onClick = [this] {
         if (onRestart)
             onRestart();

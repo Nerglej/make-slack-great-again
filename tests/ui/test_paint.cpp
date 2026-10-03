@@ -352,8 +352,8 @@ TEST("damage: colour changes and hover recolour text, never reshape it") {
     rich->setRichText(t);
     auto *ghost = col->add<ui::Button>("Ghost", ui::Button::Kind::Ghost);
     auto *tab   = col->add<ui::Button>("Tab", ui::Button::Kind::Tab);
-    auto *form  = col->add<ui::FormButton>("Save", ui::FormButton::Kind::Secondary);
-    auto *spin  = col->add<ui::SpinBox>(14, 1, 99, " days");
+    auto *form = col->add<ui::Button>("Save", ui::Button::Kind::Secondary, ui::Button::Form::Small);
+    auto *spin = col->add<ui::SpinBox>(14, 1, 99, " days");
     w.frame();
     const size_t n0 = text::layoutBuilds();
     // A label's colour (the sidebar's hover ink); a rich label's (unused).

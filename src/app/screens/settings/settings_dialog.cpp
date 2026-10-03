@@ -321,9 +321,8 @@ View *SettingsDialog::row(View *parent, float gap) {
     return r;
 }
 
-FormButton *
-SettingsDialog::button(View *parent, const char *label, FormButton::Kind k, bool small) {
-    auto *b = parent->add<FormButton>(label, k, small);
+Button *SettingsDialog::button(View *parent, const char *label, Button::Kind k) {
+    auto *b = parent->add<Button>(label, k, Button::Form::Small);
     b->style().alignSelf(Align::Start);
     return b;
 }
@@ -363,7 +362,7 @@ void SettingsDialog::saveButton(void (SettingsDialog::*save)()) {
     _content->add<View>()->style().flex(1); // pinned to the bottom of short pages
     auto *r = row(_content);
     r->style().justifyContent(Justify::End);
-    auto *b         = r->add<FormButton>(tr("Save"), FormButton::Kind::Primary, false);
+    auto *b         = r->add<Button>(tr("Save"), Button::Kind::Primary, Button::Form::Normal);
     b->style().minW = 80;
     b->onClick      = [this, save] { (this->*save)(); };
 }
@@ -539,7 +538,7 @@ void SettingsDialog::buildAppearance() {
         );
         custom->style().alignSelf(Align::Start);
         _p->trayCheck  = custom;
-        _p->trayChange = button(g, tr("Change icon\xE2\x80\xA6"), FormButton::Kind::Secondary);
+        _p->trayChange = button(g, tr("Change icon\xE2\x80\xA6"), Button::Kind::Secondary);
         _p->trayChange->setVisible(custom->checked());
         _p->trayChange->onClick = [this] { pickTrayIcon(); };
         custom->onChange        = [this](bool on) {
@@ -855,7 +854,7 @@ void SettingsDialog::buildCustomEditor() {
     auto *imp       = row(box);
     _p->importField = imp->add<TextField>(tr("Paste a Slack theme (colour list or JSON)"));
     _p->importField->style().flex(1);
-    auto *importBtn = imp->add<FormButton>(tr("Import"), FormButton::Kind::Secondary);
+    auto *importBtn = imp->add<Button>(tr("Import"), Button::Kind::Secondary, Button::Form::Small);
     auto  doImport  = [this, edited, status] {
         CustomPalette t = _s.custom;
         if (!parseSlackTheme(_p->importField->text(), &t)) {
@@ -891,11 +890,12 @@ void SettingsDialog::buildCustomEditor() {
         caption(box, tr("Low contrast: sidebar text may be hard to read"), C::FormWarning);
     _p->contrast->setVisible(lowContrast(_ctx.app.dark()));
     auto *btns = row(box);
-    auto *copy = btns->add<FormButton>(tr("Copy theme"), FormButton::Kind::Secondary);
+    auto *copy = btns->add<Button>(tr("Copy theme"), Button::Kind::Secondary, Button::Form::Small);
     // Offered only when a signed-in Slack workspace can provide its theme:
     // the redesign theme, else
     // the legacy colours.
-    auto *mine = btns->add<FormButton>(tr("Use my Slack theme"), FormButton::Kind::Secondary);
+    auto *mine =
+        btns->add<Button>(tr("Use my Slack theme"), Button::Kind::Secondary, Button::Form::Small);
     mine->setVisible(bool(_hooks.fetchSlackTheme));
     mine->onClick = [this, edited, status] {
         status(tr("Reading your Slack theme\xE2\x80\xA6"), false);
@@ -1016,11 +1016,12 @@ void SettingsDialog::buildNotifications() {
                 fillSounds(_p->sound, _p->soundIds, _draft.soundId, std::move(sys), true);
         }
     );
-    _p->soundRow->add<FormButton>(tr("Test"), FormButton::Kind::Secondary)->onClick = [this] {
-        const size_t i = size_t(_p->sound->selected());
-        if (i < _p->soundIds.size())
-            sounds::play(_ctx.app.platform(), _p->soundIds[i]);
-    };
+    _p->soundRow->add<Button>(tr("Test"), Button::Kind::Secondary, Button::Form::Small)->onClick =
+        [this] {
+            const size_t i = size_t(_p->sound->selected());
+            if (i < _p->soundIds.size())
+                sounds::play(_ctx.app.platform(), _p->soundIds[i]);
+        };
 
     heading(_content, tr("Sample notifications"));
     auto *sr = row(_content);
@@ -1028,8 +1029,8 @@ void SettingsDialog::buildNotifications() {
         sr->add<Dropdown>(strs({tr("New DM"), tr("New channel message"), tr("New huddle")}), 0);
     _p->sample->style().flex(1);
     _p->sample->style().minW = 220;
-    _p->sampleTest           = sr->add<FormButton>(tr("Test"), FormButton::Kind::Secondary);
-    _p->sampleResult         = caption(_content, {});
+    _p->sampleTest   = sr->add<Button>(tr("Test"), Button::Kind::Secondary, Button::Form::Small);
+    _p->sampleResult = caption(_content, {});
     _p->sampleResult->setVisible(false);
     _p->sampleTest->onClick = [this] {
         // A representative, self-contained notification (no real conversation).

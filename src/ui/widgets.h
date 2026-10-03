@@ -129,22 +129,30 @@ protected:
 // ── Button ──────────────────────────────────────────────────────────────────
 // A label and/or an icon. Kinds pick token defaults:
 //   Primary  accent fill        Secondary  bordered        Ghost  wash on hover only
+//   Danger   red fill
 //   Tab      underline when checked (header tabs)
 //   Icon     square ghost button with an icon (toolbar, composer, header)
+// Form styles it as a dialog / settings button (the form look, controls.h):
+// kFormSmallH or kFormNormalH tall in the Control or Field font (bold when
+// filled), the label centred on its capitals, a faint label when disabled
+// and a grey fill for a disabled Primary or Danger. Its kinds: Primary,
+// Secondary (field fill, inner stroke), Danger and Ghost (a highlight wash).
 class Button : public Clickable {
 public:
-    enum class Kind : uint8_t { Primary, Secondary, Ghost, Tab, Icon };
+    enum class Kind : uint8_t { Primary, Secondary, Danger, Ghost, Tab, Icon };
+    enum class Form : uint8_t { None, Small, Normal };
     static constexpr uint16_t kNoIcon = 0xffff;
 
-    explicit Button(std::string label, Kind k = Kind::Secondary);
+    explicit Button(std::string label, Kind k = Kind::Secondary, Form f = Form::None);
     Button(gfx::Icon icon, std::string tooltip, Kind k = Kind::Icon);
     ~Button() override;
 
-    void setLabel(std::string s);
-    void setIcon(gfx::Icon icon);
-    void setIconSize(float px);
-    void setTextColor(C c); // default depends on kind
-    Kind kind() const { return _kind; }
+    void               setLabel(std::string s);
+    const std::string &label() const { return _label; }
+    void               setIcon(gfx::Icon icon);
+    void               setIconSize(float px);
+    void               setTextColor(C c); // default depends on kind
+    Kind               kind() const { return _kind; }
 
     SizeF       measureContent(float availW, float availH) override;
     void        paint(gfx::Painter &p) override;
@@ -157,12 +165,16 @@ protected:
 
 private:
     void                          applyKind();
+    void                          applyForm();                // controls.cpp
+    void                          paintForm(gfx::Painter &p); // controls.cpp
+    Font                          labelFont() const;
     const text::Layout           *labelLayout();
     std::string                   _label;
     std::unique_ptr<text::Layout> _layout;
     float                         _iconSize = 18;
     uint16_t                      _icon     = kNoIcon;
     Kind                          _kind;
+    Form                          _form       = Form::None;
     C                             _text       = C::Text;
     bool                          _layoutBold = false; // a tab's layout: built checked
 };

@@ -53,7 +53,8 @@ TeammatePage::TeammatePage(
     who->style().shrink = 1;
     _name               = who->add<Label>();
     _description        = who->add<Label>();
-    auto *edit = header->add<FormButton>(tr("Edit teammate…"), FormButton::Kind::Secondary);
+    auto *edit =
+        header->add<Button>(tr("Edit teammate…"), Button::Kind::Secondary, Button::Form::Small);
     edit->setFocusable(false);
     edit->style().alignSelf(Align::Start).noShrink();
     edit->onClick = [this] {
@@ -91,7 +92,7 @@ TeammatePage::TeammatePage(
     _folderLabel->style().flex(1);
     _folderLabel->style().shrink = 1;
     _folderLabel->setMaxLines(1);
-    _folderBtn = footer->add<FormButton>(tr("Change folder"), FormButton::Kind::Ghost);
+    _folderBtn = footer->add<Button>(tr("Change folder"), Button::Kind::Ghost, Button::Form::Small);
     _folderBtn->setFocusable(false);
     _folderBtn->style().noShrink();
     _folderBtn->onClick = [this] { showFolderMenu(); };

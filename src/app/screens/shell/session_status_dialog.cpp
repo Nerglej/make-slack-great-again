@@ -42,7 +42,7 @@ SessionStatusDialog::show(Window &w, const std::vector<std::pair<std::string, st
         }());
         v->setMaxLines(1);
     }
-    auto   *close = d->makeButton(tr("Close"), FormButton::Kind::Primary);
+    auto   *close = d->makeButton(tr("Close"), Button::Kind::Primary);
     Dialog *raw   = d.get();
     d->addButtonRow(close, nullptr);
     close->onClick = [raw] { raw->accept(); };

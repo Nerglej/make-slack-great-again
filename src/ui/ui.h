@@ -67,7 +67,7 @@
 //   scroll.h    ScrollArea (wheel/touchpad/kinetic/scrollbar), ScrollView,
 //               VirtualList (lazy variable-height rows, anchored scrolling,
 //               stick-to-bottom, smooth jump-to-item)
-//   controls.h  CheckBox, Radio, Dropdown, SpinBox, TextField, FormButton,
+//   controls.h  CheckBox, Radio, Dropdown, SpinBox, TextField, Button::Form,
 //               SectionList, Dialog (modal overlay)
 //   textedit.h  TextEdit (rich composer, undo, clipboard html, IME, grows to N lines)
 //   filebrowser.h  FileBrowser (in-app file chooser where the OS has none; Linux only)

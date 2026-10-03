@@ -25,7 +25,7 @@ struct SettingsDialog::Parts {
     ui::Label                   *daysLabel = nullptr, *daysDesc = nullptr;
     ui::SpinBox                 *days          = nullptr;
     ui::CheckBox                *trayCheck     = nullptr;
-    ui::FormButton              *trayChange    = nullptr;
+    ui::Button                  *trayChange    = nullptr;
     ui::View                    *spellGrid     = nullptr;
     ui::Label                   *spellHint     = nullptr;
     bool                         spellFilled   = false; // the grid was filled once
@@ -36,7 +36,7 @@ struct SettingsDialog::Parts {
     ui::Dropdown                *sound    = nullptr;
     std::vector<std::string>     soundIds; // the dropdown's options' ids
     ui::Dropdown                *sample       = nullptr;
-    ui::FormButton              *sampleTest   = nullptr;
+    ui::Button                  *sampleTest   = nullptr;
     ui::Label                   *sampleResult = nullptr;
     // AI
     ui::View                    *aiList = nullptr, *aiEditor = nullptr;
@@ -58,7 +58,7 @@ struct SettingsDialog::Parts {
     // AI: the editor's "Test connection" / "Fetch models" (probeAiEditor). A
     // probe's answer counts only for the edit it was started for, and only
     // while these parts (the page) exist.
-    ui::FormButton       *aiTest = nullptr, *aiFetch = nullptr;
+    ui::Button           *aiTest = nullptr, *aiFetch = nullptr;
     int                   aiProbeSeq = 0;
     std::shared_ptr<char> alive      = std::make_shared<char>(0);
 };

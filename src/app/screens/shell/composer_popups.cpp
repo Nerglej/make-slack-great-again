@@ -402,8 +402,8 @@ Popup *showLinkPopup(
     text->setText(selected);
     auto *row = p->add<View>();
     row->style().row().spacing(8).justifyContent(Justify::End);
-    auto *cancel = row->add<FormButton>(tr("Cancel"), FormButton::Kind::Secondary);
-    auto *insert = row->add<FormButton>(tr("Insert"), FormButton::Kind::Primary);
+    auto *cancel = row->add<Button>(tr("Cancel"), Button::Kind::Secondary, Button::Form::Small);
+    auto *insert = row->add<Button>(tr("Insert"), Button::Kind::Primary, Button::Form::Small);
     auto  apply  = [p, url, text, done] {
         const std::string u(str::trim(url->text()));
         if (u.empty()) {
@@ -438,8 +438,8 @@ Popup *showSchedulePopup(Window &w, RectF anchor, std::function<void(int64_t)> d
     when->setValue(base::nowSecs() + 3600);
     auto *row = p->add<View>();
     row->style().row().spacing(8).justifyContent(Justify::End);
-    auto *cancel   = row->add<FormButton>(tr("Cancel"), FormButton::Kind::Secondary);
-    auto *schedule = row->add<FormButton>(tr("Schedule"), FormButton::Kind::Primary);
+    auto *cancel   = row->add<Button>(tr("Cancel"), Button::Kind::Secondary, Button::Form::Small);
+    auto *schedule = row->add<Button>(tr("Schedule"), Button::Kind::Primary, Button::Form::Small);
     auto  apply    = [p, when, done] {
         // Left open past its minimum: the time is behind us now. Refuse it
         // visibly, moved up to the new earliest time, instead of posting
@@ -614,7 +614,7 @@ private:
             _error->setVisible(!_keyError.empty());
             auto *row = page->add<View>();
             row->style().row().items(Align::End);
-            auto *save     = row->add<FormButton>(tr("Save"), FormButton::Kind::Primary);
+            auto *save = row->add<Button>(tr("Save"), Button::Kind::Primary, Button::Form::Small);
             save->onClick  = [this] { saveKey(); };
             _key->onSubmit = [this] { return saveKey(), true; };
             row->add<View>()->style().flex(1);

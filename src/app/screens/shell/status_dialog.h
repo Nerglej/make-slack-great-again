@@ -63,7 +63,7 @@ private:
     ui::Image                *_avatar = nullptr;
     ui::TextField            *_name = nullptr, *_email = nullptr, *_phone = nullptr;
     ui::Label                *_status = nullptr;
-    ui::FormButton           *_save   = nullptr;
+    ui::Button               *_save   = nullptr;
     model::Backend::MyProfile _loaded;
     bool                      _loadedOk = false;
     std::shared_ptr<int>      _alive    = std::make_shared<int>(0);

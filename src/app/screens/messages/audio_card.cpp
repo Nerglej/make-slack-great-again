@@ -134,7 +134,7 @@ public:
         _scroll               = d->content()->add<ui::ScrollView>();
         _scroll->style().maxH = kBodyMaxH;
         _scroll->content()->style().spacing(6);
-        _copy = ui::Dialog::makeButton(tr("Copy"), ui::FormButton::Kind::Primary);
+        _copy = ui::Dialog::makeButton(tr("Copy"), ui::Button::Kind::Primary);
         _copy->setEnabled(false);
         auto  alive    = _alive;
         auto *copy     = _copy;
@@ -193,7 +193,7 @@ private:
     Context              &_ctx;
     ui::Dialog           *_dialog = nullptr;
     ui::ScrollView       *_scroll = nullptr;
-    ui::FormButton       *_copy   = nullptr;
+    ui::Button           *_copy   = nullptr;
     std::string           _plain; // what Copy puts on the clipboard
     std::shared_ptr<char> _alive = std::make_shared<char>(0);
 
