@@ -66,14 +66,16 @@ public:
     )
         : Dialog(std::string(), 720), _ctx(ctx), _channel(std::move(channel)),
           _person(std::move(person)), _create(std::move(create)) {
-        // Custom chrome: no title row, the card's own margins.
-        panel()->child(0)->setVisible(false);
-        panel()->style().padding(0);
+        // A bare card: its own chrome, the lists edge to edge.
         content()->style().spacing(0).minH = 520;
 
         // ── Top bar: search + Create Channel + close ──
         auto *top = content()->add<View>();
-        top->style().row().items(Align::Center).spacing(8).padding(24, 20, 24, 16);
+        top->style()
+            .row()
+            .items(Align::Center)
+            .spacing(8)
+            .padding(24, 20, 24 - Dialog::kCloseInset, 16);
         _search = top->add<TextField>(
             tr("Search for channels"), TextField::Size::Normal, uint16_t(Icon::Search)
         );
@@ -110,7 +112,6 @@ public:
         }
         _lists[0]->setItems(channelItems(ctx.store));
         _lists[1]->setItems(peopleItems(ctx.store));
-        content()->add<View>()->style().height(20).noShrink();
 
         _search->edit().onChange = [this] { applyFilter(); };
         // The search field drives the open list: arrows move, Enter opens.

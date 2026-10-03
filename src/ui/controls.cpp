@@ -862,12 +862,13 @@ namespace {
 constexpr float kCardRadius = 12, kCardPadH = 28, kCardPadV = 24, kHeaderGap = 16;
 constexpr Color kCardScrim = 0x8c000000; // rgba(0,0,0,140), both themes
 
-// A dialog's card: surface.raised, radius 12; presses on it stay inside.
+// A dialog's card: surface.raised, radius 12, the children clipped to its
+// rounded corners (content may run to the edges); presses on it stay inside.
 class Card final : public View {
 public:
-    void paint(gfx::Painter &p) override {
-        p.fillRoundRect(bounds(), kCardRadius, color(C::FormBg));
-        View::paint(p);
+    Card() {
+        setBackground(C::FormBg, kCardRadius);
+        setClipChildren(true);
     }
     bool onEvent(Event &e) override { return e.type == EventType::PointerDown; }
 };
@@ -904,16 +905,28 @@ Dialog::Dialog(std::string title, float cardWidth, Scroll scroll) : _w(cardWidth
     setPaintOutset(0);
     style().dir = Dir::None;
     // Not a layout boundary: the card is as tall as its content, so content
-    // that appears or wraps anew must resize it.
+    // that appears or wraps anew must resize it. No padding of its own: the
+    // header and the body carry it, so a bare card's content (and a scroll
+    // bar) can reach its edges.
     _panel      = add<Card>();
-    _panel->style().padding(kCardPadH, kCardPadV, kCardPadH, kCardPadV).spacing(0);
-    auto *head = _panel->add<View>();
-    head->style().row().spacing(12).items(Align::Center).margins(0, 0, 0, kHeaderGap).noShrink();
-    const text::Style ts = pxFont(15 * 1.45f, text::Weight::Bold, color(C::FormText));
-    styledLabel(head, std::move(title), ts, 2)->style().flex(1);
-    auto *close    = head->add<CloseButton>();
-    close->onClick = [this] { reject(); };
-    close->style().alignSelf(Align::Start);
+    _panel->style().spacing(0);
+    const bool titled = !title.empty();
+    if (titled) {
+        // The cross lines up with the body's right edge: its button's hover
+        // wash reaches into the padding.
+        auto *head = _panel->add<View>();
+        head->style()
+            .row()
+            .spacing(12)
+            .items(Align::Center)
+            .padding(kCardPadH, kCardPadV, kCardPadH - kCloseInset, kHeaderGap)
+            .noShrink();
+        const text::Style ts = pxFont(15 * 1.45f, text::Weight::Bold, color(C::FormText));
+        styledLabel(head, std::move(title), ts, 2)->style().flex(1);
+        auto *close    = head->add<CloseButton>();
+        close->onClick = [this] { reject(); };
+        close->style().alignSelf(Align::Start);
+    }
     if (scroll == Scroll::Enabled) {
         // The header stays; the rest scrolls once the card is clamped to the
         // window. Not a boundary either: the card follows its content.
@@ -924,6 +937,8 @@ Dialog::Dialog(std::string title, float cardWidth, Scroll scroll) : _w(cardWidth
         _content = _panel->add<View>();
     }
     _content->style().spacing(12);
+    if (titled)
+        _content->style().padding(kCardPadH, 0, kCardPadH, kCardPadV);
 }
 
 FormButton *Dialog::makeButton(std::string label, FormButton::Kind k) {

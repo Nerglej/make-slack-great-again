@@ -126,13 +126,15 @@ public:
     )
         : Dialog(std::string(), 720), _ctx(ctx), _pick(std::move(pick)),
           _create(std::move(create)) {
-        // Custom chrome: no title row, the card's own margins.
-        panel()->child(0)->setVisible(false);
-        panel()->style().padding(0);
+        // A bare card: its own chrome, the list edge to edge.
         content()->style().spacing(0).minH = 520;
 
         auto *top = content()->add<View>();
-        top->style().row().items(Align::Center).spacing(8).padding(24, 20, 24, 12);
+        top->style()
+            .row()
+            .items(Align::Center)
+            .spacing(8)
+            .padding(24, 20, 24 - Dialog::kCloseInset, 12);
         _search = top->add<TextField>(
             tr("Search for sessions"), TextField::Size::Normal, uint16_t(Icon::Search)
         );
@@ -162,7 +164,6 @@ public:
             if (cb)
                 cb(id);
         };
-        content()->add<View>()->style().height(20).noShrink();
 
         _search->edit().onChange = [this] { applyFilter(); };
         // The search field drives the list: arrows move, Enter opens.

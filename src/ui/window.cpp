@@ -964,7 +964,10 @@ void Window::paintTree(View *v, gfx::Painter &p, RectF dmg, float ox, float oy) 
     v->paint(p);
     RectF cd = dmg;
     if (v->flag(View::ClipChildren)) {
-        p.clipRect(v->bounds());
+        if (v->_radius > 0)
+            p.clipRoundRect(v->bounds(), v->_radius); // a rounded card's corners
+        else
+            p.clipRect(v->bounds());
         cd = intersect(dmg, {x, y, f.w, f.h});
     }
     if (!empty(cd))

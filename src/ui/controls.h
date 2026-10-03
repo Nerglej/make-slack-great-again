@@ -266,9 +266,14 @@ private:
 //                         1-px border and an 8-px radius over rgba(0,0,0,150);
 //   Dialog(title, cardW)  a dialog: a 12-px card as tall as its content
 //                         (cardW 0: clamp(window − 80, min(480, …), 560)),
-//                         28/24 padding, a bold ×1.45 title and a round close
-//                         button over rgba(0,0,0,140), a soft 40-px shadow;
-//                         content() is a column, 12 apart.
+//                         a bold ×1.45 title and a round close button over
+//                         rgba(0,0,0,140), a soft 40-px shadow; content() is
+//                         a column, 12 apart. The header and content() carry
+//                         the 28/24 padding, not the card, and the cross
+//                         lines up with content()'s right edge. An empty
+//                         title: a bare card, no header and no padding, for
+//                         dialogs with their own chrome edge to edge (the
+//                         finders); children are clipped to its corners.
 class Dialog : public Popup {
 public:
     // The titled card's content: wrapped in a
@@ -276,6 +281,9 @@ public:
     // its buttons included — instead of clipping. A dialog that scrolls its
     // own body, sized around it, passes Disabled (no nested scrolling).
     enum class Scroll : uint8_t { Enabled, Disabled };
+    // The cross's inset in its 32-px close button: a row ending in one pads
+    // its right side this much less, so the cross meets the content edge.
+    static constexpr float kCloseInset = 9;
     // height <= 0: as tall as the panel's content at that width.
     Dialog(float width, float height);
     explicit Dialog(std::string title, float cardWidth = 0, Scroll scroll = Scroll::Enabled);
