@@ -7,6 +7,7 @@
 #include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
+#include "gfx/gfx.h"
 #include "plat/plat.h"
 
 #include <algorithm>
@@ -26,11 +27,13 @@ constexpr int     kSweepEveryMs    = 30 * 60 * 1000;
 constexpr int64_t kSweepAfterBytes = int64_t(32) << 20;
 constexpr int64_t kDefaultLimit    = int64_t(250) << 20;
 
-// What gfx can decode (PNG, JPEG, GIF, WebP), by magic bytes. Anything else
-// — Slack's HTML sign-in page for a file fetched without auth, a JSON error —
-// is not kept, so it can't poison the disk cache.
+// What gfx can decode: PNG, JPEG, GIF, WebP by magic bytes, and SVG (text,
+// so parsed; the "Slack" system user's avatar is one). Anything else —
+// Slack's HTML sign-in page for a file fetched without auth, a JSON error —
+// is not kept, so it can't poison the disk cache. Worker thread.
 bool looksLikeImage(std::string_view b) {
-    return str::startsWith(mime::sniff(b), "image/");
+    float w = 0, h = 0;
+    return str::startsWith(mime::sniff(b), "image/") || gfx::svgSize(b, &w, &h);
 }
 
 // The cache sweep: while everything (the blob folders and the
@@ -197,14 +200,18 @@ struct RemoteImages::Impl {
         --self->active;
         if (Pending *p = self->find(url))
             p->req = 0;
-        if (r.ok() && looksLikeImage(r.body)) {
+        if (r.ok()) {
             std::string  path = self->pathFor(url);
             const size_t n    = r.body.size();
             self->work([self, url, path, n, body = std::move(r.body)] {
-                const bool ok = file::writeAtomic(path, body);
-                self->app.post([self, url, path, n, ok] {
-                    if (self->alive)
-                        finish(self, url, ok ? path : std::string(), ok ? n : 0);
+                const bool image = looksLikeImage(body);
+                const bool ok    = image && file::writeAtomic(path, body);
+                self->app.post([self, url, path, n, image, ok] {
+                    if (!self->alive)
+                        return;
+                    if (!image)
+                        LOG_DEBUG("images", "%.80s: not an image", url.c_str());
+                    finish(self, url, ok ? path : std::string(), ok ? n : 0);
                 });
             });
         } else {
@@ -213,7 +220,7 @@ struct RemoteImages::Impl {
                 "%.80s: %d %s",
                 url.c_str(),
                 r.status,
-                r.error.empty() ? "not an image" : r.error.c_str()
+                r.error.empty() ? "failed" : r.error.c_str()
             );
             finish(self, url, {}, 0);
         }

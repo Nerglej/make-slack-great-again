@@ -1711,6 +1711,28 @@ TEST("image: URLs download once through RemoteImages, auth per URL, and stay on 
     wipe(dir);
 }
 
+TEST("image: an SVG URL (the \"Slack\" system user's avatar) downloads and renders") {
+    const std::string dir = tempDir("imgsvg");
+    {
+        RemoteImages remote(app().platform(), nullptr, dir);
+        FakeNet      fake;
+        fake.install(remote);
+        ImageCache cache(app().platform());
+        cache.setRemote(&remote);
+        const ImageCache::Request r{
+            "https://cdn.img.test/svg/logo-orbit.svg", 36, 36, ImageCache::Shape::Square
+        };
+        cache.get(r);
+        REQUIRE(until([&] { return cache.pending() == 0; }));
+        CHECK_FALSE(cache.failed(r));
+        CHECK_FALSE(remote.cachedPath(r.path).empty());
+        ImageCache::Bitmap b = cache.get(r);
+        REQUIRE(b != nullptr);
+        CHECK(b->width() == 36 && b->height() == 36);
+    }
+    wipe(dir);
+}
+
 TEST("image: \"Copy full image\" of a Slack-hosted image copies the original, not the thumbnail") {
     const std::string dir = tempDir("imgcopy");
     {
