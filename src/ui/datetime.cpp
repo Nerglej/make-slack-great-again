@@ -259,14 +259,29 @@ void DateTimeField::clampDate() {
 }
 
 void DateTimeField::changed() {
-    _built   = false;
+    _built = false;
+    _parts.clear();
     _invalid = false;
     update();
     if (onChange)
         onChange();
 }
 
-std::vector<DateTimeField::Part> DateTimeField::parts() const {
+// Built again when the value, the date language or the 12/24-hour setting
+// changes, not on every paint and key.
+const std::vector<DateTimeField::Part> &DateTimeField::parts() const {
+    const char *lang = base::dateLanguage();
+    const bool  h24  = base::use24h();
+    if (_parts.empty() || h24 != _parts24h || _partsLang != lang) {
+        _parts     = buildParts();
+        _partsLang = lang;
+        _parts24h  = h24;
+        _built     = false; // the sections' layouts too
+    }
+    return _parts;
+}
+
+std::vector<DateTimeField::Part> DateTimeField::buildParts() const {
     // Display formats in the date language (base::setDateLanguage, so a
     // language change shows at once): a date field shows the locale's short
     // date (en_US "M/d/yy", sv "yyyy-MM-dd", ja "yyyy/MM/dd"), a date-and-time
@@ -391,6 +406,7 @@ void DateTimeField::step(int dir) {
 
 void DateTimeField::styleChanged() {
     _built = false;
+    _parts.clear();
     update();
 }
 
@@ -399,9 +415,9 @@ SizeF DateTimeField::measureContent(float, float) {
 }
 
 int DateTimeField::sectionAt(float x) {
-    int sec = 0, best = 0;
-    for (size_t i = 0; i < _xs.size(); ++i) {
-        const std::vector<Part> ps = parts();
+    int                      sec = 0, best = 0;
+    const std::vector<Part> &ps = parts();
+    for (size_t i = 0; i < _xs.size() && i < ps.size(); ++i) {
         if (!ps[i].field())
             continue;
         if (x >= _xs[i])
@@ -412,7 +428,7 @@ int DateTimeField::sectionAt(float x) {
 }
 
 void DateTimeField::paint(gfx::Painter &p) {
-    const std::vector<Part> ps = parts();
+    const std::vector<Part> &ps = parts();
     if (!_built) {
         _layouts.clear();
         _xs.clear();
@@ -429,16 +445,14 @@ void DateTimeField::paint(gfx::Painter &p) {
     }
     const RectF b     = bounds();
     const bool  focus = focused();
-    p.fillRoundRect(b, kRadius, ui::color(C::FormBg));
-    p.strokeRoundRect(
+    fieldFrame(
+        p,
         b,
         kRadius,
-        1,
-        ui::color(
-            _invalid ? C::FormError
-            : focus  ? C::Accent
-                     : C::FormDividerStrong
-        )
+        C::FormBg,
+        _invalid ? C::FormError
+        : focus  ? C::Accent
+                 : C::FormDividerStrong
     );
     int sec = 0;
     for (size_t i = 0; i < ps.size(); ++i) {
@@ -512,19 +526,11 @@ bool DateTimeField::onEvent(Event &e) {
         case plat::Key::Right:
             setSection(_sec + 1);
             return true;
-        case plat::Key::Up:
-            step(1);
-            return true;
-        case plat::Key::Down:
-            step(-1);
-            return true;
-        case plat::Key::PageUp:
-            step(10);
-            return true;
-        case plat::Key::PageDown:
-            step(-10);
-            return true;
         default:
+            if (const int n = stepForKey(e.key)) {
+                step(n);
+                return true;
+            }
             break;
         }
         if (e.key >= plat::Key::Num0 && e.key <= plat::Key::Num9) {

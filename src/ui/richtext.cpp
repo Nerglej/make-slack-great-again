@@ -39,25 +39,6 @@ void escape(std::string &out, std::string_view s, bool attr) {
     }
 }
 
-bool ieq(std::string_view a, const char *b) {
-    const size_t n = std::strlen(b);
-    if (a.size() != n)
-        return false;
-    for (size_t i = 0; i < n; ++i)
-        if ((a[i] | 0x20) != b[i])
-            return false;
-    return true;
-}
-
-bool ieqv(std::string_view a, std::string_view b) {
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if ((a[i] | 0x20) != (b[i] | 0x20))
-            return false;
-    return true;
-}
-
 bool icontains(std::string_view hay, const char *needle) {
     const size_t n = std::strlen(needle);
     for (size_t i = 0; i + n <= hay.size(); ++i) {
@@ -80,7 +61,7 @@ std::string attr(std::string_view tag, const char *name) {
     const size_t n = std::strlen(name);
     for (size_t i = 0; i + n < tag.size(); ++i) {
         if ((i > 0 && tag[i - 1] != ' ' && tag[i - 1] != '\t' && tag[i - 1] != '\n') ||
-            !ieq(tag.substr(i, n), name))
+            !str::iequals(tag.substr(i, n), name))
             continue;
         size_t k = i + n;
         while (k < tag.size() && tag[k] == ' ')
@@ -126,7 +107,7 @@ bool isBlock(std::string_view n) {
         "pre"
     };
     for (const char *b : blocks)
-        if (ieq(n, b))
+        if (str::iequals(n, b))
             return true;
     return false;
 }
@@ -241,8 +222,8 @@ void fromHtml(
                    tag[ne] != '\n')
                 ++ne;
             const std::string_view name = tag.substr(0, ne);
-            const bool skipper = ieq(name, "script") || ieq(name, "style") || ieq(name, "head") ||
-                                 ieq(name, "title");
+            const bool skipper = str::iequals(name, "script") || str::iequals(name, "style") ||
+                                 str::iequals(name, "head") || str::iequals(name, "title");
             if (skipper) {
                 skip += closing ? -1 : 1;
                 if (skip < 0)
@@ -251,7 +232,7 @@ void fromHtml(
             }
             if (skip)
                 continue;
-            if (ieq(name, "br")) {
+            if (str::iequals(name, "br")) {
                 emit("\n", 0);
                 pendingSpace = false;
                 continue;
@@ -260,7 +241,7 @@ void fromHtml(
                 newline();
             if (closing) {
                 for (size_t k = stack.size(); k-- > 0;)
-                    if (ieqv(stack[k].name, name)) {
+                    if (str::iequals(stack[k].name, name)) {
                         stack.resize(k);
                         break;
                     }
@@ -269,18 +250,23 @@ void fromHtml(
             if (!tag.empty() && tag.back() == '/')
                 continue; // self-closing: no content to format
             Open o{name, 0, 0, false};
-            if (ieq(name, "b") || ieq(name, "strong"))
+            if (str::iequals(name, "b") || str::iequals(name, "strong"))
                 o.formats |= kBold;
-            else if (ieq(name, "i") || ieq(name, "em"))
+            else if (str::iequals(name, "i") || str::iequals(name, "em"))
                 o.formats |= kItalic;
-            else if (ieq(name, "s") || ieq(name, "strike") || ieq(name, "del"))
+            else if (
+                str::iequals(name, "s") || str::iequals(name, "strike") || str::iequals(name, "del")
+            )
                 o.formats |= kStrike;
-            else if (ieq(name, "code") || ieq(name, "tt") || ieq(name, "kbd") || ieq(name, "samp"))
+            else if (
+                str::iequals(name, "code") || str::iequals(name, "tt") ||
+                str::iequals(name, "kbd") || str::iequals(name, "samp")
+            )
                 o.formats |= kCode;
-            else if (ieq(name, "pre")) {
+            else if (str::iequals(name, "pre")) {
                 o.formats |= kCode;
                 o.pre = true;
-            } else if (ieq(name, "a")) {
+            } else if (str::iequals(name, "a")) {
                 std::string href = attr(tag, "href");
                 if (!href.empty() && links->size() < 255) {
                     links->push_back(std::move(href));

@@ -69,6 +69,9 @@ public:
     // Password-style display: every byte shows as a bullet, no IME, no copy.
     void setMasked(bool on);
     bool masked() const { return _masked; }
+    // At most n code points (0: no limit): typing and pastes past it are
+    // cut to what fits, as one edit (undo steps over it as usual).
+    void setMaxLength(int n);
 
     // Enter without Shift: return true to consume (send), false inserts a newline.
     std::function<bool()>              onSubmit;
@@ -116,7 +119,6 @@ public:
     bool undo();
     bool redo();
     bool canUndo() const { return !_undo.empty(); }
-    bool canRedo() const { return !_redo.empty(); }
     void copy();
     void cut();
     void paste(bool plainText = false, plat::Selection sel = plat::Selection::Clipboard);
@@ -214,12 +216,20 @@ private:
     uint32_t    lineEdge(uint32_t o, bool end);
     void        showContextMenu(PointF local);
     void        shiftSquiggles(uint32_t pos, size_t removed, size_t inserted);
-    void        paintSquiggles(gfx::Painter &p) const;
+    void        placeWaves();
+    void        paintSquiggles(gfx::Painter &p);
+
+    // A squiggle's run along one line (document coordinates).
+    struct Wave {
+        float    x, y, w;
+        uint32_t squiggle; // index into _squiggles
+    };
 
     std::string                   _text;
     std::vector<uint16_t>         _fmt;   // per byte: format bits | link index << 8
     std::vector<std::string>      _links; // link index - 1
     std::vector<Range>            _squiggles;
+    std::vector<Wave>             _waves; // placeWaves(), while _wavesValid
     std::string                   _preedit, _placeholder;
     std::vector<Edit>             _undo, _redo;
     std::vector<Para>             _paras;
@@ -228,6 +238,7 @@ private:
     float                         _layoutW = -1, _scrollY = 0;
     uint32_t                      _caret = 0, _anchor = 0, _preeditPos = 0;
     uint32_t                      _selOriginA = 0, _selOriginB = 0;
+    uint32_t                      _maxLength     = 0; // code points; 0 = none
     int                           _preeditCursor = -1;
     plat::TimerId                 _blinkTimer    = 0;
     uint16_t                      _typing        = 0;
@@ -238,6 +249,7 @@ private:
     bool                          _caretTyped = false; // the caret last moved by an edit
     bool                          _masked = false, _plainPaste = false;
     bool                          _parasDirty = true; // a layout to build or tops to place
+    bool                          _wavesValid = false;
     C                             _linkBg     = C::None;
 };
 

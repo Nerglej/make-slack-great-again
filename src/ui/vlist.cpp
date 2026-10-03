@@ -15,11 +15,6 @@ constexpr float  kDefaultRowH = 48;
 constexpr size_t kPoolPerKind = 8;  // spare row views kept per kind
 constexpr float  kJumpTau     = 60; // ms, jump-to-item glide
 constexpr size_t kNone        = size_t(-1);
-
-struct Placed {
-    int   index;
-    float y, h;
-};
 } // namespace
 
 VirtualList::VirtualList(Adapter *a) : _adapter(a) {
@@ -76,19 +71,36 @@ float VirtualList::heightOf(int i) const {
 
 void VirtualList::rebuildFenwick() const {
     const size_t n = _h.size();
-    _fenH.assign(n + 1, 0.f);
-    _fenU.assign(n + 1, 0);
+    _fen.assign(n + 1, Fen{});
     for (size_t i = 1; i <= n; ++i) {
         int u;
-        _fenH[i] += knownHeight(int(i - 1), &u);
-        _fenU[i] += u;
+        _fen[i].h += knownHeight(int(i - 1), &u);
+        _fen[i].u += u;
         const size_t j = i + (i & (~i + 1));
         if (j <= n) {
-            _fenH[j] += _fenH[i];
-            _fenU[j] += _fenU[i];
+            _fen[j].h += _fen[i].h;
+            _fen[j].u += _fen[i].u;
         }
     }
     _fenDirty = false;
+}
+
+// Rows appended: their nodes are filled in from the ones already there
+// (each covers (i - lowbit(i), i]), O(log n) apiece instead of a rebuild.
+void VirtualList::fenwickAppend() {
+    if (_fenDirty)
+        return;
+    const size_t n0 = _fen.size() - 1, n = _h.size();
+    for (size_t i = n0 + 1; i <= n; ++i) {
+        int          u;
+        float        h   = knownHeight(int(i - 1), &u);
+        const size_t low = i & (~i + 1);
+        for (size_t j = i - 1; j > i - low; j -= j & (~j + 1)) {
+            h += _fen[j].h;
+            u += _fen[j].u;
+        }
+        _fen.push_back({h, u});
+    }
 }
 
 void VirtualList::fenwickAdd(int i, float dh, int du) {
@@ -96,8 +108,8 @@ void VirtualList::fenwickAdd(int i, float dh, int du) {
         return; // rebuilt on the next query anyway
     const size_t n = _h.size();
     for (size_t k = size_t(i) + 1; k <= n; k += k & (~k + 1)) {
-        _fenH[k] += dh;
-        _fenU[k] += du;
+        _fen[k].h += dh;
+        _fen[k].u += du;
     }
 }
 
@@ -109,8 +121,8 @@ float VirtualList::offsetOf(int i) const {
     float sh = 0;
     int   su = 0;
     for (size_t k = size_t(i); k > 0; k -= k & (~k + 1)) {
-        sh += _fenH[k];
-        su += _fenU[k];
+        sh += _fen[k].h;
+        su += _fen[k].u;
     }
     return sh + float(su) * averageHeight() + float(i) * _gap;
 }
@@ -132,11 +144,11 @@ int VirtualList::indexAt(float y) const {
         const size_t nxt = pos + step;
         if (nxt > n)
             continue;
-        const float off = accH + _fenH[nxt] + float(accU + _fenU[nxt]) * avg + float(nxt) * _gap;
+        const float off = accH + _fen[nxt].h + float(accU + _fen[nxt].u) * avg + float(nxt) * _gap;
         if (off <= y) {
             pos = nxt;
-            accH += _fenH[nxt];
-            accU += _fenU[nxt];
+            accH += _fen[nxt].h;
+            accU += _fen[nxt].u;
         }
     }
     return int(std::min(pos, n - 1));
@@ -204,7 +216,7 @@ View *VirtualList::acquire(int index, bool *fresh) {
     auto it = std::lower_bound(_live.begin(), _live.end(), index, [](const Live &l, int i) {
         return l.index < i;
     });
-    _live.insert(it, Live{index, kind, v, false, key});
+    _live.insert(it, Live{index, kind, v, false, false, key});
     if (!kept || !_adapter->reuse(*v, index))
         _adapter->bind(*v, index);
     *fresh = true;
@@ -232,13 +244,21 @@ void VirtualList::trimPool() {
             _pool[i].key = 0;
             --kept;
         }
+    // Newest first, counting the spares of each kind seen so far (a list
+    // has a few kinds): one pass, not a count of the newer ones per entry.
+    _spares.clear();
     for (size_t i = _pool.size(); i-- > 0;) {
         if (_pool[i].key)
             continue;
-        size_t newer = 0;
-        for (size_t j = i + 1; j < _pool.size(); ++j)
-            newer += _pool[j].kind == _pool[i].kind && !_pool[j].key;
-        if (newer >= kPoolPerKind) {
+        size_t *seen = nullptr;
+        for (KindCount &k : _spares)
+            if (k.kind == _pool[i].kind)
+                seen = &k.n;
+        if (!seen) {
+            _spares.push_back({_pool[i].kind, 0});
+            seen = &_spares.back().n;
+        }
+        if ((*seen)++ >= kPoolPerKind) {
             View *v = _pool[i].view;
             _pool.erase(_pool.begin() + ptrdiff_t(i));
             remove(v);
@@ -424,15 +444,11 @@ void VirtualList::layout() {
     }
 
     // Where every live row was, to tell a pure scroll (blit) from a change.
-    struct Prev {
-        View *view;
-        int   index;
-        float y, h;
-    };
-    std::vector<Prev> prev;
-    prev.reserve(_live.size());
-    for (const Live &l : _live)
-        prev.push_back({l.view, l.index, l.view->frame().y, l.view->frame().h});
+    for (Live &l : _live) {
+        l.wasLive = true;
+        l.prevY   = l.view->frame().y;
+        l.prevH   = l.view->frame().h;
+    }
 
     // 2. Place from the anchor down, then up.
     float top = -_anchorOff;
@@ -443,8 +459,9 @@ void VirtualList::layout() {
         if (sum < H)
             top = H - sum;
     }
-    std::vector<Placed> placed;
-    float               y = top;
+    std::vector<Placed> &placed = _placed;
+    placed.clear();
+    float y = top;
     for (int i = _anchorIdx; i < n && y < H + _overscan; ++i) {
         const float h = measureItem(i);
         placed.push_back({i, y, h});
@@ -468,34 +485,32 @@ void VirtualList::layout() {
             release(li);
 
     // 4. Position (quietly: damage is decided below).
-    bool               uniform = !_contentDirty, haveShift = false;
-    float              shift = 0;
-    std::vector<RectF> fresh;
+    bool                uniform = !_contentDirty, haveShift = false;
+    float               shift = 0;
+    std::vector<RectF> &fresh = _fresh;
+    fresh.clear();
     for (const Placed &p : placed) {
         const size_t li = findLive(p.index);
         if (li == kNone)
             continue; // cannot happen: measureItem materialised it
-        View       *v        = _live[li].view;
+        Live       &l  = _live[li];
+        View       *v  = l.view;
         // Every row top on the pixel grid; scrollPixels() moves by whole
         // physical pixels, so a scroll shifts all rows by the same amount.
-        const float sy       = snap(p.y);
-        bool        survived = false;
-        for (const Prev &o : prev)
-            if (o.view == v && o.index == p.index) {
-                survived      = true;
-                const float d = sy - o.y;
-                if (!haveShift) {
-                    shift     = d;
-                    haveShift = true;
-                } else if (std::abs(d - shift) > 0.01f) {
-                    uniform = false;
-                }
-                if (std::abs(o.h - p.h) > 0.01f)
-                    uniform = false;
-                break;
+        const float sy = snapPx(p.y);
+        if (l.wasLive) { // the same row view showing the same item as before
+            const float d = sy - l.prevY;
+            if (!haveShift) {
+                shift     = d;
+                haveShift = true;
+            } else if (std::abs(d - shift) > 0.01f) {
+                uniform = false;
             }
-        if (!survived)
+            if (std::abs(l.prevH - p.h) > 0.01f)
+                uniform = false;
+        } else {
             fresh.push_back({0, sy, W, p.h});
+        }
         v->setFrameQuiet({0, sy, W, p.h});
     }
     if (!haveShift)
@@ -723,7 +738,10 @@ void VirtualList::itemsInserted(int index, int k) {
     const int n = int(_h.size());
     index       = std::clamp(index, 0, n);
     _h.insert(_h.begin() + index, size_t(k), 0.f);
-    _fenDirty = true;
+    if (index == n)
+        fenwickAppend(); // new messages: the common case
+    else
+        _fenDirty = true;
     dropKept(index, k); // an item back under a key a removed one had
     for (Live &l : _live)
         if (l.index >= index)

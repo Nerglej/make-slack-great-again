@@ -3,6 +3,7 @@
 #include <cstdlib>
 
 #include "base/i18n.h"
+#include "base/utf8.h"
 #include "gfx/icons_generated.h"
 
 #include <algorithm>
@@ -45,12 +46,15 @@ void ensureLabels(
         labels.push_back(layoutText(t, Font::Body, C::FormText, v.windowScale()));
 }
 
-// The field frame of dropdowns and text fields: 1 px, 2 px when active.
-void fieldFrame(gfx::Painter &p, RectF r, bool active, bool enabled) {
-    p.fillRoundRect(r, metric(M::RadiusM), color(enabled ? C::FormBg : C::FormSunken));
-    const float w = active ? 2.f : 1.f;
-    p.strokeRoundRect(
-        r, metric(M::RadiusM), w, color(active ? C::FieldBorderFocus : C::FieldBorder)
+// The frame of dropdowns and one-line text fields: 1 px, 2 px when active.
+void inputFrame(gfx::Painter &p, RectF r, bool active, bool enabled) {
+    fieldFrame(
+        p,
+        r,
+        metric(M::RadiusM),
+        enabled ? C::FormBg : C::FormSunken,
+        active ? C::FieldBorderFocus : C::FieldBorder,
+        active ? 2.f : 1.f
     );
 }
 
@@ -272,7 +276,7 @@ SizeF Dropdown::measureContent(float, float) {
 
 void Dropdown::paint(gfx::Painter &p) {
     const bool en = enabled();
-    fieldFrame(p, bounds(), en && (hovered() || _menu), en);
+    inputFrame(p, bounds(), en && (hovered() || _menu), en);
     if (_selected >= 0 && _selected < int(_options.size())) {
         const text::Layout *l = label(size_t(_selected));
         p.save();
@@ -395,8 +399,7 @@ void SpinBox::commit() {
 void SpinBox::paint(gfx::Painter &p) {
     const bool  en = enabled();
     const RectF b  = bounds();
-    p.fillRoundRect(b, 4, color(C::FieldWell));
-    innerStroke(p, b, 4, color(focused() ? C::FormLink : C::FormDividerStrong));
+    fieldFrame(p, b, 4, C::FieldWell, focused() ? C::FormLink : C::FormDividerStrong);
     // Up/down halves.
     const float ax = width() - kSpinArrowW - 1;
     if (_hoverArrow && hovered() && en)
@@ -453,8 +456,7 @@ bool SpinBox::onEvent(Event &e) {
         return false;
     }
     case EventType::PointerLeave:
-        _hoverArrow = 0;
-        update();
+        _hoverArrow = 0; // the hover repaint (setHoverRepaint) clears it
         return false;
     case EventType::PointerDown:
         if (e.button != plat::Button::Left)
@@ -466,19 +468,11 @@ bool SpinBox::onEvent(Event &e) {
     case EventType::PointerUp:
         return true;
     case EventType::KeyDown:
+        if (const int n = stepForKey(e.key)) {
+            step(n);
+            return true;
+        }
         switch (e.key) {
-        case plat::Key::Up:
-            step(1);
-            return true;
-        case plat::Key::Down:
-            step(-1);
-            return true;
-        case plat::Key::PageUp:
-            step(10);
-            return true;
-        case plat::Key::PageDown:
-            step(-10);
-            return true;
         case plat::Key::Enter:
         case plat::Key::KpEnter:
             commit();
@@ -589,28 +583,13 @@ void TextField::setMaxLength(int n) {
         _counter = add<Label>();
         _counter->style().noShrink();
     }
-    _edit->onChange = [this] {
-        const std::string &t = _edit->text();
-        size_t             i = 0;
-        for (int k = 0; i < t.size() && k < _max; ++k)
-            i += (uint8_t(t[i]) >= 0xf0)   ? 4
-                 : (uint8_t(t[i]) >= 0xe0) ? 3
-                 : (uint8_t(t[i]) >= 0xc0) ? 2
-                                           : 1;
-        if (i < t.size()) {
-            const std::string cut = t.substr(0, i);
-            _edit->setText(cut);
-            _edit->setSelection(uint32_t(cut.size()), uint32_t(cut.size()));
-        }
-        updateCounter();
-    };
+    _edit->setMaxLength(n);
+    _edit->onChange = [this] { updateCounter(); };
     updateCounter();
 }
 
 void TextField::updateCounter() {
-    int n = 0;
-    for (char ch : _edit->text())
-        n += (uint8_t(ch) & 0xc0) != 0x80;
+    const int            n = int(utf8::countCodePoints(_edit->text()));
     text::AttributedText t; // fonts.sm, text.tertiary
     t.append(std::to_string(_max - n), pxFont(11, text::Weight::Regular, themed(C::FormTextFaint)));
     _counter->setRichText(std::move(t));
@@ -649,12 +628,15 @@ void TextField::setMasked(bool on, bool reveal) {
 void TextField::paint(gfx::Painter &p) {
     const bool active = _edit->focused();
     if (_multi) {
-        p.fillRoundRect(bounds(), metric(M::RadiusM), color(C::FormBg));
-        innerStroke(
-            p, bounds(), metric(M::RadiusM), color(active ? C::FieldBorderFocus : C::FieldBorder)
+        fieldFrame(
+            p,
+            bounds(),
+            metric(M::RadiusM),
+            C::FormBg,
+            active ? C::FieldBorderFocus : C::FieldBorder
         );
     } else {
-        fieldFrame(p, bounds(), active, enabled());
+        inputFrame(p, bounds(), active, enabled());
         if (_icon != 0xffff)
             gfx::drawIcon(
                 p, gfx::Icon(_icon), {kFieldPad, (height() - 16) / 2, 16, 16}, color(C::FormIcon)
@@ -786,8 +768,12 @@ bool SectionList::onEvent(Event &e) {
     case EventType::PointerMove: {
         const int h = rowAt(e.pos.y);
         if (h != _hover) {
+            // Only the two rows whose hover fill changes.
+            const float top = currentStyle().pad.t;
+            for (int r : {_hover, h})
+                if (r >= 0)
+                    update({0, top + kRowPitch * float(r), width(), kRowPitch});
             _hover = h;
-            update();
         }
         return false;
     }
@@ -992,8 +978,7 @@ void Dialog::layout() {
         const RectF f{
             std::round((W - w) / 2), std::round((H - h) / 2), std::round(w), std::round(h)
         };
-        const RectF o = _panel->frame();
-        if (f.x != o.x || f.y != o.y || f.w != o.w || f.h != o.h)
+        if (!sameRect(f, _panel->frame()))
             update(); // the backdrop and the shadow cover the whole window
         _panel->setFrame(f);
         return;

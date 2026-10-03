@@ -16,6 +16,44 @@ void paintFocusRing(const View &v, gfx::Painter &p, RectF r, float radius) {
         p.strokeRoundRect(r, radius, 2, color(C::FocusRing));
 }
 
+void fieldFrame(gfx::Painter &p, RectF r, float radius, C fill, C border, float borderW) {
+    p.fillRoundRect(r, radius, color(fill));
+    p.strokeRoundRect(r, radius, borderW, color(border));
+}
+
+int stepForKey(plat::Key k) {
+    switch (k) {
+    case plat::Key::Up:
+        return 1;
+    case plat::Key::Down:
+        return -1;
+    case plat::Key::PageUp:
+        return 10;
+    case plat::Key::PageDown:
+        return -10;
+    default:
+        return 0;
+    }
+}
+
+char typeAheadChar(plat::Key k, bool digits) {
+    if (k >= plat::Key::A && k <= plat::Key::Z)
+        return char('a' + (int(k) - int(plat::Key::A)));
+    if (digits && k >= plat::Key::Num0 && k <= plat::Key::Num9)
+        return char('0' + (int(k) - int(plat::Key::Num0)));
+    return 0;
+}
+
+int typeAheadMatch(int current, int n, char c, const void *ctx, TypeAheadLabel label) {
+    for (int k = 1; k <= n; ++k) {
+        const int              i = ((current < 0 ? -1 : current) + k + n) % n;
+        const std::string_view l = label(ctx, i);
+        if (!l.empty() && (l[0] >= 'A' && l[0] <= 'Z' ? char(l[0] | 0x20) : l[0]) == c)
+            return i;
+    }
+    return -1;
+}
+
 // ── Label ───────────────────────────────────────────────────────────────────
 
 Label::Label(std::string text, Font f, C color) : _text(std::move(text)), _font(f), _color(color) {
@@ -39,24 +77,38 @@ void Label::updateInk() {
     }
 }
 
-// The selected range (painted white over the highlight: Layout::paintAs).
-struct Label::Selection {
-    uint32_t from = 0, to = 0;
+// What only some labels need, allocated while one is: the selected range
+// (painted white over the highlight: Layout::paintAs), and a cut label's
+// layout at its other width (layoutFor).
+struct Label::Extra {
+    uint32_t                      from = 0, to = 0;
+    std::unique_ptr<text::Layout> alt;
+    float                         altW = -1;
 };
 
 Label::~Label() = default;
 
 uint32_t Label::selectionFrom() const {
-    return _sel ? _sel->from : 0;
+    return _x ? _x->from : 0;
 }
 
 uint32_t Label::selectionTo() const {
-    return _sel ? _sel->to : 0;
+    return _x ? _x->to : 0;
 }
 
 void Label::dropLayout() {
     _layout.reset();
     _layoutW = -1;
+    dropAlt();
+}
+
+void Label::dropAlt() {
+    if (!_x)
+        return;
+    if (_x->from == _x->to)
+        _x.reset();
+    else
+        _x->alt.reset();
 }
 
 void Label::setText(std::string text) {
@@ -109,8 +161,12 @@ void Label::setColor(C c) {
     _color = c;
     // Colour is paint-time only: recolour the shaped text (a rich label's
     // spans carry their own colours and ignore it).
-    if (_layout && !_rich)
-        _layout->setColor(color(_color));
+    if (!_rich) {
+        if (_layout)
+            _layout->setColor(color(_color));
+        if (_x && _x->alt)
+            _x->alt->setColor(color(_color));
+    }
     update();
 }
 
@@ -177,10 +233,27 @@ const text::Layout *Label::layoutFor(float w) {
         if (left && !_layout->truncated() && _layout->width() <= w + slack + 0.01f &&
             (w <= _layoutW || _layout->lineCount() <= 1))
             return _layout.get();
+        // A label cut to fit is measured at two widths per layout pass (the
+        // room offered, then what it got): both stay shaped.
+        if (_x && _x->alt && w == _x->altW) {
+            std::swap(_layout, _x->alt);
+            std::swap(_layoutW, _x->altW);
+            return _layout.get();
+        }
     }
-    _layout      = buildLayout(w, scale);
-    _layoutW     = w;
-    _layoutScale = scale;
+    std::unique_ptr<text::Layout> prev  = _layoutScale == scale ? std::move(_layout) : nullptr;
+    const float                   prevW = _layoutW;
+    _layout                             = buildLayout(w, scale);
+    _layoutW                            = w;
+    _layoutScale                        = scale;
+    if (prev && (prev->truncated() || _layout->truncated())) {
+        if (!_x)
+            _x = std::make_unique<Extra>();
+        _x->alt  = std::move(prev);
+        _x->altW = prevW;
+    } else {
+        dropAlt();
+    }
     return _layout.get();
 }
 
@@ -207,11 +280,11 @@ void Label::paint(gfx::Painter &p) {
     layoutFor(std::max(0.f, width() - s.pad.l - s.pad.r));
     const PointF o = textOrigin();
     _layout->paint(p, o);
-    if (!_sel)
+    if (!_x || _x->from == _x->to)
         return;
     // A message selection: the system highlight, the text on it white
     // (mention pills lose their fill), from the same shaping.
-    for (RectF r : _layout->selectionRects(_sel->from, _sel->to)) {
+    for (RectF r : _layout->selectionRects(_x->from, _x->to)) {
         const RectF rr{r.x + o.x, r.y + o.y, r.w, r.h};
         p.save();
         p.clipRect(rr);
@@ -231,14 +304,12 @@ void Label::setSelection(uint32_t from, uint32_t to) {
         from = to = 0;
     if (from == selectionFrom() && to == selectionTo())
         return;
-    if (from == to) {
-        _sel.reset();
-    } else {
-        if (!_sel)
-            _sel = std::make_unique<Selection>();
-        _sel->from = from;
-        _sel->to   = to;
-    }
+    if (!_x)
+        _x = std::make_unique<Extra>();
+    _x->from = from;
+    _x->to   = to;
+    if (from == to && !_x->alt)
+        _x.reset();
     update();
 }
 
@@ -352,10 +423,6 @@ bool Clickable::onEvent(Event &e) {
         setFlag(Pressed, true);
         setFlag(UserFlag1, true);
         update();
-        if (e.clicks == 2 && onDoubleClick) {
-            auto cb = onDoubleClick;
-            cb();
-        }
         return true;
     case EventType::PointerMove:
         if (flag(Pressed)) {
@@ -585,13 +652,6 @@ void Badge::setDot(bool on) {
     _dot = on;
     setVisible(_count > 0 || _dot);
     invalidateLayout();
-    update();
-}
-
-void Badge::setColors(C bg, C fg) {
-    _bg = bg;
-    _fg = fg;
-    _layout.reset();
     update();
 }
 

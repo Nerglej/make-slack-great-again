@@ -70,6 +70,7 @@ public:
     void reset() {
         _names.clear();
         _sizes.clear();
+        _empty.reset();
         _names.resize(_b._entries.size());
         _nameWs.assign(_b._entries.size(), -1.f);
         _sizes.resize(_b._entries.size());
@@ -157,14 +158,16 @@ public:
             _names[i]->paint(p, snapPx({nameX, y + std::floor((kRowH - _names[i]->height()) / 2)}));
         }
         if (n == 0) {
-            text::AttributedText t;
-            t.append(
-                _b._desc.mode == Mode::PickFolder ? tr("No folders here")
-                                                  : tr("This folder is empty"),
-                font(Font::Body, C::TextMuted)
-            );
-            auto l = text::Layout::build(t, {}, scale);
-            l->paint(p, snapPx({std::floor((width() - l->width()) / 2), 24}));
+            if (!_empty) { // shaped once per listing, not per paint
+                text::AttributedText t;
+                t.append(
+                    _b._desc.mode == Mode::PickFolder ? tr("No folders here")
+                                                      : tr("This folder is empty"),
+                    font(Font::Body, C::TextMuted)
+                );
+                _empty = text::Layout::build(t, {}, scale);
+            }
+            _empty->paint(p, snapPx({std::floor((width() - _empty->width()) / 2), 24}));
         }
     }
 
@@ -226,6 +229,7 @@ public:
 private:
     FileBrowser                               &_b;
     std::vector<std::unique_ptr<text::Layout>> _names, _sizes;
+    std::unique_ptr<text::Layout>              _empty;  // "This folder is empty"
     std::vector<float>                         _nameWs; // the width each name was built for
     float                                      _laidW    = -1;
     int                                        _hoverRow = -1;
@@ -691,8 +695,8 @@ void FileBrowser::finish(std::vector<std::string> paths) {
 
 bool FileBrowser::keyDown(const Event &e) {
     using plat::Key;
-    const uint32_t mods = e.mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper);
-    const bool     prim = mods == plat::primaryMod();
+    const uint32_t mods  = e.mods & kModMask;
+    const bool     prim  = mods == plat::primaryMod();
     const bool     shift = mods == plat::ModShift;
     const int      n     = int(_entries.size());
     auto           move  = [&](int to) {
@@ -756,18 +760,14 @@ bool FileBrowser::keyDown(const Event &e) {
         break;
     }
     // A letter or digit jumps to the next entry starting with it.
-    const bool letter = e.key >= Key::A && e.key <= Key::Z,
-               digit  = e.key >= Key::Num0 && e.key <= Key::Num9;
-    if ((letter || digit) && !(mods & ~plat::ModShift)) {
-        const char c = letter ? char('a' + (int(e.key) - int(Key::A)))
-                              : char('0' + (int(e.key) - int(Key::Num0)));
-        for (int k = 1; k <= n; ++k) {
-            const int i = ((_current < 0 ? -1 : _current) + k + n) % n;
-            if (!_entries[size_t(i)].name.empty() && lower(_entries[size_t(i)].name[0]) == c) {
-                select(i);
-                break;
-            }
-        }
+    if (const char c = typeAheadChar(e.key, true); c && !(mods & ~plat::ModShift)) {
+        const int i = typeAheadMatch(_current, n, c, &_entries, [](const void *entries, int k) {
+            return std::string_view(
+                (*static_cast<const std::vector<file::DirEntry> *>(entries))[size_t(k)].name
+            );
+        });
+        if (i >= 0)
+            select(i);
         return true;
     }
     return false;

@@ -52,12 +52,10 @@ RectF Popup::placeIn(SizeF win) {
                 : above;
         break;
     }
-    case Place::Right:
-    case Place::Left: {
+    case Place::Right: {
         const float right = a.x + a.w + kGap, left = a.x - kGap - s.w;
         const bool  fitsRight = right + s.w <= win.w - kMargin, fitsLeft = left >= kMargin;
-        x = (_place == Place::Right ? (fitsRight || !fitsLeft) : (!fitsLeft && fitsRight)) ? right
-                                                                                           : left;
+        x = fitsRight || !fitsLeft ? right : left;
         break;
     }
     case Place::Cursor:
@@ -383,7 +381,8 @@ void Menu::openSubmenu(int index, bool selectFirst) {
 void Menu::syncSubmenuLater() {
     if (_hoverTimer)
         app()->cancelTimer(_hoverTimer);
-    _hoverTimer = app()->addTimer(kSubmenuDelayMs, false, [this] {
+    _hoverTimerFor = _current;
+    _hoverTimer    = app()->addTimer(kSubmenuDelayMs, false, [this] {
         _hoverTimer = 0;
         if (_current == _childFor)
             return;
@@ -467,16 +466,20 @@ bool Menu::onEvent(Event &e) {
         const int i = bounds().contains(e.pos) ? itemAt(e.pos.y) : -1;
         if (i < 0 || !_items[size_t(i)].enabled) {
             setCurrent(-1); // nothing hovered off the rows
+            _hoverTimerFor = -1;
             return true;
         }
-        if (i != _current)
+        const bool moved = i != _current;
+        if (moved)
             setFlag(UserFlag0, true); // armed: a release now chooses
         setCurrent(i);
-        if (i != _childFor)
-            syncSubmenuLater();
-        else if (_hoverTimer) { // back on the open submenu's row: keep it
+        if (i != _childFor) {
+            if (moved || i != _hoverTimerFor) // once per row, not on every move
+                syncSubmenuLater();
+        } else if (_hoverTimer) { // back on the open submenu's row: keep it
             app()->cancelTimer(_hoverTimer);
-            _hoverTimer = 0;
+            _hoverTimer    = 0;
+            _hoverTimerFor = -1;
         }
         return true;
     }
@@ -537,17 +540,16 @@ bool Menu::onEvent(Event &e) {
             break;
         }
         // A letter jumps to the next enabled item starting with it.
-        if (e.key >= plat::Key::A && e.key <= plat::Key::Z && !(e.mods & ~plat::ModShift)) {
-            const char c = char('a' + (int(e.key) - int(plat::Key::A)));
-            const int  n = int(_items.size());
-            for (int k = 1; k <= n; ++k) {
-                const int       i  = ((_current < 0 ? -1 : _current) + k + n) % n;
-                const MenuItem &it = _items[size_t(i)];
-                if (selectable(it) && !it.label.empty() && (it.label[0] | 0x20) == c) {
-                    setCurrent(i);
-                    break;
+        if (const char c = typeAheadChar(e.key, false); c && !(e.mods & ~plat::ModShift)) {
+            const int i = typeAheadMatch(
+                _current, int(_items.size()), c, &_items, [](const void *items, int k) {
+                    const MenuItem &it =
+                        (*static_cast<const std::vector<MenuItem> *>(items))[size_t(k)];
+                    return selectable(it) ? std::string_view(it.label) : std::string_view();
                 }
-            }
+            );
+            if (i >= 0)
+                setCurrent(i);
             return true;
         }
         return Popup::onEvent(e);

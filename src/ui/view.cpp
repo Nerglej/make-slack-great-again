@@ -5,6 +5,13 @@
 
 namespace ui {
 
+namespace {
+// v within [lo, hi]; lo wins when the two cross (a min above the max).
+inline float clampSize(float v, float lo, float hi) {
+    return std::clamp(v, lo, std::max(lo, hi));
+}
+} // namespace
+
 float View::windowScale() const {
     return _window ? _window->scale() : 1.f;
 }
@@ -115,7 +122,7 @@ Style &View::style() {
 }
 
 void View::setFrame(RectF f) {
-    if (f.x == _frame.x && f.y == _frame.y && f.w == _frame.w && f.h == _frame.h)
+    if (sameRect(f, _frame))
         return;
     if (_window && visible())
         _window->damage(damageRect());
@@ -155,20 +162,31 @@ RectF View::damageRect() const {
 }
 
 RectF View::clippedRect(float out) const {
-    const PointF o = mapToWindow({0, 0});
-    RectF        r{o.x - out, o.y - out, _frame.w + 2 * out, _frame.h + 2 * out};
-    // Clip by clipping ancestors so offscreen rows in a list damage nothing.
-    for (const View *v = _parent; v; v = v->_parent)
+    // One walk up: the rect in each ancestor's coordinates, clipped by the
+    // clipping ones (so offscreen rows in a list damage nothing).
+    RectF r{_frame.x - out, _frame.y - out, _frame.w + 2 * out, _frame.h + 2 * out};
+    bool  clipped = false;
+    for (const View *v = _parent; v; v = v->_parent) {
         if (v->flag(ClipChildren)) {
-            const PointF vo = v->mapToWindow({0, 0});
-            r               = intersect(r, {vo.x, vo.y, v->_frame.w, v->_frame.h});
+            r       = intersect(r, {0, 0, v->_frame.w, v->_frame.h});
+            clipped = true;
         }
-    return r;
+        r.x += v->_frame.x;
+        r.y += v->_frame.y;
+    }
+    return clipped && empty(r) ? RectF{} : r;
 }
 
 void View::setVisible(bool on) {
     if (visible() == on)
         return;
+    // Hiding the focus holder (or an ancestor of it) moves the focus away
+    // like disabling does: it gets its FocusOut (a field stops its caret).
+    if (!on && _window && _window->_focus && isAncestorOf(_window->_focus)) {
+        _window->setFocus(nullptr);
+        if (!visible())
+            return; // its handler hid it already
+    }
     if (!on)
         update();
     setFlag(Visible, on);
@@ -341,8 +359,8 @@ SizeF View::measure(float aw, float ah) {
         if (h < 0)
             h = c.h + padY;
     }
-    w    = std::clamp(w, s.minW, std::max(s.minW, s.maxW));
-    h    = std::clamp(h, s.minH, std::max(s.minH, s.maxH));
+    w    = clampSize(w, s.minW, s.maxW);
+    h    = clampSize(h, s.minH, s.maxH);
     _mc  = {w, h};
     _mcW = aw;
     _mcH = ah;
@@ -367,6 +385,23 @@ struct Item {
     bool  flexible; // auto main size (may shrink)
     float grow, shrink;
 };
+
+// A child's working values before sizing.
+Item makeItem(View *c, const Style &cs, bool row) {
+    const float fixed = row ? cs.w : cs.h;
+    return {
+        c,
+        0,
+        0,
+        row ? cs.minW : cs.minH,
+        row ? cs.maxW : cs.maxH,
+        row ? cs.margin.l + cs.margin.r : cs.margin.t + cs.margin.b,
+        row ? cs.margin.t + cs.margin.b : cs.margin.l + cs.margin.r,
+        fixed < 0,
+        cs.grow,
+        cs.shrink
+    };
+}
 
 // A shared scratch stack: layouts nest (measure recurses), so each call
 // pushes its items and pops them afterwards instead of allocating.
@@ -470,20 +505,9 @@ SizeF View::measureFlex(float aw, float ah) {
         if (!c->visible())
             continue;
         const Style &cs     = c->_style;
-        const float  mMain  = row ? cs.margin.l + cs.margin.r : cs.margin.t + cs.margin.b;
-        const float  mCross = row ? cs.margin.t + cs.margin.b : cs.margin.l + cs.margin.r;
-        Item         it{
-            c,
-            0,
-            0,
-            row ? cs.minW : cs.minH,
-            row ? cs.maxW : cs.maxH,
-            mMain,
-            mCross,
-            fixedMain(cs, row) < 0,
-            cs.grow,
-            cs.shrink
-        };
+        Item         it     = makeItem(c, cs, row);
+        const float  mMain  = it.marginMain;
+        const float  mCross = it.marginCross;
         if (!it.flexible)
             it.main = fixedMain(cs, row);
         else if (cs.grow > 0 && finite(mainAvail))
@@ -518,13 +542,11 @@ void View::layoutFlex() {
     if (s.dir == Dir::None)
         return;
     const float ix = s.pad.l, iy = s.pad.t;
-    const float iw    = std::max(0.f, _frame.w - s.pad.l - s.pad.r);
-    const float ih    = std::max(0.f, _frame.h - s.pad.t - s.pad.b);
-    // Edges land on the physical pixel grid (not whole logical px): at 1.5x
-    // nothing sits on a half-pixel tie, where float noise would flip glyph
-    // and fill rounding between two paints of the same view.
-    const float gs    = windowScale();
-    auto        round = [gs](float v) { return std::floor(v * gs + 0.5f + 1e-3f) / gs; };
+    const float iw = std::max(0.f, _frame.w - s.pad.l - s.pad.r);
+    const float ih = std::max(0.f, _frame.h - s.pad.t - s.pad.b);
+    // Edges land on the physical pixel grid (snapPx, not whole logical px):
+    // at 1.5x nothing sits on a half-pixel tie, where float noise would flip
+    // glyph and fill rounding between two paints of the same view.
     if (s.dir == Dir::Stack) {
         for (auto &cp : _children) {
             View *c = cp.get();
@@ -537,16 +559,16 @@ void View::layoutFlex() {
             SizeF        sz;
             if (a == Align::Stretch) {
                 sz = {
-                    cs.w >= 0 ? cs.w : std::clamp(aw, cs.minW, std::max(cs.minW, cs.maxW)),
-                    cs.h >= 0 ? cs.h : std::clamp(ah, cs.minH, std::max(cs.minH, cs.maxH))
+                    cs.w >= 0 ? cs.w : clampSize(aw, cs.minW, cs.maxW),
+                    cs.h >= 0 ? cs.h : clampSize(ah, cs.minH, cs.maxH)
                 };
             } else {
                 sz = c->measure(aw, ah);
             }
             const float x  = ix + m.l + (a == Align::Stretch ? 0 : alignOffset(a, aw, sz.w));
             const float y  = iy + m.t + (a == Align::Stretch ? 0 : alignOffset(a, ah, sz.h));
-            const float x0 = round(x), y0 = round(y);
-            c->setFrame({x0, y0, round(x + sz.w) - x0, round(y + sz.h) - y0});
+            const float x0 = snapPx(x), y0 = snapPx(y);
+            c->setFrame({x0, y0, snapPx(x + sz.w) - x0, snapPx(y + sz.h) - y0});
         }
         return;
     }
@@ -558,24 +580,13 @@ void View::layoutFlex() {
         View *c = cp.get();
         if (!c->visible())
             continue;
-        const Style &cs     = c->_style;
-        const float  mMain  = row ? cs.margin.l + cs.margin.r : cs.margin.t + cs.margin.b;
-        const float  mCross = row ? cs.margin.t + cs.margin.b : cs.margin.l + cs.margin.r;
-        Item         it{
-            c,
-            0,
-            0,
-            row ? cs.minW : cs.minH,
-            row ? cs.maxW : cs.maxH,
-            mMain,
-            mCross,
-            fixedMain(cs, row) < 0,
-            cs.grow,
-            cs.shrink
-        };
-        const Align a            = effectiveAlign(s, cs);
-        const float fc           = fixedCross(cs, row);
-        const float stretchCross = fc >= 0 ? fc : crossAvail - mCross;
+        const Style &cs           = c->_style;
+        Item         it           = makeItem(c, cs, row);
+        const float  mMain        = it.marginMain;
+        const float  mCross       = it.marginCross;
+        const Align  a            = effectiveAlign(s, cs);
+        const float  fc           = fixedCross(cs, row);
+        const float  stretchCross = fc >= 0 ? fc : crossAvail - mCross;
         if (!it.flexible)
             it.main = fixedMain(cs, row);
         else if (cs.grow > 0)
@@ -605,8 +616,7 @@ void View::layoutFlex() {
         else // measure() may grow the scratch stack: no Item& across it
             cross = row ? v->measure(mn, crossAvail - mc).h : v->measure(crossAvail - mc, mn).w;
         Item &it = items[i];
-        it.cross = row ? std::clamp(cross, cs.minH, std::max(cs.minH, cs.maxH))
-                       : std::clamp(cross, cs.minW, std::max(cs.minW, cs.maxW));
+        it.cross = row ? clampSize(cross, cs.minH, cs.maxH) : clampSize(cross, cs.minW, cs.maxW);
     }
     const size_t n   = items.size() - base;
     float        pos = row ? ix : iy, between = s.gap;
@@ -635,8 +645,8 @@ void View::layoutFlex() {
         const float  crossPos =
             (row ? iy : ix) + mcS +
             (a == Align::Stretch ? 0 : alignOffset(a, crossAvail - it.marginCross, it.cross));
-        const float m0 = round(pos + mmS), m1 = round(pos + mmS + it.main);
-        const float c0 = round(crossPos), c1 = round(crossPos + it.cross);
+        const float m0 = snapPx(pos + mmS), m1 = snapPx(pos + mmS + it.main);
+        const float c0 = snapPx(crossPos), c1 = snapPx(crossPos + it.cross);
         it.v->setFrame(row ? RectF{m0, c0, m1 - m0, c1 - c0} : RectF{c0, m0, c1 - c0, m1 - m0});
         pos += it.main + it.marginMain + between;
     }

@@ -64,9 +64,6 @@ protected:
     // alone: blits (when `blit`) and notifies.
     void          moved(float oldOffset, float newOffset, bool blit = true);
     RectF         barZone() const; // the strip the scrollbar lives in (local)
-    // Logical offset snapped to whole physical pixels (content positions use
-    // it so a blit by an integer number of pixels is exact).
-    float         snap(float v) const;
     // Custom animation hook for subclasses (VirtualList's jump-to-item).
     virtual bool  tickCustom(double dtMs) { return false; }
     void          startCustomAnimation();
@@ -219,13 +216,23 @@ private:
         int      index;
         int      kind;
         View    *view;
-        bool     dirty; // needs bind()
-        uint64_t key;   // Adapter::key when bound
+        bool     dirty;   // needs bind()
+        bool     wasLive; // layout(): live at its start, at prevY/prevH
+        uint64_t key;     // Adapter::key when bound
+        float    prevY = 0, prevH = 0;
     };
     struct Pooled {
         int      kind;
         View    *view;
         uint64_t key; // still bound to this item (0: a spare)
+    };
+    struct Placed {
+        int   index;
+        float y, h;
+    };
+    struct KindCount {
+        int    kind;
+        size_t n;
     };
 
     float  heightOf(int i) const;
@@ -234,6 +241,7 @@ private:
     int    indexAt(float y) const; // the item whose span contains content y
     float  knownHeight(int i, int *unknown) const;
     void   fenwickAdd(int i, float dh, int du);
+    void   fenwickAppend(); // _h grew at its end
     void   rebuildFenwick() const;
     float  averageHeight() const;
     View  *acquire(int index, bool *fresh);
@@ -247,20 +255,27 @@ private:
     void   anchorFromBottom();
     void   setAnchor(int index, float off, bool pinned);
 
-    Adapter                   *_adapter;
-    std::vector<float>         _h; // >0 measured, <0 stale (|h| is a guess), 0 unknown
+    Adapter           *_adapter;
+    std::vector<float> _h; // >0 measured, <0 stale (|h| is a guess), 0 unknown
     // Offsets are prefix sums over two Fenwick trees: heights we know (measured,
     // stale, or the adapter's estimate) and a count of rows we know nothing
     // about, which count at the running average. A new measurement is an
     // O(log n) update and the average moving invalidates nothing, so the
     // scrollbar costs the same at 100 or 1,000,000 rows.
-    mutable std::vector<float> _fenH;
-    mutable std::vector<int>   _fenU;
-    mutable bool               _fenDirty = true;
-    std::vector<Live>          _live; // sorted by index
-    std::vector<Pooled>        _pool; // oldest first
-    size_t                     _keep      = 0;
-    int                        _anchorIdx = 0, _measured = 0;
+    struct Fen {
+        float h = 0; // known heights
+        int   u = 0; // rows known nothing about
+    };
+    mutable std::vector<Fen> _fen;
+    mutable bool             _fenDirty = true;
+    std::vector<Live>        _live; // sorted by index
+    std::vector<Pooled>      _pool; // oldest first
+    // layout()'s and trimPool()'s working memory, kept between calls.
+    std::vector<Placed>      _placed;
+    std::vector<RectF>       _fresh;
+    std::vector<KindCount>   _spares;
+    size_t                   _keep      = 0;
+    int                      _anchorIdx = 0, _measured = 0;
     float     _anchorOff = 0, _measuredSum = 0, _width = -1, _overscan = 120, _gap = 0;
     float     _subpixel  = 0; // scroll remainder below one physical pixel
     int       _jumpIdx   = -1;

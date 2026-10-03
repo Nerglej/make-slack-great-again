@@ -368,3 +368,38 @@ TEST("popup: the calendar repaints hovered cells only and keeps its labels") {
     CHECK(w.damageArea() <= long(2 * 32 * s * 32 * s));
     CHECK(text::layoutBuilds() == n0);
 }
+
+// The length cap cuts what goes in as part of the edit itself: typing and
+// pastes past it keep their undo step (the cut used to replace the text and
+// wipe the history), and a paste in the middle keeps the tail.
+TEST("controls: a length limit cuts typing and pastes, and undo still works") {
+    Win   w(400, 200);
+    auto *f = w.root().add<ui::TextField>("Name");
+    f->setMaxLength(5);
+    w.frame();
+    ui::TextEdit &e = f->edit();
+    e.focus();
+    w.type("abc");
+    w.type("defg");
+    CHECK_STR(f->text(), "abcde");
+    CHECK(e.undo());
+    CHECK_STR(f->text(), "");
+    CHECK(e.redo());
+    CHECK_STR(f->text(), "abcde");
+    // A paste into the middle: only what fits, the tail stays.
+    f->setText("abc");
+    e.setSelection(1, 1);
+    e.insertText("12345");
+    CHECK_STR(f->text(), "a12bc");
+    CHECK(e.caret() == 3);
+    CHECK(e.undo());
+    CHECK_STR(f->text(), "abc");
+    // Full: a key adds nothing and leaves the history alone.
+    f->setText("vwxyz");
+    w.type("q");
+    CHECK_STR(f->text(), "vwxyz");
+    CHECK(!e.canUndo());
+    // Code points, not bytes; setText is cut too.
+    f->setText("\xC3\xA5\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA9x");
+    CHECK_STR(f->text(), "\xC3\xA5\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA9");
+}

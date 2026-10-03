@@ -18,9 +18,8 @@ App *App::s_instance = nullptr;
 
 namespace {
 
-constexpr uint32_t kModMask        = plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper;
-constexpr int      kTooltipDelayMs = 600;
-constexpr int      kLongPressMs    = 550; // press-and-hold → context menu
+constexpr int kTooltipDelayMs = 600;
+constexpr int kLongPressMs    = 550; // press-and-hold → context menu
 
 // The overlay layer: every child is a Popup, placed by its anchor.
 class Overlay final : public View {
@@ -172,8 +171,12 @@ void Window::styleChangedAll() {
 void Window::forget(View *v) {
     if (_dying)
         return;
-    if (_focus && v->isAncestorOf(_focus))
+    // The flag goes with the focus, or a view put back later still thinks
+    // it has it (setVisible(false) moved it away properly before this).
+    if (_focus && v->isAncestorOf(_focus)) {
+        _focus->_flags &= ~View::Focused;
         _focus = nullptr;
+    }
     if (_capture && v->isAncestorOf(_capture))
         _capture = nullptr;
     if (_dropView && v->isAncestorOf(_dropView))
@@ -406,26 +409,40 @@ bool Window::dispatch(View *target, Event &e) {
     for (View *v = target; v; v = v->_parent)
         if (v->flag(View::Disabled))
             target = v->_parent;
+    if (!target)
+        return false;
+    // The target's window origin, then each ancestor's by taking off the
+    // frame of the view below it: one walk, not one per ancestor.
+    PointF o = target->mapToWindow({0, 0});
     for (View *v = target; v; v = v->_parent) {
-        e.pos = v->mapFromWindow(e.windowPos);
+        e.pos = {e.windowPos.x - o.x, e.windowPos.y - o.y};
         if (v->onEvent(e)) {
             _handled = v;
             return true;
         }
+        o.x -= v->_frame.x;
+        o.y -= v->_frame.y;
     }
     return false;
 }
 
 void Window::updateHover(View *target) {
-    std::vector<View *> chain;
+    std::vector<View *> &chain = _hoverNext;
+    chain.clear();
     for (View *v = target; v; v = v->_parent)
         chain.push_back(v);
     if (chain == _hoverChain)
         return;
-    const View *oldLeaf = _hoverChain.empty() ? nullptr : _hoverChain.front();
-    for (View *v : _hoverChain) {
-        if (std::find(chain.begin(), chain.end(), v) != chain.end())
-            continue;
+    // Both are paths to a root: what they share is a common tail (the
+    // ancestors both hover), the rest leaves (old) or enters (new).
+    size_t common = 0;
+    while (common < chain.size() && common < _hoverChain.size() &&
+           chain[chain.size() - 1 - common] == _hoverChain[_hoverChain.size() - 1 - common])
+        ++common;
+    const View  *oldLeaf = _hoverChain.empty() ? nullptr : _hoverChain.front();
+    const size_t leaving = _hoverChain.size() - common;
+    for (size_t i = 0; i < leaving && i < _hoverChain.size(); ++i) {
+        View *v = _hoverChain[i];
         v->_flags &= ~View::Hovered;
         Event e{EventType::PointerLeave};
         e.windowPos = _pointer;
@@ -434,11 +451,10 @@ void Window::updateHover(View *target) {
         if (v->flag(View::HoverRepaint))
             v->update();
     }
-    std::vector<View *> old = std::move(_hoverChain);
-    _hoverChain             = std::move(chain);
-    for (View *v : _hoverChain) {
-        if (std::find(old.begin(), old.end(), v) != old.end())
-            continue;
+    _hoverChain.swap(chain);
+    const size_t entering = _hoverChain.size() - common;
+    for (size_t i = 0; i < entering && i < _hoverChain.size(); ++i) {
+        View *v = _hoverChain[i];
         v->_flags |= View::Hovered;
         Event e{EventType::PointerEnter};
         e.windowPos = _pointer;
@@ -457,12 +473,15 @@ void Window::updateHover(View *target) {
 void Window::refreshCursor() {
     View   *src = _capture ? _capture : (_hoverChain.empty() ? nullptr : _hoverChain.front());
     uint8_t c   = uint8_t(plat::Cursor::Arrow);
+    PointF  o   = src ? src->mapToWindow({0, 0}) : PointF{};
     for (View *v = src; v; v = v->_parent) {
-        const uint8_t cc = v->cursorAt(v->mapFromWindow(_pointer));
+        const uint8_t cc = v->cursorAt({_pointer.x - o.x, _pointer.y - o.y});
         if (cc != View::kCursorInherit) {
             c = cc;
             break;
         }
+        o.x -= v->_frame.x;
+        o.y -= v->_frame.y;
     }
     if (c != _cursor) {
         _cursor = c;
@@ -699,8 +718,7 @@ bool Window::startDrag(const plat::DragDesc &d) {
 }
 
 void Window::setTextInput(bool enabled, RectF caret) {
-    if (enabled == _textInput && caret.x == _textCaret.x && caret.y == _textCaret.y &&
-        caret.w == _textCaret.w && caret.h == _textCaret.h)
+    if (enabled == _textInput && sameRect(caret, _textCaret))
         return;
     _textInput = enabled;
     _textCaret = caret;
@@ -872,7 +890,7 @@ void Window::scrollBlit(View *area, int dy) {
         return;
     bool merged = false;
     for (Blit &b : _blits) {
-        if (b.rect.x == rect.x && b.rect.y == rect.y && b.rect.w == rect.w && b.rect.h == rect.h) {
+        if (sameRect(b.rect, rect)) {
             b.dy += dy;
             merged = true;
             break;
@@ -887,8 +905,9 @@ void Window::scrollBlit(View *area, int dy) {
     if (!merged)
         _blits.push_back({rect, dy});
     // Damage recorded before the blit covers stale pixels that now move too.
-    const float        ldy = float(dy) / _scale;
-    std::vector<RectF> moved;
+    const float         ldy   = float(dy) / _scale;
+    std::vector<RectF> &moved = _movedScratch;
+    moved.clear();
     for (const RectF &d : _damage)
         if (RectF part = intersect(d, rect); !empty(part)) {
             part.y -= ldy;
@@ -985,7 +1004,8 @@ void Window::onFrame(bool requested) {
     _inFrame = true;
     flushGraveyard();
     if (!_ticking.empty()) {
-        for (View *v : std::vector<View *>(_ticking)) {
+        _tickScratch.assign(_ticking.begin(), _ticking.end()); // a tick may stop others
+        for (View *v : _tickScratch) {
             if (std::find(_ticking.begin(), _ticking.end(), v) == _ticking.end())
                 continue; // removed by an earlier tick
             if (!v->tick(t0)) {
@@ -1029,12 +1049,13 @@ void Window::onFrame(bool requested) {
             damageAll();
             _frameAgain = false;
         }
-        const float             s = float(c.scale);
+        const float              s     = float(c.scale);
         // Blits first: shift what the canvas shows, then repaint the damage.
         // The shifted rects changed as much as repainted ones did: they go to
         // endPaint too, or a backend that presents (or keeps its other
         // buffers up to date) by damage shows the old pixels there.
-        std::vector<plat::Rect> shifted;
+        std::vector<plat::Rect> &rects = _presented; // the shifted, then the repainted
+        rects.clear();
         for (const Blit &b : _blits) {
             const int x0 = std::max(0, int(std::ceil(b.rect.x * s)));
             const int x1 = std::min(c.width, int(std::floor((b.rect.x + b.rect.w) * s)));
@@ -1045,7 +1066,7 @@ void Window::onFrame(bool requested) {
                 damage(b.rect);
                 continue;
             }
-            shifted.push_back({x0, y0, w, h});
+            rects.push_back({x0, y0, w, h});
             const size_t bytes = size_t(w) * 4;
             if (dy > 0)
                 for (int y = y0; y < y1 - dy; ++y)
@@ -1072,8 +1093,7 @@ void Window::onFrame(bool requested) {
             }
         }
         _blits.clear();
-        std::vector<plat::Rect> rects;
-        rects.reserve(_damage.size());
+        const size_t shifted = rects.size();
         for (const RectF &d : _damage) {
             const int x0 = std::max(0, int(std::floor(d.x * s)));
             const int y0 = std::max(0, int(std::floor(d.y * s)));
@@ -1086,27 +1106,25 @@ void Window::onFrame(bool requested) {
         _frameAgain = false;
         gfx::Painter p({c.pixels, c.width, c.height, c.stride}, s, &_paintScratch);
         _stats.viewsPainted = 0;
-        for (const plat::Rect &r : rects) {
-            const RectF lr{r.x / s, r.y / s, r.w / s, r.h / s};
+        for (size_t i = shifted; i < rects.size(); ++i) {
+            const plat::Rect &r = rects[i];
+            const RectF       lr{r.x / s, r.y / s, r.w / s, r.h / s};
             p.save();
             p.clipRect(lr);
             paintTree(_root.get(), p, lr, 0, 0);
             paintTree(_overlay.get(), p, lr, 0, 0);
             p.restore();
         }
-        std::vector<plat::Rect> presented = rects;
-        presented.insert(presented.end(), shifted.begin(), shifted.end());
+        _stats.lastDamage.assign(rects.begin() + ptrdiff_t(shifted), rects.end());
         double verifyMs = 0;
         if (_verify) {
             const double tv = app()->nowMs();
-            verifyFrame(c, presented);
+            verifyFrame(c, rects);
             verifyMs = app()->nowMs() - tv;
         }
-        _native->endPaint(presented);
-        _stats.lastPaintMs   = app()->nowMs() - tp - verifyMs; // the check is not the cost
-        _verifyMs            = verifyMs;
-        _stats.lastDamage    = std::move(rects);
-        _stats.lastPresented = std::move(presented);
+        _native->endPaint(rects);
+        _stats.lastPaintMs = app()->nowMs() - tp - verifyMs; // the check is not the cost
+        _verifyMs          = verifyMs;
         ++_stats.frames;
     }
     _inFrame           = false;

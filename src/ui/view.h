@@ -43,6 +43,9 @@ inline bool empty(RectF r) {
 inline bool overlaps(RectF a, RectF b) {
     return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
+inline bool sameRect(RectF a, RectF b) {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
 
 // ── Layout style ────────────────────────────────────────────────────────────
 // A compact flexbox: children laid out along `dir`, `gap` between them,
@@ -138,6 +141,9 @@ struct Style {
 };
 
 // ── Events ──────────────────────────────────────────────────────────────────
+// The modifier bits keys and shortcuts compare (locks and buttons left out).
+constexpr uint32_t kModMask = plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper;
+
 // What a View sees. Pointer positions are local to the receiving view (they
 // are re-mapped while an unhandled event bubbles to the parent). Rarely used
 // payloads (text, preedit cursor, drop items) stay in `raw`.
@@ -289,8 +295,6 @@ public:
     void    setLayoutBoundary(bool on) { setFlag(LayoutBoundary, on); }
     // Repaint when hover changes (for views whose look depends on hovered()).
     void    setHoverRepaint(bool on) { setFlag(HoverRepaint, on); }
-    // Receive Tab/Shift+Tab as KeyDown instead of focus traversal.
-    void    setWantsTab(bool on) { setFlag(WantsTab, on); }
     // Pointer cursor while over this view (children inherit unless they set one).
     void    setCursor(plat::Cursor c);
     // Extra paint area beyond the frame (drop shadows), for damage and culling.
@@ -388,9 +392,8 @@ protected:
         Pressed        = 1u << 11,
         Focused        = 1u << 12,
         HoverRepaint   = 1u << 13,
-        WantsTab       = 1u << 14,
-        Ticking        = 1u << 15,
-        WatchesHide    = 1u << 16,
+        Ticking        = 1u << 14,
+        WatchesHide    = 1u << 15,
         UserFlag0      = 1u << 24, // free for subclasses
         UserFlag1      = 1u << 25,
         UserFlag2      = 1u << 26,
@@ -483,7 +486,6 @@ public:
     // none: a hit-test callback telling a title bar's controls from the
     // empty space that drags the window.
     View  *viewAt(PointF windowPos) { return hitAt(windowPos); }
-    void   setCapture(View *v) { _capture = v; }
     View  *capture() const { return _capture; }
     PointF pointerPos() const { return _pointer; }
     bool   startDrag(const plat::DragDesc &d);
@@ -522,8 +524,7 @@ public:
     // Diagnostics (tests, perf numbers).
     struct Stats {
         int                     frames = 0;
-        std::vector<plat::Rect> lastDamage;    // physical rects repainted in the last frame
-        std::vector<plat::Rect> lastPresented; // … reported to endPaint (repaints + blits)
+        std::vector<plat::Rect> lastDamage; // physical rects repainted in the last frame
         int                     viewsPainted = 0;
         double                  lastFrameMs = 0, lastLayoutMs = 0, lastPaintMs = 0;
         int                     verifiedFrames = 0, verifyMismatches = 0; // setVerify()
@@ -534,6 +535,8 @@ public:
 
     // Internal: plat event entry point (App routes by plat::Window::userData).
     void handle(const plat::Event &e);
+    // Internal: v leaves the window, is hidden or is destroyed: drops the
+    // focus, hover, capture and so on held inside it.
     void forget(View *v);
     void styleChangedAll();
     void refreshCursor(); // re-evaluate the pointer cursor (a view changed its own)
@@ -580,13 +583,15 @@ private:
     View                              *_focus = nullptr, *_capture = nullptr, *_dropView = nullptr;
     View                              *_scrollLatch = nullptr, *_handled = nullptr;
     std::vector<View *>                _hoverChain; // leaf first
-    std::vector<View *>                _ticking;
+    std::vector<View *>                _hoverNext;  // updateHover's scratch
+    std::vector<View *>                _ticking, _tickScratch;
     std::vector<View *>                _hideWatchers; // watchAncestorHide()
     std::vector<View *>                _focusStack;   // focus to restore per popup
     std::vector<std::unique_ptr<View>> _graveyard;
     std::vector<Shortcut>              _shortcuts;
-    std::vector<RectF>                 _damage;
+    std::vector<RectF>                 _damage, _movedScratch;
     std::vector<Blit>                  _blits;
+    std::vector<plat::Rect>            _presented; // onFrame's scratch
     PointF                             _pointer;
     Popup                             *_tooltip      = nullptr;
     View                              *_tooltipFor   = nullptr;

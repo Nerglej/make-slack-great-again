@@ -2,6 +2,7 @@
 #include "ui/widgets.h"
 
 #include "base/i18n.h"
+#include "base/utf8.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,15 +16,20 @@ constexpr double   kCoalesceMs = 1500;
 constexpr float    kWheelStep  = 50;
 constexpr uint16_t kLinkMask   = 0xff00;
 
-inline bool isCont(char c) {
-    return (uint8_t(c) & 0xc0) == 0x80;
-}
 inline bool isSpace(char c) {
     return c == ' ' || c == '\t' || c == '\n';
 }
 
 // Menu ids for the built-in context menu.
 enum : int { kCut = 1, kCopy, kPaste, kSelectAll };
+
+// Bytes of the first n code points of s.
+size_t codePointBytes(std::string_view s, size_t n) {
+    size_t i = 0;
+    for (; n > 0 && i < s.size(); --n)
+        i = utf8::nextBoundary(s, i);
+    return i;
+}
 
 } // namespace
 
@@ -42,22 +48,11 @@ TextEdit::~TextEdit() {
 // ── Offsets ─────────────────────────────────────────────────────────────────
 
 uint32_t TextEdit::prevChar(uint32_t o) const {
-    if (o == 0)
-        return 0;
-    --o;
-    while (o > 0 && isCont(_text[o]))
-        --o;
-    return o;
+    return uint32_t(utf8::prevBoundary(_text, o));
 }
 
 uint32_t TextEdit::nextChar(uint32_t o) const {
-    const uint32_t n = uint32_t(_text.size());
-    if (o >= n)
-        return n;
-    ++o;
-    while (o < n && isCont(_text[o]))
-        ++o;
-    return o;
+    return uint32_t(utf8::nextBoundary(_text, o));
 }
 
 // Masked text shows one 3-byte bullet per byte (keys are ASCII), so offsets
@@ -295,6 +290,7 @@ void TextEdit::layoutFor(float w) {
     }
     if (!_parasDirty)
         return;
+    _wavesValid       = false; // squiggles sit on the lines laid out here
     // Tops add up in whole physical pixels (every line box is one), as one
     // layout of the whole text stacks its lines.
     const float scale = windowScale() > 0 ? windowScale() : 1;
@@ -557,6 +553,16 @@ void TextEdit::replace(
 ) {
     from = std::min(from, uint32_t(_text.size()));
     to   = std::clamp(to, from, uint32_t(_text.size()));
+    if (_maxLength && kind != EditKind::Format) {
+        // Only what fits goes in: the edit itself is cut, so undo never
+        // steps through text over the limit.
+        const std::string_view t(_text);
+        const size_t           kept =
+            utf8::countCodePoints(t.substr(0, from)) + utf8::countCodePoints(t.substr(to));
+        ins = ins.substr(0, codePointBytes(ins, kept < _maxLength ? _maxLength - kept : 0));
+        if (ins.empty() && from == to)
+            return;
+    }
     Edit e;
     e.pos     = from;
     e.removed = _text.substr(from, to - from);
@@ -679,7 +685,8 @@ void TextEdit::moveTo(uint32_t c, bool extend) {
 
 void TextEdit::setText(std::string_view plain) {
     _squiggles.clear();
-    _text.assign(plain);
+    _wavesValid = false;
+    _text.assign(_maxLength ? plain.substr(0, codePointBytes(plain, _maxLength)) : plain);
     _fmt.assign(_text.size(), 0);
     _links.clear();
     _undo.clear();
@@ -816,6 +823,10 @@ void TextEdit::setMasked(bool on) {
     splitParas();
     invalidateLayout();
     update();
+}
+
+void TextEdit::setMaxLength(int n) {
+    _maxLength = uint32_t(std::max(0, n));
 }
 
 void TextEdit::setMinLines(int n) {
@@ -1035,7 +1046,8 @@ void TextEdit::showContextMenu(PointF local) {
 void TextEdit::setSquiggles(std::vector<Range> ranges) {
     if (ranges == _squiggles)
         return;
-    _squiggles = std::move(ranges);
+    _squiggles  = std::move(ranges);
+    _wavesValid = false;
     update();
 }
 
@@ -1053,6 +1065,7 @@ bool TextEdit::squiggleShown(const Range &r) const {
 void TextEdit::shiftSquiggles(uint32_t pos, size_t removed, size_t inserted) {
     if (_squiggles.empty())
         return;
+    _wavesValid              = false;
     const uint32_t     end   = pos + uint32_t(removed);
     const int64_t      delta = int64_t(inserted) - int64_t(removed);
     std::vector<Range> kept;
@@ -1066,11 +1079,13 @@ void TextEdit::shiftSquiggles(uint32_t pos, size_t removed, size_t inserted) {
     _squiggles = std::move(kept);
 }
 
-// A 1-px zigzag 2 px below each line's baseline (spell-check underline).
-void TextEdit::paintSquiggles(gfx::Painter &p) const {
-    const Color c = color(C::Danger);
-    for (const Range &r : _squiggles) {
-        if (!squiggleShown(r) || r.to > _text.size())
+// Where each squiggle's lines run (document coordinates), found once per
+// layout and set of squiggles rather than on every paint.
+void TextEdit::placeWaves() {
+    _waves.clear();
+    for (size_t s = 0; s < _squiggles.size(); ++s) {
+        const Range &r = _squiggles[s];
+        if (r.to > _text.size())
             continue;
         const uint32_t a = toDisplay(r.from), z = toDisplay(r.to);
         for (const RectF &b : docSelectionRects(a, z)) {
@@ -1088,14 +1103,27 @@ void TextEdit::paintSquiggles(gfx::Painter &p) const {
                 if (found)
                     break;
             }
-            gfx::Path       path;
-            constexpr float kStep = 2, kAmp = 1;
-            path.moveTo(b.x, y);
-            int k = 0;
-            for (float x = b.x + kStep; x <= b.x + b.w + 0.01f; x += kStep, ++k)
-                path.lineTo(x, (k & 1) ? y : y + kAmp);
-            p.strokePath(path, 1, c);
+            _waves.push_back({b.x, y, b.w, uint32_t(s)});
         }
+    }
+    _wavesValid = true;
+}
+
+// A 1-px zigzag 2 px below each line's baseline (spell-check underline).
+void TextEdit::paintSquiggles(gfx::Painter &p) {
+    if (!_wavesValid)
+        placeWaves();
+    const Color c = color(C::Danger);
+    for (const Wave &w : _waves) {
+        if (!squiggleShown(_squiggles[w.squiggle]))
+            continue;
+        gfx::Path       path;
+        constexpr float kStep = 2, kAmp = 1;
+        path.moveTo(w.x, w.y);
+        int k = 0;
+        for (float x = w.x + kStep; x <= w.x + w.w + 0.01f; x += kStep, ++k)
+            path.lineTo(x, (k & 1) ? w.y : w.y + kAmp);
+        p.strokePath(path, 1, c);
     }
 }
 
@@ -1174,10 +1202,9 @@ bool TextEdit::onEvent(Event &e) {
         if (!e.raw)
             return false;
         std::string t;
-        for (char c : e.raw->text) // drop control characters (except newline/tab)
-            if (uint8_t(c) >= 0x20 || c == '\n' || (c == '\t' && flag(WantsTab)))
-                if (c != 0x7f)
-                    t.push_back(c);
+        for (char c : e.raw->text) // drop control characters (except newline)
+            if ((uint8_t(c) >= 0x20 || c == '\n') && c != 0x7f)
+                t.push_back(c);
         const bool hadPreedit = !_preedit.empty();
         if (hadPreedit)
             dropParaAt(_preeditPos);
@@ -1323,7 +1350,7 @@ bool TextEdit::onEvent(Event &e) {
     if (!_preedit.empty())
         return true; // the IME owns the keyboard while composing
     currentLayout(); // caret movement asks the paragraphs' layouts
-    const uint32_t m = e.mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper);
+    const uint32_t m       = e.mods & kModMask;
     const uint32_t primary = plat::primaryMod();
     const bool     shift   = m & plat::ModShift;
     const bool     cmd     = (m & primary) && !(m & ~(primary | plat::ModShift));
@@ -1416,11 +1443,6 @@ bool TextEdit::onEvent(Event &e) {
                 return true;
         }
         replace(a, b, "\n", nullptr, typingFormat(), EditKind::Typing);
-        return true;
-    case K::Tab:
-        if (!flag(WantsTab) || m)
-            return false;
-        replace(a, b, "\t", nullptr, typingFormat(), EditKind::Typing);
         return true;
     default:
         break;

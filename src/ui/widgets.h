@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ui {
@@ -15,6 +16,24 @@ namespace ui {
 // The keyboard focus ring (2 px, C::FocusRing) around r, drawn only while v
 // has focus and its window shows focus (keyboard navigation).
 void paintFocusRing(const View &v, gfx::Painter &p, RectF r, float radius);
+
+// A form field's box: filled, with a `borderW`-px stroke inside its edge.
+// Each control passes its own tokens (text fields, dropdowns, spin boxes and
+// date fields differ).
+void fieldFrame(gfx::Painter &p, RectF r, float radius, C fill, C border, float borderW = 1);
+
+// What a step key does to a number field: Up/Down ±1, PageUp/PageDown ±10,
+// anything else 0.
+int stepForKey(plat::Key k);
+
+// Type-to-select in lists and menus: the lower-case letter (or, with
+// digits, the digit) key k types, 0 for any other key …
+char typeAheadChar(plat::Key k, bool digits);
+// … and the first of n items after `current` (wrapping; -1 starts at the
+// top) whose label(ctx, i) starts with it, ignoring ASCII case; -1 when
+// none. An empty label never matches (items that cannot be chosen).
+using TypeAheadLabel = std::string_view (*)(const void *ctx, int index);
+int typeAheadMatch(int current, int n, char c, const void *ctx, TypeAheadLabel label);
 
 // ── Label ───────────────────────────────────────────────────────────────────
 // Plain or rich text. Wraps at the width it is given; with maxLines > 0 the
@@ -71,6 +90,7 @@ private:
     const text::Layout           *layoutFor(float width);
     std::unique_ptr<text::Layout> buildLayout(float width, float scale) const;
     void                          dropLayout();
+    void                          dropAlt();
     void                          updateInk();
 
     std::string                           _text; // plain labels; empty for rich ones
@@ -80,8 +100,8 @@ private:
     std::unique_ptr<text::Layout>         _layout;
     float                                 _layoutW = -1, _layoutScale = 0, _lineHeight = 1.4f;
     uint32_t                              _pressedLink = 0;
-    struct Selection;
-    std::unique_ptr<Selection> _sel; // only while something is selected
+    struct Extra;
+    std::unique_ptr<Extra>     _x; // a selection, a second layout; null while neither
     Font                       _font;
     C                          _color;
     uint8_t                    _maxLines       = 0;
@@ -102,11 +122,8 @@ public:
     Clickable();
 
     std::function<void()> onClick;
-    // Double click (clicks == 2 on the second press); onClick fires for the first.
-    std::function<void()> onDoubleClick;
 
     void        setLook(const Look &l);
-    const Look &look() const { return _look; }
     void        setChecked(bool on);
     bool        checked() const { return flag(UserFlag0); }
     void        setTooltip(std::string t) { _tooltip = std::move(t); }
@@ -194,7 +211,6 @@ public:
     void setCount(int n);
     int  count() const { return _count; }
     void setDot(bool on);
-    void setColors(C bg, C fg);
 
     SizeF       measureContent(float availW, float availH) override;
     void        paint(gfx::Painter &p) override;
@@ -296,10 +312,11 @@ private:
 // press outside it (that press is swallowed, like a native menu).
 class Popup : public View {
 public:
+    // Right: beside the anchor, on its left when there is no room (submenus).
     // Fill covers the whole window, anchor ignored (Dialog's backdrop).
     // Cursor: a context menu at a point (zero-size anchor) — below-right of
     // it, flipped left/up where it would leave the window.
-    enum class Place : uint8_t { Below, Above, Right, Left, Over, Fill, Cursor, Tip };
+    enum class Place : uint8_t { Below, Above, Right, Over, Fill, Cursor, Tip };
     // Tip: centred above the anchor, below it when there is no room.
     Popup();
     ~Popup() override;
@@ -407,6 +424,7 @@ private:
     plat::TimerId                              _hoverTimer = 0;
     float                                      _minW       = 0;
     int                                        _current = -1, _childFor = -1;
+    int                                        _hoverTimerFor = -1; // the row it was armed on
 };
 
 } // namespace ui

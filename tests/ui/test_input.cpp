@@ -376,3 +376,48 @@ TEST("hit: drag and drop target accepts by position") {
     dst.frame();
     CHECK(yes->drops == 1 && yes->dropText == "dragged" && no->drops == 0);
 }
+
+// Hiding the focused view's ancestor moves the focus away as disabling it
+// does: the flag goes, FocusOut arrives, the caret stops blinking (it kept
+// repainting a hidden field every half period). Taking it out of the window
+// or destroying it drops the focus and the flag without an event.
+TEST("focus: hiding or removing the focused field's ancestor drops its focus and caret") {
+    Win   w(400, 300);
+    auto *box           = w.root().add<ui::View>();
+    auto *edit          = box->add<ui::TextEdit>();
+    int   outs          = 0;
+    edit->onFocusChange = [&](bool on) { outs += !on; };
+    w.frame();
+    edit->focus();
+    w.frame();
+    REQUIRE(edit->focused());
+    box->setVisible(false);
+    w.frame();
+    CHECK(!edit->focused() && w.w->focusView() == nullptr);
+    CHECK(outs == 1);
+    // No caret blink left behind: an idle window paints nothing more.
+    const int    frames = w.w->stats().frames;
+    const double until  = app().nowMs() + 2.5 * std::max(1, app().settings().caretBlinkMs);
+    while (app().nowMs() < until)
+        app().pump(5);
+    CHECK(w.w->stats().frames == frames);
+    // Shown again, it is just a field without focus.
+    box->setVisible(true);
+    w.frame();
+    CHECK(!edit->focused());
+
+    // Taken out of the window: no focus, no flag left behind.
+    edit->focus();
+    REQUIRE(edit->focused());
+    std::unique_ptr<ui::View> owned = w.root().remove(box);
+    CHECK(!edit->focused() && w.w->focusView() == nullptr);
+
+    // Destroyed while focused: the focus is just gone.
+    w.root().adopt(std::move(owned));
+    w.frame();
+    edit->focus();
+    REQUIRE(edit->focused());
+    w.root().clearChildren();
+    w.frame();
+    CHECK(w.w->focusView() == nullptr);
+}

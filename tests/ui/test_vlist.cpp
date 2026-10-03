@@ -326,3 +326,49 @@ TEST("scroll: a thin thumb grabs only on itself and keeps its width") {
     w.release();
     CHECK(sv->scrollOffset() == 800);
 }
+
+// Appending (new messages) extends the offset index in place instead of
+// rebuilding it: the extent matches a full rebuild (setGap forces one),
+// with measured, estimated and unknown rows mixed.
+TEST("vlist: appended rows extend the offset index exactly") {
+    struct Mixed : Rows {
+        using Rows::Rows;
+        float estimateHeight(int i) const override { return i % 3 == 0 ? 40 : 0; }
+    } rows(300);
+    for (size_t i = 0; i < rows.h.size(); ++i)
+        rows.h[i] = 20 + float(i % 5) * 10;
+    Win   w(300, 300);
+    auto *list = w.root().add<ui::VirtualList>(&rows);
+    w.frame();
+    list->scrollToItem(150, ui::VirtualList::ItemAlign::Start, false);
+    w.frame();
+    for (int batch = 0; batch < 5; ++batch) {
+        const int n = int(rows.h.size()), k = 1 + batch * 7;
+        for (int i = 0; i < k; ++i)
+            rows.h.push_back(20 + float((n + i) % 5) * 10);
+        list->itemsInserted(n, k);
+        const float ext = list->contentExtent();
+        list->setGap(0); // the same gap: only rebuilds the index
+        CHECK(list->contentExtent() == ext);
+        list->scrollBy(-200); // measures a few more rows on the way
+        w.frame();
+    }
+}
+
+// Spares are kept per kind (8 each), whatever order the kinds come back in.
+TEST("vlist: spare rows stay bounded per kind") {
+    struct Kinds : Rows {
+        using Rows::Rows;
+        int kind(int i) const override { return i % 3; }
+    } rows(3000);
+    Win   w(300, 300);
+    auto *list = w.root().add<ui::VirtualList>(&rows);
+    w.frame();
+    for (int i = 0; i < 150; ++i) {
+        list->scrollBy(-97);
+        w.frame(1);
+    }
+    CHECK(list->liveCount() < 30);
+    CHECK(list->childCount() <= size_t(list->liveCount()) + 3 * 8);
+    CHECK(rows.created < 30 + 3 * 8);
+}

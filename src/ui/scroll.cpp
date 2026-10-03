@@ -25,7 +25,7 @@ constexpr float kMinFling = 0.08f;
 // +1/-1 when (key, mods) is a page step (next / previous page), 0 otherwise.
 int pageStep(plat::Key k, uint32_t mods) {
     using plat::Key;
-    const uint32_t m    = mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper);
+    const uint32_t m    = mods & kModMask;
     const bool     page = k == Key::PageDown || k == Key::PageUp;
     if (m == 0 && page)
         return k == Key::PageDown ? 1 : -1;
@@ -48,11 +48,6 @@ ScrollArea::ScrollArea() {
     setRole(Role::ScrollArea);
 }
 
-float ScrollArea::snap(float v) const {
-    const float s = windowScale();
-    return std::floor(v * s + 0.5f + 1e-3f) / s; // biased: ties always round the same way
-}
-
 void ScrollArea::setThinThumb(C color) {
     _thinColor = color;
     update(barZone());
@@ -72,7 +67,8 @@ void ScrollArea::moved(float oldOffset, float newOffset, bool blit) {
     if (Window *w = window()) {
         if (blit) {
             const float s = w->scale();
-            const int d = int(std::lround(snap(newOffset) * s) - std::lround(snap(oldOffset) * s));
+            const int   d =
+                int(std::lround(snapPx(newOffset) * s) - std::lround(snapPx(oldOffset) * s));
             if (d && opaqueBackground())
                 w->scrollBlit(this, d);
             else if (d)
@@ -327,7 +323,7 @@ void ScrollView::layout() {
     _contentH       = cs.h;
     const float old = _offset;
     _offset         = std::clamp(_offset, 0.f, std::max(0.f, _contentH - h));
-    _content->setFrame({0, -snap(_offset), w, std::max(cs.h, h)});
+    _content->setFrame({0, -snapPx(_offset), w, std::max(cs.h, h)});
     if (old != _offset && onScroll)
         onScroll();
 }
@@ -341,7 +337,7 @@ float ScrollView::scrollPixels(float dy) {
         return 0;
     _offset = nw;
     RectF f = _content->frame();
-    f.y     = -snap(nw);
+    f.y     = -snapPx(nw);
     _content->setFrameQuiet(f);
     moved(old, nw);
     return nw - old;
