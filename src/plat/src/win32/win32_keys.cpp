@@ -43,19 +43,11 @@ int utf8Length(std::wstring_view w, size_t units) {
 }
 
 std::string fileUri(std::wstring_view path) {
-    // Long-path prefixes are an API detail, not part of the file's name:
-    // \\?\UNC\srv\share is \\srv\share, \\?\C:\x is C:\x.
-    std::wstring w(path);
-    if (w.rfind(L"\\\\?\\UNC\\", 0) == 0)
-        w = L"\\\\" + w.substr(8);
-    else if (w.rfind(L"\\\\?\\", 0) == 0)
-        w = w.substr(4);
-    std::string p = toUtf8(w);
-    for (char &c : p)
-        if (c == '\\')
-            c = '/';
+    // portablePath drops the long-path prefixes (an API detail, not part of
+    // the file's name) and turns '\' into '/'.
+    const std::string p   = portablePath(path);
     // UNC: the server becomes the URI authority; "C:/x" → "file:///C:/x".
-    const bool unc = p.rfind("//", 0) == 0;
+    const bool        unc = p.rfind("//", 0) == 0;
     return (unc ? "file://" : "file:///") +
            core::percentEncode(std::string_view(p).substr(unc ? 2 : 0), "/:");
 }

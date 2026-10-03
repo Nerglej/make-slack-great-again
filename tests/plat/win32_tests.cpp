@@ -1188,6 +1188,28 @@ void caseInstanceFraming() {
         !validUrlScheme("")
     );
     CHECK(urlSchemeCommand(L"C:\\x y\\a.exe") == L"\"C:\\x y\\a.exe\" \"%1\"");
+    // The bytes themselves never change: a running primary of an older build
+    // must read what a newer secondary sends.
+    const std::string golden = std::string("\x17\0\0\0", 4) + "PLAT" +
+                               std::string("\x01\0\0\0\x02\0\0\0\x02\0\0\0", 12) +
+                               "C:" + std::string("\x01\0\0\0", 4) + "a";
+    CHECK(encodeInstanceMessage("C:", {"a"}) == golden);
+}
+
+void caseTruncatedFields() {
+    // Notify-icon fields (tooltip, balloon texts) are cut to fit, never in
+    // the middle of a surrogate pair.
+    wchar_t buf[4];
+    copyTruncated(buf, 4, L"abc");
+    CHECK(std::wstring(buf) == L"abc");
+    copyTruncated(buf, 4, L"abcd");
+    CHECK(std::wstring(buf) == L"abc");
+    copyTruncated(buf, 4, L"ab\U0001F600"); // the pair would straddle the cut
+    CHECK(std::wstring(buf) == L"ab");
+    copyTruncated(buf, 4, L"a\U0001F600x"); // the pair fits exactly
+    CHECK(std::wstring(buf) == L"a\U0001F600");
+    copyTruncated(buf, 4, L"");
+    CHECK(buf[0] == 0);
 }
 
 std::wstring testPipeName(const std::string &key) {
@@ -1458,6 +1480,7 @@ int main() {
     runCase("broadcasts only report real monitor/theme changes", caseMonitorAndThemeDedup);
     runCase("settings parsing, tray icon scale, power dedup", caseSettingsParsing);
     runCase("instance message framing and pipe names", caseInstanceFraming);
+    runCase("notify-icon texts keep surrogate pairs whole", caseTruncatedFields);
     runCase("instance pipe: ack, garbage and silent clients", caseInstancePipe);
     runCase("URL scheme lands in HKCU; forwarded URLs become OpenUrls", caseUrlSchemeRegistry);
     runCase("Start-menu shortcut with the AUMID, when asked for", caseStartMenuShortcut);

@@ -15,6 +15,7 @@
 #include "win32/win32.h"
 
 #include "core/hash.h"
+#include "core/wire.h"
 
 #include <aclapi.h>
 #include <dwmapi.h>
@@ -32,25 +33,8 @@ namespace plat::win32 {
 
 namespace {
 
-template <class T>
-T sym(HMODULE m, const char *name) {
-    return m ? reinterpret_cast<T>(reinterpret_cast<void (*)()>(GetProcAddress(m, name))) : nullptr;
-}
-
 constexpr int  kInstanceTimeoutMs = 5000; // a client that stalls this long is dropped
 constexpr char kAck[]             = "ACK1";
-
-void put32(std::string &s, uint32_t v) {
-    for (int i = 0; i < 4; ++i)
-        s += char((v >> (8 * i)) & 0xff);
-}
-
-uint32_t get32(std::string_view s, size_t at) {
-    uint32_t v = 0;
-    for (int i = 0; i < 4; ++i)
-        v |= uint32_t(uint8_t(s[at + i])) << (8 * i);
-    return v;
-}
 
 // A COM-free, allocation-light hash: monitor ids and over-long pipe keys.
 using core::fnv1a;
@@ -114,38 +98,12 @@ PSECURITY_DESCRIPTOR userOnlyDescriptor(const std::wstring &sid) {
     return sd;
 }
 
-std::wstring exePath() {
-    std::wstring buf(32768, L'\0'); // long paths
-    const DWORD  n = GetModuleFileNameW(nullptr, buf.data(), DWORD(buf.size()));
-    buf.resize(n < buf.size() ? n : 0);
-    return buf;
-}
-
 std::string currentDir() {
     const DWORD  n = GetCurrentDirectoryW(0, nullptr);
     std::wstring buf(n, L'\0');
     const DWORD  m = n ? GetCurrentDirectoryW(n, buf.data()) : 0;
     buf.resize(m < n ? m : 0);
     return portablePath(buf);
-}
-
-std::string lower(std::string_view s) {
-    std::string r(s);
-    for (char &c : r)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c - 'A' + 'a');
-    return r;
-}
-
-bool setRegString(HKEY key, const wchar_t *name, const std::wstring &v) {
-    return RegSetValueExW(
-               key,
-               name,
-               0,
-               REG_SZ,
-               reinterpret_cast<const BYTE *>(v.c_str()),
-               DWORD((v.size() + 1) * sizeof(wchar_t))
-           ) == ERROR_SUCCESS;
 }
 
 // Overlapped I/O on `h` with a deadline: the secondary must never hang on a
@@ -171,6 +129,54 @@ bool ioWithin(HANDLE h, bool write, void *buf, DWORD len, DWORD timeoutMs, DWORD
 }
 
 } // namespace
+
+// ── shared helpers ──────────────────────────────────────────────────────────
+
+bool setRegString(HKEY key, const wchar_t *name, const std::wstring &v) {
+    return RegSetValueExW(
+               key,
+               name,
+               0,
+               REG_SZ,
+               reinterpret_cast<const BYTE *>(v.c_str()),
+               DWORD((v.size() + 1) * sizeof(wchar_t))
+           ) == ERROR_SUCCESS;
+}
+
+std::wstring exePath() {
+    std::wstring buf(32768, L'\0'); // long paths
+    const DWORD  n = GetModuleFileNameW(nullptr, buf.data(), DWORD(buf.size()));
+    buf.resize(n < buf.size() ? n : 0);
+    return buf;
+}
+
+std::wstring tempPath() {
+    wchar_t     buf[MAX_PATH + 2];
+    const DWORD n = GetTempPathW(MAX_PATH + 2, buf);
+    return n && n <= MAX_PATH + 1 ? std::wstring(buf, n) : std::wstring();
+}
+
+void *windowUserData(HWND h, UINT msg, LPARAM lp) {
+    if (msg == WM_NCCREATE)
+        SetWindowLongPtrW(
+            h, GWLP_USERDATA, LONG_PTR(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams)
+        );
+    return reinterpret_cast<void *>(GetWindowLongPtrW(h, GWLP_USERDATA));
+}
+
+HWND createHiddenWindow(HINSTANCE inst, const wchar_t *cls, WNDPROC proc, void *param) {
+    WNDCLASSEXW wc{sizeof(wc)};
+    wc.lpfnWndProc   = proc;
+    wc.hInstance     = inst;
+    wc.lpszClassName = cls;
+    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        return nullptr;
+    // Never shown, and a tool window so nothing about it can reach the
+    // taskbar or Alt+Tab.
+    return CreateWindowExW(
+        WS_EX_TOOLWINDOW, cls, L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, inst, param
+    );
+}
 
 // ── pure helpers ────────────────────────────────────────────────────────────
 
@@ -234,24 +240,23 @@ uint64_t monitorId(std::wstring_view device) {
 }
 
 std::string encodeInstanceMessage(std::string_view cwd, const std::vector<std::string> &args) {
-    std::string body = "PLAT";
-    put32(body, kInstanceProtocol);
-    put32(body, uint32_t(args.size() + 1));
-    put32(body, uint32_t(cwd.size()));
-    body += cwd;
-    for (const auto &a : args) {
-        put32(body, uint32_t(a.size()));
-        body += a;
-    }
-    std::string frame;
-    put32(frame, uint32_t(body.size()));
-    return frame + body;
+    std::string frame(4, '\0'); // the length of the rest, filled in below
+    frame += "PLAT";
+    core::putU32(frame, kInstanceProtocol);
+    core::putU32(frame, uint32_t(args.size() + 1));
+    core::putString(frame, cwd);
+    for (const auto &a : args)
+        core::putString(frame, a);
+    std::string len;
+    core::putU32(len, uint32_t(frame.size() - 4));
+    frame.replace(0, 4, len);
+    return frame;
 }
 
 size_t instanceFrameSize(std::string_view buf) {
     if (buf.size() < 4)
         return 0;
-    const uint32_t n = get32(buf, 0);
+    const uint32_t n = core::getU32(buf.data());
     return n > kInstanceMaxBytes ? SIZE_MAX : size_t(n) + 4;
 }
 
@@ -264,22 +269,18 @@ bool decodeInstanceMessage(
         return false;
     // Newer versions may append fields after the strings; the v1 prefix
     // stays readable, so any version ≥ 1 is accepted.
-    if (get32(frame, 8) < 1)
+    if (core::getU32(frame.data() + 8) < 1)
         return false;
-    const uint32_t count = get32(frame, 12);
+    const uint32_t count = core::getU32(frame.data() + 12);
     if (count < 1)
         return false;
-    size_t                   at = 16;
+    std::string_view         rest = frame.substr(16);
     std::vector<std::string> strings;
     for (uint32_t i = 0; i < count; ++i) {
-        if (frame.size() - at < 4)
+        std::string s;
+        if (!core::takeString(rest, &s))
             return false;
-        const uint32_t n = get32(frame, at);
-        at += 4;
-        if (frame.size() - at < n)
-            return false;
-        strings.emplace_back(frame.substr(at, n));
-        at += n;
+        strings.push_back(std::move(s));
     }
     *cwd = std::move(strings[0]);
     args->assign(
@@ -320,13 +321,7 @@ std::wstring urlSchemeCommand(std::wstring_view exe) {
 
 bool validUrlScheme(std::string_view s) {
     // RFC 3986 scheme, and two letters at least: "c:" would be a drive.
-    if (s.size() < 2 || !((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z')))
-        return false;
-    for (char c : s)
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-              c == '+' || c == '-' || c == '.'))
-            return false;
-    return true;
+    return s.size() >= 2 && core::validScheme(s);
 }
 
 std::string portablePath(std::wstring_view native) {
@@ -426,20 +421,6 @@ uint64_t monitorIdOf(HMONITOR h) {
 }
 
 namespace {
-bool sameMonitors(const std::vector<Monitor> &a, const std::vector<Monitor> &b) {
-    auto rectEq = [](const Rect &x, const Rect &y) {
-        return x.x == y.x && x.y == y.y && x.w == y.w && x.h == y.h;
-    };
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (a[i].id != b[i].id || !rectEq(a[i].bounds, b[i].bounds) ||
-            !rectEq(a[i].workArea, b[i].workArea) || a[i].scale != b[i].scale ||
-            a[i].refreshMilliHz != b[i].refreshMilliHz || a[i].primary != b[i].primary)
-            return false;
-    return true;
-}
-
 bool sameSettings(const SystemSettings &a, const SystemSettings &b) {
     return a.reducedMotion == b.reducedMotion && a.highContrast == b.highContrast &&
            a.textScale == b.textScale && a.accentColor == b.accentColor &&
@@ -447,9 +428,23 @@ bool sameSettings(const SystemSettings &a, const SystemSettings &b) {
 }
 } // namespace
 
+std::vector<Monitor> Win32App::monitors() const {
+    // The layout is cheap to read and always current; only the refresh rate
+    // (a driver query per monitor) comes from the snapshot, which is re-read
+    // on every change the system window hears of (display, DPI, work area).
+    if (!_monitorsKnown)
+        return enumMonitors(true);
+    std::vector<Monitor> now = enumMonitors(false);
+    for (auto &m : now)
+        for (const auto &s : _monitorSnapshot)
+            if (s.id == m.id)
+                m.refreshMilliHz = s.refreshMilliHz;
+    return now;
+}
+
 void Win32App::monitorsMaybeChanged() {
     auto now = enumMonitors(true);
-    if (_monitorsKnown && sameMonitors(now, _monitorSnapshot))
+    if (_monitorsKnown && now == _monitorSnapshot)
         return;
     // Unknown before (the deferred snapshot has not run): report it, since
     // there is nothing to compare with and a spurious re-query is harmless.
@@ -524,28 +519,7 @@ bool Win32App::initSystem() {
     _themeDark     = darkMode();
     _themeSettings = systemSettings();
 
-    WNDCLASSEXW wc{sizeof(wc)};
-    wc.lpfnWndProc   = &Win32App::sysProc;
-    wc.hInstance     = _instance;
-    wc.lpszClassName = L"plat.system";
-    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-        return false;
-    // Top-level (broadcasts skip message-only windows), never shown, and a
-    // tool window so nothing about it can reach the taskbar or Alt+Tab.
-    _sysHwnd = CreateWindowExW(
-        WS_EX_TOOLWINDOW,
-        L"plat.system",
-        L"",
-        WS_POPUP,
-        0,
-        0,
-        0,
-        0,
-        nullptr,
-        nullptr,
-        _instance,
-        this
-    );
+    _sysHwnd = createHiddenWindow(_instance, L"plat.system", &Win32App::sysProc, this);
     if (!_sysHwnd)
         return false;
 
@@ -573,11 +547,7 @@ bool Win32App::initSystem() {
 }
 
 LRESULT CALLBACK Win32App::sysProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_NCCREATE)
-        SetWindowLongPtrW(
-            h, GWLP_USERDATA, LONG_PTR(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams)
-        );
-    auto *self = reinterpret_cast<Win32App *>(GetWindowLongPtrW(h, GWLP_USERDATA));
+    auto *self = static_cast<Win32App *>(windowUserData(h, msg, lp));
     return self ? self->onSystemMessage(h, msg, wp, lp) : DefWindowProcW(h, msg, wp, lp);
 }
 
@@ -598,6 +568,7 @@ LRESULT Win32App::onSystemMessage(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         monitorsMaybeChanged();
         return 0;
     case WM_SETTINGCHANGE:
+        settingsChanged();         // the wheel settings, say
         if (wp == SPI_SETWORKAREA) // the taskbar moved, resized or auto-hides now
             monitorsMaybeChanged();
         themeMaybeChanged();
@@ -655,30 +626,13 @@ bool onlineFrom(NLM_CONNECTIVITY c) {
 
 // INetworkListManagerEvents as a plain COM object. In our STA the callback
 // arrives through the message queue, i.e. from inside the loop.
-struct Win32App::Network final : INetworkListManagerEvents {
+struct Win32App::Network final : ComObject<INetworkListManagerEvents> {
     Win32App            *app    = nullptr;
     INetworkListManager *nlm    = nullptr;
     IConnectionPoint    *cp     = nullptr;
     DWORD                cookie = 0;
     std::optional<bool>  last;
-    std::atomic<ULONG>   refs{1};
 
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
-        if (riid == IID_IUnknown || riid == IID_INetworkListManagerEvents) {
-            *out = static_cast<INetworkListManagerEvents *>(this);
-            AddRef();
-            return S_OK;
-        }
-        *out = nullptr;
-        return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
-    ULONG STDMETHODCALLTYPE Release() override {
-        const ULONG n = --refs;
-        if (!n)
-            delete this;
-        return n;
-    }
     HRESULT STDMETHODCALLTYPE ConnectivityChanged(NLM_CONNECTIVITY c) override {
         const bool on = onlineFrom(c);
         if (app && (!last || *last != on)) {
@@ -936,19 +890,10 @@ struct Win32App::Instance {
         state = State::Draining;
         read();
 
-        std::vector<std::string> urls;
-        for (const auto &a : args) {
-            const size_t colon = a.find(':');
-            if (colon == std::string::npos)
-                continue;
-            const std::string scheme = lower(std::string_view(a).substr(0, colon));
-            if (std::find(app->_schemes.begin(), app->_schemes.end(), scheme) !=
-                app->_schemes.end())
-                urls.push_back(a);
-        }
+        std::vector<std::string> urls = core::schemeUrls(args, app->_schemes);
         // Posted, not emitted from here: a handler may well tear down this
         // instance (or the App) and we are inside its I/O callback.
-        Win32App *a = app;
+        Win32App                *a    = app;
         a->post([a, args = std::move(args), cwd = std::move(cwd), urls = std::move(urls)] {
             a->emit({.type = EventType::InstanceActivated, .text = cwd, .strings = args});
             if (!urls.empty())
@@ -1079,12 +1024,11 @@ bool Win32App::forwardToPrimary(
 bool Win32App::registerUrlScheme(std::string_view schemeIn) {
     if (!validUrlScheme(schemeIn))
         return false;
-    const std::string scheme = lower(schemeIn);
+    const std::string scheme = core::asciiLower(schemeIn);
     // Remembered even if the registry write fails (say, policy locks HKCU
     // Classes): an installer may have registered it, and forwarded URLs of
     // it should still come out as OpenUrls.
-    if (std::find(_schemes.begin(), _schemes.end(), scheme) == _schemes.end())
-        _schemes.push_back(scheme);
+    core::rememberScheme(_schemes, scheme);
     const std::wstring exe = exePath();
     if (exe.empty())
         return false;
@@ -1135,11 +1079,9 @@ std::vector<std::string> Win32App::preferredLanguages() const {
 
 std::string Win32App::standardDir(StandardDir d) const {
     if (d == StandardDir::Temp) {
-        wchar_t     buf[MAX_PATH + 2];
-        const DWORD n = GetTempPathW(MAX_PATH + 2, buf);
-        if (!n || n > MAX_PATH + 1)
+        std::wstring p = tempPath();
+        if (p.empty())
             return {};
-        std::wstring p(buf, n);
         while (p.size() > 3 && p.back() == L'\\') // keep "C:\"
             p.pop_back();
         return portablePath(p);

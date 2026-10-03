@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <optional>
+#include <utility>
 
 namespace plat::x11 {
 
@@ -46,13 +48,6 @@ uint32_t bitOf(DropAction a) {
     default:
         return 0;
     }
-}
-
-DropAction preferredOf(uint32_t allowed) {
-    return (allowed & ActCopy)   ? DropAction::Copy
-           : (allowed & ActMove) ? DropAction::Move
-           : (allowed & ActLink) ? DropAction::Link
-                                 : DropAction::None;
 }
 
 std::vector<xcb_atom_t> readAtoms(xcb_connection_t *c, xcb_window_t w, xcb_atom_t prop) {
@@ -148,7 +143,8 @@ void X11App::onXdnd(X11Window *w, xcb_client_message_event_t *e) {
         _dnd.allowed               = bitOf(requested) | _dnd.listActions;
         if (!_dnd.allowed)
             _dnd.allowed = ActCopy; // Ask/Private with no list: Copy is what every target does
-        _dnd.preferred = requested != DropAction::None ? requested : preferredOf(_dnd.allowed);
+        _dnd.preferred =
+            requested != DropAction::None ? requested : core::preferredAction(_dnd.allowed);
 
         Event ev{
             .type = _dnd.entered ? EventType::DropMove : EventType::DropEnter, .pos = _dnd.pos
@@ -193,7 +189,7 @@ void X11App::onXdnd(X11Window *w, xcb_client_message_event_t *e) {
         if (has(_atoms[MimeUriList]))
             _dnd.wants.push_back({"text/uri-list", {_atoms[MimeUriList]}});
         if (auto tt = textTargets(_dnd.types); !tt.empty())
-            _dnd.wants.push_back({"text/plain;charset=utf-8", std::move(tt)});
+            _dnd.wants.push_back({core::kTextMime, std::move(tt)});
         if (has(_atoms[MimeTextHtml]))
             _dnd.wants.push_back({"text/html", {_atoms[MimeTextHtml]}});
         if (has(_atoms[MimeImagePng]))
@@ -236,7 +232,7 @@ void X11App::dndFetchNext() {
     for (auto &item : _dnd.got) {
         if (item.mime == "text/uri-list")
             ev.uris = core::parseUriList(item.data);
-        else if (item.mime == "text/plain;charset=utf-8")
+        else if (item.mime == core::kTextMime)
             ev.text = item.data;
     }
     ev.items                = std::move(_dnd.got);
@@ -380,6 +376,7 @@ bool X11App::startDrag(Window &source, const DragDesc &drag) {
     // Enter whatever is under the pointer right away: a drag that is
     // released without moving still gets a target.
     dragMotion(_drag.rootX, _drag.rootY, _lastTime);
+    dragTrack();
     xcb_flush(_c);
     return true;
 }
@@ -478,10 +475,47 @@ void X11App::createDragIcon(const Image &srcImg, Point hotspot) {
     xcb_map_window(_c, _drag.icon);
 }
 
+X11App::DndProbe X11App::probeDnd(xcb_window_t w) {
+    if (auto it = _drag.probes.find(w); it != _drag.probes.end())
+        return it->second;
+    // XdndProxy and XdndAware asked together; the proxy's own pair likewise.
+    auto ask = [this](xcb_window_t on) {
+        return std::pair{
+            xcb_get_property(_c, 0, on, _atoms[XdndProxy], XCB_ATOM_WINDOW, 0, 1),
+            xcb_get_property(_c, 0, on, _atoms[XdndAware], XCB_ATOM_ATOM, 0, 1)
+        };
+    };
+    auto value = [this](xcb_get_property_cookie_t c) -> std::optional<uint32_t> {
+        Reply r(xcb_get_property_reply(_c, c, nullptr));
+        if (!r || r->format != 32 || xcb_get_property_value_length(r.p) < 4)
+            return std::nullopt;
+        return *static_cast<uint32_t *>(xcb_get_property_value(r.p));
+    };
+    auto [proxyCookie, awareCookie] = ask(w);
+    xcb_window_t            via     = value(proxyCookie).value_or(0);
+    std::optional<uint32_t> aware   = value(awareCookie);
+    if (via) {
+        // The proxy must point at itself, or it is stale.
+        auto [viaProxy, viaAware]     = ask(via);
+        const bool              valid = value(viaProxy).value_or(0) == via;
+        std::optional<uint32_t> a     = value(viaAware);
+        if (valid)
+            aware = a;
+        else
+            via = 0;
+    }
+    DndProbe p;
+    p.aware         = aware.has_value();
+    p.version       = aware ? int(*aware) : 0;
+    p.proxy         = via ? via : w;
+    _drag.probes[w] = p;
+    return p;
+}
+
 xcb_window_t X11App::findDndTarget(int16_t x, int16_t y, xcb_window_t *proxy, int *version) {
     // Walk down from the root through the window under the point until one
     // is XdndAware (a WM frame is not; the client inside it is), honouring
-    // XdndProxy (the proxy must point at itself, or it is stale).
+    // XdndProxy. What each window says is asked once per drag (probeDnd).
     xcb_window_t w = _root;
     for (int depth = 0; depth < 32; ++depth) {
         Reply t(xcb_translate_coordinates_reply(
@@ -492,28 +526,12 @@ xcb_window_t X11App::findDndTarget(int16_t x, int16_t y, xcb_window_t *proxy, in
         w = t->child;
         if (w == _drag.icon)
             return 0; // no input shape support and the icon got under the pointer anyway
-        auto readWindow = [this](xcb_window_t on, xcb_atom_t prop) -> xcb_window_t {
-            Reply r(xcb_get_property_reply(
-                _c, xcb_get_property(_c, 0, on, prop, XCB_ATOM_WINDOW, 0, 1), nullptr
-            ));
-            if (!r || r->format != 32 || xcb_get_property_value_length(r.p) < 4)
-                return 0;
-            return *static_cast<xcb_window_t *>(xcb_get_property_value(r.p));
-        };
-        xcb_window_t via = readWindow(w, _atoms[XdndProxy]);
-        if (via && readWindow(via, _atoms[XdndProxy]) != via)
-            via = 0;
-        Reply aw(xcb_get_property_reply(
-            _c,
-            xcb_get_property(_c, 0, via ? via : w, _atoms[XdndAware], XCB_ATOM_ATOM, 0, 1),
-            nullptr
-        ));
-        if (aw && aw->format == 32 && xcb_get_property_value_length(aw.p) >= 4) {
-            const int v = int(*static_cast<uint32_t *>(xcb_get_property_value(aw.p)));
-            if (v < 3)
+        const DndProbe p = probeDnd(w);
+        if (p.aware) {
+            if (p.version < 3)
                 return 0; // pre-v3 targets speak a different protocol
-            *proxy   = via ? via : w;
-            *version = std::min(v, kMaxVersion);
+            *proxy   = p.proxy;
+            *version = std::min(p.version, kMaxVersion);
             return w;
         }
     }
@@ -529,7 +547,7 @@ xcb_atom_t X11App::dragRequestedAction() const {
     // The usual modifier convention (toolkits, file managers): Shift moves,
     // Ctrl copies, both link — when the drag allows it.
     const uint32_t m    = _kbd.hasKeymap() ? _kbd.mods() : 0;
-    DropAction     want = preferredOf(_drag.actions);
+    DropAction     want = core::preferredAction(_drag.actions);
     if ((m & ModShift) && (m & ModCtrl))
         want = DropAction::Link;
     else if (m & ModShift)
@@ -537,7 +555,7 @@ xcb_atom_t X11App::dragRequestedAction() const {
     else if (m & ModCtrl)
         want = DropAction::Copy;
     if (!(_drag.actions & bitOf(want)))
-        want = preferredOf(_drag.actions);
+        want = core::preferredAction(_drag.actions);
     return atomFromAction(want);
 }
 
@@ -550,8 +568,18 @@ void X11App::dragMotion(int16_t rootX, int16_t rootY, xcb_timestamp_t t) {
         const uint32_t xy[] = {uint32_t(rootX - _drag.hotX), uint32_t(rootY - _drag.hotY)};
         xcb_configure_window(_c, _drag.icon, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y, xy);
     }
+    // The target search waits for the end of this batch of events (or for
+    // a release), so a burst of motion costs one search.
+    _drag.moved = true;
+}
+
+void X11App::dragTrack() {
+    if (!_drag.moved)
+        return;
+    _drag.moved = false;
     if (_drag.released)
         return;
+    const int16_t      rootX = _drag.rootX, rootY = _drag.rootY;
     xcb_window_t       proxy   = 0;
     int                version = 0;
     const xcb_window_t target  = findDndTarget(rootX, rootY, &proxy, &version);
@@ -670,6 +698,7 @@ void X11App::dragOnStatus(const xcb_client_message_event_t *e) {
 }
 
 void X11App::dragRelease(xcb_timestamp_t t) {
+    dragTrack(); // the drop goes where the pointer is now
     _drag.released = true;
     if (t)
         _drag.time = t;

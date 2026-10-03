@@ -30,6 +30,19 @@ namespace {
 constexpr short          kWakeSubtype = 0x504c; // 'PL'
 constexpr NSInteger      kWakeMagic   = 0x706c6174;
 constexpr CFTimeInterval kNever       = 1.0e10; // "far future" for idle CF timers
+
+// The application-defined event that makes -nextEventMatchingMask: return.
+NSEvent *wakeEvent() {
+    return [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                              location:NSZeroPoint
+                         modifierFlags:0
+                             timestamp:0
+                          windowNumber:0
+                               context:nil
+                               subtype:kWakeSubtype
+                                 data1:kWakeMagic
+                                 data2:0];
+}
 } // namespace
 
 // ── NSApplication delegate ─────────────────────────────────────────────────
@@ -55,16 +68,7 @@ constexpr CFTimeInterval kNever       = 1.0e10; // "far future" for idle CF time
     // createCocoaApp runs [NSApp run] only to get through launch (menu bar,
     // activation, Dock); stop it at once and hand the loop to pump().
     [NSApp stop:nil];
-    NSEvent *wake = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                                       location:NSZeroPoint
-                                  modifierFlags:0
-                                      timestamp:0
-                                   windowNumber:0
-                                        context:nil
-                                        subtype:kWakeSubtype
-                                          data1:kWakeMagic
-                                          data2:0];
-    [NSApp postEvent:wake atStart:YES]; // -stop: only takes effect after an event
+    [NSApp postEvent:wakeEvent() atStart:YES]; // -stop: only takes effect after an event
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     // Cmd+Q, Dock "Quit" and logout all land here. The app is asked to
@@ -101,18 +105,6 @@ namespace plat::cocoa {
 namespace {
 
 bool g_launched = false;
-
-NSEvent *wakeEvent() {
-    return [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                              location:NSZeroPoint
-                         modifierFlags:0
-                             timestamp:0
-                          windowNumber:0
-                               context:nil
-                               subtype:kWakeSubtype
-                                 data1:kWakeMagic
-                                 data2:0];
-}
 
 bool isWake(NSEvent *ev) {
     return ev.type == NSEventTypeApplicationDefined && ev.subtype == kWakeSubtype &&
@@ -532,10 +524,9 @@ int CocoaApp::doubleClickMs() const {
 
 bool CocoaApp::openUrl(std::string_view url) {
     @autoreleasepool {
-        NSString *s = [[NSString alloc] initWithBytes:url.data()
-                                               length:url.size()
-                                             encoding:NSUTF8StringEncoding];
-        NSURL    *u = s ? [NSURL URLWithString:s] : nil;
+        // nsString() answers "" for bytes that are not UTF-8: no URL then.
+        NSString *s = nsString(url);
+        NSURL    *u = s.length || url.empty() ? [NSURL URLWithString:s] : nil;
         return u && [NSWorkspace.sharedWorkspace openURL:u];
     }
 }

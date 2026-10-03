@@ -81,6 +81,8 @@ fi
 build=${1:?usage: $0 <build-dir>}
 case $build in /*) ;; *) build=$(pwd)/$build ;; esac
 selftest=$build/plat_selftest
+# The standalone build puts the test binaries under tests/.
+[ -x "$selftest" ] || selftest=$build/tests/plat_selftest
 probe=$build/plat_services_probe
 [ -x "$selftest" ] || { echo "FAIL: $selftest not built"; exit 2; }
 command -v dbus-daemon >/dev/null || { echo "SKIP: dbus-daemon not installed"; exit 0; }

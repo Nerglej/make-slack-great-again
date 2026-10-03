@@ -22,6 +22,8 @@
 // started plus that offset, capped by what has been written.
 #include "audio/audio_internal.h"
 
+#include "linux/files.h"
+#include "linux/process.h"
 #include "plat/plat.h"
 #include "pcm_decoder.h"
 
@@ -35,15 +37,13 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <mutex>
+#include <optional>
 #include <poll.h>
 #include <pthread.h>
-#include <spawn.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern char **environ;
 
 namespace plat::audio {
 
@@ -57,129 +57,24 @@ int64_t msSince(Clock::time_point t) {
 
 // ── Helper processes ────────────────────────────────────────────────────────
 
-// Absolute path of an audio helper program, or "". Searched on $PATH, or
-// only in $PLAT_AUDIO_HELPERS when that is set: tests point it at fake
-// helpers (or at nothing), so no test ever reaches the real speakers or mic.
+using linux_process::Child;
+using linux_process::closeFd;
+using linux_process::kStderr;
+using linux_process::kStdin;
+using linux_process::kStdout;
+using linux_process::reaped;
+
+// Where audio helpers are searched: $PATH, or only $PLAT_AUDIO_HELPERS when
+// that is set: tests point it at fake helpers (or at nothing), so no test
+// ever reaches the real speakers or mic.
+std::string_view helperPath() {
+    const char *only = std::getenv("PLAT_AUDIO_HELPERS");
+    return only ? std::string_view(only) : linux_process::defaultSearchPath();
+}
+
+// Absolute path of an audio helper program, or "".
 std::string findHelper(const char *name) {
-    const char      *only = std::getenv("PLAT_AUDIO_HELPERS");
-    const char      *path = only ? only : std::getenv("PATH");
-    std::string_view rest = path && *path ? path : only ? "" : "/usr/local/bin:/usr/bin:/bin";
-    while (!rest.empty()) {
-        const size_t colon = rest.find(':');
-        std::string  dir(rest.substr(0, colon));
-        rest = colon == std::string_view::npos ? std::string_view() : rest.substr(colon + 1);
-        if (dir.empty())
-            continue;
-        const std::string full = dir + "/" + name;
-        struct stat       st{};
-        if (::stat(full.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
-            ::access(full.c_str(), X_OK) == 0)
-            return full;
-    }
-    return {};
-}
-
-void closeFd(int &fd) {
-    if (fd >= 0)
-        ::close(fd);
-    fd = -1;
-}
-
-enum Pipes : unsigned { kStdin = 1, kStdout = 2, kStderr = 4 };
-
-struct Child {
-    pid_t pid = -1;
-    int   in = -1, out = -1, err = -1; // our ends, non-blocking
-};
-
-// Starts `exe` (an absolute path) with `args`. The requested stdio streams
-// become pipes (stdin a socket, so a dead reader can't SIGPIPE us), the rest
-// the null device. False when it could not be started.
-bool spawnChild(
-    const std::string &exe, const std::vector<std::string> &args, unsigned pipes, Child *c
-) {
-    int in[2] = {-1, -1}, out[2] = {-1, -1}, err[2] = {-1, -1};
-    if ((pipes & kStdin) && ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, in) != 0)
-        return false;
-    if ((pipes & kStdout) && ::pipe2(out, O_CLOEXEC) != 0) {
-        closeFd(in[0]), closeFd(in[1]);
-        return false;
-    }
-    if ((pipes & kStderr) && ::pipe2(err, O_CLOEXEC) != 0) {
-        closeFd(in[0]), closeFd(in[1]), closeFd(out[0]), closeFd(out[1]);
-        return false;
-    }
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    if (in[1] >= 0)
-        posix_spawn_file_actions_adddup2(&fa, in[1], 0);
-    else
-        posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    if (out[1] >= 0)
-        posix_spawn_file_actions_adddup2(&fa, out[1], 1);
-    else
-        posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
-    if (err[1] >= 0)
-        posix_spawn_file_actions_adddup2(&fa, err[1], 2);
-    else
-        posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-    // A clean signal state: our blocked/ignored signals are not the helper's.
-    posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-    sigset_t none, dfl;
-    sigemptyset(&none);
-    sigemptyset(&dfl);
-    sigaddset(&dfl, SIGPIPE);
-    sigaddset(&dfl, SIGTERM);
-    sigaddset(&dfl, SIGINT);
-    posix_spawnattr_setsigmask(&attr, &none);
-    posix_spawnattr_setsigdefault(&attr, &dfl);
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
-
-    std::vector<char *> argv;
-    argv.push_back(const_cast<char *>(exe.c_str()));
-    for (const auto &a : args)
-        argv.push_back(const_cast<char *>(a.c_str()));
-    argv.push_back(nullptr);
-    pid_t     pid = -1;
-    const int rc  = ::posix_spawn(&pid, exe.c_str(), &fa, &attr, argv.data(), environ);
-    posix_spawn_file_actions_destroy(&fa);
-    posix_spawnattr_destroy(&attr);
-    closeFd(in[1]), closeFd(out[1]), closeFd(err[1]);
-    if (rc != 0) {
-        closeFd(in[0]), closeFd(out[0]), closeFd(err[0]);
-        return false;
-    }
-    for (int fd : {in[0], out[0], err[0]})
-        if (fd >= 0)
-            ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
-    *c = {pid, in[0], out[0], err[0]};
-    return true;
-}
-
-// Kills and reaps the child (SIGKILL lands at once) and closes our ends.
-void killChild(Child &c) {
-    if (c.pid > 0) {
-        ::kill(c.pid, SIGKILL);
-        while (::waitpid(c.pid, nullptr, 0) < 0 && errno == EINTR) {
-        }
-    }
-    c.pid = -1;
-    closeFd(c.in), closeFd(c.out), closeFd(c.err);
-}
-
-// Non-blocking: true once the child has exited (and is reaped); *ok = it
-// exited normally with status 0.
-bool reaped(Child &c, bool *ok) {
-    if (c.pid <= 0)
-        return true;
-    int         st = 0;
-    const pid_t r  = ::waitpid(c.pid, &st, WNOHANG);
-    if (r == 0 || (r < 0 && errno == EINTR))
-        return false;
-    *ok   = r == c.pid && WIFEXITED(st) && WEXITSTATUS(st) == 0;
-    c.pid = -1;
-    return true;
+    return linux_process::findExecutable(name, helperPath());
 }
 
 // Reads what is there; false at end of file (the fd is then closed).
@@ -219,12 +114,62 @@ std::string lastLine(const std::string &s) {
     return {};
 }
 
+// Notification sounds look up the same few helpers and the sound theme on
+// every play (canberra missing means a gsettings run of up to 800 ms each
+// time): both are remembered for a while, per search path, so a burst of
+// notifications costs one lookup. A helper installed or a theme switched
+// meanwhile is seen once the entry expires.
+constexpr auto kSoundCacheTtl = std::chrono::seconds(60);
+
+struct SoundCache {
+    std::mutex        mutex;
+    std::string       key; // the search path + data dirs it was built for
+    Clock::time_point built{};
+    std::vector<std::pair<std::string, std::string>> helpers; // name → path ("" = none)
+    std::optional<std::string>                       themeDir;
+};
+
+SoundCache &soundCache() {
+    static SoundCache c;
+    return c;
+}
+
+// The cache, emptied when it expired or the environment it was built for
+// changed; mutex held by the caller.
+SoundCache &freshSoundCache() {
+    SoundCache       &c   = soundCache();
+    const char       *dh  = std::getenv("XDG_DATA_HOME");
+    const char       *h   = std::getenv("HOME");
+    const std::string key = std::string(helperPath()) + '\n' + (dh ? dh : "") + '\n' + (h ? h : "");
+    if (key != c.key || Clock::now() - c.built > kSoundCacheTtl) {
+        c.key   = key;
+        c.built = Clock::now();
+        c.helpers.clear();
+        c.themeDir.reset();
+    }
+    return c;
+}
+
+// findHelper through the sound cache.
+std::string soundHelper(const char *name) {
+    {
+        std::lock_guard lock(soundCache().mutex);
+        for (const auto &[n, p] : freshSoundCache().helpers)
+            if (n == name)
+                return p;
+    }
+    std::string     path = findHelper(name);
+    std::lock_guard lock(soundCache().mutex);
+    freshSoundCache().helpers.emplace_back(name, path);
+    return path;
+}
+
 // Spawns a fire-and-forget helper and waits for it (this runs on a detached
 // thread). True when it could be started.
 bool runHelper(const char *name, const std::vector<std::string> &args) {
-    const std::string exe = findHelper(name);
+    const std::string exe = soundHelper(name);
     Child             c;
-    if (exe.empty() || !spawnChild(exe, args, 0, &c))
+    if (exe.empty() || !linux_process::spawn(exe, args, 0, &c))
         return false;
     while (::waitpid(c.pid, nullptr, 0) < 0 && errno == EINTR) {
     }
@@ -443,7 +388,7 @@ private:
             return;
         _pausedFrame = current();
         _playing     = false;
-        killChild(_sink);
+        linux_process::kill(_sink);
         snapshot();
     }
 
@@ -456,7 +401,7 @@ private:
         frame        = std::max<int64_t>(0, frame);
         _pausedFrame = frame;
         if (_playing) {
-            killChild(_sink);
+            linux_process::kill(_sink);
             sourceSeek(frame);
             _baseFrame = frame;
             startSink();
@@ -467,12 +412,12 @@ private:
 
     void stopMedia() {
         _playing = _probing = false;
-        killChild(_sink);
+        linux_process::kill(_sink);
         if (_dec)
             pcm_decoder_close(_dec);
         _dec = nullptr;
         if (_ff)
-            killChild(_ff->c);
+            linux_process::kill(_ff->c);
         _ff.reset();
         _pending.clear();
         _pendingOff = 0;
@@ -496,7 +441,7 @@ private:
     // `ffmpeg … -f s16le pipe:1` from `frame` on; seeking restarts it with -ss.
     void ffmpegStart(int64_t frame) {
         Ffmpeg &f = *_ff;
-        killChild(f.c);
+        linux_process::kill(f.c);
         f.buf.clear();
         f.err.clear();
         f.off        = 0;
@@ -522,7 +467,7 @@ private:
              std::to_string(_fmt.rate),
              "pipe:1"}
         );
-        if (!spawnChild(f.exe, args, kStdout | kStderr, &f.c)) {
+        if (!linux_process::spawn(f.exe, args, kStdout | kStderr, &f.c)) {
             f.finished = true;
             failSource({Error::NeedsFfmpeg, {}});
         }
@@ -559,7 +504,7 @@ private:
 
     void failSource(Failure f) {
         _probing = _playing = false;
-        killChild(_sink);
+        linux_process::kill(_sink);
         snapshot();
         post(PlayerEv::Failed, std::move(f));
     }
@@ -614,7 +559,7 @@ private:
         for (int i = _attempt; i < kSinkCount; ++i) {
             std::vector<std::string> args;
             const std::string        exe = findHelper(sinkArgs(i, _fmt, &args));
-            if (exe.empty() || !spawnChild(exe, args, kStdin, &_sink))
+            if (exe.empty() || !linux_process::spawn(exe, args, kStdin, &_sink))
                 continue;
             _attempt         = i;
             // Keep ~250 ms queued for the helper; more only delays pause/seek.
@@ -939,7 +884,7 @@ enum class RecEv : uint8_t { Started, Level, Finished, Failed };
 class RecorderWorker {
 public:
     explicit RecorderWorker(std::shared_ptr<RecorderShared> s) : _s(std::move(s)) {}
-    ~RecorderWorker() { killChild(_c); }
+    ~RecorderWorker() { linux_process::kill(_c); }
 
     static void *entry(void *p) {
         auto *w = static_cast<RecorderWorker *>(p);
@@ -955,7 +900,7 @@ private:
         for (int i = from; i < kCaptureCount; ++i) {
             std::vector<std::string> args;
             const std::string        exe = findHelper(captureArgs(i, &args));
-            if (exe.empty() || !spawnChild(exe, args, kStdout | kStderr, &_c))
+            if (exe.empty() || !linux_process::spawn(exe, args, kStdout | kStderr, &_c))
                 continue;
             _attempt     = i;
             _firstDataAt = Clock::now() + std::chrono::milliseconds(kFirstDataMs);
@@ -1032,7 +977,7 @@ private:
                     _levelAt = t + std::chrono::milliseconds(kLevelIntervalMs);
             }
             if (!_gotData && !_stopping && t >= _firstDataAt) {
-                killChild(_c);
+                linux_process::kill(_c);
                 post(RecEv::Failed, 0, {}, {Error::NoAudio, lastLine(_stderr)});
                 return;
             }
@@ -1199,14 +1144,8 @@ void RecorderWorker::post(RecEv ev, float level, std::string wav, Failure f) {
 
 // ── Notification sounds ─────────────────────────────────────────────────────
 
-bool isDir(const std::string &p) {
-    struct stat st{};
-    return ::stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-bool isFile(const std::string &p) {
-    struct stat st{};
-    return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
-}
+using linux_files::isDir;
+using linux_files::isFile;
 
 // Base dirs that hold sound themes, most specific first (user overrides system).
 std::vector<std::string> soundBaseDirs() {
@@ -1223,11 +1162,11 @@ std::vector<std::string> soundBaseDirs() {
 // Best-effort current theme name (GNOME's setting); the freedesktop default
 // otherwise. Waits at most ~800 ms for gsettings.
 std::string currentThemeName() {
-    const std::string exe = findHelper("gsettings");
+    const std::string exe = soundHelper("gsettings");
     Child             c;
     std::string       out;
     if (!exe.empty() &&
-        spawnChild(exe, {"get", "org.gnome.desktop.sound", "theme-name"}, kStdout, &c)) {
+        linux_process::spawn(exe, {"get", "org.gnome.desktop.sound", "theme-name"}, kStdout, &c)) {
         const auto deadline = Clock::now() + std::chrono::milliseconds(800);
         while (c.out >= 0 && Clock::now() < deadline) {
             pollfd p{c.out, POLLIN, 0};
@@ -1236,7 +1175,7 @@ std::string currentThemeName() {
         }
         bool ok = false;
         if (c.out >= 0 || !reaped(c, &ok))
-            killChild(c);
+            linux_process::kill(c);
         closeFd(c.out);
         std::string name;
         for (char ch : out)
@@ -1257,8 +1196,17 @@ std::string themeStereoDir(const std::string &theme) {
 }
 
 std::string activeThemeDir() {
+    {
+        std::lock_guard lock(soundCache().mutex);
+        if (const auto &d = freshSoundCache().themeDir)
+            return *d;
+    }
     std::string dir = themeStereoDir(currentThemeName());
-    return dir.empty() ? themeStereoDir("freedesktop") : dir;
+    if (dir.empty())
+        dir = themeStereoDir("freedesktop");
+    std::lock_guard lock(soundCache().mutex);
+    freshSoundCache().themeDir = dir;
+    return dir;
 }
 
 // "message-new-instant" -> "Message new instant"

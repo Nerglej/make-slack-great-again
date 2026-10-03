@@ -96,7 +96,6 @@ public:
     explicit MsgReader(DBusMessage *m) { _ok = m && dbus_message_iter_init(m, &_it); }
 
     int  type() const { return _ok ? dbus_message_iter_get_arg_type(&_it) : DBUS_TYPE_INVALID; }
-    bool atEnd() const { return type() == DBUS_TYPE_INVALID; }
     bool skip() { return _ok && dbus_message_iter_next(&_it); }
 
     bool      str(std::string *out); // s, o or g
@@ -186,7 +185,6 @@ public:
     // libdbus then answers UnknownMethod.
     using MethodFn = std::function<bool(DBusMessage *)>;
     void addObject(const std::string &path, MethodFn fn) { _objects[path] = std::move(fn); }
-    void removeObject(const std::string &path) { _objects.erase(path); }
 
     // Signals matching `rule` (a D-Bus match rule; sent to the daemon on
     // every connect) are passed to fn if they carry iface/member. fn does any

@@ -11,11 +11,14 @@
 // whole screen, so a panel between two monitors is invisible to it.
 #include "x11/x11_internal.h"
 
+#include "core/pacing.h"
+
 #include <xcb/randr.h>
 
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 
 namespace plat::x11 {
 
@@ -35,16 +38,6 @@ Rect toLogical(const Rect &r, double s) {
     const int x0 = int(std::lround(r.x / s)), y0 = int(std::lround(r.y / s));
     const int x1 = int(std::lround((r.x + r.w) / s)), y1 = int(std::lround((r.y + r.h) / s));
     return {x0, y0, x1 - x0, y1 - y0};
-}
-
-bool sameRect(const Rect &a, const Rect &b) {
-    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-}
-
-bool sameMonitor(const Monitor &a, const Monitor &b) {
-    return a.id == b.id && a.name == b.name && sameRect(a.bounds, b.bounds) &&
-           sameRect(a.workArea, b.workArea) && a.scale == b.scale &&
-           a.refreshMilliHz == b.refreshMilliHz && a.primary == b.primary;
 }
 
 int modeMilliHz(const xcb_randr_mode_info_t &m) {
@@ -86,28 +79,93 @@ bool X11App::isWorkareaAtom(xcb_atom_t a) const {
            (_gtkWorkareas && a == _gtkWorkareas);
 }
 
-void X11App::scheduleMonitorRefresh() {
+void X11App::scheduleMonitorRefresh(bool layout) {
+    _monitorsLayoutStale |= layout;
     if (_monitorsPending)
         return;
     _monitorsPending = true;
     post([this] {
         _monitorsPending = false;
-        readRefreshRate();
-        refreshMonitors(true);
+        if (std::exchange(_monitorsLayoutStale, false) || !_monitorsReady)
+            refreshMonitors(true);
+        else
+            refreshWorkAreas(true);
     });
 }
 
 void X11App::refreshMonitors(bool emitChange) {
-    std::vector<MonitorEntry> out;
+    std::vector<MonitorEntry> out = readLayout();
+    applyWorkAreas(out);
+    commitMonitors(std::move(out), emitChange);
+}
 
-    // ── the monitors ────────────────────────────────────────────────────────
-    if (_randrMinor >= 5) {
-        auto  res = Reply(xcb_randr_get_screen_resources_current_reply(
-            _c, xcb_randr_get_screen_resources_current(_c, _root), nullptr
-        ));
-        Reply mons(xcb_randr_get_monitors_reply(_c, xcb_randr_get_monitors(_c, _root, 1), nullptr));
-        std::vector<xcb_atom_t> nameAtoms;
+void X11App::refreshWorkAreas(bool emitChange) {
+    // A desktop switch or a panel change: the layout is what it was.
+    std::vector<MonitorEntry> out = _monitors;
+    applyWorkAreas(out);
+    commitMonitors(std::move(out), emitChange);
+}
+
+std::vector<X11App::MonitorEntry> X11App::readLayout() {
+    std::vector<MonitorEntry> out;
+    // Requests go out in batches, each answered together, rather than one
+    // blocking round trip per CRTC, output and monitor.
+    _refreshMilliHz = 0;
+    if (_randrMinor >= 3) {
+        const auto resCookie = xcb_randr_get_screen_resources_current(_c, _root);
+        xcb_randr_get_monitors_cookie_t monCookie{};
+        if (_randrMinor >= 5)
+            monCookie = xcb_randr_get_monitors(_c, _root, 1);
+        Reply res(xcb_randr_get_screen_resources_current_reply(_c, resCookie, nullptr));
+        Reply mons(
+            _randrMinor >= 5 ? xcb_randr_get_monitors_reply(_c, monCookie, nullptr) : nullptr
+        );
+        const xcb_randr_mode_info_t  *modes  = nullptr;
+        const xcb_randr_crtc_t       *crtcs  = nullptr;
+        int                           nModes = 0, nCrtcs = 0;
+        std::vector<xcb_randr_mode_t> crtcMode; // per entry of crtcs, 0 = off
+        if (res) {
+            modes  = xcb_randr_get_screen_resources_current_modes(res.p);
+            nModes = xcb_randr_get_screen_resources_current_modes_length(res.p);
+            crtcs  = xcb_randr_get_screen_resources_current_crtcs(res.p);
+            nCrtcs = xcb_randr_get_screen_resources_current_crtcs_length(res.p);
+            std::vector<xcb_randr_get_crtc_info_cookie_t> cookies;
+            cookies.resize(size_t(nCrtcs));
+            for (int i = 0; i < nCrtcs; ++i)
+                cookies[size_t(i)] = xcb_randr_get_crtc_info(_c, crtcs[i], res->config_timestamp);
+            crtcMode.assign(size_t(nCrtcs), 0);
+            // X11 has no frame callbacks, so Frames are paced by a timer at the
+            // fastest active output's refresh rate; 60 Hz when RandR can't say.
+            double best = 0;
+            for (int i = 0; i < nCrtcs; ++i) {
+                Reply ci(xcb_randr_get_crtc_info_reply(_c, cookies[size_t(i)], nullptr));
+                if (!ci || !ci->mode)
+                    continue;
+                crtcMode[size_t(i)] = ci->mode;
+                for (int m = 0; m < nModes; ++m)
+                    if (modes[m].id == ci->mode && modes[m].htotal && modes[m].vtotal)
+                        best = std::max(
+                            best, double(modes[m].dot_clock) / (modes[m].htotal * modes[m].vtotal)
+                        );
+            }
+            if (best >= 20 && best <= 500)
+                _refreshMilliHz = int(std::lround(best * 1000));
+        }
+        // A CRTC's mode refresh, from the batch above.
+        auto crtcMilliHz = [&](xcb_randr_crtc_t crtc) {
+            for (int i = 0; i < nCrtcs; ++i)
+                if (crtcs[i] == crtc)
+                    for (int k = 0; k < nModes; ++k)
+                        if (crtcMode[size_t(i)] && modes[k].id == crtcMode[size_t(i)])
+                            return modeMilliHz(modes[k]);
+            return 0;
+        };
+
+        // ── the monitors ────────────────────────────────────────────────────
         if (mons) {
+            std::vector<xcb_atom_t>                         nameAtoms;
+            std::vector<xcb_randr_get_output_info_cookie_t> outputs; // per entry
+            std::vector<bool>                               hasOutput;
             for (auto it = xcb_randr_get_monitors_monitors_iterator(mons.p); it.rem;
                  xcb_randr_monitor_info_next(&it)) {
                 const xcb_randr_monitor_info_t *mi = it.data;
@@ -121,31 +179,29 @@ void X11App::refreshMonitors(bool emitChange) {
                 e.m.primary = mi->primary != 0;
                 nameAtoms.push_back(mi->name);
                 // Refresh from the first output's CRTC mode.
-                if (res && xcb_randr_monitor_info_outputs_length(mi) > 0) {
-                    const xcb_randr_output_t o = xcb_randr_monitor_info_outputs(mi)[0];
-                    Reply                    oi(xcb_randr_get_output_info_reply(
-                        _c, xcb_randr_get_output_info(_c, o, res->config_timestamp), nullptr
-                    ));
-                    if (oi && oi->crtc) {
-                        Reply       ci(xcb_randr_get_crtc_info_reply(
-                            _c,
-                            xcb_randr_get_crtc_info(_c, oi->crtc, res->config_timestamp),
-                            nullptr
-                        ));
-                        const auto *modes = xcb_randr_get_screen_resources_current_modes(res.p);
-                        const int   n = xcb_randr_get_screen_resources_current_modes_length(res.p);
-                        for (int k = 0; ci && k < n; ++k)
-                            if (modes[k].id == ci->mode)
-                                e.m.refreshMilliHz = modeMilliHz(modes[k]);
-                    }
-                }
+                const bool has = res && xcb_randr_monitor_info_outputs_length(mi) > 0;
+                outputs.push_back(
+                    has ? xcb_randr_get_output_info(
+                              _c, xcb_randr_monitor_info_outputs(mi)[0], res->config_timestamp
+                          )
+                        : xcb_randr_get_output_info_cookie_t{}
+                );
+                hasOutput.push_back(has);
                 out.push_back(std::move(e));
             }
+            for (size_t i = 0; i < out.size(); ++i) {
+                if (!hasOutput[i])
+                    continue;
+                Reply oi(xcb_randr_get_output_info_reply(_c, outputs[i], nullptr));
+                if (oi && oi->crtc)
+                    out[i].m.refreshMilliHz = crtcMilliHz(oi->crtc);
+            }
+            const auto names = atomNames(nameAtoms);
+            for (size_t i = 0; i < out.size() && i < names.size(); ++i)
+                out[i].m.name = names[i];
         }
-        const auto names = atomNames(nameAtoms);
-        for (size_t i = 0; i < out.size() && i < names.size(); ++i)
-            out[i].m.name = names[i];
     }
+    _frameIntervalMs = core::frameIntervalMs(_refreshMilliHz);
     if (out.empty()) {
         // No RandR 1.5 (or no active CRTC, as on a bare Xvfb without outputs):
         // the whole screen is the one monitor. The root's live geometry, not
@@ -166,40 +222,47 @@ void X11App::refreshMonitors(bool emitChange) {
         e.m.primary = e.m.primary && !seen;
         seen |= e.m.primary;
     }
+    return out;
+}
 
-    // ── work areas ──────────────────────────────────────────────────────────
-    uint32_t desktop = 0;
+void X11App::applyWorkAreas(std::vector<MonitorEntry> &out) {
+    // The current desktop and _NET_WORKAREA in one round trip; the per-desktop
+    // GTK list (its atom is interned once per desktop) in a second.
+    auto cardinals = [this](xcb_atom_t prop, uint32_t longs) {
+        return xcb_get_property(_c, 0, _root, prop, XCB_ATOM_CARDINAL, 0, longs);
+    };
+    const auto deskCookie = cardinals(_atoms[NetCurrentDesktop], 1);
+    const auto netCookie  = cardinals(_atoms[NetWorkarea], 4096);
+    uint32_t   desktop    = 0;
     {
-        Reply r(xcb_get_property_reply(
-            _c,
-            xcb_get_property(_c, 0, _root, _atoms[NetCurrentDesktop], XCB_ATOM_CARDINAL, 0, 1),
-            nullptr
-        ));
+        Reply r(xcb_get_property_reply(_c, deskCookie, nullptr));
         if (r && r->format == 32 && xcb_get_property_value_length(r.p) >= 4)
             desktop = *static_cast<uint32_t *>(xcb_get_property_value(r.p));
     }
-    auto readRects = [this](xcb_atom_t prop) {
+    auto rectsOf = [](const xcb_get_property_reply_t *r) {
         std::vector<Rect> rects;
-        if (!prop)
-            return rects;
-        Reply r(xcb_get_property_reply(
-            _c, xcb_get_property(_c, 0, _root, prop, XCB_ATOM_CARDINAL, 0, 4096), nullptr
-        ));
         if (!r || r->format != 32)
             return rects;
-        const auto *v = static_cast<const uint32_t *>(xcb_get_property_value(r.p));
-        const int   n = xcb_get_property_value_length(r.p) / 16;
+        const auto *v = static_cast<const uint32_t *>(
+            xcb_get_property_value(const_cast<xcb_get_property_reply_t *>(r))
+        );
+        const int n = xcb_get_property_value_length(r) / 16;
         for (int i = 0; i < n; ++i)
             rects.push_back(
                 {int(v[4 * i]), int(v[4 * i + 1]), int(v[4 * i + 2]), int(v[4 * i + 3])}
             );
         return rects;
     };
-    _gtkWorkareas                      = intern("_GTK_WORKAREAS_D" + std::to_string(desktop));
-    const std::vector<Rect> perMonitor = readRects(_gtkWorkareas);
-    std::vector<Rect>       net        = readRects(_atoms[NetWorkarea]);
-    const bool              haveNet    = !net.empty();
-    const Rect              netArea    = haveNet ? net[desktop < net.size() ? desktop : 0] : Rect{};
+    Reply netReply(xcb_get_property_reply(_c, netCookie, nullptr));
+    _gtkWorkareas = intern("_GTK_WORKAREAS_D" + std::to_string(desktop));
+    std::vector<Rect> perMonitor;
+    if (_gtkWorkareas) {
+        Reply r(xcb_get_property_reply(_c, cardinals(_gtkWorkareas, 4096), nullptr));
+        perMonitor = rectsOf(r.p);
+    }
+    std::vector<Rect> net     = _atoms[NetWorkarea] ? rectsOf(netReply.p) : std::vector<Rect>();
+    const bool        haveNet = !net.empty();
+    const Rect        netArea = haveNet ? net[desktop < net.size() ? desktop : 0] : Rect{};
 
     for (auto &e : out) {
         Rect wa = e.phys;
@@ -224,11 +287,13 @@ void X11App::refreshMonitors(bool emitChange) {
             e.m.workArea = e.m.bounds;
         e.m.scale = _scale;
     }
+}
 
+void X11App::commitMonitors(std::vector<MonitorEntry> out, bool emitChange) {
     const bool changed =
         out.size() != _monitors.size() ||
         !std::equal(out.begin(), out.end(), _monitors.begin(), [](auto &a, auto &b) {
-            return sameMonitor(a.m, b.m);
+            return a.m == b.m;
         });
     _monitors      = std::move(out);
     _monitorsReady = true;

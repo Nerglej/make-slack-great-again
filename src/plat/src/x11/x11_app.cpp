@@ -1,5 +1,5 @@
 // X11 backend: connection, event loop, input and the odds and ends (cursors,
-// scale, openUrl, XTEST hooks). Windows and present live in x11_window.cpp,
+// scale, XTEST hooks). Windows and present live in x11_window.cpp,
 // clipboard and XDND in x11_selection.cpp.
 #include "x11/x11_internal.h"
 #include "core/pacing.h"
@@ -24,11 +24,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <poll.h>
-#include <spawn.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
-
-extern char **environ;
 
 namespace plat::x11 {
 
@@ -61,7 +57,7 @@ constexpr const char *kAtomNames[AtomCount] = {
     "TIMESTAMP",
     "TEXT",
     "INCR",
-    "text/plain;charset=utf-8",
+    core::kTextMime,
     "text/plain",
     "text/uri-list",
     "PLAT_SELECTION",
@@ -260,7 +256,6 @@ bool X11App::init(std::string *error) {
     }
     setupXInput();
     setupRandr();
-    readRefreshRate();
     refreshMonitors(false);
     if (xcb_cursor_context_new(_c, _screen, &_cursorCtx) < 0)
         _cursorCtx = nullptr;
@@ -313,7 +308,7 @@ void X11App::readScale() {
         w->onScaleChanged();
     // Logical monitor geometry follows the scale.
     if (_monitorsReady)
-        scheduleMonitorRefresh();
+        scheduleMonitorRefresh(false);
 }
 
 void X11App::readWmSupport() {
@@ -432,42 +427,6 @@ void X11App::setupShm() {
         _shmFd = false;
 }
 
-void X11App::readRefreshRate() {
-    // X11 has no frame callbacks, so Frames are paced by a timer at the
-    // fastest active output's refresh rate; 60 Hz when RandR can't say.
-    _refreshMilliHz = 0;
-    {
-        if (_randrMinor >= 3) {
-            Reply res(xcb_randr_get_screen_resources_current_reply(
-                _c, xcb_randr_get_screen_resources_current(_c, _root), nullptr
-            ));
-            if (res) {
-                const auto *modes  = xcb_randr_get_screen_resources_current_modes(res.p);
-                const int   nModes = xcb_randr_get_screen_resources_current_modes_length(res.p);
-                const auto *crtcs  = xcb_randr_get_screen_resources_current_crtcs(res.p);
-                const int   nCrtcs = xcb_randr_get_screen_resources_current_crtcs_length(res.p);
-                double      best   = 0;
-                for (int i = 0; i < nCrtcs; ++i) {
-                    Reply ci(xcb_randr_get_crtc_info_reply(
-                        _c, xcb_randr_get_crtc_info(_c, crtcs[i], res->config_timestamp), nullptr
-                    ));
-                    if (!ci || !ci->mode)
-                        continue;
-                    for (int m = 0; m < nModes; ++m)
-                        if (modes[m].id == ci->mode && modes[m].htotal && modes[m].vtotal)
-                            best = std::max(
-                                best,
-                                double(modes[m].dot_clock) / (modes[m].htotal * modes[m].vtotal)
-                            );
-                }
-                if (best >= 20 && best <= 500)
-                    _refreshMilliHz = int(std::lround(best * 1000));
-            }
-        }
-    }
-    _frameIntervalMs = core::frameIntervalMs(_refreshMilliHz);
-}
-
 xcb_atom_t X11App::intern(const std::string &name) {
     if (auto it = _internCache.find(name); it != _internCache.end())
         return it->second;
@@ -534,9 +493,11 @@ bool X11App::beforeWait() {
     // readable again: drain them, send due Frames, and repeat a few times in
     // case painting queued more — poll() must never sleep on queued events.
     for (int i = 0; i < 4; ++i) {
+        if (_drag.moved)
+            dragTrack(); // once per batch of motion; its replies may queue events
         const bool any = dispatchAll(false);
         emitFrames();
-        if (!any && _deferred.empty())
+        if (!any && _deferred.empty() && !_drag.moved)
             break;
     }
     xcb_flush(_c);
@@ -544,9 +505,9 @@ bool X11App::beforeWait() {
         connectionLost();
         return false;
     }
-    // Something (a Frame handler, a deferred wait) left work queued: go round
-    // again without sleeping.
-    if (!_deferred.empty())
+    // Something (a Frame handler, a deferred wait, a drag motion) left work
+    // queued: go round again without sleeping.
+    if (!_deferred.empty() || _drag.moved)
         return false;
     const auto now = core::Clock::now();
     for (auto &[id, w] : _windows)
@@ -618,9 +579,10 @@ bool X11App::waitForEvent(const std::function<bool(xcb_generic_event_t *)> &matc
 void X11App::emitFrames() {
     const auto                now     = core::Clock::now();
     core::Clock::time_point   soonest = core::Clock::time_point::max();
-    // Snapshot ids: a Frame handler may create or destroy windows.
-    std::vector<xcb_window_t> ids;
-    ids.reserve(_windows.size());
+    // Snapshot ids: a Frame handler may create or destroy windows. The
+    // vector is reused across calls (a nested call gets its own).
+    std::vector<xcb_window_t> ids     = std::move(_frameIds);
+    ids.clear();
     for (auto &[id, w] : _windows)
         ids.push_back(id);
     for (xcb_window_t id : ids) {
@@ -633,6 +595,7 @@ void X11App::emitFrames() {
         else if (notBefore != core::Clock::time_point{})
             soonest = std::min(soonest, notBefore);
     }
+    _frameIds = std::move(ids);
     if (soonest != core::Clock::time_point::max() && !_frameTimer) {
         const int ms = int(std::max<long long>(
             1, std::chrono::ceil<std::chrono::milliseconds>(soonest - now).count()
@@ -702,7 +665,7 @@ void X11App::handle(xcb_generic_event_t *ev) {
             else if (e->atom == _atoms[NetSupportingWmCheck] || e->atom == _atoms[NetSupported])
                 readWmSupport();
             else if (isWorkareaAtom(e->atom))
-                scheduleMonitorRefresh();
+                scheduleMonitorRefresh(false);
             return;
         }
         if (onSelectionProperty(e))
@@ -817,7 +780,7 @@ void X11App::handle(xcb_generic_event_t *ev) {
     }
     if (_randrEvent && (type == _randrEvent + XCB_RANDR_SCREEN_CHANGE_NOTIFY ||
                         type == _randrEvent + XCB_RANDR_NOTIFY)) {
-        scheduleMonitorRefresh();
+        scheduleMonitorRefresh(true);
         return;
     }
     if (_shm && type == _shmEvent + XCB_SHM_COMPLETION) {
@@ -1167,25 +1130,6 @@ xcb_cursor_t X11App::cursor(Cursor c) {
         );
     }
     return _cursors[i] = cur;
-}
-
-// ── misc ────────────────────────────────────────────────────────────────────
-
-bool X11App::openUrl(std::string_view url) {
-    // Through a shell that backgrounds xdg-open and exits at once: we reap
-    // the shell right here and the opener is re-parented to init, so no
-    // zombie and no SIGCHLD handling in a library.
-    const std::string u(url);
-    const char       *argv[] = {
-        "/bin/sh", "-c", "xdg-open \"$1\" >/dev/null 2>&1 &", "sh", u.c_str(), nullptr
-    };
-    pid_t pid = 0;
-    if (posix_spawn(&pid, "/bin/sh", nullptr, nullptr, const_cast<char **>(argv), environ) != 0)
-        return false;
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-    }
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 #ifdef PLAT_TEST_HOOKS

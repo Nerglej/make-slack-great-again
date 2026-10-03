@@ -21,6 +21,8 @@ add_library(plat STATIC
     src/core/input.cpp
     src/core/image_util.cpp
     src/core/hash.cpp
+    src/core/strings.cpp
+    src/core/wire.cpp
 )
 target_include_directories(plat PUBLIC include PRIVATE src)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -55,6 +57,10 @@ target_link_libraries(plat PUBLIC Threads::Threads)
 if(UNIX)
     target_sources(plat PRIVATE src/posix/posix_loop.cpp)
 endif()
+if(UNIX AND NOT APPLE)
+    # Child processes and file helpers for the desktop tools, XDG dirs and audio.
+    target_sources(plat PRIVATE src/linux/process.cpp src/linux/files.cpp)
+endif()
 
 # Each backend owns its own fragment, which adds sources and dependencies to
 # the `plat` target and defines PLAT_HAS_<BACKEND> when it builds.
@@ -65,7 +71,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME MATCHES "BSD")
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(PLAT_XKB REQUIRED IMPORTED_TARGET xkbcommon)
         target_sources(plat PRIVATE src/linux/xkb_keyboard.cpp src/linux/instance.cpp src/linux/xdg_dirs.cpp
-            src/linux/cursor_names.cpp)
+            src/linux/cursor_names.cpp src/linux/posix_app.cpp)
         # D-Bus desktop services (tray, notifications, badge, portal) shared by
         # both Linux backends; src/linux/services.cmake replaces the stub.
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/linux/services.cmake")

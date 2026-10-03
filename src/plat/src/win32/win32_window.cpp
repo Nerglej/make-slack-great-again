@@ -92,23 +92,13 @@ DWORD styleFor(bool resizable) {
 
 void setAppUserModelId(HWND h, const std::string &id) {
     // Per-window, so a plat window inside a host process groups on the
-    // taskbar under its own id. PKEY_AppUserModel_ID, spelled out to avoid
-    // linking propsys for one constant.
-    static const PROPERTYKEY kAppId = {
-        {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5
-    };
+    // taskbar under its own id.
     IPropertyStore *store = nullptr;
     if (FAILED(
             SHGetPropertyStoreForWindow(h, IID_IPropertyStore, reinterpret_cast<void **>(&store))
         ))
         return;
-    std::wstring w = toWide(id);
-    PROPVARIANT  pv;
-    PropVariantInit(&pv);
-    pv.vt      = VT_LPWSTR;
-    pv.pwszVal = w.data(); // borrowed: SetValue copies, so no PropVariantClear
-    store->SetValue(kAppId, pv);
-    store->Commit();
+    setAppUserModelIdProperty(store, toWide(id));
     store->Release();
 }
 
@@ -533,10 +523,22 @@ bool Win32Window::deliverFrame() {
 void Win32Window::ensureDib(int w, int h) {
     if (_dib && w == _dibW && h == _dibH)
         return;
+    // Live resize asks for a new size every few pixels: the DIB grows in
+    // steps and is reused while the window fits, so a drag reallocates a
+    // handful of times instead of on every step. A much smaller window
+    // (a quarter of the area) gives the memory back.
+    const bool fits =
+        _dib && w <= _capW && h <= _capH && size_t(_capW) * _capH <= size_t(w) * h * 4;
+    if (fits) {
+        _dibW = w;
+        _dibH = h;
+        return;
+    }
+    const int  cw = (w + 127) & ~127, ch = (h + 127) & ~127;
     BITMAPINFO bi{};
     bi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth       = w;
-    bi.bmiHeader.biHeight      = -h; // top-down, so row 0 is the top like Canvas
+    bi.bmiHeader.biWidth       = cw;
+    bi.bmiHeader.biHeight      = -ch; // top-down, so row 0 is the top like Canvas
     bi.bmiHeader.biPlanes      = 1;
     bi.bmiHeader.biBitCount    = 32; // BGRA in memory == 0xAARRGGBB little-endian
     bi.bmiHeader.biCompression = BI_RGB;
@@ -549,11 +551,14 @@ void Win32Window::ensureDib(int w, int h) {
         _oldBitmap = HBITMAP(prev); // the DC's stock bitmap, restored before DeleteDC
     if (_dib)
         DeleteObject(_dib);
+    // No clearing: a new DIB section comes zero-filled from the OS, and a
+    // size change is a new canvas the app repaints in full.
     _dib  = dib;
     _bits = static_cast<uint32_t *>(bits);
+    _capW = cw;
+    _capH = ch;
     _dibW = w;
     _dibH = h;
-    std::memset(_bits, 0, size_t(w) * size_t(h) * 4);
 }
 
 Canvas Win32Window::beginPaint() {
@@ -561,7 +566,7 @@ Canvas Win32Window::beginPaint() {
     if (!_bits)
         return {};
     GdiFlush(); // GDI may still be reading the DIB from a batched BitBlt
-    return {_bits, _dibW, _dibH, _dibW, scale()};
+    return {_bits, _dibW, _dibH, _capW, scale()};
 }
 
 void Win32Window::blit(HDC dc, RECT r) {
@@ -1078,14 +1083,10 @@ void Win32Window::setCursor(Cursor c) {
 // ── the window procedure ────────────────────────────────────────────────────
 
 LRESULT CALLBACK Win32Window::wndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_NCCREATE) {
-        // WM_GETMINMAXINFO precedes this; it gets the defaults.
-        auto *self =
-            static_cast<Win32Window *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
+    // WM_GETMINMAXINFO precedes WM_NCCREATE; it gets the defaults.
+    auto *self = static_cast<Win32Window *>(windowUserData(h, msg, lp));
+    if (self && msg == WM_NCCREATE)
         self->_hwnd = h;
-        SetWindowLongPtrW(h, GWLP_USERDATA, LONG_PTR(self));
-    }
-    auto *self = reinterpret_cast<Win32Window *>(GetWindowLongPtrW(h, GWLP_USERDATA));
     return self ? self->handle(msg, wp, lp) : DefWindowProcW(h, msg, wp, lp);
 }
 
@@ -1311,10 +1312,7 @@ LRESULT Win32Window::handle(UINT msg, WPARAM wp, LPARAM lp) {
             // send fractions of a notch; the contract wants logical pixels
             // then. A notch is the user's lines-per-notch × 100/3 px —
             // Chromium's line height — i.e. 100 px at the default 3.
-            UINT lines = 3;
-            SystemParametersInfoW(
-                horiz ? SPI_GETWHEELSCROLLCHARS : SPI_GETWHEELSCROLLLINES, 0, &lines, 0
-            );
+            const UINT lines = _app->wheelScrollAmount(horiz);
             v *= lines == WHEEL_PAGESCROLL ? double(horiz ? size().w : size().h)
                                            : lines * (100.0 / 3);
         }
@@ -1409,13 +1407,19 @@ LRESULT Win32Window::handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         break;
 
-    // Theme and settings: the App compares the new state with the old one,
-    // so the copy of the same broadcast every other window (and the system
-    // window) receives emits nothing twice. A handler may destroy us.
+    // Theme and settings: the same broadcast reaches every top-level window,
+    // the system window included, which re-reads them once for all. Only
+    // without it (it failed to start) does each window ask; the App compares
+    // the new state with the old, so a copy emits nothing twice. A handler
+    // may destroy us.
     case WM_SETTINGCHANGE:
     case WM_DWMCOLORIZATIONCOLORCHANGED: // accent colour
     case WM_THEMECHANGED:
     case WM_SYSCOLORCHANGE: {
+        if (_app->systemWindow())
+            break;
+        if (msg == WM_SETTINGCHANGE)
+            _app->settingsChanged();
         std::weak_ptr<char> alive = _alive;
         _app->themeMaybeChanged();
         if (alive.expired())

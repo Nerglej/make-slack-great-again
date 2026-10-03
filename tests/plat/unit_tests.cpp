@@ -4,7 +4,9 @@
 #include "core/image_util.h"
 #include "core/input.h"
 #include "core/pacing.h"
+#include "core/strings.h"
 #include "core/transfer.h"
+#include "core/wire.h"
 #include "plat/plat.h"
 #include "plat/testing.h"
 #include "test_util.h"
@@ -469,6 +471,116 @@ void testFrameInterval() {
     CHECK(core::frameIntervalMs(5000) == 50);
 }
 
+void testPostWakesOncePerBatch() {
+    // Only the post into an empty queue wakes; runPosted() takes the batch,
+    // and the next post wakes again.
+    core::LoopCore core;
+    int            wakes = 0, ran = 0;
+    core.wake = [&] { ++wakes; };
+    core.post([&] { ++ran; });
+    core.post([&] { ++ran; });
+    core.post([&] { ++ran; });
+    CHECK(wakes == 1);
+    core.runPosted();
+    CHECK(ran == 3);
+    // A closure that posts from inside the batch wakes for the next one.
+    core.post([&] { core.post([&] { ++ran; }); });
+    CHECK(wakes == 2);
+    core.runPosted();
+    CHECK(wakes == 3);
+    CHECK(core.hasPosted());
+    core.runPosted();
+    CHECK(ran == 4);
+    core.wake = nullptr;
+}
+
+void testStrings() {
+    CHECK(core::asciiLower("MsGa-Ö+1") == "msga-Ö+1");
+    CHECK(core::asciiLower('Z') == 'z' && core::asciiLower('@') == '@');
+    CHECK(core::trim("  a b\t") == "a b");
+    CHECK(core::trim(" \t ").empty());
+    CHECK(core::trim("\r x\r", " \r") == "x");
+    CHECK(core::escapeMarkup("a<b>&\"c\"") == "a&lt;b&gt;&amp;\"c\"");
+    CHECK(core::escapeMarkup("\"", true) == "&quot;");
+
+    CHECK(core::validScheme("msga") && core::validScheme("x-plat+1.2") && core::validScheme("c"));
+    CHECK(!core::validScheme("") && !core::validScheme("1abc") && !core::validScheme("a b"));
+    CHECK(!core::validScheme("ü"));
+
+    std::vector<std::string> schemes;
+    core::rememberScheme(schemes, "MSGA");
+    core::rememberScheme(schemes, "msga");
+    CHECK((schemes == std::vector<std::string>{"msga"}));
+    CHECK(core::isSchemeUrl("MSGA://x", schemes) && core::isSchemeUrl("msga:", schemes));
+    CHECK(!core::isSchemeUrl(":msga", schemes) && !core::isSchemeUrl("msga", schemes));
+    CHECK(!core::isSchemeUrl("other://msga:", schemes));
+    const std::vector<std::string> args = {"--flag", "Msga://open?x", "other://y", "msga:z"};
+    CHECK((core::schemeUrls(args, schemes) == std::vector<std::string>{"Msga://open?x", "msga:z"}));
+}
+
+void testWire() {
+    std::string out;
+    core::putU32(out, 0x04030201u);
+    CHECK(out == std::string("\x01\x02\x03\x04", 4));
+    CHECK(core::getU32(out.data()) == 0x04030201u);
+    out.clear();
+    core::putString(out, "ab");
+    core::putString(out, "");
+    CHECK(out == std::string("\x02\0\0\0ab\0\0\0\0", 10));
+    std::string_view in = out;
+    std::string      s  = "x";
+    CHECK(core::takeString(in, &s) && s == "ab");
+    CHECK(core::takeString(in, &s) && s.empty() && in.empty());
+    CHECK(!core::takeString(in, &s));
+    // Truncated: the length promises more than is there; `in` is untouched.
+    std::string_view cut = std::string_view(out).substr(0, 5);
+    CHECK(!core::takeString(cut, &s) && cut.size() == 5);
+    const std::string huge("\xff\xff\xff\xff", 4);
+    std::string_view  h = huge;
+    CHECK(!core::takeString(h, &s));
+}
+
+void testPreferredAction() {
+    CHECK(core::preferredAction(ActCopy | ActMove | ActLink) == DropAction::Copy);
+    CHECK(core::preferredAction(ActMove | ActLink) == DropAction::Move);
+    CHECK(core::preferredAction(ActLink) == DropAction::Link);
+    CHECK(core::preferredAction(0) == DropAction::None);
+}
+
+void testPickImage() {
+    auto img = [](int size, double scale) {
+        Image i{size, size, std::vector<uint32_t>(size_t(size) * size, 0xff000000u)};
+        i.scale = scale;
+        return i;
+    };
+    const std::vector<Image> set = {img(16, 1), img(32, 2), img(32, 1), img(64, 1)};
+    // The smallest one big enough, else the largest.
+    CHECK(core::pickImage(set, 20, 0, false) == &set[1]);
+    CHECK(core::pickImage(set, 100, 0, false) == &set[3]);
+    // Equal sizes: the closer scale wins.
+    CHECK(core::pickImage(set, 32, 1.0, false) == &set[2]);
+    CHECK(core::pickImage(set, 32, 2.0, false) == &set[1]);
+    // onlyAtScale: images drawn for the scale first, whatever their size.
+    CHECK(core::pickImage(set, 64, 2.0, true) == &set[1]);
+    CHECK(core::pickImage(set, 64, 3.0, true) == &set[3]); // none at 3: all count
+    // Empty and malformed ones are skipped.
+    Image bad{8, 8, {}};
+    CHECK(core::pickImage({bad}, 8, 1, false) == nullptr);
+    CHECK(core::pickImage({}, 8, 1, false) == nullptr);
+}
+
+void testMonitorEquality() {
+    Monitor a{.id = 1, .name = "DP-1", .bounds = {0, 0, 10, 10}, .workArea = {0, 0, 10, 9}};
+    Monitor b = a;
+    CHECK(a == b);
+    b.workArea.h = 10;
+    CHECK(!(a == b));
+    b      = a;
+    b.name = "DP-2";
+    CHECK(!(a == b));
+    CHECK((Rect{1, 2, 3, 4} == Rect{1, 2, 3, 4}) && !(Rect{1, 2, 3, 4} == Rect{1, 2, 3, 5}));
+}
+
 } // namespace
 
 int main() {
@@ -494,5 +606,11 @@ int main() {
     runCase("input: keys from ASCII", testKeyFromAscii);
     runCase("image: unpremultiply and scale", testImageUtil);
     runCase("pacing: frame interval from the refresh rate", testFrameInterval);
+    runCase("loop: a post wakes only an empty queue", testPostWakesOncePerBatch);
+    runCase("strings: case, trim, markup, URL schemes", testStrings);
+    runCase("wire: u32 and length-prefixed strings", testWire);
+    runCase("transfer: preferred drop action", testPreferredAction);
+    runCase("image: picking the size for a slot", testPickImage);
+    runCase("monitors compare field by field", testMonitorEquality);
     return plat_test::summary();
 }

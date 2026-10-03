@@ -31,9 +31,14 @@ struct Com {
     explicit operator bool() const { return p != nullptr; }
 };
 
-IWICImagingFactory *wic() {
-    // Per call rather than cached: COM objects must not outlive the
-    // apartment, and the App may be torn down and re-created (tests).
+// The factory, created once and kept for the thread that created it (the
+// loop thread): COM objects must not outlive their apartment, so the App
+// drops it (releaseWic) before it uninitialises COM. Another thread gets a
+// fresh one per call.
+IWICImagingFactory *g_wic       = nullptr;
+DWORD               g_wicThread = 0;
+
+IWICImagingFactory *createWic() {
     IWICImagingFactory *f = nullptr;
     CoCreateInstance(
         CLSID_WICImagingFactory,
@@ -42,6 +47,22 @@ IWICImagingFactory *wic() {
         IID_IWICImagingFactory,
         reinterpret_cast<void **>(&f)
     );
+    return f;
+}
+
+// A reference the caller releases.
+IWICImagingFactory *wic() {
+    const DWORD me = GetCurrentThreadId();
+    if (g_wic && g_wicThread == me) {
+        g_wic->AddRef();
+        return g_wic;
+    }
+    IWICImagingFactory *f = createWic();
+    if (f && !g_wic) {
+        g_wic       = f;
+        g_wicThread = me;
+        f->AddRef();
+    }
     return f;
 }
 
@@ -87,6 +108,13 @@ std::string encodePngBgra(IWICImagingFactory *f, int w, int h, const uint32_t *p
 
 } // namespace
 
+void releaseWic() {
+    if (g_wic && g_wicThread == GetCurrentThreadId()) {
+        g_wic->Release();
+        g_wic = nullptr;
+    }
+}
+
 Image fitImage(const std::vector<Image> &sizes, int size) {
     return fitImage(sizes, size, 0);
 }
@@ -96,18 +124,7 @@ Image fitImage(const std::vector<Image> &sizes, int size, double scale) {
     // system DPI), so pixel size decides. Image::scale only breaks ties: two
     // 32 px icons, one drawn as 16 pt @2x and one as 32 pt @1x, are equally
     // sharp, but the one designed for this scale has the right line weights.
-    const Image *best = nullptr;
-    for (const auto &i : sizes) {
-        if (i.empty() || i.pixels.size() < size_t(i.width) * i.height)
-            continue;
-        const int  m   = std::max(i.width, i.height),
-                   bm  = best ? std::max(best->width, best->height) : 0;
-        const bool big = m >= size, bestBig = best && bm >= size;
-        const bool closerScale = best && m == bm && scale > 0 &&
-                                 std::abs(i.scale - scale) < std::abs(best->scale - scale);
-        if (!best || (big && (!bestBig || m < bm)) || (!big && !bestBig && m > bm) || closerScale)
-            best = &i;
-    }
+    const Image *best = core::pickImage(sizes, size, scale, false);
     if (!best)
         return {};
     if (best->width == size && best->height == size)
@@ -185,18 +202,19 @@ std::string encodePng(const Image &img) {
 }
 
 std::string bmpFileToPng(std::string_view bmp) {
-    if (bmp.size() < sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER))
+    if (bmp.size() < sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) || bmp.size() > MAXDWORD)
         return {};
     Com<IWICImagingFactory> f;
     f.p = wic();
     if (!f)
         return {};
-    Com<IStream> in;
-    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, in.out())) ||
-        FAILED(in->Write(bmp.data(), ULONG(bmp.size()), nullptr)))
+    // Read in place: a stream over the caller's bytes, no copy.
+    Com<IWICStream> in;
+    if (FAILED(f->CreateStream(in.out())) ||
+        FAILED(in->InitializeFromMemory(
+            reinterpret_cast<BYTE *>(const_cast<char *>(bmp.data())), DWORD(bmp.size())
+        )))
         return {};
-    LARGE_INTEGER zero{};
-    in->Seek(zero, STREAM_SEEK_SET, nullptr);
     // WIC's BMP decoder knows every DIB flavour (palettes, bitfields, V5
     // alpha, bottom-up); converting to BGRA gives us plain rows to encode.
     Com<IWICBitmapDecoder>     dec;

@@ -10,11 +10,12 @@
 
 namespace plat::cocoa {
 
-namespace {
-
 NSString *nsString(std::string_view s) {
-    return [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding];
+    return [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding]
+               ?: @"";
 }
+
+namespace {
 
 // File-reference URLs (file:///.file/id=…) are not portable paths.
 NSURL *portable(NSURL *u) {
@@ -22,10 +23,6 @@ NSURL *portable(NSURL *u) {
 }
 
 } // namespace
-
-bool isTextMime(std::string_view m) {
-    return core::isTextMime(m);
-}
 
 NSPasteboardType pasteboardTypeForMime(std::string_view mime) {
     if (isTextMime(mime))
@@ -55,7 +52,7 @@ NSPasteboardType pasteboardTypeForMime(std::string_view mime) {
 
 std::string mimeForPasteboardType(NSPasteboardType type) {
     if ([type isEqualToString:NSPasteboardTypeString])
-        return "text/plain;charset=utf-8";
+        return core::kTextMime;
     if ([type isEqualToString:NSPasteboardTypeHTML])
         return "text/html";
     if ([type isEqualToString:NSPasteboardTypePNG])
@@ -73,7 +70,7 @@ std::string mimeForPasteboardType(NSPasteboardType type) {
         // UTF-16 and other plain-text flavours are all "the text" to plat;
         // the pasteboard converts between them on read.
         if ([t conformsToType:UTTypePlainText])
-            return "text/plain;charset=utf-8";
+            return core::kTextMime;
         if (NSString *m = t.preferredMIMEType)
             return m.UTF8String;
         if (t.dynamic)
@@ -101,13 +98,15 @@ NSArray<NSPasteboardItem *> *pasteboardItems(const std::vector<DataItem> &items)
         if (!type)
             continue;
         if (type == NSPasteboardTypeString) {
-            [first setString:nsString(i.data) ?: @"" forType:type];
+            [first setString:nsString(i.data) forType:type];
         } else {
             [first setData:[NSData dataWithBytes:i.data.data() length:i.data.size()] forType:type];
         }
     }
     for (size_t n = 0; n < uris.size(); ++n) {
-        NSURL *u = [NSURL URLWithString:nsString(uris[n])];
+        // parseUriList never yields an empty line: "" here is not UTF-8.
+        NSString *s = nsString(uris[n]);
+        NSURL    *u = s.length ? [NSURL URLWithString:s] : nil;
         if (!u)
             continue;
         NSPasteboardItem *item = n == 0 ? first : [NSPasteboardItem new];
@@ -270,13 +269,6 @@ NSDragOperation operationFromAction(DropAction a) {
     default:
         return NSDragOperationNone;
     }
-}
-
-DropAction preferredAction(uint32_t actions) {
-    return (actions & ActCopy)   ? DropAction::Copy
-           : (actions & ActMove) ? DropAction::Move
-           : (actions & ActLink) ? DropAction::Link
-                                 : DropAction::None;
 }
 
 } // namespace plat::cocoa

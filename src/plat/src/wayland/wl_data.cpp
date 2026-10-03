@@ -14,15 +14,10 @@
 
 namespace plat::wl {
 
-const char *const kTextMimes[5] = {
-    "text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT", "STRING"
-};
-
-bool isTextMime(std::string_view m) {
-    return core::isTextMime(m);
-}
-
 namespace {
+
+// Text MIME types other toolkits offer or ask for; UTF-8 first.
+const char *const kTextMimes[] = {core::kTextMime, "UTF8_STRING", "text/plain", "TEXT", "STRING"};
 
 constexpr const char *kText        = core::kTextMime;
 constexpr const char *kUriList     = "text/uri-list";
@@ -116,13 +111,6 @@ DropAction fromWlAction(uint32_t wl) {
 
 uint32_t toWlAction(DropAction a) {
     return a == DropAction::Copy ? kWlCopy : a == DropAction::Move ? kWlMove : 0;
-}
-
-DropAction preferred(uint32_t acts) {
-    return (acts & ActCopy)   ? DropAction::Copy
-           : (acts & ActMove) ? DropAction::Move
-           : (acts & ActLink) ? DropAction::Link
-                              : DropAction::None;
 }
 
 WlApp *appOf(void *d) {
@@ -317,7 +305,7 @@ void WlApp::requestClipboardMimes(std::function<void(std::vector<std::string>)> 
         if (auto it = _primaryOffers.find(_primaryOffer); it != _primaryOffers.end())
             mimes = normalised(it->second.mimes);
     }
-    post([cb = std::move(cb), mimes = std::move(mimes)] { cb(mimes); });
+    post([cb = std::move(cb), mimes = std::move(mimes)]() mutable { cb(std::move(mimes)); });
 }
 
 void WlApp::requestClipboard(
@@ -330,7 +318,7 @@ void WlApp::requestClipboard(
         std::optional<std::string> v;
         if (const DataItem *i = itemFor(*own, mime))
             v = i->data;
-        post([cb = std::move(cb), v = std::move(v)] { cb(v); });
+        post([cb = std::move(cb), v = std::move(v)]() mutable { cb(std::move(v)); });
         return;
     }
     const std::vector<std::string> *offered = nullptr;
@@ -508,7 +496,7 @@ Event WlApp::dropEvent(EventType t, const Offer &of) const {
     Event e{.type = t, .pos = _dragPos, .mods = _xkb.mods()};
     // Before v3 there are no actions: every drop is a copy.
     e.allowedActions = dataManagerVersion >= 3 ? fromWlActions(of.sourceActions) : ActCopy;
-    e.dropAction     = preferred(e.allowedActions);
+    e.dropAction     = core::preferredAction(e.allowedActions);
     for (auto &m : normalised(of.mimes))
         e.items.push_back({std::move(m), {}});
     return e;

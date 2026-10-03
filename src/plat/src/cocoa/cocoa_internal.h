@@ -10,6 +10,7 @@
 #include "core/backends.h"
 #include "core/loop_core.h"
 #include "core/input.h"
+#include "core/strings.h"
 #include "core/transfer.h"
 #include "plat/testing.h"
 
@@ -47,6 +48,9 @@ constexpr CFTimeInterval kFrameFallback = 0.1;
 
 namespace plat::cocoa {
 
+// UTF-8 → NSString; @"" (never nil) for bytes that are not UTF-8 (cocoa_data.mm).
+NSString *nsString(std::string_view s);
+
 // ── Keyboard (cocoa_keys.mm) ────────────────────────────────────────────────
 // The logical Key for a macOS virtual key code (kVK_*): letters and
 // punctuation resolve through the active layout (Dvorak, AZERTY, …), falling
@@ -67,11 +71,11 @@ void      invalidateKeyboardLayout();
 // UTType for any MIME type macOS knows, else a dynamic UTI that encodes the
 // MIME string (dyn.…), which other apps can map back to it. Never
 // text/uri-list: URIs are one pasteboard item each (pasteboardItems()).
-NSPasteboardType             pasteboardTypeForMime(std::string_view mime);
+NSPasteboardType pasteboardTypeForMime(std::string_view mime);
 // Reverse: the plat MIME name for a pasteboard type, "" when it has none
 // (legacy NeXT/Apple types, private UTIs without a MIME mapping).
-std::string                  mimeForPasteboardType(NSPasteboardType type);
-bool                         isTextMime(std::string_view mime);
+std::string      mimeForPasteboardType(NSPasteboardType type);
+using core::isTextMime;
 // Pasteboard items for a multi-type selection: the first carries every
 // representation plus the first URI, each further URI gets its own item.
 NSArray<NSPasteboardItem *> *pasteboardItems(const std::vector<DataItem> &items);
@@ -99,7 +103,6 @@ uint32_t        dropActionsFromOperation(NSDragOperation op); // mask → DropAc
 NSDragOperation operationFromActions(uint32_t actions);
 DropAction      dropActionFromOperation(NSDragOperation op); // one result → action
 NSDragOperation operationFromAction(DropAction a);
-DropAction      preferredAction(uint32_t actions); // Copy, else Move, else Link
 
 // ── Window (cocoa_window.mm) ────────────────────────────────────────────────
 

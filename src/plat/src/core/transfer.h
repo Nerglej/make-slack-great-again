@@ -4,6 +4,8 @@
 // Win32 drive-letter and UNC forms, the X atoms, the pasteboard types).
 #pragma once
 
+#include "plat/plat.h"
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +32,10 @@ std::vector<std::string> parseUriList(std::string_view list);
 std::string percentEncode(std::string_view s, std::string_view keep = {});
 // Decodes %XX escapes (either case); a malformed escape stays literal.
 std::string percentDecode(std::string_view s);
+
+// The action a drop gets when the user asked for none in particular:
+// Copy, else Move, else Link, out of the DropActions the source allows.
+DropAction preferredAction(uint32_t allowed);
 
 // file:// URI for an absolute POSIX path, and back. pathFromFileUri accepts
 // file:///p and file://localhost/p; "" for another host, another scheme, or

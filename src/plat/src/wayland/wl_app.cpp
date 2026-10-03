@@ -12,12 +12,8 @@
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>
-#include <spawn.h>
 #include <sys/mman.h>
-#include <sys/wait.h>
 #include <unistd.h>
-
-extern char **environ;
 
 namespace plat::wl {
 
@@ -458,9 +454,13 @@ bool WlApp::frameDue(WlWindow *w, std::chrono::steady_clock::time_point now, int
 }
 
 bool WlApp::emitReadyFrames() {
-    int        wait = -1;
-    const auto now  = std::chrono::steady_clock::now();
-    for (auto *w : std::vector<WlWindow *>(_windows)) {
+    int                     wait    = -1;
+    const auto              now     = std::chrono::steady_clock::now();
+    // A snapshot (a Frame handler may create or destroy windows), in a vector
+    // reused across calls (a nested call gets its own).
+    std::vector<WlWindow *> windows = std::move(_frameWindows);
+    windows.assign(_windows.begin(), _windows.end());
+    for (auto *w : windows) {
         if (!alive(w) || !w->frameReady())
             continue;
         int ms = 0;
@@ -471,6 +471,7 @@ bool WlApp::emitReadyFrames() {
         w->lastFrame = now;
         w->emitFrame();
     }
+    _frameWindows = std::move(windows);
     if (wait >= 0 && !_frameTimer) {
         // A timer is how the loop learns when to look again.
         _frameTimer = _loop.core.addTimer(std::max(1, wait), false, [this] { _frameTimer = 0; });
@@ -543,24 +544,6 @@ void WlApp::run() {
     if (_dead)
         return;
     _loop.run();
-}
-
-bool WlApp::openUrl(std::string_view url) {
-    // Through sh so xdg-open is backgrounded and reparented to init: we reap
-    // only the short-lived shell and never leave zombies or block on a
-    // browser that xdg-open runs in the foreground. The URL is $1, never
-    // interpolated into the script.
-    const std::string u(url);
-    const char       *argv[] = {
-        "/bin/sh", "-c", "xdg-open \"$1\" >/dev/null 2>&1 &", "sh", u.c_str(), nullptr
-    };
-    pid_t pid;
-    if (posix_spawn(&pid, "/bin/sh", nullptr, nullptr, const_cast<char **>(argv), environ) != 0)
-        return false;
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-    }
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 } // namespace plat::wl

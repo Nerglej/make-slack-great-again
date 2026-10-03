@@ -81,20 +81,6 @@ const zxdg_output_v1_listener kXdgOutputListener = {
     .description = [](void *, zxdg_output_v1 *, const char *) {},
 };
 
-bool sameMonitors(const std::vector<Monitor> &a, const std::vector<Monitor> &b) {
-    auto rectEq = [](const Rect &x, const Rect &y) {
-        return x.x == y.x && x.y == y.y && x.w == y.w && x.h == y.h;
-    };
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (a[i].id != b[i].id || a[i].name != b[i].name || !rectEq(a[i].bounds, b[i].bounds) ||
-            !rectEq(a[i].workArea, b[i].workArea) || a[i].scale != b[i].scale ||
-            a[i].refreshMilliHz != b[i].refreshMilliHz || a[i].primary != b[i].primary)
-            return false;
-    return true;
-}
-
 } // namespace
 
 void WlApp::bindOutput(uint32_t name, uint32_t version) {
@@ -158,7 +144,7 @@ void WlApp::scheduleMonitorsChanged() {
     post([this] {
         _monitorsPending = false;
         auto now         = monitors();
-        if (sameMonitors(now, _lastMonitors))
+        if (now == _lastMonitors)
             return;
         _lastMonitors = std::move(now);
         emit({.type = EventType::MonitorsChanged});

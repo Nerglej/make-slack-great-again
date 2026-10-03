@@ -97,6 +97,15 @@ long headerValue(std::string_view header, std::string_view key) {
     return any && !neg ? v : -1;
 }
 
+// Text in the ANSI code page (CF_TEXT, a non-wide CF_HDROP) → UTF-16.
+std::wstring acpToWide(std::string_view a) {
+    const int    n = MultiByteToWideChar(CP_ACP, 0, a.data(), int(a.size()), nullptr, 0);
+    std::wstring w(size_t(n > 0 ? n : 0), L'\0');
+    if (n > 0)
+        MultiByteToWideChar(CP_ACP, 0, a.data(), int(a.size()), w.data(), n);
+    return w;
+}
+
 bool openClipboard(HWND owner) {
     // Another process may hold the clipboard for a moment (clipboard
     // managers, RDP); a few short retries is what every toolkit does.
@@ -108,8 +117,6 @@ bool openClipboard(HWND owner) {
     return false;
 }
 
-} // namespace
-
 UINT cfHtml() {
     static const UINT f = registered(L"HTML Format");
     return f;
@@ -118,13 +125,107 @@ UINT cfPng() {
     static const UINT f = registered(L"PNG");
     return f;
 }
-UINT cfUriList() {
+UINT cfUriList() { // registered "text/uri-list": exact bytes between plat apps
     static const UINT f = registered(L"text/uri-list");
     return f;
 }
 
-bool isTextMime(std::string_view m) {
-    return core::isTextMime(m);
+// Where a packed DIB's (CF_DIB / CF_DIBV5) pixels start in the .bmp file
+// made of it: after BITMAPFILEHEADER, the header, the BI_BITFIELDS masks
+// (only outside the header for a plain BITMAPINFOHEADER) and the palette.
+// 0 when the header does not describe the data.
+size_t bmpPixelOffset(std::string_view dib) {
+    if (dib.size() < sizeof(BITMAPINFOHEADER))
+        return 0;
+    BITMAPINFOHEADER h;
+    std::memcpy(&h, dib.data(), sizeof(h));
+    if (h.biSize < sizeof(BITMAPINFOHEADER) || h.biSize > dib.size())
+        return 0;
+    size_t extra = 0;
+    if (h.biSize == sizeof(BITMAPINFOHEADER) && h.biCompression == BI_BITFIELDS)
+        extra = 12;
+    else if (h.biSize == sizeof(BITMAPINFOHEADER) && h.biCompression == 6) // BI_ALPHABITFIELDS
+        extra = 16;
+    size_t colors = h.biClrUsed;
+    if (!colors && h.biBitCount <= 8)
+        colors = size_t(1) << h.biBitCount;
+    const size_t off = sizeof(BITMAPFILEHEADER) + h.biSize + extra + colors * sizeof(RGBQUAD);
+    return off > sizeof(BITMAPFILEHEADER) + dib.size() ? 0 : off;
+}
+
+// The DIB as a .bmp file (BITMAPFILEHEADER in front); empty when invalid.
+std::string dibToBmpFile(std::string dib) {
+    const size_t off = bmpPixelOffset(dib);
+    if (!off)
+        return {};
+    BITMAPFILEHEADER fh{};
+    fh.bfType    = 0x4d42; // "BM"
+    fh.bfSize    = DWORD(sizeof(fh) + dib.size());
+    fh.bfOffBits = DWORD(off);
+    dib.insert(0, reinterpret_cast<const char *>(&fh), sizeof(fh));
+    return dib;
+}
+
+// The standard MIME name of a native format; nullopt for ones with no
+// meaningful MIME (CF_LOCALE, CF_OEMTEXT duplicates, private GDI formats).
+std::optional<std::string> mimeForFormat(UINT cf) {
+    switch (cf) {
+    case CF_UNICODETEXT:
+    case CF_TEXT:
+    case CF_OEMTEXT:
+        return core::kTextMime;
+    case CF_DIB:
+    case CF_DIBV5:
+    case CF_BITMAP:
+        return "image/bmp";
+    case CF_HDROP:
+        return "text/uri-list";
+    default:
+        break;
+    }
+    if (cf < 0xC000)
+        return std::nullopt; // other predefined formats: GDI handles, locale, …
+    if (cf == cfHtml())
+        return "text/html";
+    if (cf == cfPng())
+        return "image/png";
+    if (cf == cfUriList() || cf == cfUrlW() || cf == cfUrlA())
+        return "text/uri-list";
+    wchar_t   name[256];
+    const int n = GetClipboardFormatNameW(cf, name, 256);
+    if (n <= 0)
+        return std::nullopt;
+    return toUtf8(std::wstring_view(name, size_t(n)));
+}
+
+} // namespace
+
+// ── HGLOBAL ─────────────────────────────────────────────────────────────────
+
+HGLOBAL globalFromBytes(const void *p, size_t n) {
+    HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, std::max<size_t>(n, 1));
+    if (!g)
+        return nullptr;
+    if (void *d = GlobalLock(g)) {
+        if (n)
+            std::memcpy(d, p, n);
+        GlobalUnlock(g);
+        return g;
+    }
+    GlobalFree(g);
+    return nullptr;
+}
+
+std::optional<std::string> bytesFromGlobal(HGLOBAL g) {
+    // GlobalSize may round up; the terminator bounds text formats, and
+    // binary types get what every other reader sees.
+    const size_t size = GlobalSize(g);
+    const void  *p    = GlobalLock(g);
+    if (!p)
+        return std::nullopt;
+    std::string bytes(static_cast<const char *>(p), size);
+    GlobalUnlock(g);
+    return bytes;
 }
 
 // ── CF_HTML ─────────────────────────────────────────────────────────────────
@@ -194,10 +295,7 @@ std::string hdropToUriList(const void *p, size_t size) {
         const size_t n = size - df->pFiles;
         for (size_t i = 0; i < n && a[i];) {
             const size_t len = strnlen(a + i, n - i);
-            const int    wn  = MultiByteToWideChar(CP_ACP, 0, a + i, int(len), nullptr, 0);
-            std::wstring w(size_t(wn), L'\0');
-            MultiByteToWideChar(CP_ACP, 0, a + i, int(len), w.data(), wn);
-            out += fileUri(w) + "\r\n";
+            out += fileUri(acpToWide(std::string_view(a + i, len))) + "\r\n";
             i += len + 1;
         }
     }
@@ -221,37 +319,6 @@ std::string hdropFromUriList(std::string_view list) {
     df.fWide  = TRUE;
     std::string out(reinterpret_cast<const char *>(&df), sizeof(df));
     out.append(reinterpret_cast<const char *>(files.data()), files.size() * sizeof(wchar_t));
-    return out;
-}
-
-// ── DIB ─────────────────────────────────────────────────────────────────────
-
-std::string dibToBmpFile(std::string_view dib) {
-    if (dib.size() < sizeof(BITMAPINFOHEADER))
-        return {};
-    BITMAPINFOHEADER h;
-    std::memcpy(&h, dib.data(), sizeof(h));
-    if (h.biSize < sizeof(BITMAPINFOHEADER) || h.biSize > dib.size())
-        return {};
-    // The pixels start after the header, the BI_BITFIELDS masks (only
-    // outside the header for a plain BITMAPINFOHEADER) and the palette.
-    size_t extra = 0;
-    if (h.biSize == sizeof(BITMAPINFOHEADER) && h.biCompression == BI_BITFIELDS)
-        extra = 12;
-    else if (h.biSize == sizeof(BITMAPINFOHEADER) && h.biCompression == 6) // BI_ALPHABITFIELDS
-        extra = 16;
-    size_t colors = h.biClrUsed;
-    if (!colors && h.biBitCount <= 8)
-        colors = size_t(1) << h.biBitCount;
-    const size_t off = sizeof(BITMAPFILEHEADER) + h.biSize + extra + colors * sizeof(RGBQUAD);
-    if (off > sizeof(BITMAPFILEHEADER) + dib.size())
-        return {};
-    BITMAPFILEHEADER fh{};
-    fh.bfType    = 0x4d42; // "BM"
-    fh.bfSize    = DWORD(sizeof(fh) + dib.size());
-    fh.bfOffBits = DWORD(off);
-    std::string out(reinterpret_cast<const char *>(&fh), sizeof(fh));
-    out.append(dib.data(), dib.size());
     return out;
 }
 
@@ -291,36 +358,6 @@ std::vector<NativeData> encodeForOs(const std::vector<DataItem> &items) {
     return out;
 }
 
-std::optional<std::string> mimeForFormat(UINT cf) {
-    switch (cf) {
-    case CF_UNICODETEXT:
-    case CF_TEXT:
-    case CF_OEMTEXT:
-        return "text/plain;charset=utf-8";
-    case CF_DIB:
-    case CF_DIBV5:
-    case CF_BITMAP:
-        return "image/bmp";
-    case CF_HDROP:
-        return "text/uri-list";
-    default:
-        break;
-    }
-    if (cf < 0xC000)
-        return std::nullopt; // other predefined formats: GDI handles, locale, …
-    if (cf == cfHtml())
-        return "text/html";
-    if (cf == cfPng())
-        return "image/png";
-    if (cf == cfUriList() || cf == cfUrlW() || cf == cfUrlA())
-        return "text/uri-list";
-    wchar_t   name[256];
-    const int n = GetClipboardFormatNameW(cf, name, 256);
-    if (n <= 0)
-        return std::nullopt;
-    return toUtf8(std::wstring_view(name, size_t(n)));
-}
-
 std::vector<std::string> mimesForFormats(const std::vector<UINT> &cfs) {
     std::vector<std::string> out;
     bool                     bmp = false;
@@ -339,55 +376,65 @@ std::vector<std::string> mimesForFormats(const std::vector<UINT> &cfs) {
     return out;
 }
 
+std::optional<OsData>
+readFromOs(std::string_view mime, const std::function<std::optional<std::string>(UINT)> &get) {
+    // Every format worth trying, best first; the first one present wins. A
+    // DIB that does not form a valid bitmap falls through to the next one,
+    // as before the split: checked here (cheap), converted in finishDecode.
+    auto first = [&](std::initializer_list<UINT> cfs) -> std::optional<OsData> {
+        for (UINT cf : cfs)
+            if (auto b = get(cf)) {
+                if ((cf == CF_DIB || cf == CF_DIBV5) && !bmpPixelOffset(*b))
+                    continue;
+                return OsData{cf, std::move(*b)};
+            }
+        return std::nullopt;
+    };
+    if (isTextMime(mime))
+        return first({CF_UNICODETEXT, CF_TEXT});
+    if (mime == "text/html")
+        return first({cfHtml(), registered(L"text/html")});
+    if (mime == "text/uri-list")
+        return first({cfUriList(), CF_HDROP, cfUrlW(), cfUrlA()});
+    if (mime == "image/png")
+        return first({cfPng(), registered(L"image/png"), CF_DIBV5, CF_DIB});
+    if (mime == "image/bmp")
+        return first({CF_DIB, CF_DIBV5});
+    return first({RegisterClipboardFormatW(toWide(mime).c_str())});
+}
+
+std::optional<std::string> finishDecode(std::string_view mime, OsData raw) {
+    const UINT cf = raw.cf;
+    if (cf == CF_UNICODETEXT || (cf == cfUrlW() && mime == "text/uri-list")) {
+        std::string s = toUtf8(wideUntilNul(raw.bytes));
+        return cf == CF_UNICODETEXT ? crlfToLf(s) : s + "\r\n";
+    }
+    if (cf == CF_TEXT)
+        return crlfToLf(toUtf8(acpToWide(untilNul(raw.bytes))));
+    if (cf == cfHtml() && mime == "text/html")
+        return cfHtmlDecode(raw.bytes);
+    if (cf == CF_HDROP)
+        return hdropToUriList(raw.bytes.data(), raw.bytes.size());
+    if (cf == cfUrlA() && mime == "text/uri-list")
+        return std::string(untilNul(raw.bytes)) + "\r\n";
+    if (cf == CF_DIB || cf == CF_DIBV5) {
+        std::string bmp = dibToBmpFile(std::move(raw.bytes));
+        if (mime != "image/png")
+            return bmp;
+        std::string png = bmpFileToPng(bmp);
+        if (png.empty())
+            return std::nullopt;
+        return png;
+    }
+    return std::move(raw.bytes);
+}
+
 std::optional<std::string>
 decodeFromOs(std::string_view mime, const std::function<std::optional<std::string>(UINT)> &get) {
-    if (isTextMime(mime)) {
-        if (auto b = get(CF_UNICODETEXT))
-            return crlfToLf(toUtf8(wideUntilNul(*b)));
-        if (auto b = get(CF_TEXT)) {
-            const std::string_view a = untilNul(*b);
-            const int    wn = MultiByteToWideChar(CP_ACP, 0, a.data(), int(a.size()), nullptr, 0);
-            std::wstring w(size_t(wn), L'\0');
-            MultiByteToWideChar(CP_ACP, 0, a.data(), int(a.size()), w.data(), wn);
-            return crlfToLf(toUtf8(w));
-        }
+    auto raw = readFromOs(mime, get);
+    if (!raw)
         return std::nullopt;
-    }
-    if (mime == "text/html") {
-        if (auto b = get(cfHtml()))
-            return cfHtmlDecode(*b);
-        return get(registered(L"text/html"));
-    }
-    if (mime == "text/uri-list") {
-        if (auto b = get(cfUriList()))
-            return b;
-        if (auto b = get(CF_HDROP))
-            return hdropToUriList(b->data(), b->size());
-        if (auto b = get(cfUrlW()))
-            return toUtf8(wideUntilNul(*b)) + "\r\n";
-        if (auto b = get(cfUrlA()))
-            return std::string(untilNul(*b)) + "\r\n";
-        return std::nullopt;
-    }
-    if (mime == "image/png") {
-        if (auto b = get(cfPng()))
-            return b;
-        if (auto b = get(registered(L"image/png")))
-            return b;
-        for (UINT cf : {UINT(CF_DIBV5), UINT(CF_DIB)})
-            if (auto b = get(cf))
-                if (std::string png = bmpFileToPng(dibToBmpFile(*b)); !png.empty())
-                    return png;
-        return std::nullopt;
-    }
-    if (mime == "image/bmp") {
-        for (UINT cf : {UINT(CF_DIB), UINT(CF_DIBV5)})
-            if (auto b = get(cf))
-                if (std::string bmp = dibToBmpFile(*b); !bmp.empty())
-                    return bmp;
-        return std::nullopt;
-    }
-    return get(RegisterClipboardFormatW(toWide(mime).c_str()));
+    return finishDecode(mime, std::move(*raw));
 }
 
 // ── clipboard ───────────────────────────────────────────────────────────────
@@ -400,16 +447,9 @@ void Win32App::setClipboard(std::vector<DataItem> items, Selection sel) {
         return;
     EmptyClipboard(); // a new selection replaces every offered type
     for (const auto &n : native) {
-        HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, std::max<size_t>(n.bytes.size(), 1));
-        if (!g)
-            continue;
-        if (void *p = GlobalLock(g)) {
-            std::memcpy(p, n.bytes.data(), n.bytes.size());
-            GlobalUnlock(g);
-            if (SetClipboardData(n.cf, g))
-                continue; // ownership passed to the OS
-        }
-        GlobalFree(g);
+        HGLOBAL g = globalFromBytes(n.bytes.data(), n.bytes.size());
+        if (g && !SetClipboardData(n.cf, g))
+            GlobalFree(g); // else ownership passed to the OS
     }
     CloseClipboard();
 }
@@ -419,27 +459,23 @@ void Win32App::requestClipboard(
 ) {
     // The data is local to the OS, so reading is synchronous; the callback is
     // still posted because the contract promises it never runs re-entrantly.
-    std::optional<std::string> result;
+    // Only the copy happens with the clipboard open: converting (a
+    // screenshot's DIB to PNG takes a while) waits until other apps can
+    // have it back.
+    std::optional<OsData> raw;
     if (sel == Selection::Clipboard && openClipboard(_msgHwnd)) {
-        result = decodeFromOs(mime, [](UINT cf) -> std::optional<std::string> {
+        raw = readFromOs(mime, [](UINT cf) -> std::optional<std::string> {
             if (!cf || !IsClipboardFormatAvailable(cf))
                 return std::nullopt;
             HANDLE h = GetClipboardData(cf);
-            if (!h)
-                return std::nullopt;
-            // GlobalSize may round up; the terminator bounds text formats,
-            // and binary types get what every other reader sees.
-            const size_t size = GlobalSize(h);
-            const void  *p    = GlobalLock(h);
-            if (!p)
-                return std::nullopt;
-            std::string bytes(static_cast<const char *>(p), size);
-            GlobalUnlock(h);
-            return bytes;
+            return h ? bytesFromGlobal(h) : std::nullopt;
         });
         CloseClipboard();
     }
-    post([cb = std::move(cb), result = std::move(result)] { cb(result); });
+    std::optional<std::string> result;
+    if (raw)
+        result = finishDecode(mime, std::move(*raw));
+    post([cb = std::move(cb), result = std::move(result)]() mutable { cb(std::move(result)); });
 }
 
 void Win32App::requestClipboardMimes(

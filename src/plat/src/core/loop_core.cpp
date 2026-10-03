@@ -69,8 +69,14 @@ void LoopCore::post(std::function<void()> fn) {
     std::lock_guard lock(_postMutex);
     if (_closed)
         return;
+    // Only the first post into an empty queue wakes: every backend runs
+    // runPosted() at some point after a wake, and runPosted() takes the whole
+    // queue under this lock, so a closure queued behind another one runs in
+    // the same batch, and the next post after that batch finds the queue
+    // empty and wakes again.
+    const bool first = _posted.empty();
     _posted.push_back(std::move(fn));
-    if (wake)
+    if (first && wake)
         wake();
 }
 

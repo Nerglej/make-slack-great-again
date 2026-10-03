@@ -7,12 +7,11 @@
 #include "core/backends.h"
 #include "core/input.h"
 #include "core/transfer.h"
-#include "linux/services.h"
+#include "linux/posix_app.h"
 #include "linux/xkb_keyboard.h"
 #ifdef PLAT_TEST_HOOKS
 #include "plat/testing.h"
 #endif
-#include "posix/posix_loop.h"
 
 #include <xcb/xcb.h>
 
@@ -218,7 +217,8 @@ private:
     int                           _userX = 0, _userY = 0; // …and that position, physical
 };
 
-class X11App final : public linux_services::ServicesApp {
+// The loop, openUrl and testHooks(): linux_services::PosixServicesApp.
+class X11App final : public linux_services::PosixServicesApp {
 public:
     X11App() = default;
     ~X11App() override;
@@ -228,19 +228,9 @@ public:
     const char             *backendName() const override { return "x11"; }
     std::unique_ptr<Window> createWindow(const WindowDesc &desc) override;
     void                    run() override;
-    void                    quit() override { _loop.quit(); }
     void                    pump(int timeoutMs) override;
-    void    post(std::function<void()> fn) override { _loop.core.post(std::move(fn)); }
-    TimerId addTimer(int ms, bool repeat, std::function<void()> fn) override {
-        return _loop.core.addTimer(ms, repeat, std::move(fn));
-    }
-    void     cancelTimer(TimerId id) override { _loop.core.cancelTimer(id); }
-    uint64_t watchFd(int fd, uint32_t ev, std::function<void(uint32_t)> fn) override {
-        return _loop.watch(fd, ev, std::move(fn));
-    }
-    void unwatchFd(uint64_t id) override { _loop.unwatch(id); }
-    void setClipboard(std::vector<DataItem> items, Selection sel) override;
-    void requestClipboard(
+    void                    setClipboard(std::vector<DataItem> items, Selection sel) override;
+    void                    requestClipboard(
         std::string_view mime, std::function<void(std::optional<std::string>)> cb, Selection sel
     ) override;
     void
@@ -250,14 +240,8 @@ public:
     void                 emitThemeChanged() override;
     std::string          parentHandle(Window *w) override;
     std::vector<Monitor> monitors() const override;
-    int                  doubleClickMs() const override { return 400; }
-    bool                 openUrl(std::string_view url) override;
 #ifdef PLAT_TEST_HOOKS
-    // Always this: the service hooks (tray, notifications) and readbacks work
-    // without XTEST; only the input injectors need it and say so.
-    TestHooks *testHooks() override { return this; }
-
-    // ── TestHooks ───────────────────────────────────────────────────────────
+    // ── TestHooks (the input injectors need XTEST and say so) ───────────────
     bool injectKey(Window &w, Key k, bool down) override;
     bool injectPointerMove(Window &w, Point logical) override;
     bool injectButton(Window &w, Button b, bool down) override;
@@ -290,9 +274,9 @@ public:
     xcb_timestamp_t serverTime(); // a real timestamp, via a property round trip
     xcb_cursor_t    cursor(Cursor c);
     void            sendToRoot(xcb_window_t win, xcb_atom_t type, const uint32_t data[5]);
-    void            wakeFrames() { _loop.wakeUp(); }
+
     // Id of the monitor containing a physical root point (nearest if none).
-    uint64_t        monitorAt(int x, int y) const;
+    uint64_t monitorAt(int x, int y) const;
 
     // Block (bounded) until pred() holds, processing only matching events and
     // deferring everything else to the normal dispatch. For the handful of
@@ -333,12 +317,15 @@ private:
     bool     setupXkb();
     void     reloadKeymap();
     void     setupShm();
-    void     readRefreshRate();
     void     setupRandr();
-    // Re-read the monitor layout (x11_monitors.cpp); emit = send
-    // MonitorsChanged if it differs from what we had.
+    // Re-read the monitor layout and work areas (x11_monitors.cpp), and the
+    // frame rate; emit = send MonitorsChanged if they differ from what we had.
     void     refreshMonitors(bool emit);
-    void     scheduleMonitorRefresh(); // coalesces bursts of RandR/property events
+    // Only the work areas (a desktop switch, a panel change).
+    void     refreshWorkAreas(bool emit);
+    // Coalesces bursts of RandR/property events; layout = RandR said the
+    // monitors themselves changed (else only work areas or the scale did).
+    void     scheduleMonitorRefresh(bool layout);
     bool     isWorkareaAtom(xcb_atom_t a) const;
     uint32_t pointerMods(uint16_t state) const;
     void     startMoveResize(X11Window *w, HitArea a, const xcb_button_press_event_t *e);
@@ -374,15 +361,19 @@ private:
         Rect    phys; // physical root coordinates
     };
     std::vector<MonitorEntry> _monitors;
-    bool                      _monitorsReady   = false;
-    bool                      _monitorsPending = false;
-    xcb_atom_t                _gtkWorkareas    = 0; // _GTK_WORKAREAS_D<current desktop>
+    bool                      _monitorsReady       = false;
+    bool                      _monitorsPending     = false;
+    bool                      _monitorsLayoutStale = false; // a pending refresh must re-read RandR
+    std::vector<MonitorEntry> readLayout(); // monitors (no work areas yet) + frame rate
+    void                      applyWorkAreas(std::vector<MonitorEntry> &out);
+    void                      commitMonitors(std::vector<MonitorEntry> out, bool emit);
+    xcb_atom_t                _gtkWorkareas = 0; // _GTK_WORKAREAS_D<current desktop>
 
-    posix::PosixLoop                  _loop;
     uint64_t                          _xcbWatch = 0;
     std::deque<xcb_generic_event_t *> _deferred;
 
     std::unordered_map<xcb_window_t, X11Window *> _windows;
+    std::vector<xcb_window_t>                     _frameIds; // emitFrames' scratch
     X11Window                                    *_focus = nullptr, *_pointerWin = nullptr;
 
     // Keyboard.
@@ -452,8 +443,10 @@ private:
     std::map<xcb_atom_t, std::string> _atomNameCache;
     // What an item list offers: every mime, plus the X text aliases for text.
     std::vector<xcb_atom_t>           offeredTypes(const std::vector<DataItem> &items);
-    std::optional<std::string>
-    dataFor(const std::vector<DataItem> &items, xcb_atom_t target, xcb_atom_t *type);
+    // The bytes for `target`, viewed in `items` (or in *latin1 for STRING).
+    std::optional<std::string_view>   dataFor(
+        const std::vector<DataItem> &items, xcb_atom_t target, xcb_atom_t *type, std::string *latin1
+    );
     // The offered text targets, best first.
     std::vector<xcb_atom_t> textTargets(const std::vector<xcb_atom_t> &offered) const;
     bool                    isOurWindow(xcb_window_t w) const;
@@ -483,6 +476,11 @@ private:
     xcb_atom_t atomFromAction(DropAction a) const;
 
     // XDND source (x11_dnd.cpp).
+    struct DndProbe {
+        bool         aware   = false;
+        int          version = 0;
+        xcb_window_t proxy   = 0; // where messages go: the window or its proxy
+    };
     struct DndOut {
         bool                    active  = false;
         X11Window              *source  = nullptr;
@@ -503,8 +501,14 @@ private:
         xcb_window_t            icon       = 0;
         int                     hotX = 0, hotY = 0;
         Cursor                  cursor = Cursor::Grabbing;
+        bool                    moved  = false; // the target search is due (dragTrack)
+        // What each window under the pointer said (XdndAware, XdndProxy),
+        // asked once per drag.
+        std::unordered_map<xcb_window_t, DndProbe> probes;
     } _drag;
+    DndProbe     probeDnd(xcb_window_t w);
     void         dragMotion(int16_t rootX, int16_t rootY, xcb_timestamp_t t);
+    void         dragTrack(); // the target search for the latest dragMotion
     void         dragRelease(xcb_timestamp_t t);
     void         dragSendPosition();
     void         dragSendDrop();
@@ -549,7 +553,7 @@ private:
 // Helpers shared by the translation units.
 std::string latin1ToUtf8(std::string_view s);
 std::string utf8ToLatin1(std::string_view s);
-bool        isTextMime(std::string_view m); // any X/MIME name for UTF-8/Latin-1 text
+using core::isTextMime; // any X/MIME name for UTF-8/Latin-1 text
 // The contract's name for a selection/XDND target: text aliases become
 // text/plain;charset=utf-8, bookkeeping targets (TARGETS, …) become "".
 std::string normaliseMime(std::string_view name);

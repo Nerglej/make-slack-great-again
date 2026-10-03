@@ -80,10 +80,7 @@ DropAction proposedAction(DWORD keys, uint32_t allowed) {
         want = DropAction::Copy;
     if (want != DropAction::None && (effectFor(want) & effectsFor(allowed)))
         return want;
-    return (allowed & ActCopy)   ? DropAction::Copy
-           : (allowed & ActMove) ? DropAction::Move
-           : (allowed & ActLink) ? DropAction::Link
-                                 : DropAction::None;
+    return core::preferredAction(allowed);
 }
 
 uint32_t modsFor(DWORD keys) {
@@ -101,28 +98,22 @@ uint32_t modsFor(DWORD keys) {
     return m;
 }
 
-HGLOBAL globalFrom(const void *p, size_t n) {
-    HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, std::max<size_t>(n, 1));
-    if (!g)
-        return nullptr;
-    if (void *d = GlobalLock(g)) {
-        if (n)
-            std::memcpy(d, p, n);
-        GlobalUnlock(g);
-        return g;
-    }
-    GlobalFree(g);
-    return nullptr;
-}
-
 HGLOBAL duplicate(HGLOBAL src) {
     const size_t n = GlobalSize(src);
     const void  *p = GlobalLock(src);
     if (!p)
         return nullptr;
-    HGLOBAL g = globalFrom(p, n);
+    HGLOBAL g = globalFromBytes(p, n);
     GlobalUnlock(src);
     return g;
+}
+
+// Drop data is read only for types that are cheap and meant for us: the
+// standard ones and plat-style MIME types, not the BMP a bitmap drag also
+// offers or other image conversions (the others are listed without data).
+bool readOnDrop(const std::string &m) {
+    return m == core::kTextMime || m == "text/html" || m == "image/png" || m == "text/uri-list" ||
+           (m.find('/') != std::string::npos && m.rfind("image/", 0) != 0);
 }
 
 // ── IDataObject ─────────────────────────────────────────────────────────────
@@ -130,33 +121,16 @@ HGLOBAL duplicate(HGLOBAL src) {
 // Our drag payload. Also accepts SetData of anything: the shell's drag-image
 // helpers store their state ("DragImageBits", "DragContext", drop
 // descriptions) on the data object and read it back from the other end.
-class DataObject final : public IDataObject {
+class DataObject final : public ComObject<IDataObject> {
 public:
     explicit DataObject(const std::vector<NativeData> &native) {
         for (const auto &n : native)
-            if (HGLOBAL g = globalFrom(n.bytes.data(), n.bytes.size())) {
+            if (HGLOBAL g = globalFromBytes(n.bytes.data(), n.bytes.size())) {
                 STGMEDIUM m{};
                 m.tymed   = TYMED_HGLOBAL;
                 m.hGlobal = g;
                 _entries.push_back({fmt(CLIPFORMAT(n.cf)), m});
             }
-    }
-
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
-        if (riid == IID_IUnknown || riid == IID_IDataObject) {
-            *out = static_cast<IDataObject *>(this);
-            AddRef();
-            return S_OK;
-        }
-        *out = nullptr;
-        return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++_refs; }
-    ULONG STDMETHODCALLTYPE Release() override {
-        const ULONG n = --_refs;
-        if (!n)
-            delete this;
-        return n;
     }
 
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC *fe, STGMEDIUM *m) override {
@@ -245,7 +219,7 @@ private:
         FORMATETC fe;
         STGMEDIUM medium;
     };
-    ~DataObject() {
+    ~DataObject() override {
         for (auto &e : _entries)
             ReleaseStgMedium(&e.medium);
     }
@@ -260,32 +234,15 @@ private:
         return nullptr;
     }
 
-    std::atomic<ULONG> _refs{1};
     std::vector<Entry> _entries;
 };
 
 // ── IDropSource ─────────────────────────────────────────────────────────────
 
-class DropSource final : public IDropSource {
+class DropSource final : public ComObject<IDropSource> {
 public:
     explicit DropSource(DWORD button) : _button(button) {}
 
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
-        if (riid == IID_IUnknown || riid == IID_IDropSource) {
-            *out = static_cast<IDropSource *>(this);
-            AddRef();
-            return S_OK;
-        }
-        *out = nullptr;
-        return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++_refs; }
-    ULONG STDMETHODCALLTYPE Release() override {
-        const ULONG n = --_refs;
-        if (!n)
-            delete this;
-        return n;
-    }
     HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escape, DWORD keys) override {
         // Escape cancels; releasing the button that started the drag drops;
         // pressing another button cancels, as in Explorer.
@@ -299,36 +256,18 @@ public:
     HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD) override { return DRAGDROP_S_USEDEFAULTCURSORS; }
 
 private:
-    std::atomic<ULONG> _refs{1};
-    DWORD              _button;
+    DWORD _button;
 };
 
 } // namespace
 
 // ── IDropTarget ─────────────────────────────────────────────────────────────
 
-struct DropTarget final : public IDropTarget {
+struct DropTarget final : public ComObject<IDropTarget> {
     DropTarget(Win32Window *w, IDropTargetHelper *helper)
         : window(w), hwnd(w->hwnd()), helper(helper) {
         if (helper)
             helper->AddRef();
-    }
-
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
-        if (riid == IID_IUnknown || riid == IID_IDropTarget) {
-            *out = static_cast<IDropTarget *>(this);
-            AddRef();
-            return S_OK;
-        }
-        *out = nullptr;
-        return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
-    ULONG STDMETHODCALLTYPE Release() override {
-        const ULONG n = --refs;
-        if (!n)
-            delete this;
-        return n;
     }
 
     HRESULT STDMETHODCALLTYPE
@@ -399,6 +338,10 @@ struct DropTarget final : public IDropTarget {
         }
         Event e = event(EventType::Drop, keys, pt);
         for (const auto &mime : types) {
+            if (!readOnDrop(mime)) {
+                e.items.push_back({mime, {}});
+                continue;
+            }
             auto data = decodeFromOs(mime, [&](UINT cf) { return fetch(obj, cf); });
             if (!data)
                 continue;
@@ -422,7 +365,7 @@ struct DropTarget final : public IDropTarget {
         ~Hold() { t->Release(); }
     };
 
-    ~DropTarget() {
+    ~DropTarget() override {
         setData(nullptr);
         if (helper)
             helper->Release();
@@ -444,13 +387,8 @@ struct DropTarget final : public IDropTarget {
         if (FAILED(obj->GetData(&fe, &m)))
             return std::nullopt;
         std::optional<std::string> out;
-        if (m.tymed == TYMED_HGLOBAL && m.hGlobal) {
-            const size_t n = GlobalSize(m.hGlobal);
-            if (const void *p = GlobalLock(m.hGlobal)) {
-                out = std::string(static_cast<const char *>(p), n);
-                GlobalUnlock(m.hGlobal);
-            }
-        }
+        if (m.tymed == TYMED_HGLOBAL && m.hGlobal)
+            out = bytesFromGlobal(m.hGlobal);
         ReleaseStgMedium(&m);
         return out;
     }
@@ -493,7 +431,6 @@ struct DropTarget final : public IDropTarget {
 
     DWORD currentEffect() const { return effectFor(reply) & effectsFor(allowed); }
 
-    std::atomic<ULONG>       refs{1};
     Win32Window             *window; // null once the window is gone
     HWND                     hwnd;
     IDropTargetHelper       *helper;

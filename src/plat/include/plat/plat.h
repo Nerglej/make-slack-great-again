@@ -33,6 +33,8 @@ struct Size {
 };
 struct Rect {
     int x = 0, y = 0, w = 0, h = 0;
+
+    bool operator==(const Rect &) const = default;
 };
 
 class Window;
@@ -609,6 +611,8 @@ struct Monitor {
     double      scale          = 1.0; // physical / logical
     int         refreshMilliHz = 0;   // 0 = unknown
     bool        primary = false; // exactly one; Wayland has none: the output at 0,0, else the first
+
+    bool operator==(const Monitor &) const = default;
 };
 
 // ── File dialogs ────────────────────────────────────────────────────────────

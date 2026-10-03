@@ -14,6 +14,16 @@
 using namespace plat;
 using namespace plat_test;
 
+// The parts of NSDraggingInfo the drop target reads, over a private pasteboard.
+@interface                                 FakeDragInfo : NSObject
+@property(nonatomic, strong) NSPasteboard *draggingPasteboard;
+@property(nonatomic) NSPoint               draggingLocation;
+@property(nonatomic) NSDragOperation       draggingSourceOperationMask;
+@property(nonatomic) NSInteger             draggingSequenceNumber;
+@end
+@implementation FakeDragInfo
+@end
+
 namespace {
 
 bool has(const std::vector<std::string> &v, const char *s) {
@@ -220,10 +230,94 @@ void casePartialPresentsKeepEveryFrame() {
     }
 }
 
+const DataItem *itemOf(const Event &e, std::string_view mime) {
+    for (const auto &i : e.items)
+        if (i.mime == mime)
+            return &i;
+    return nullptr;
+}
+
+// The drop target's events: types only while hovering (the type list kept
+// across moves of one drag until the pasteboard changes), data on Drop with
+// the text and the URIs each read once into both of their fields.
+void caseDropTargetEvents() {
+    @autoreleasepool {
+        std::string          err;
+        std::unique_ptr<App> app = createCocoaApp(&err);
+        if (!app) {
+            skip("no window-server session: " + err);
+            return;
+        }
+        std::vector<Event> got;
+        app->setEventHandler([&](const Event &e) { got.push_back(e); });
+        std::unique_ptr<Window> win = app->createWindow({.title = "plat drop", .size = {160, 120}});
+        PlatView               *view = static_cast<cocoa::CocoaWindow &>(*win).view;
+        pumpRunLoop(0.1);
+
+        NSPasteboard *pb = [NSPasteboard pasteboardWithUniqueName];
+        [pb clearContents];
+        const std::string text = "h\xc3\xa9llo";
+        [pb writeObjects:cocoa::pasteboardItems(
+                             {{core::kTextMime, text},
+                              {"text/uri-list", "file:///tmp/a%20b.txt\r\n"}}
+                         )];
+        FakeDragInfo *fake               = [FakeDragInfo new];
+        fake.draggingPasteboard          = pb;
+        fake.draggingLocation            = NSMakePoint(10, 10);
+        fake.draggingSourceOperationMask = NSDragOperationCopy;
+        fake.draggingSequenceNumber      = 7;
+        id<NSDraggingInfo> info          = (id<NSDraggingInfo>)(id)fake;
+
+        auto last = [&](EventType t) -> const Event * {
+            for (auto it = got.rbegin(); it != got.rend(); ++it)
+                if (it->type == t)
+                    return &*it;
+            return nullptr;
+        };
+        CHECK([view draggingEntered:info] == NSDragOperationCopy);
+        const Event *enter = last(EventType::DropEnter);
+        CHECK(enter && itemOf(*enter, core::kTextMime) && itemOf(*enter, "text/uri-list"));
+        CHECK(enter && itemOf(*enter, core::kTextMime)->data.empty());
+        CHECK(enter && enter->dropAction == DropAction::Copy);
+
+        [view draggingUpdated:info];
+        const Event *move = last(EventType::DropMove);
+        CHECK(move && move->items.size() == enter->items.size());
+
+        CHECK([view performDragOperation:info]);
+        const Event *drop = last(EventType::Drop);
+        CHECK(drop != nullptr);
+        if (drop) {
+            const DataItem *t = itemOf(*drop, core::kTextMime);
+            const DataItem *u = itemOf(*drop, "text/uri-list");
+            CHECK(t && t->data == text);
+            CHECK(u && u->data == "file:///tmp/a%20b.txt\r\n");
+            CHECK(drop->text == text);
+            CHECK(drop->uris == std::vector<std::string>{"file:///tmp/a%20b.txt"});
+        }
+
+        // Same drag, new contents: the type list is read again.
+        [pb clearContents];
+        [pb setData:[NSData dataWithBytes:"<b>x</b>" length:8] forType:NSPasteboardTypeHTML];
+        [view draggingUpdated:info];
+        move = last(EventType::DropMove);
+        CHECK(move && itemOf(*move, "text/html") && !itemOf(*move, core::kTextMime));
+        CHECK([view performDragOperation:info]);
+        drop = last(EventType::Drop);
+        CHECK(drop && drop->text.empty() && drop->uris.empty());
+        CHECK(drop && itemOf(*drop, "text/html") && itemOf(*drop, "text/html")->data == "<b>x</b>");
+
+        [pb releaseGlobally];
+        win.reset();
+        pumpRunLoop(0.05);
+    }
+}
+
 } // namespace
 
 int main() {
     runCase("a TIFF-only picture is offered and read as PNG", caseTiffOnlyPictureReadsAsPng);
     runCase("partial presents keep every frame", casePartialPresentsKeepEveryFrame);
+    runCase("drop target: types while hovering, data once on drop", caseDropTargetEvents);
     return summary();
 }

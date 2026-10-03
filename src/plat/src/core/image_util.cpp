@@ -15,6 +15,32 @@ uint32_t unpremultiply(uint32_t p) {
     return a << 24 | ch((p >> 16) & 0xff) << 16 | ch((p >> 8) & 0xff) << 8 | ch(p & 0xff);
 }
 
+const Image *pickImage(const std::vector<Image> &sizes, int px, double scale, bool onlyAtScale) {
+    auto usable = [](const Image &i) {
+        return !i.empty() && i.pixels.size() >= size_t(i.width) * size_t(i.height);
+    };
+    auto atScale  = [scale](const Image &i) { return std::abs(i.scale - scale) < 0.01; };
+    bool restrict = false;
+    if (onlyAtScale)
+        for (const auto &i : sizes)
+            restrict |= usable(i) && atScale(i);
+    const Image *best = nullptr;
+    int          bm   = 0;
+    for (const auto &i : sizes) {
+        if (!usable(i) || (restrict && !atScale(i)))
+            continue;
+        const int  m   = std::max(i.width, i.height);
+        const bool big = m >= px, bestBig = best && bm >= px;
+        const bool closerScale = best && m == bm && scale > 0 &&
+                                 std::abs(i.scale - scale) < std::abs(best->scale - scale);
+        if (!best || (big && (!bestBig || m < bm)) || (!big && !bestBig && m > bm) || closerScale) {
+            best = &i;
+            bm   = m;
+        }
+    }
+    return best;
+}
+
 Image scaleImage(const Image &src, int w, int h) {
     Image out{w, h, std::vector<uint32_t>(size_t(std::max(w, 0)) * size_t(std::max(h, 0)), 0)};
     if (src.empty() || src.pixels.size() < size_t(src.width) * size_t(src.height) || w <= 0 ||

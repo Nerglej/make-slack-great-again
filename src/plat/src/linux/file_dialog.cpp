@@ -1,15 +1,13 @@
 #include "linux/file_dialog.h"
 
+#include "linux/process.h"
+
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
-#include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern char **environ;
 
 namespace plat::linux_services {
 
@@ -24,23 +22,6 @@ constexpr int         kBusWaitMs      = 2000;
 // A portal's code 2 within this long of the call means its backend failed
 // before showing anything; after it, a dialog was up and the user closed it.
 constexpr auto        kNoDialogWindow = std::chrono::milliseconds(1000);
-
-// Absolute path of an executable on $PATH, or "".
-std::string findTool(const char *name) {
-    const char      *path = std::getenv("PATH");
-    std::string_view rest = path && *path ? path : "/usr/local/bin:/usr/bin:/bin";
-    while (!rest.empty()) {
-        const size_t colon = rest.find(':');
-        std::string  dir(rest.substr(0, colon));
-        rest = colon == std::string_view::npos ? std::string_view() : rest.substr(colon + 1);
-        if (dir.empty())
-            continue;
-        const std::string full = dir + "/" + name;
-        if (::access(full.c_str(), X_OK) == 0)
-            return full;
-    }
-    return {};
-}
 
 // "x11:1a2b" -> 6699 (kdialog --attach wants the XID in decimal).
 std::string x11Xid(const std::string &parent) {
@@ -61,9 +42,10 @@ std::string joined(const std::vector<std::string> &v, const char *sep) {
     return out;
 }
 
+// The tools' arguments (after argv[0]).
 std::vector<std::string> zenityArgs(const FileDialogDesc &d) {
     using Mode                 = FileDialogDesc::Mode;
-    std::vector<std::string> a = {"zenity", "--file-selection"};
+    std::vector<std::string> a = {"--file-selection"};
     if (!d.title.empty())
         a.push_back("--title=" + d.title);
     if (d.mode == Mode::OpenMultiple) {
@@ -88,8 +70,8 @@ std::vector<std::string> zenityArgs(const FileDialogDesc &d) {
 }
 
 std::vector<std::string> kdialogArgs(const FileDialogDesc &d, const std::string &parent) {
-    using Mode                 = FileDialogDesc::Mode;
-    std::vector<std::string> a = {"kdialog"};
+    using Mode = FileDialogDesc::Mode;
+    std::vector<std::string> a;
     if (!d.title.empty()) {
         a.push_back("--title");
         a.push_back(d.title);
@@ -365,7 +347,8 @@ void FileChooser::fallback(uint64_t id) {
                               : decltype(order){{"zenity", false}, {"kdialog", true}};
     }
     for (auto [name, kdialog] : order) {
-        const std::string tool = findTool(name);
+        const std::string tool =
+            linux_process::findExecutable(name, linux_process::defaultSearchPath());
         if (!tool.empty() && spawn(id, tool, kdialog))
             return;
     }
@@ -375,32 +358,15 @@ void FileChooser::fallback(uint64_t id) {
 bool FileChooser::spawn(uint64_t id, const std::string &tool, bool kdialog) {
     const Request           &r    = _requests[id];
     std::vector<std::string> args = kdialog ? kdialogArgs(r.desc, r.parent) : zenityArgs(r.desc);
-    std::vector<char *>      argv;
-    for (auto &a : args)
-        argv.push_back(a.data());
-    argv.push_back(nullptr);
-
-    int fds[2];
-    if (::pipe2(fds, O_CLOEXEC) != 0)
+    linux_process::Child     p;
+    if (!linux_process::spawn(
+            tool, args, linux_process::kStdout, &p, kdialog ? "kdialog" : "zenity"
+        ))
         return false;
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_adddup2(&fa, fds[1], 1); // dup2 clears CLOEXEC on 1
-    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-    pid_t     pid = -1;
-    const int rc  = posix_spawn(&pid, tool.c_str(), &fa, nullptr, argv.data(), environ);
-    posix_spawn_file_actions_destroy(&fa);
-    ::close(fds[1]);
-    if (rc != 0) {
-        ::close(fds[0]);
-        return false;
-    }
-    ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL) | O_NONBLOCK);
     Child &c                = _children[id];
-    c                       = {.request = id, .pid = pid, .fd = fds[0], .kdialog = kdialog};
+    c                       = {.request = id, .pid = p.pid, .fd = p.out, .kdialog = kdialog};
     std::weak_ptr<int> weak = _alive;
-    c.watch                 = _app.watchFd(fds[0], FdRead, [this, weak, id](uint32_t) {
+    c.watch                 = _app.watchFd(p.out, FdRead, [this, weak, id](uint32_t) {
         if (!weak.expired())
             childReadable(id);
     });

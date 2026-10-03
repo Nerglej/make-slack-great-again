@@ -24,12 +24,6 @@ constexpr int      kModalTickMs = 10; // USER_TIMER_MINIMUM; the OS rounds it to
 // an OS modal loop: polled this often while one is open.
 constexpr int      kModalHandlePollMs = 100;
 
-template <class T>
-T sym(HMODULE m, const char *name) {
-    // Through void(*)() so -Wcast-function-type accepts the FARPROC cast.
-    return m ? reinterpret_cast<T>(reinterpret_cast<void (*)()>(GetProcAddress(m, name))) : nullptr;
-}
-
 HINSTANCE thisModule() {
     // The module that contains plat, not the exe: plat may end up in a DLL,
     // and window classes are registered per module.
@@ -126,10 +120,8 @@ bool Win32App::init(std::string *error) {
     wc.lpszClassName = kWindowClass;
     // The app's resource script names its icon IDI_ICON1, so windows pick it
     // up without a plat API for icons.
-    wc.hIcon         = LoadIconW(GetModuleHandleW(nullptr), L"IDI_ICON1");
-    if (!wc.hIcon)
-        wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wc.hIconSm = wc.hIcon;
+    wc.hIcon         = appIcon();
+    wc.hIconSm       = wc.hIcon;
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         if (error)
             *error = "RegisterClassExW failed";
@@ -186,6 +178,7 @@ Win32App::~Win32App() {
     if (_hiresTimer)
         CloseHandle(_hiresTimer);
     _shell.reset(); // tray/balloon icons, toast handlers: before COM goes
+    releaseWic();
     if (_dropHelper)
         _dropHelper->Release();
     if (_oleInit)
@@ -370,12 +363,7 @@ void Win32App::armModal() {
 }
 
 LRESULT CALLBACK Win32App::msgProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_NCCREATE) {
-        auto *cs = reinterpret_cast<CREATESTRUCTW *>(lp);
-        SetWindowLongPtrW(h, GWLP_USERDATA, LONG_PTR(cs->lpCreateParams));
-    }
-    auto *self = reinterpret_cast<Win32App *>(GetWindowLongPtrW(h, GWLP_USERDATA));
-    if (self) {
+    if (auto *self = static_cast<Win32App *>(windowUserData(h, msg, lp))) {
         // Both arrive through whatever loop is pumping: ours, or an OS modal
         // loop (move/resize, menu) — which is how posted work, timers and
         // frames keep running while the user drags a window edge.
@@ -394,6 +382,21 @@ LRESULT CALLBACK Win32App::msgProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
     }
     return DefWindowProcW(h, msg, wp, lp);
+}
+
+UINT Win32App::wheelScrollAmount(bool horizontal) {
+    // Read once per settings change rather than per wheel event.
+    const uint8_t bit = horizontal ? 2 : 1;
+    UINT         &v   = horizontal ? _wheelChars : _wheelLines;
+    if (!(_wheelKnown & bit)) {
+        UINT n = 3;
+        SystemParametersInfoW(
+            horizontal ? SPI_GETWHEELSCROLLCHARS : SPI_GETWHEELSCROLLLINES, 0, &n, 0
+        );
+        v = n;
+        _wheelKnown |= bit;
+    }
+    return v;
 }
 
 // ── desktop integration ─────────────────────────────────────────────────────
@@ -420,14 +423,8 @@ bool Win32App::openUrl(std::string_view url) {
     // a program launch, not a URL: insist on a scheme of two or more letters
     // (one letter is a drive, "C:\..."), the way a link in a message has one.
     const size_t colon = url.find(':');
-    if (colon == std::string_view::npos || colon < 2)
+    if (colon == std::string_view::npos || !validUrlScheme(url.substr(0, colon)))
         return false;
-    for (size_t i = 0; i < colon; ++i) {
-        const char c = url[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-              (i > 0 && ((c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'))))
-            return false;
-    }
     const auto r = reinterpret_cast<INT_PTR>(
         ShellExecuteW(nullptr, L"open", toWide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL)
     );

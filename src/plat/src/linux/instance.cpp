@@ -17,6 +17,9 @@
 #include "linux/instance.h"
 
 #include "core/hash.h"
+#include "core/strings.h"
+#include "core/wire.h"
+#include "linux/files.h"
 
 #include <algorithm>
 #include <cctype>
@@ -27,7 +30,6 @@
 #include <fcntl.h>
 #include <map>
 #include <optional>
-#include <set>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -48,47 +50,25 @@ constexpr int      kConnIdleMs  = 5000;    // primary drops a client that stalls
 constexpr size_t   kMaxConns    = 16;
 constexpr char     kAck         = 'A';
 
-// Schemes registerUrlScheme() was called for in this process.
-std::set<std::string> &schemes() {
-    static std::set<std::string> s;
+// Schemes registerUrlScheme() was called for in this process (lower case).
+std::vector<std::string> &schemes() {
+    static std::vector<std::string> s;
     return s;
-}
-
-std::string lower(std::string_view s) {
-    std::string out(s);
-    for (char &c : out)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c - 'A' + 'a');
-    return out;
 }
 
 // ── wire format ─────────────────────────────────────────────────────────────
 // header: "PLAT", u32 version, u32 payload length (little endian)
 // payload: strings as u32 length + bytes — cwd, token, then each argument.
-
-void putU32(std::string &out, uint32_t v) {
-    for (int i = 0; i < 4; ++i)
-        out += char((v >> (8 * i)) & 0xff);
-}
-
-uint32_t getU32(const char *p) {
-    uint32_t v = 0;
-    for (int i = 0; i < 4; ++i)
-        v |= uint32_t(uint8_t(p[i])) << (8 * i);
-    return v;
-}
+using core::getU32;
+using core::putU32;
 
 std::string
 encode(const std::string &cwd, const std::string &token, const std::vector<std::string> &args) {
     std::string payload;
-    auto        put = [&](const std::string &s) {
-        putU32(payload, uint32_t(s.size()));
-        payload += s;
-    };
-    put(cwd);
-    put(token);
+    core::putString(payload, cwd);
+    core::putString(payload, token);
     for (auto &a : args)
-        put(a);
+        core::putString(payload, a);
     std::string msg(kMagic, 4);
     putU32(msg, kVersion);
     putU32(msg, uint32_t(payload.size()));
@@ -99,16 +79,9 @@ bool decode(
     std::string_view p, std::string *cwd, std::string *token, std::vector<std::string> *args
 ) {
     std::vector<std::string> fields;
-    while (!p.empty()) {
-        if (p.size() < 4)
+    while (!p.empty())
+        if (!core::takeString(p, &fields.emplace_back()))
             return false;
-        const uint32_t n = getU32(p.data());
-        p.remove_prefix(4);
-        if (n > p.size())
-            return false;
-        fields.emplace_back(p.substr(0, n));
-        p.remove_prefix(n);
-    }
     if (fields.size() < 2)
         return false;
     *cwd   = std::move(fields[0]);
@@ -317,10 +290,7 @@ private:
     }
 
     void deliver(std::string cwd, std::string token, std::vector<std::string> args) {
-        std::vector<std::string> urls;
-        for (auto &a : args)
-            if (isRegisteredSchemeUrl(a))
-                urls.push_back(a);
+        std::vector<std::string> urls = core::schemeUrls(args, schemes());
         _app.emit(
             {.type            = EventType::InstanceActivated,
              .text            = std::move(cwd),
@@ -377,15 +347,6 @@ bool forward(int fd, const std::vector<std::string> &args) {
 
 // ── URL schemes ─────────────────────────────────────────────────────────────
 
-// RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
-bool validScheme(std::string_view s) {
-    if (s.empty() || !std::isalpha(uint8_t(s[0])))
-        return false;
-    return std::all_of(s.begin(), s.end(), [](char c) {
-        return std::isalnum(uint8_t(c)) || c == '+' || c == '-' || c == '.';
-    });
-}
-
 // Desktop Entry Exec quoting: the argument goes in double quotes with ", `,
 // $ and \ backslash-escaped; then the value itself is a string, whose own
 // escaping doubles every backslash; % is a field-code prefix and becomes %%.
@@ -409,25 +370,7 @@ std::string execQuote(const std::string &path) {
     return out;
 }
 
-// POSIX calls throughout, not <fstream>/<sstream>/<filesystem>: they cost a
-// static binary ~400 KB of locale and filesystem code.
-std::optional<std::string> readFile(const std::string &path) {
-    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
-        return std::nullopt;
-    std::string out;
-    char        buf[4096];
-    for (;;) {
-        const ssize_t n = read(fd, buf, sizeof buf);
-        if (n < 0 && errno == EINTR)
-            continue;
-        if (n <= 0)
-            break;
-        out.append(buf, size_t(n));
-    }
-    close(fd);
-    return out;
-}
+using linux_files::readFile;
 
 // `s` cut at every `sep`, std::getline-style (no empty piece after a final one).
 std::vector<std::string> split(const std::string &s, char sep) {
@@ -485,11 +428,7 @@ bool writeAtomically(std::string path, const std::string &data) {
 }
 
 std::string trim(std::string_view s) {
-    const size_t b = s.find_first_not_of(" \t\r");
-    if (b == std::string_view::npos)
-        return {};
-    const size_t e = s.find_last_not_of(" \t\r");
-    return std::string(s.substr(b, e - b + 1));
+    return std::string(core::trim(s, " \t\r"));
 }
 
 // mimeapps.list with `mime` defaulting to `desktopId` (ours first, earlier
@@ -612,12 +551,12 @@ bool claim(
 }
 
 bool registerUrlScheme(BackendApp &app, std::string_view schemeIn) {
-    if (!validScheme(schemeIn))
+    if (!core::validScheme(schemeIn))
         return false;
-    const std::string scheme = lower(schemeIn);
+    const std::string scheme = core::asciiLower(schemeIn);
     // Remembered whatever happens below: a handler may already be installed
     // (a distro package), and forwarded URLs should still reach OpenUrls.
-    schemes().insert(scheme);
+    core::rememberScheme(schemes(), scheme);
 
     char          exeBuf[4096];
     const ssize_t exeLen = readlink("/proc/self/exe", exeBuf, sizeof exeBuf);
@@ -682,13 +621,6 @@ bool registerUrlScheme(BackendApp &app, std::string_view schemeIn) {
     // directly by GIO, KIO and xdg-open; the cache only matters for
     // "what can open this type" lists.
     return true;
-}
-
-bool isRegisteredSchemeUrl(std::string_view arg) {
-    const size_t colon = arg.find(':');
-    if (colon == std::string_view::npos || colon == 0)
-        return false;
-    return schemes().count(lower(arg.substr(0, colon))) != 0;
 }
 
 } // namespace plat::linux_instance

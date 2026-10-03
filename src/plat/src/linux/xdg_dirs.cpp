@@ -1,12 +1,11 @@
 // XDG base and user directories (standardDir). Read from the environment and
 // $XDG_CONFIG_HOME/user-dirs.dirs on every call: both are cheap, and a
 // long-running app then sees the user's edits without a restart.
+#include "linux/files.h"
 #include "linux/instance.h"
 
-#include <cstdio>
 #include <cstdlib>
 #include <pwd.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace plat::linux_instance {
@@ -22,10 +21,7 @@ std::string clean(std::string p) {
     return p;
 }
 
-bool isDir(const std::string &p) {
-    struct stat st{};
-    return !p.empty() && stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
+using linux_files::isDir;
 
 std::string home() {
     if (const char *h = std::getenv("HOME"); h && *h)
@@ -53,16 +49,11 @@ std::optional<std::string> userDir(const char *name) {
     const std::string cfg = xdgHome("XDG_CONFIG_HOME", ".config");
     if (cfg.empty())
         return std::nullopt;
-    // stdio, not <fstream>: iostreams cost a static binary ~350 KB of locale code.
-    FILE *in = std::fopen((cfg + "/user-dirs.dirs").c_str(), "re");
-    if (!in)
+    const std::optional<std::string> file = linux_files::readFile(cfg + "/user-dirs.dirs");
+    if (!file)
         return std::nullopt;
-    std::string text;
-    char        buf[4096];
-    for (size_t n; (n = std::fread(buf, 1, sizeof buf, in)) > 0;)
-        text.append(buf, n);
-    std::fclose(in);
-    const std::string key = std::string("XDG_") + name + "_DIR=";
+    const std::string &text = *file;
+    const std::string  key  = std::string("XDG_") + name + "_DIR=";
     for (size_t at = 0, eol; at < text.size(); at = eol + 1) {
         eol = text.find('\n', at);
         if (eol == std::string::npos)

@@ -215,7 +215,7 @@ public:
         for (const auto &i : _clipboard[size_t(sel)])
             if (i.mime == mime || (core::isTextMime(i.mime) && core::isTextMime(mime)))
                 v = i.data;
-        post([cb = std::move(cb), v = std::move(v)] { cb(v); });
+        post([cb = std::move(cb), v = std::move(v)]() mutable { cb(std::move(v)); });
     }
     void requestClipboardMimes(
         std::function<void(std::vector<std::string>)> cb, Selection sel
@@ -223,7 +223,7 @@ public:
         std::vector<std::string> m;
         for (const auto &i : _clipboard[size_t(sel)])
             m.push_back(i.mime);
-        post([cb = std::move(cb), m = std::move(m)] { cb(m); });
+        post([cb = std::move(cb), m = std::move(m)]() mutable { cb(std::move(m)); });
     }
 
     // ── Drag source: moves over another window turn into Drop* there ────────
@@ -524,15 +524,9 @@ public:
     int                              badge = 0;
 
 private:
-    static DropAction preferred(uint32_t actions) {
-        return (actions & ActCopy)   ? DropAction::Copy
-               : (actions & ActMove) ? DropAction::Move
-               : (actions & ActLink) ? DropAction::Link
-                                     : DropAction::None;
-    }
     Event dropEvent(EventType t, Point p, bool withData) {
         Event e{.type = t, .pos = p};
-        e.dropAction     = preferred(_drag->actions);
+        e.dropAction     = core::preferredAction(_drag->actions);
         e.allowedActions = _drag->actions;
         for (const auto &i : _drag->items) {
             e.items.push_back({i.mime, withData ? i.data : std::string()});
@@ -562,7 +556,7 @@ private:
             if (_dropTarget)
                 _dropTarget->emit({.type = EventType::DropLeave});
             _dropTarget  = w;
-            w->dropReply = preferred(_drag->actions);
+            w->dropReply = core::preferredAction(_drag->actions);
             w->emit(dropEvent(EventType::DropEnter, p, false));
         } else {
             w->emit(dropEvent(EventType::DropMove, p, false));

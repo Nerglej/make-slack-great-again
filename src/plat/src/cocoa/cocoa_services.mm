@@ -10,6 +10,7 @@
 #include "cocoa/cocoa_internal.h"
 
 #include "core/hash.h"
+#include "core/wire.h"
 
 #import <CoreServices/CoreServices.h> // AESendMessage, kInternetEventClass/kAEGetURL
 #import <Network/Network.h>
@@ -71,19 +72,6 @@ namespace plat::cocoa {
 
 namespace {
 
-NSString *nsString(std::string_view s) {
-    return [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding]
-               ?: @"";
-}
-
-std::string lower(std::string_view s) {
-    std::string r(s);
-    for (char &c : r)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c - 'A' + 'a');
-    return r;
-}
-
 CGFloat primaryHeight() {
     return NSScreen.screens.firstObject.frame.size.height;
 }
@@ -99,27 +87,14 @@ constexpr size_t   kHeader     = 9;
 constexpr uint32_t kMaxPayload = 1u << 20;
 constexpr char     kAck        = 0x06;
 
-void putU32(std::string &out, uint32_t v) {
-    for (int i = 0; i < 4; ++i)
-        out += char((v >> (8 * i)) & 0xff);
-}
-uint32_t getU32(const char *p) {
-    uint32_t v = 0;
-    for (int i = 0; i < 4; ++i)
-        v |= uint32_t(uint8_t(p[i])) << (8 * i);
-    return v;
-}
-
 std::string encodeMessage(const std::vector<std::string> &strings) {
     std::string payload;
-    putU32(payload, uint32_t(strings.size()));
-    for (const auto &s : strings) {
-        putU32(payload, uint32_t(s.size()));
-        payload += s;
-    }
+    core::putU32(payload, uint32_t(strings.size()));
+    for (const auto &s : strings)
+        core::putString(payload, s);
     std::string out(kMagic, 4);
     out += char(kVersion);
-    putU32(out, uint32_t(payload.size()));
+    core::putU32(out, uint32_t(payload.size()));
     return out + payload;
 }
 
@@ -130,27 +105,23 @@ bool decodeMessage(const std::string &buf, bool *complete, std::vector<std::stri
         return buf.compare(0, buf.size(), kMagic, std::min<size_t>(buf.size(), 4)) == 0;
     if (buf.compare(0, 4, kMagic, 4) != 0 || uint8_t(buf[4]) != kVersion)
         return false;
-    const uint32_t len = getU32(buf.data() + 5);
+    const uint32_t len = core::getU32(buf.data() + 5);
     if (len > kMaxPayload || len < 4)
         return false;
     if (buf.size() < kHeader + len)
         return true;
-    const char *p = buf.data() + kHeader, *end = p + len;
-    uint32_t    n = getU32(p);
-    p += 4;
+    std::string_view p(buf.data() + kHeader, len);
+    const uint32_t   n = core::getU32(p.data());
+    p.remove_prefix(4);
     strings->clear();
     for (uint32_t i = 0; i < n; ++i) {
-        if (end - p < 4)
+        std::string s;
+        if (!core::takeString(p, &s))
             return false;
-        const uint32_t sl = getU32(p);
-        p += 4;
-        if (uint32_t(end - p) < sl)
-            return false;
-        strings->emplace_back(p, sl);
-        p += sl;
+        strings->push_back(std::move(s));
     }
     *complete = true;
-    return p == end;
+    return p.empty();
 }
 
 // The per-user temporary directory (/var/folders/…/T/): created by the system
@@ -428,9 +399,8 @@ bool CocoaApp::registerUrlScheme(std::string_view scheme) {
     // macOS registers schemes from the bundle's Info.plist (CFBundleURLTypes)
     // when Launch Services sees the bundle; nothing to write at run time.
     // Remembered either way, for second-instance arguments.
-    const std::string s = lower(scheme);
-    if (std::find(_schemes.begin(), _schemes.end(), s) == _schemes.end())
-        _schemes.push_back(s);
+    core::rememberScheme(_schemes, scheme);
+    const std::string s = core::asciiLower(scheme);
     @autoreleasepool {
         NSString *want = nsString(s);
         for (NSDictionary *type in NSBundle.mainBundle.infoDictionary[@"CFBundleURLTypes"]) {
@@ -600,14 +570,7 @@ void CocoaApp::onInstanceData(int fd) {
     Event e{.type = EventType::InstanceActivated};
     e.text = std::move(strings.front());
     e.strings.assign(strings.begin() + 1, strings.end());
-    std::vector<std::string> urls;
-    for (const auto &a : e.strings) {
-        const size_t colon = a.find(':');
-        if (colon != std::string::npos && colon > 0 &&
-            std::find(_schemes.begin(), _schemes.end(), lower(a.substr(0, colon))) !=
-                _schemes.end())
-            urls.push_back(a);
-    }
+    std::vector<std::string> urls = core::schemeUrls(e.strings, _schemes);
     emit(e);
     if (!urls.empty())
         emit({.type = EventType::OpenUrls, .strings = std::move(urls)});

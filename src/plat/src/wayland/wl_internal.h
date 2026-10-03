@@ -17,12 +17,11 @@
 #include "core/backends.h"
 #include "core/input.h"
 #include "core/transfer.h"
-#include "linux/services.h"
+#include "linux/posix_app.h"
 #include "linux/xkb_keyboard.h"
 #ifdef PLAT_TEST_HOOKS
 #include "plat/testing.h"
 #endif
-#include "posix/posix_loop.h"
 
 #include <wayland-client.h>
 #include <wayland-cursor.h>
@@ -182,7 +181,6 @@ public:
 
 private:
     void updateScale();
-    void applySize(Size logical);
     void createRole();
     void destroyRole();
     void pruneBuffers();
@@ -234,7 +232,8 @@ private:
     TextInputState                _textInput;
 };
 
-class WlApp final : public linux_services::ServicesApp {
+// The loop, openUrl and testHooks(): linux_services::PosixServicesApp.
+class WlApp final : public linux_services::PosixServicesApp {
 public:
     WlApp();
     ~WlApp() override;
@@ -243,17 +242,7 @@ public:
     const char             *backendName() const override { return "wayland"; }
     std::unique_ptr<Window> createWindow(const WindowDesc &desc) override;
     void                    run() override;
-    void                    quit() override { _loop.quit(); }
     void                    pump(int timeoutMs) override;
-    void    post(std::function<void()> fn) override { _loop.core.post(std::move(fn)); }
-    TimerId addTimer(int ms, bool repeat, std::function<void()> fn) override {
-        return _loop.core.addTimer(ms, repeat, std::move(fn));
-    }
-    void     cancelTimer(TimerId id) override { _loop.core.cancelTimer(id); }
-    uint64_t watchFd(int fd, uint32_t ev, std::function<void(uint32_t)> fn) override {
-        return _loop.watch(fd, ev, std::move(fn));
-    }
-    void unwatchFd(uint64_t id) override { _loop.unwatch(id); }
 
     void setClipboard(std::vector<DataItem> items, Selection sel) override;
     void requestClipboard(
@@ -265,17 +254,14 @@ public:
 
     // darkMode(), tray, notifications, badge: linux_services::ServicesApp.
     void emitThemeChanged() override;
-    int  doubleClickMs() const override { return 400; }
-    bool openUrl(std::string_view url) override;
 
 #ifdef PLAT_TEST_HOOKS
-    TestHooks *testHooks() override { return this; }
-    bool       injectKey(Window &w, Key k, bool down) override;
-    bool       injectPointerMove(Window &w, Point logical) override;
-    bool       injectButton(Window &w, Button b, bool down) override;
-    bool       injectScroll(Window &w, double dx, double dy) override;
-    bool       readPixel(Window &w, int x, int y, uint32_t *argb) override;
-    bool       injectPhasedScroll(Window &w, double dx, double dy, ScrollPhase phase) override;
+    bool injectKey(Window &w, Key k, bool down) override;
+    bool injectPointerMove(Window &w, Point logical) override;
+    bool injectButton(Window &w, Button b, bool down) override;
+    bool injectScroll(Window &w, double dx, double dy) override;
+    bool readPixel(Window &w, int x, int y, uint32_t *argb) override;
+    bool injectPhasedScroll(Window &w, double dx, double dy, ScrollPhase phase) override;
     // injectGesture / wantsAttention: no protocol for either (TestHooks defaults).
 #endif
 
@@ -391,8 +377,7 @@ public:
 #endif
 
     // ── state ───────────────────────────────────────────────────────────────
-    posix::PosixLoop _loop;
-    bool             _reading = false, _dead = false;
+    bool _reading = false, _dead = false;
 
     wl_display                              *display            = nullptr;
     wl_registry                             *registry           = nullptr;
@@ -425,6 +410,7 @@ public:
     std::vector<Monitor> _lastMonitors;
 
     std::vector<WlWindow *> _windows;
+    std::vector<WlWindow *> _frameWindows; // emitReadyFrames' scratch
     uint64_t                _displayWatch = 0;
     TimerId                 _frameTimer   = 0; // wakes the loop for a rate-limited frame
 
@@ -543,8 +529,6 @@ public:
 #endif
 };
 
-// Text MIME types other toolkits offer or ask for; UTF-8 first.
-extern const char *const kTextMimes[5];
-bool                     isTextMime(std::string_view m);
+using core::isTextMime;
 
 } // namespace plat::wl

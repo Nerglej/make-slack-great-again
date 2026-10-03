@@ -1,5 +1,7 @@
 #include "linux/notifications.h"
 
+#include "core/strings.h"
+
 #include <algorithm>
 #include <unistd.h>
 
@@ -14,27 +16,6 @@ constexpr size_t kRetainClosed = 64;
 // Some servers never report a close for persistent notifications; cap the
 // open ones too so a long-running app cannot grow the maps without bound.
 constexpr size_t kMaxEntries   = 512;
-
-std::string escapeMarkup(std::string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        switch (c) {
-        case '&':
-            out += "&amp;";
-            break;
-        case '<':
-            out += "&lt;";
-            break;
-        case '>':
-            out += "&gt;";
-            break;
-        default:
-            out += c;
-        }
-    }
-    return out;
-}
 
 } // namespace
 
@@ -180,7 +161,7 @@ void Notifier::send(uint64_t id, const Notification &n) {
     w.u32(0);  // replaces_id
     w.str(""); // app_icon: the desktop-entry hint names our icon
     w.str(n.title);
-    w.str(_markup ? escapeMarkup(sanitizeUtf8(n.body)) : n.body);
+    w.str(_markup ? core::escapeMarkup(sanitizeUtf8(n.body)) : n.body);
     w.array("s", [&](MsgWriter &a) {
         // "default" is the body click; servers do not draw it as a button.
         a.str("default");

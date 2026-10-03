@@ -36,10 +36,6 @@ readProperty(xcb_connection_t *c, xcb_window_t w, xcb_atom_t prop, xcb_atom_t *t
 
 } // namespace
 
-bool isTextMime(std::string_view m) {
-    return core::isTextMime(m);
-}
-
 std::string normaliseMime(std::string_view name) {
     // Selection bookkeeping targets, not data; and COMPOUND_TEXT, an ISO
     // 2022 text encoding nobody can use that GTK offers next to UTF8_STRING.
@@ -183,8 +179,9 @@ std::vector<xcb_atom_t> X11App::textTargets(const std::vector<xcb_atom_t> &offer
     return out;
 }
 
-std::optional<std::string>
-X11App::dataFor(const std::vector<DataItem> &items, xcb_atom_t target, xcb_atom_t *type) {
+std::optional<std::string_view> X11App::dataFor(
+    const std::vector<DataItem> &items, xcb_atom_t target, xcb_atom_t *type, std::string *latin1
+) {
     for (auto &i : items)
         if (intern(i.mime) == target) {
             *type = target;
@@ -206,8 +203,9 @@ X11App::dataFor(const std::vector<DataItem> &items, xcb_atom_t target, xcb_atom_
         return *text;
     }
     if (target == XCB_ATOM_STRING) { // ICCCM STRING is Latin-1
-        *type = XCB_ATOM_STRING;
-        return utf8ToLatin1(*text);
+        *type   = XCB_ATOM_STRING;
+        *latin1 = utf8ToLatin1(*text);
+        return *latin1;
     }
     return std::nullopt;
 }
@@ -229,6 +227,7 @@ void X11App::onSelectionRequest(xcb_selection_request_event_t *e) {
     if (owned) {
         const auto &items = _owned[idx].items;
         xcb_atom_t  type  = 0;
+        std::string latin1; // the STRING conversion, when that is the target
         if (e->target == _atoms[Targets]) {
             std::vector<xcb_atom_t> t = {_atoms[Targets], _atoms[Timestamp]};
             for (xcb_atom_t a : offeredTypes(items))
@@ -256,7 +255,7 @@ void X11App::onSelectionRequest(xcb_selection_request_event_t *e) {
                 &_owned[idx].time
             );
             n.property = prop;
-        } else if (auto data = dataFor(items, e->target, &type)) {
+        } else if (auto data = dataFor(items, e->target, &type, &latin1)) {
             if (data->size() > kIncrChunk) {
                 // INCR: announce the size, then feed a chunk every time the
                 // requestor deletes the property. Watching its property
@@ -272,8 +271,9 @@ void X11App::onSelectionRequest(xcb_selection_request_event_t *e) {
                 xcb_change_property(
                     _c, XCB_PROP_MODE_REPLACE, e->requestor, prop, _atoms[Incr], 32, 1, &size
                 );
+                // Our own copy: the selection may change before the last chunk.
                 _incrSends.push_back(
-                    {e->requestor, prop, type, std::move(*data), 0, core::Clock::now()}
+                    {e->requestor, prop, type, std::string(*data), 0, core::Clock::now()}
                 );
             } else {
                 xcb_change_property(

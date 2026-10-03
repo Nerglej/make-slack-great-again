@@ -55,9 +55,12 @@ void PosixLoop::iterate(int timeoutMs) {
     if (core.hasPosted())
         mayBlock = false;
 
-    std::vector<pollfd>   pfds;
-    std::vector<uint64_t> ids;
-    pfds.reserve(_watches.size() + 1);
+    // The poll arrays are reused across iterations (taken here and handed
+    // back at the end, so a nested iterate() from a callback gets its own).
+    std::vector<pollfd>   pfds = std::move(_pfds);
+    std::vector<uint64_t> ids  = std::move(_ids);
+    pfds.clear();
+    ids.clear();
     pfds.push_back({_wakeRead, POLLIN, 0});
     for (const auto &[id, w] : _watches) {
         short ev = 0;
@@ -99,6 +102,8 @@ void PosixLoop::iterate(int timeoutMs) {
             fn(ready);
         }
     }
+    _pfds = std::move(pfds);
+    _ids  = std::move(ids);
     core.runPosted();
     core.runDueTimers();
 }

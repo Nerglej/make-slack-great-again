@@ -77,6 +77,13 @@ constexpr NSEventModifierFlags kDevLCtrl = 0x0001, kDevLShift = 0x0002, kDevRShi
     bool                     _imeTouched;
     std::vector<std::string> _pendingText;
     bool                     _keyDownSent[128];
+    // The offered MIME types of the drag over us, kept for the moves that
+    // follow: valid while the drag (sequence number) and the pasteboard
+    // contents (change count) are the same.
+    std::vector<std::string> _dropMimes;
+    NSInteger                _dropSeq;
+    NSInteger                _dropChange;
+    bool                     _dropKnown;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -608,25 +615,51 @@ constexpr NSEventModifierFlags kDevLCtrl = 0x0001, kDevLShift = 0x0002, kDevRShi
 - (Event)dropEvent:(id<NSDraggingInfo>)info type:(EventType)t withData:(bool)withData {
     const NSPoint p = [self convertPoint:info.draggingLocation fromView:nil];
     Event         e{.type = t, .pos = {p.x, p.y}};
-    e.allowedActions = plat::cocoa::dropActionsFromOperation(info.draggingSourceOperationMask);
-    e.dropAction     = plat::cocoa::preferredAction(e.allowedActions);
-    NSPasteboard *pb = info.draggingPasteboard;
-    for (auto &m : plat::cocoa::pasteboardMimes(pb)) {
+    e.allowedActions    = plat::cocoa::dropActionsFromOperation(info.draggingSourceOperationMask);
+    e.dropAction        = plat::core::preferredAction(e.allowedActions);
+    NSPasteboard   *pb  = info.draggingPasteboard;
+    const NSInteger seq = info.draggingSequenceNumber;
+    const NSInteger change = pb.changeCount;
+    if (!_dropKnown || seq != _dropSeq || change != _dropChange) {
+        _dropMimes  = plat::cocoa::pasteboardMimes(pb);
+        _dropSeq    = seq;
+        _dropChange = change;
+        _dropKnown  = true;
+    }
+    // Read once on Drop: the uri-list item and e.uris, the text item and
+    // e.text are the same reads.
+    if (withData)
+        e.uris = plat::cocoa::pasteboardUris(pb);
+    std::optional<std::string> text;
+    bool                       textRead = false;
+    for (const auto &m : _dropMimes) {
         plat::DataItem item{m, {}};
         // Data only on Drop, and only for types that are cheap and meant
         // for us: the standard ones and plat-style MIME/dynamic types (not
         // file promises or the TIFF a PNG drag also offers, say).
-        const bool     wanted = m == "text/plain;charset=utf-8" || m == "text/html" ||
-                                m == "image/png" || m == "text/uri-list" ||
-                                (m.find('/') != std::string::npos && m.rfind("image/", 0) != 0);
-        if (withData && wanted)
-            item.data = plat::cocoa::readPasteboard(pb, m).value_or(std::string());
+        const bool wanted = m == plat::core::kTextMime || m == "text/html" || m == "image/png" ||
+                            m == "text/uri-list" ||
+                            (m.find('/') != std::string::npos && m.rfind("image/", 0) != 0);
+        if (withData && wanted) {
+            if (m == "text/uri-list") {
+                for (const auto &u : e.uris)
+                    item.data += u + "\r\n";
+            } else {
+                std::optional<std::string> d = plat::cocoa::readPasteboard(pb, m);
+                if (m == plat::core::kTextMime) {
+                    text     = d;
+                    textRead = true;
+                }
+                item.data = std::move(d).value_or(std::string());
+            }
+        }
         e.items.push_back(std::move(item));
     }
     if (withData) {
-        e.uris = plat::cocoa::pasteboardUris(pb);
-        if (NSString *s = [pb stringForType:NSPasteboardTypeString])
-            e.text = s.UTF8String;
+        if (!textRead)
+            if (NSString *s = [pb stringForType:NSPasteboardTypeString])
+                text = std::string(s.UTF8String);
+        e.text = std::move(text).value_or(std::string());
     }
     return e;
 }
@@ -976,10 +1009,7 @@ Point CocoaWindow::viewPoint(NSEvent *ev) const {
 }
 
 void CocoaWindow::setTitle(std::string_view t) {
-    window.title = [[NSString alloc] initWithBytes:t.data()
-                                            length:t.size()
-                                          encoding:NSUTF8StringEncoding]
-                       ?: @"";
+    window.title = plat::cocoa::nsString(t);
 }
 
 Size CocoaWindow::size() const {

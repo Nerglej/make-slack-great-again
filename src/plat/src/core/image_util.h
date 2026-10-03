@@ -18,4 +18,11 @@ uint32_t unpremultiply(uint32_t argb);
 // w×h of transparent pixels for an empty src. The result's scale is 1.
 Image scaleImage(const Image &src, int w, int h);
 
+// The image of `sizes` for a px×px slot: the smallest one at least that big,
+// else the largest (empty and malformed ones are skipped; null when none is
+// left). Between equally big ones the Image::scale closest to `scale` wins
+// (when `scale` > 0). `onlyAtScale`: when any image is drawn for `scale`,
+// only those are considered.
+const Image *pickImage(const std::vector<Image> &sizes, int px, double scale, bool onlyAtScale);
+
 } // namespace plat::core

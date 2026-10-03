@@ -7,6 +7,9 @@
 #include "core/loop_core.h"
 
 #include <map>
+#include <vector>
+
+#include <poll.h>
 
 namespace plat::posix {
 
@@ -33,8 +36,6 @@ public:
         _quit = true;
         wakeUp();
     }
-    bool quitting() const { return _quit; }
-    void resetQuit() { _quit = false; }
 
     void wakeUp(); // thread-safe
 
@@ -46,6 +47,8 @@ private:
     };
     std::map<uint64_t, Watch> _watches;
     uint64_t                  _nextWatch = 1;
+    std::vector<pollfd>       _pfds; // iterate()'s scratch
+    std::vector<uint64_t>     _ids;
     int                       _wakeRead = -1, _wakeWrite = -1;
     bool                      _quit = false;
 };

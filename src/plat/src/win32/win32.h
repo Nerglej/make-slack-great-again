@@ -23,11 +23,13 @@
 #endif
 #include <windows.h>
 #include <shellapi.h> // HDROP
+#include <unknwn.h>
 
 #include "core/backends.h"
 #include "core/loop_core.h"
 #include "core/image_util.h"
 #include "core/input.h"
+#include "core/strings.h"
 #include "core/transfer.h"
 #include "plat/testing.h"
 
@@ -40,6 +42,7 @@
 #include <vector>
 
 struct IDropTargetHelper;
+struct IPropertyStore;
 
 namespace plat::win32 {
 
@@ -60,6 +63,64 @@ using core::parseUriList; // the URIs of a text/uri-list
 Key      keyFromVk(UINT vk, bool extended, UINT scan);
 UINT     vkFromKey(Key k, bool *extended); // for SendInput; 0 = no mapping
 uint32_t currentMods();                    // from GetKeyState, i.e. as of the current message
+
+// ── Small shared helpers (win32_system.cpp unless noted) ────────────────────
+// GetProcAddress as a typed function pointer; null for a missing module or
+// symbol. Through void(*)() so -Wcast-function-type accepts the FARPROC cast.
+template <class T>
+T sym(HMODULE m, const char *name) {
+    return m ? reinterpret_cast<T>(reinterpret_cast<void (*)()>(GetProcAddress(m, name))) : nullptr;
+}
+bool         setRegString(HKEY key, const wchar_t *name, const std::wstring &v); // REG_SZ
+std::wstring exePath(); // this executable, long paths included; empty on failure
+// GetTempPathW: the temp directory with its trailing '\'; empty on failure.
+std::wstring tempPath();
+// The app's icon (resource IDI_ICON1), else the stock application icon.
+HICON        appIcon();
+// The GWLP_USERDATA pointer of a window whose CreateWindowExW passed it as
+// lpParam: stored on WM_NCCREATE, then read back for every message.
+void        *windowUserData(HWND h, UINT msg, LPARAM lp);
+// A hidden top-level tool window of class `cls` (registered on first use):
+// broadcasts (TaskbarCreated, WM_SETTINGCHANGE, …) skip message-only ones.
+HWND         createHiddenWindow(HINSTANCE inst, const wchar_t *cls, WNDPROC proc, void *param);
+// `w` into a fixed buffer of `cap` (NOTIFYICONDATA fields): cut to fit with
+// its terminator, never in the middle of a surrogate pair (win32_shell.cpp).
+void         copyTruncated(wchar_t *dst, size_t cap, std::wstring_view w);
+// PKEY_AppUserModel_ID := id on a property store, committed (win32_shell.cpp).
+void         setAppUserModelIdProperty(IPropertyStore *store, const std::wstring &id);
+// HGLOBAL ↔ bytes (win32_data.cpp): a movable block holding a copy of `n`
+// bytes (at least one byte is allocated), and the whole block's bytes.
+HGLOBAL      globalFromBytes(const void *p, size_t n);
+std::optional<std::string> bytesFromGlobal(HGLOBAL g);
+
+// A single-interface COM object: IUnknown for interface I, deleted by its
+// last Release.
+template <class I>
+class ComObject : public I {
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(I)) {
+            *out = static_cast<I *>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++_refs; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG n = --_refs;
+        if (!n)
+            delete this;
+        return n;
+    }
+
+protected:
+    virtual ~ComObject() = default;
+
+private:
+    std::atomic<ULONG> _refs{1};
+};
 
 // ── Optional APIs, resolved at runtime ──────────────────────────────────────
 // Linking these directly would make the exe refuse to start on Windows 10
@@ -85,28 +146,32 @@ struct NativeData {
 };
 // What setClipboard / a drag source offers for these items: several native
 // formats per item where Windows apps expect them (uri-list → CF_HDROP too).
-std::vector<NativeData>    encodeForOs(const std::vector<DataItem> &items);
-// The standard MIME name of a native format; nullopt for ones with no
-// meaningful MIME (CF_LOCALE, CF_OEMTEXT duplicates, private GDI formats).
-std::optional<std::string> mimeForFormat(UINT cf);
+std::vector<NativeData>  encodeForOs(const std::vector<DataItem> &items);
 // Offered formats → the de-duplicated MIME list requestClipboardMimes and
 // DropEnter report (image/png is added when a DIB can be converted to it).
-std::vector<std::string>   mimesForFormats(const std::vector<UINT> &cfs);
-// Read `mime` from whatever the source offers: `get` fetches one native
-// format's bytes (nullopt when absent), trying the best one first.
+std::vector<std::string> mimesForFormats(const std::vector<UINT> &cfs);
+// Reading `mime` from whatever the source offers, in two steps so the
+// source (the clipboard) is held only while bytes are copied out:
+// readFromOs fetches the best native format through `get` (one format's
+// bytes, nullopt when absent), finishDecode converts them (CRLF, CF_HTML,
+// CF_HDROP, DIB → PNG through WIC) with the source released.
+struct OsData {
+    UINT        cf = 0;
+    std::string bytes;
+};
+std::optional<OsData>
+readFromOs(std::string_view mime, const std::function<std::optional<std::string>(UINT)> &get);
+std::optional<std::string> finishDecode(std::string_view mime, OsData raw);
+// Both steps at once.
 std::optional<std::string>
 decodeFromOs(std::string_view mime, const std::function<std::optional<std::string>(UINT)> &get);
-bool        isTextMime(std::string_view mime);
+using core::isTextMime;
 // CF_HTML ("HTML Format"): a header with byte offsets, then the markup.
 std::string cfHtmlEncode(std::string_view fragment);
 std::string cfHtmlDecode(std::string_view data); // the fragment
 // CF_HDROP payload (DROPFILES + NUL-separated paths) ↔ text/uri-list.
 std::string hdropToUriList(const void *dropfiles, size_t size);
 std::string hdropFromUriList(std::string_view list); // empty: not all local files
-std::string dibToBmpFile(std::string_view dib);      // prepend BITMAPFILEHEADER
-UINT        cfHtml();
-UINT        cfPng();
-UINT        cfUriList(); // registered "text/uri-list": exact bytes between plat apps
 
 // ── Images (win32_image.cpp) ────────────────────────────────────────────────
 // The image of `sizes` best suited to a size×size slot: the smallest one at
@@ -120,6 +185,8 @@ HBITMAP     dibFromImage(const Image &img);
 // PNG through WIC (part of Windows; no encoder of our own). Empty on failure.
 std::string encodePng(const Image &img);
 std::string bmpFileToPng(std::string_view bmp);
+// Drops the WIC factory cached for this thread; before COM goes.
+void        releaseWic();
 // The taskbar overlay: a red disc with the count ("9+" past nine) drawn by
 // a tiny built-in bitmap font, since plat has no text rendering.
 Image       badgeImage(int count, int size);
@@ -283,7 +350,8 @@ private:
     HDC       _memDC = nullptr;
     HBITMAP   _dib = nullptr, _oldBitmap = nullptr;
     uint32_t *_bits = nullptr;
-    int       _dibW = 0, _dibH = 0;
+    int       _dibW = 0, _dibH = 0; // the canvas: the client size last painted
+    int       _capW = 0, _capH = 0; // the DIB itself, at least as big
     bool      _everPainted = false, _inSizeMove = false;
     int       _modalRefs      = 0; // OS modal loops this window entered (enterModal calls to undo)
     bool      _frameRequested = true;
@@ -371,7 +439,7 @@ public:
     bool       openUrl(std::string_view url) override;
     TestHooks *testHooks() override { return this; }
 
-    std::vector<Monitor> monitors() const override { return enumMonitors(true); }
+    std::vector<Monitor> monitors() const override;
     bool claimSingleInstance(std::string_view key, const std::vector<std::string> &args) override;
     bool registerUrlScheme(std::string_view scheme) override;
     std::optional<bool> networkOnline() const override;
@@ -405,24 +473,27 @@ public:
 
     // ── backend-internal ──
     using BackendApp::emit;
-    HINSTANCE      instance() const { return _instance; }
-    const wchar_t *windowClass() const { return kWindowClass; }
-    int            frameIntervalMs() const { return _frameIntervalMs; }
-    void           addWindow(Win32Window *w) { _windows.push_back(w); }
-    void           removeWindow(Win32Window *w);
-    void           wake() { _core.wake(); }
+    HINSTANCE instance() const { return _instance; }
+    int       frameIntervalMs() const { return _frameIntervalMs; }
+    // Lines (or, horizontal, characters) per wheel notch, cached until the
+    // next WM_SETTINGCHANGE (settingsChanged()).
+    UINT      wheelScrollAmount(bool horizontal);
+    void      settingsChanged() { _wheelKnown = 0; }
+    void      addWindow(Win32Window *w) { _windows.push_back(w); }
+    void      removeWindow(Win32Window *w);
+    void      wake() { _core.wake(); }
     // Posted work, due timers, due frames. Runs after every pump and from the
     // hidden window's messages, so it keeps going inside modal loops.
-    void           service();
+    void      service();
     // OS modal loops (live move/resize, menus) run their own message pump;
     // a SetTimer armed for the next due timer or frame keeps them alive
     // meanwhile (posted work arrives as kWakeMsg anyway).
-    void           enterModal();
-    void           leaveModal();
+    void      enterModal();
+    void      leaveModal();
     // The modal timer for what is due next, or none: no ticks while idle.
-    void           armModal();
+    void      armModal();
     // For win32_tests: the modal timer's period now (-1: not armed).
-    int            modalTimerMs() const { return _modalTimerMs; }
+    int       modalTimerMs() const { return _modalTimerMs; }
 
     bool   oleReady() const { return _oleInit; }
     Shell &shell(); // created on first use
@@ -506,6 +577,8 @@ private:
     struct Instance;
     std::vector<Instance *>  _instances; // owned; freed in teardownSystem()
     std::vector<std::string> _schemes;   // lower case, registered by this process
+    UINT                     _wheelLines = 3, _wheelChars = 3;
+    uint8_t                  _wheelKnown = 0; // bit 0: lines, bit 1: chars
     struct Network;
     mutable Network *_network = nullptr; // COM sink; created on first use
     struct DialogRequest {

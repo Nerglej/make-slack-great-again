@@ -3,6 +3,8 @@
 // every status item — plat.h's macOS exception.
 #include "cocoa/cocoa_internal.h"
 
+#include "core/image_util.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -31,27 +33,6 @@ namespace {
 
 // Status-item icons are 18 pt square in a 22–24 pt menu bar (the HIG size).
 constexpr int kIconPoints = 18;
-
-// The best source for a target pixel size: the smallest at least that big
-// (scaled down), else the largest (scaled up). Images drawn for this rep's
-// scale (Image::scale) are preferred over any others, so an app that hands
-// over an 18 px @1x and a 36 px @2x icon gets exactly those two.
-const Image *bestFit(const std::vector<Image> &sizes, int px, double scale) {
-    bool anyAtScale = false;
-    for (const auto &i : sizes)
-        anyAtScale |= !i.empty() && std::abs(i.scale - scale) < 0.01;
-    const Image *atLeast = nullptr, *largest = nullptr;
-    for (const auto &i : sizes) {
-        if (i.empty() || (anyAtScale && std::abs(i.scale - scale) >= 0.01))
-            continue;
-        const int s = std::max(i.width, i.height);
-        if (s >= px && (!atLeast || s < std::max(atLeast->width, atLeast->height)))
-            atLeast = &i;
-        if (!largest || s > std::max(largest->width, largest->height))
-            largest = &i;
-    }
-    return atLeast ? atLeast : largest;
-}
 
 // src drawn into an exactly px-sized sRGB bitmap: a rep of the menu bar's
 // real size, so AppKit never resamples it at draw time (and the probe sees
@@ -89,11 +70,6 @@ NSBitmapImageRep *repAt(const Image &src, int px) {
     CGImageRelease(scaled);
     rep.size = NSMakeSize(w * double(kIconPoints) / px, h * double(kIconPoints) / px);
     return rep;
-}
-
-NSString *nsString(std::string_view s) {
-    return [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding]
-               ?: @"";
 }
 
 NSMenu *buildMenu(const std::vector<MenuItem> &items, PlatTrayTarget *target) {
@@ -170,9 +146,12 @@ void CocoaTray::setIcon(const std::vector<Image> &sizes) {
         // A template (setTemplate) is tinted by the menu bar from its alpha;
         // otherwise the pixels show as given (a colour picture, its badge).
         NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(kIconPoints, kIconPoints)];
+        // Per rep: the smallest source at least px big, else the largest;
+        // images drawn for the rep's scale win, so an app that hands over an
+        // 18 px @1x and a 36 px @2x icon gets exactly those two.
         for (int scale : {1, 2}) {
             const int px = kIconPoints * scale;
-            if (const Image *src = bestFit(sizes, px, scale))
+            if (const Image *src = core::pickImage(sizes, px, scale, true))
                 if (NSBitmapImageRep *rep = repAt(*src, px))
                     [image addRepresentation:rep];
         }

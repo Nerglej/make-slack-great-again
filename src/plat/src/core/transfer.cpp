@@ -1,28 +1,18 @@
 #include "core/transfer.h"
 
+#include "core/strings.h"
+
 namespace plat::core {
 
 namespace {
-
-char lower(char c) {
-    return c >= 'A' && c <= 'Z' ? char(c | 0x20) : c;
-}
 
 bool ieq(std::string_view a, std::string_view lowerB) {
     if (a.size() != lowerB.size())
         return false;
     for (size_t i = 0; i < a.size(); ++i)
-        if (lower(a[i]) != lowerB[i])
+        if (asciiLower(a[i]) != lowerB[i])
             return false;
     return true;
-}
-
-std::string_view trimSpaces(std::string_view s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
-        s.remove_prefix(1);
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t'))
-        s.remove_suffix(1);
-    return s;
 }
 
 int hexValue(char c) {
@@ -38,15 +28,15 @@ bool isTextMime(std::string_view m) {
     if (m == "UTF8_STRING" || m == "STRING" || m == "TEXT")
         return true;
     const size_t semi = m.find(';');
-    if (!ieq(trimSpaces(m.substr(0, semi)), "text/plain"))
+    if (!ieq(trim(m.substr(0, semi)), "text/plain"))
         return false;
     if (semi == std::string_view::npos)
         return true;
-    const std::string_view param = trimSpaces(m.substr(semi + 1));
+    const std::string_view param = trim(m.substr(semi + 1));
     const size_t           eq    = param.find('=');
-    if (eq == std::string_view::npos || !ieq(trimSpaces(param.substr(0, eq)), "charset"))
+    if (eq == std::string_view::npos || !ieq(trim(param.substr(0, eq)), "charset"))
         return false;
-    std::string_view cs = trimSpaces(param.substr(eq + 1));
+    std::string_view cs = trim(param.substr(eq + 1));
     if (cs.size() >= 2 && cs.front() == '"' && cs.back() == '"')
         cs = cs.substr(1, cs.size() - 2);
     return ieq(cs, "utf-8") || ieq(cs, "utf8");
@@ -99,6 +89,13 @@ std::string percentDecode(std::string_view s) {
         }
     }
     return out;
+}
+
+DropAction preferredAction(uint32_t allowed) {
+    return (allowed & ActCopy)   ? DropAction::Copy
+           : (allowed & ActMove) ? DropAction::Move
+           : (allowed & ActLink) ? DropAction::Link
+                                 : DropAction::None;
 }
 
 std::string fileUri(std::string_view absPath) {

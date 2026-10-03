@@ -18,6 +18,7 @@
 #include <cstdlib>
 
 using plat::cocoa::CocoaApp;
+using plat::cocoa::nsString;
 
 namespace {
 
@@ -28,11 +29,6 @@ void toLoop(const std::shared_ptr<Alive> &alive, std::function<void(CocoaApp *)>
     std::lock_guard lock(alive->mutex);
     if (CocoaApp *app = alive->app)
         app->post([app, fn = std::move(fn)] { fn(app); });
-}
-
-NSString *nsString(std::string_view s) {
-    return [[NSString alloc] initWithBytes:s.data() length:s.size() encoding:NSUTF8StringEncoding]
-               ?: @"";
 }
 
 // Categories accumulate for the process lifetime: setNotificationCategories:

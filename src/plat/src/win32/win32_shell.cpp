@@ -46,11 +46,6 @@ namespace {
 
 constexpr UINT kTrayMsg = WM_APP + 7; // notify-icon callbacks
 
-template <class T>
-T sym(HMODULE m, const char *name) {
-    return m ? reinterpret_cast<T>(reinterpret_cast<void (*)()>(GetProcAddress(m, name))) : nullptr;
-}
-
 int smallIconSize() {
     // At the system DPI: that is what the notification area renders at.
     using ForDpi     = int(WINAPI *)(int, UINT);
@@ -64,21 +59,9 @@ double systemScale() {
     return (api().getDpiForSystem ? api().getDpiForSystem() : 96) / 96.0;
 }
 
-HICON appIcon() {
-    HICON i = LoadIconW(GetModuleHandleW(nullptr), L"IDI_ICON1");
-    return i ? i : LoadIconW(nullptr, IDI_APPLICATION);
-}
-
 template <size_t N>
 void copyTruncated(wchar_t (&dst)[N], std::string_view utf8) {
-    std::wstring w = toWide(utf8);
-    if (w.size() >= N) {
-        w.resize(N - 1);
-        if (IS_HIGH_SURROGATE(w.back()))
-            w.pop_back(); // never cut a surrogate pair in half
-    }
-    std::copy(w.begin(), w.end(), dst);
-    dst[w.size()] = 0;
+    win32::copyTruncated(dst, N, toWide(utf8));
 }
 
 // Anything that owns a hidden notify-icon window.
@@ -89,30 +72,15 @@ struct IconHost {
 };
 
 LRESULT CALLBACK iconProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_NCCREATE)
-        SetWindowLongPtrW(
-            h, GWLP_USERDATA, LONG_PTR(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams)
-        );
-    auto *host = reinterpret_cast<IconHost *>(GetWindowLongPtrW(h, GWLP_USERDATA));
+    auto *host = static_cast<IconHost *>(windowUserData(h, msg, lp));
     // `h`, not host->hwnd: that is only set once CreateWindowExW returns.
     return host ? host->handle(h, msg, wp, lp) : DefWindowProcW(h, msg, wp, lp);
 }
 
 HWND createIconWindow(HINSTANCE inst, IconHost *host) {
-    static const bool registered = [inst] {
-        WNDCLASSEXW wc{sizeof(wc)};
-        wc.lpfnWndProc   = &iconProc;
-        wc.hInstance     = inst;
-        wc.lpszClassName = L"plat.tray";
-        return RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-    }();
-    if (!registered)
-        return nullptr;
     // A hidden top-level window, not HWND_MESSAGE: "TaskbarCreated" is a
     // broadcast, and broadcasts only reach top-level windows.
-    HWND h = CreateWindowExW(
-        WS_EX_TOOLWINDOW, L"plat.tray", L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, inst, host
-    );
+    HWND h = createHiddenWindow(inst, L"plat.tray", &iconProc, host);
     if (h)
         ChangeWindowMessageFilterEx(
             h, RegisterWindowMessageW(L"TaskbarCreated"), MSGFLT_ALLOW, nullptr
@@ -126,26 +94,7 @@ UINT taskbarCreatedMsg() {
 }
 
 std::string xmlEscape(std::string_view s) {
-    std::string out;
-    for (char c : s) {
-        switch (c) {
-        case '&':
-            out += "&amp;";
-            break;
-        case '<':
-            out += "&lt;";
-            break;
-        case '>':
-            out += "&gt;";
-            break;
-        case '"':
-            out += "&quot;";
-            break;
-        default:
-            out += c;
-        }
-    }
-    return out;
+    return core::escapeMarkup(s, true);
 }
 
 // What a toast hands back on activation: "plat:<id>:<percent-encoded key>",
@@ -173,6 +122,33 @@ bool parseToastArguments(std::string_view args, uint64_t *id, std::string *key) 
 }
 
 } // namespace
+
+void copyTruncated(wchar_t *dst, size_t cap, std::wstring_view w) {
+    size_t n = std::min(w.size(), cap - 1);
+    if (n < w.size() && n > 0 && IS_HIGH_SURROGATE(w[n - 1]))
+        --n;
+    std::copy(w.begin(), w.begin() + ptrdiff_t(n), dst);
+    dst[n] = 0;
+}
+
+HICON appIcon() {
+    HICON i = LoadIconW(GetModuleHandleW(nullptr), L"IDI_ICON1");
+    return i ? i : LoadIconW(nullptr, IDI_APPLICATION);
+}
+
+void setAppUserModelIdProperty(IPropertyStore *store, const std::wstring &id) {
+    // PKEY_AppUserModel_ID, spelled out to avoid linking propsys for one
+    // constant.
+    static const PROPERTYKEY kAppId = {
+        {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5
+    };
+    PROPVARIANT pv;
+    PropVariantInit(&pv);
+    pv.vt      = VT_LPWSTR;
+    pv.pwszVal = const_cast<wchar_t *>(id.c_str()); // borrowed: SetValue copies
+    store->SetValue(kAppId, pv);
+    store->Commit();
+}
 
 // ── tray ────────────────────────────────────────────────────────────────────
 
@@ -477,9 +453,7 @@ void Win32Tray::fill(NOTIFYICONDATAW &nid, UINT flags) const {
     nid.uFlags           = flags;
     nid.uCallbackMessage = kTrayMsg;
     nid.hIcon            = _icon ? _icon : appIcon();
-    const size_t n       = std::min(_tip.size(), std::size(nid.szTip) - 1);
-    std::copy(_tip.begin(), _tip.begin() + ptrdiff_t(n), nid.szTip);
-    nid.szTip[n] = 0;
+    copyTruncated(nid.szTip, std::size(nid.szTip), _tip);
 }
 
 void Win32Tray::add() {
@@ -771,10 +745,6 @@ DWORD windowsBuild() {
     return fn && fn(&vi) == 0 ? vi.dwBuildNumber : 0;
 }
 
-const PROPERTYKEY kPkeyAumid = {
-    {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5
-};
-
 // Pre-1903 Windows only accepts toasts from an AUMID carried by a Start-menu
 // shortcut. Idempotent: an
 // existing one is left alone.
@@ -786,8 +756,8 @@ bool writeStartMenuShortcut(const std::wstring &aumid, const std::wstring &name)
     CoTaskMemFree(programs);
     if (GetFileAttributesW(lnk.c_str()) != INVALID_FILE_ATTRIBUTES)
         return true;
-    wchar_t exe[MAX_PATH];
-    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH))
+    const std::wstring exe = exePath(); // long paths too
+    if (exe.empty())
         return false;
     IShellLinkW *link = nullptr;
     if (FAILED(CoCreateInstance(
@@ -798,16 +768,11 @@ bool writeStartMenuShortcut(const std::wstring &aumid, const std::wstring &name)
             reinterpret_cast<void **>(&link)
         )))
         return false;
-    link->SetPath(exe);
+    link->SetPath(exe.c_str());
     bool            ok    = false;
     IPropertyStore *props = nullptr;
     if (SUCCEEDED(link->QueryInterface(IID_IPropertyStore, reinterpret_cast<void **>(&props)))) {
-        PROPVARIANT pv;
-        PropVariantInit(&pv);
-        pv.vt      = VT_LPWSTR;
-        pv.pwszVal = const_cast<wchar_t *>(aumid.c_str()); // borrowed; SetValue copies
-        props->SetValue(kPkeyAumid, pv);
-        props->Commit();
+        setAppUserModelIdProperty(props, aumid);
         props->Release();
     }
     IPersistFile *file = nullptr;
@@ -819,21 +784,9 @@ bool writeStartMenuShortcut(const std::wstring &aumid, const std::wstring &name)
     return ok;
 }
 
-bool setRegString(HKEY key, const wchar_t *name, const std::wstring &v) {
-    return RegSetValueExW(
-               key,
-               name,
-               0,
-               REG_SZ,
-               reinterpret_cast<const BYTE *>(v.c_str()),
-               DWORD((v.size() + 1) * sizeof(wchar_t))
-           ) == ERROR_SUCCESS;
-}
-
 std::wstring tempDir() {
-    wchar_t     buf[MAX_PATH + 1];
-    const DWORD n = GetTempPathW(MAX_PATH + 1, buf);
-    return n ? std::wstring(buf, n) : std::wstring(L".\\");
+    std::wstring p = tempPath();
+    return p.empty() ? std::wstring(L".\\") : p;
 }
 
 } // namespace

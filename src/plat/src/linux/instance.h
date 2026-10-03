@@ -27,7 +27,6 @@ bool claim(
 // Per-user registration of `scheme:` URLs for this executable. Remembered in
 // the process so forwarded args with that scheme also produce OpenUrls.
 bool registerUrlScheme(BackendApp &app, std::string_view scheme);
-bool isRegisteredSchemeUrl(std::string_view arg);
 
 std::string standardDir(StandardDir d);
 
