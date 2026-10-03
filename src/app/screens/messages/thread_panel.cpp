@@ -5,6 +5,7 @@
 #include "base/time.h"
 #include "gfx/icons_generated.h"
 #include "screens/common/file_dialogs.h"
+#include "screens/common/icon_button.h"
 
 #include "base/i18n.h"
 
@@ -20,24 +21,14 @@ namespace {
 
 // A round icon button: 32 px, an 18 px icon.def glyph, surface.highlight
 // on hover.
-class RoundButton final : public Clickable {
+class RoundButton final : public IconButton {
 public:
-    RoundButton(gfx::Icon icon, std::string tip) : icon(icon) {
+    RoundButton(gfx::Icon icon, std::string tip) : IconButton(icon, 18, C::FormIcon) {
         style().size(32, 32).noShrink();
         setLook({C::None, C::FormHighlight, C::FormHighlight, C::None, 16});
         setTooltip(std::move(tip));
         setRole(Role::Button);
     }
-    void paint(gfx::Painter &p) override {
-        Clickable::paint(p);
-        gfx::drawIcon(
-            p,
-            icon,
-            {snapPx((width() - 18) / 2), snapPx((height() - 18) / 2), 18, 18},
-            color(C::FormIcon)
-        );
-    }
-    gfx::Icon icon;
 };
 
 } // namespace
@@ -125,9 +116,8 @@ void ThreadPanel::refreshMute() {
     const bool muted = conversation() != model::kNoConv && root() &&
                        _ctx.store().threadMuted(conversation(), root());
     auto      *b     = static_cast<RoundButton *>(_mute);
-    b->icon          = muted ? gfx::Icon::BellOff : gfx::Icon::Bell;
     b->setTooltip(muted ? tr("Unmute thread") : tr("Mute thread"));
-    b->update();
+    b->setIcon(muted ? gfx::Icon::BellOff : gfx::Icon::Bell);
 }
 
 bool ThreadPanel::broadcastShown() const {

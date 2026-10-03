@@ -46,7 +46,6 @@ public:
 
 private:
     bool searchKey(const ui::Event &e);
-    void rebuildTabs();
     void syncTabs();
 
     Context                     &_ctx;

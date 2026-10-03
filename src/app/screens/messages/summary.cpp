@@ -4,6 +4,8 @@
 #include "app/llm/service.h"
 #include "app/model/jobs.h"
 #include "app/mrkdwn/markdown.h"
+#include "app/screens/common/message_rules.h"
+#include "app/screens/common/message_text.h"
 #include "app/screens/messages/rich.h"
 #include "base/i18n.h"
 #include "base/str.h"
@@ -31,13 +33,6 @@ constexpr int    kFetchDeadlineMs = 15000;
 // that leaves room for the card's chrome in a short window).
 constexpr float  kCardW = 840, kBodyH = 420, kCardChromeH = 260;
 
-// The message list's system lines (joins, topic changes, pins).
-bool isSystemLine(const model::Message &m) {
-    const std::string &s = m.subtype();
-    return str::endsWith(s, "_join") || str::endsWith(s, "_leave") || s == "channel_topic" ||
-           s == "channel_purpose" || s == "channel_name" || s == "pinned_item";
-}
-
 struct SummarizeJob {
     Context                       &ctx;
     ConvRef                        conv;
@@ -62,15 +57,13 @@ struct SummarizeJob {
     }
 
     std::string author(const model::Message &m) const {
-        if (m.extra && !m.extra->botName.empty())
-            return m.extra->botName;
-        return std::string(ctx.store().user(m.user).label());
+        return std::string(authorName(ctx.store(), m));
     }
 
     // The text as read (markup gone, mentions as names); a file-only
     // message as a placeholder.
     std::string text(const model::Message &m) const {
-        std::string t(str::trim(plainText(ctx, m.text)));
+        std::string t(str::trim(plainText(ctx.store(), m.text)));
         if (!t.empty() || m.files().empty())
             return t;
         std::string names;
@@ -152,7 +145,7 @@ void fetchNext(const JobPtr &j) {
         if (j->sameStore())
             if (const auto *list = j->ctx.store().replies(j->conv, root))
                 for (const model::Message &m : *list) {
-                    if (m.ts == root || m.pending || isSystemLine(m))
+                    if (m.ts == root || m.pending || isSystem(m))
                         continue;
                     if (std::string t = j->text(m); !t.empty())
                         j->replies[j->next].push_back({j->author(m), std::move(t), true});

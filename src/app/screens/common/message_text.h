@@ -19,10 +19,13 @@ namespace screens {
 // parser's own text, or for any other kind.
 std::string entityText(const model::Store &store, const mrkdwn::Entity &e, uint8_t skinTone = 0);
 
-// A notification's text: the parsed text with every entity entityText can
-// resolve swapped in. For a Store that need not be the one on screen (a
-// background workspace's notification).
-std::string plainText(const model::Store &store, std::string_view mrkdwn);
+// A message's text as the user reads it (notifications, copy text, search,
+// previews): markup stripped, every entity entityText can resolve swapped in
+// (emoji with their skin tone). fullUrls: a link label Slack shortened
+// ("host/…/…") is its full URL instead ("Copy message"). Reads the Store
+// only — never asks the backend for anything — so it suits a Store that
+// isn't the one on screen (a background workspace's notification).
+std::string plainText(const model::Store &store, std::string_view mrkdwn, bool fullUrls = false);
 
 // The first URL the message links to: a Link's URL, or a MessageLink's
 // permalink (the app's own thread links have none and are skipped). "" when

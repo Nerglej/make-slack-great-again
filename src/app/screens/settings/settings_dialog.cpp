@@ -2,6 +2,8 @@
 
 #include "screens/settings/settings_parts.h"
 
+#include "app/screens/common/custom_theme.h"
+
 #include "app/media/sounds.h"
 #include "app/spell/spell.h"
 #include "app/update/updater.h"
@@ -699,56 +701,6 @@ bool lowContrast(bool dark) {
     return contrastRatio(pc.text, pc.sidebar) < 3.0;
 }
 
-// Slack's theme swatches by name: what an ia_theme slot
-// names when it has no hex of its own.
-bool swatchColor(std::string_view name, Color *out) {
-    static const struct {
-        const char *name;
-        uint32_t    rgb;
-    } kSwatches[] = {
-        {"aubergine", 0x3F0E40},
-        {"graphite", 0x1F1F1F},
-        {"ocean", 0x0E2A40},
-        {"forest", 0x0E3D2E},
-        {"nocturne", 0x1A1D21},
-        {"ochin", 0x303E4D},
-        {"blueberry", 0x3B4CCA},
-        {"lagoon", 0x1264A3},
-        {"jade", 0x2BAC76},
-        {"banana", 0xECB22E},
-        {"clementine", 0xE8912D},
-        {"cherry", 0xCD2553},
-        {"hoth", 0xF5F0EB},
-    };
-    const std::string n = str::asciiLower(str::trim(name));
-    for (const auto &w : kSwatches)
-        if (n == w.name) {
-            *out = Color(0xff000000u | w.rgb);
-            return true;
-        }
-    return false;
-}
-
-// One ia_theme slot: {"hex":…} wins when valid, else its
-// "palette" name; a bare string is a hex or a palette name.
-bool parseThemeSlot(const json::Value &v, Color *out) {
-    if (v.isObject())
-        return parseHexColor(v["hex"].str(), out) || swatchColor(v["palette"].str(), out);
-    return v.isString() && (parseHexColor(v.str(), out) || swatchColor(v.str(), out));
-}
-
-// The custom theme's pins by their JSON names.
-const struct {
-    const char *key;
-    Color CustomPalette::*field;
-} kPins[] = {
-    {"itemHover", &CustomPalette::itemHover},
-    {"itemSelText", &CustomPalette::itemSelText},
-    {"itemText", &CustomPalette::itemText},
-    {"titleBarBg", &CustomPalette::titleBarBg},
-    {"titleBarText", &CustomPalette::titleBarText},
-};
-
 } // namespace
 
 // A custom theme from text: the ia_theme JSON ({"primary":{"hex":…} or
@@ -765,28 +717,8 @@ bool parseSlackTheme(std::string_view text, CustomPalette *out) {
         json::Document d;
         if (!d.parse(std::string(text), nullptr) || !d.root().isObject())
             return false;
-        const json::Value r = d.root();
-        const struct {
-            const char *key;
-            Color CustomPalette::*field;
-        } kSlots[] = {
-            {"primary", &CustomPalette::primary},
-            {"highlight1", &CustomPalette::highlight1},
-            {"highlight2", &CustomPalette::highlight2},
-            {"important", &CustomPalette::important},
-        };
-        bool any = false;
-        for (const auto &k : kSlots)
-            any |= r.has(k.key);
-        if (!any)
+        if (!screens::readCustomTheme(d.root(), &t))
             return false; // some other JSON
-        for (const auto &k : kSlots)
-            parseThemeSlot(r[k.key], &(t.*k.field)); // else the default's
-        t.brightness      = int(std::clamp<int64_t>(r["brightness"].integer(6), 0, 10));
-        t.sidebarInverted = r["sidebarInverted"].boolean(true);
-        t.gradient        = r["gradient"].boolean(true);
-        for (const auto &k : kPins)
-            parseHexColor(r["pins"][k.key].str(), &(t.*k.field));
         *out = t;
         return true;
     }

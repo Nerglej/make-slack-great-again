@@ -72,9 +72,6 @@ struct Builder {
     std::vector<std::string>       images;
     std::vector<mrkdwn::Run>       runs;
     int                            lastEntity = -1;
-    // plainText(): what the user reads, for the clipboard — no GIF badge,
-    // and (fullUrls) a shortened link label is its URL.
-    bool                           plain = false, fullUrls = false;
 
     // self: the own-mention background (a mention of me, @here/@channel, my group).
     text::Style pill(text::Style s, bool self = false) const {
@@ -119,16 +116,16 @@ struct Builder {
             const std::string_view label = std::string_view(r.text).substr(e.start, e.length);
             // Link labels: a GIPHY media link is a "GIF" badge; a
             // label Slack shortened ("host/…/…") is rebuilt from the URL.
-            const bool giphy = e.kind == Kind::Link && !plain && mrkdwn::isGiphyMediaUrl(e.data);
-            const bool shortened = e.kind == Kind::Link && (!plain || fullUrls) &&
-                                   mrkdwn::isShortenedUrlLabel(label, e.data);
+            const bool             giphy = e.kind == Kind::Link && mrkdwn::isGiphyMediaUrl(e.data);
+            const bool             shortened =
+                e.kind == Kind::Link && mrkdwn::isShortenedUrlLabel(label, e.data);
             // Mentions, emoji and rewritten links are replaced as a whole:
             // emit them once even when a style change split the entity into
             // several runs.
             // A permalink (it has a host; the app's own thread links don't) is
             // a chip.
             const bool chip =
-                e.kind == Kind::MessageLink && !plain && !mrkdwn::refFromToken(e.data).host.empty();
+                e.kind == Kind::MessageLink && !mrkdwn::refFromToken(e.data).host.empty();
             const bool atomic =
                 (e.kind != Kind::Link && e.kind != Kind::MessageLink) || giphy || shortened || chip;
             if (atomic && run.entity == lastEntity)
@@ -137,10 +134,6 @@ struct Builder {
             switch (e.kind) {
             case Kind::Link:
             case Kind::MessageLink:
-                if (plain) {
-                    t.append(shortened ? std::string_view(e.data) : slice, s);
-                    break;
-                }
                 s.color  = ui::themed(ui::C::Link);
                 s.linkId = target(e.kind, e.data);
                 if (chip) {
@@ -659,13 +652,7 @@ std::vector<std::string> bodyTexts(Context &ctx, std::string_view text, const Ri
 }
 
 std::string plainText(const Context &ctx, std::string_view text, bool fullUrls) {
-    const mrkdwn::Rich r = mrkdwn::parse(text);
-    Builder            b{const_cast<Context &>(ctx), r, ui::font(ui::Font::Body), {}, {}, {}};
-    b.plain    = true;
-    b.fullUrls = fullUrls;
-    text::AttributedText t;
-    b.append(t, 0, uint32_t(r.text.size()));
-    return t.text;
+    return plainText(ctx.store(), text, fullUrls);
 }
 
 // ── Links ───────────────────────────────────────────────────────────────────
@@ -691,10 +678,7 @@ void copyAddress(Context &ctx, const std::string &url, ui::Window *w, ui::PointF
 } // namespace
 
 void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at) {
-    const bool mailto = url.size() > 7 && (url[0] | 0x20) == 'm' && (url[1] | 0x20) == 'a' &&
-                        (url[2] | 0x20) == 'i' && (url[3] | 0x20) == 'l' &&
-                        (url[4] | 0x20) == 't' && (url[5] | 0x20) == 'o' && url[6] == ':';
-    if (!mailto) {
+    if (url.size() <= 7 || !str::iequals(std::string_view(url).substr(0, 7), "mailto:")) {
         if (ctx.openUrl)
             ctx.openUrl(url);
         return;
@@ -735,24 +719,6 @@ void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at
 #endif
     if (!ctx.app.platform().openUrl(url))
         copyAddress(ctx, url, w, at);
-}
-
-gfx::Color parseHexColor(std::string_view hex, gfx::Color fallback) {
-    if (!hex.empty() && hex[0] == '#')
-        hex.remove_prefix(1);
-    if (hex.size() != 6)
-        return fallback;
-    uint32_t v = 0;
-    for (char c : hex) {
-        const int d = c >= '0' && c <= '9'   ? c - '0'
-                      : c >= 'a' && c <= 'f' ? c - 'a' + 10
-                      : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                             : -1;
-        if (d < 0)
-            return fallback;
-        v = v * 16 + uint32_t(d);
-    }
-    return gfx::rgb(v);
 }
 
 } // namespace screens

@@ -19,10 +19,6 @@ using i18n::tr;
 
 constexpr float kCardW = 640, kCardH = 460, kRowH = 28, kIcon = 16;
 
-char lower(char c) {
-    return c >= 'A' && c <= 'Z' ? char(c | 0x20) : c;
-}
-
 std::string parentOf(const std::string &dir) {
     std::string_view p = file::dirName(dir);
     if (p.empty() || p == dir)
@@ -242,7 +238,8 @@ bool FileBrowser::globMatch(std::string_view pat, std::string_view name) {
     // in practice ASCII extensions).
     size_t p = 0, n = 0, star = std::string_view::npos, mark = 0;
     while (n < name.size()) {
-        if (p < pat.size() && (pat[p] == '?' || lower(pat[p]) == lower(name[n]))) {
+        if (p < pat.size() &&
+            (pat[p] == '?' || str::asciiLower(pat[p]) == str::asciiLower(name[n]))) {
             ++p;
             ++n;
         } else if (p < pat.size() && pat[p] == '*') {

@@ -19,6 +19,46 @@ class EmojiFrameTimer;
 
 constexpr int kMaxInlineTableRows = 10;
 
+// The table itself, for TableView and the table viewer (message_dialogs.h):
+// cells shaped once at their natural width, columns shrunk in proportion
+// (wrapping; only the cells that no longer fit are shaped again) when the
+// width is short of them, rows as tall as their tallest cell; drawn with the
+// header tint, the rules and the frame, only the rows in view.
+class TableGrid {
+public:
+    // The cells' text, row-major (rows may be short), shaped at `scale`.
+    void setCells(std::vector<std::vector<text::AttributedText>> cells, float scale);
+    // Columns for `width` (logical px): a squeezed one keeps at least
+    // minColW; a row without text is emptyRowH high (plus the padding).
+    void fit(float width, float minColW, float emptyRowH);
+    // From y0 down in view `v`'s coordinates, the rows that meet [top,
+    // bottom) only. With a Context, the cells' custom emoji boxes too (box id
+    // i is images[i - 1]; `anim` repaints v for their next frame).
+    void paint(
+        gfx::Painter                   &p,
+        ui::View                       &v,
+        float                           y0,
+        float                           top,
+        float                           bottom,
+        Context                        *ctx,
+        const std::vector<std::string> &images,
+        EmojiFrameTimer                *anim
+    ) const;
+    bool  empty() const { return _texts.empty(); }
+    float scale() const { return _scale; }
+    float naturalWidth() const { return _naturalW; } // every column at its natural width
+    float width() const { return _tableW; }
+    float height() const { return _tableH; }
+    bool  squeezed() const { return _squeezed; }
+
+private:
+    std::vector<std::vector<text::AttributedText>>          _texts;
+    std::vector<std::vector<std::unique_ptr<text::Layout>>> _natural, _wrapped;
+    std::vector<float>                                      _colW, _natW, _rowH;
+    float _scale = 0, _naturalW = 0, _tableW = 0, _tableH = 0;
+    bool  _squeezed = false;
+};
+
 class TableView : public ui::View {
 public:
     // cells: mrkdwn, row-major.
@@ -45,15 +85,14 @@ public:
 private:
     void build(float width);
 
-    Context                                                &_ctx;
-    std::vector<std::vector<std::string>>                   _cells;
-    std::vector<std::vector<std::unique_ptr<text::Layout>>> _layouts;
-    std::vector<std::string>                                _images; // emoji box id i: [i - 1]
-    std::unique_ptr<EmojiFrameTimer>                        _anim;
-    std::vector<float>                                      _colW, _rowH;
-    std::unique_ptr<text::Layout>                           _pillText;
-    float _builtW = -1, _builtScale = 0, _tableW = 0, _tableH = 0;
-    bool  _squeezed = false, _overPill = false;
+    Context                              &_ctx;
+    std::vector<std::vector<std::string>> _cells;
+    TableGrid                             _grid;
+    std::vector<std::string>              _images; // emoji box id i: [i - 1]
+    std::unique_ptr<EmojiFrameTimer>      _anim;
+    std::unique_ptr<text::Layout>         _pillText;
+    float                                 _builtW   = -1;
+    bool                                  _overPill = false;
 };
 
 } // namespace screens

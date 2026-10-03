@@ -1,7 +1,11 @@
 #include "screens/common/message_text.h"
 
 #include "app/mrkdwn/emoji.h"
+#include "app/mrkdwn/link_labels.h"
 #include "base/file.h"
+
+#include <algorithm>
+#include <vector>
 
 namespace screens {
 
@@ -34,16 +38,46 @@ std::string entityText(const model::Store &store, const mrkdwn::Entity &e, uint8
     return {};
 }
 
-std::string plainText(const model::Store &store, std::string_view text) {
-    const mrkdwn::Rich r   = mrkdwn::parse(text);
-    // Entities keep their raw form in the text (":name:", "@U0…", "#C0…").
-    // Only leaf entities resolve to anything, so swapping back to front keeps
-    // every earlier offset valid.
-    std::string        out = r.text;
-    for (size_t i = r.entities.size(); i-- > 0;) {
-        const mrkdwn::Entity &e = r.entities[i];
-        if (std::string to = entityText(store, e); !to.empty())
-            out.replace(e.start, e.length, to);
+std::string plainText(const model::Store &store, std::string_view text, bool fullUrls) {
+    const mrkdwn::Rich       r = mrkdwn::parse(text);
+    std::vector<mrkdwn::Run> runs;
+    mrkdwn::runs(r, 0, uint32_t(r.text.size()), runs);
+    std::string out;
+    out.reserve(r.text.size());
+    int last = -1; // the entity just written whole
+    for (const mrkdwn::Run &run : runs) {
+        const std::string_view slice =
+            std::string_view(r.text).substr(run.start, run.end - run.start);
+        if (run.entity < 0) {
+            out += slice;
+            continue;
+        }
+        const mrkdwn::Entity &e = r.entities[size_t(run.entity)];
+        const bool link = e.kind == mrkdwn::Kind::Link || e.kind == mrkdwn::Kind::MessageLink;
+        const bool shortened =
+            fullUrls && e.kind == mrkdwn::Kind::Link &&
+            mrkdwn::isShortenedUrlLabel(std::string_view(r.text).substr(e.start, e.length), e.data);
+        // A link's label is text like any other (a style change may split it
+        // into runs); everything else, and a label swapped for its URL, is
+        // written once, whole.
+        if (link && !shortened) {
+            out += slice;
+            continue;
+        }
+        if (run.entity == last)
+            continue;
+        last = run.entity;
+        if (shortened) {
+            out += e.data;
+            continue;
+        }
+        if (std::string to = entityText(store, e, run.skinTone); !to.empty()) {
+            out += to;
+            continue;
+        }
+        // Unresolved: its raw form (":name:", "@U0…"), with a merged
+        // ":skin-tone-N:" after it.
+        out += std::string_view(r.text).substr(e.start, std::max(e.end(), run.end) - e.start);
     }
     return out;
 }

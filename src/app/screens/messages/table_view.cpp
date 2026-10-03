@@ -20,6 +20,103 @@ constexpr float kPillH = 28, kPillIconPad = 40;
 
 } // namespace
 
+// ── TableGrid ───────────────────────────────────────────────────────────────
+
+void TableGrid::setCells(std::vector<std::vector<text::AttributedText>> cells, float scale) {
+    _texts      = std::move(cells);
+    _scale      = scale;
+    size_t cols = 0;
+    for (const auto &r : _texts)
+        cols = std::max(cols, r.size());
+    _natW.assign(cols, 2 * kPadX);
+    _natural.clear();
+    _natural.resize(_texts.size());
+    for (size_t r = 0; r < _texts.size(); ++r)
+        for (size_t c = 0; c < _texts[r].size(); ++c) {
+            _natural[r].push_back(text::Layout::build(_texts[r][c], {}, scale));
+            _natW[c] = std::max(_natW[c], std::ceil(_natural[r][c]->width()) + 2 * kPadX);
+        }
+    _naturalW = 0;
+    for (float v : _natW)
+        _naturalW += v;
+}
+
+void TableGrid::fit(float width, float minColW, float emptyRowH) {
+    _colW     = _natW;
+    _squeezed = _naturalW > width + 0.5f;
+    if (_squeezed)
+        for (float &v : _colW)
+            v = std::max(minColW, std::floor(v * width / _naturalW));
+    _tableW = 0;
+    for (float v : _colW)
+        _tableW += v;
+    _wrapped.clear();
+    _wrapped.resize(_texts.size());
+    _rowH.assign(_texts.size(), 0);
+    _tableH = 0;
+    for (size_t r = 0; r < _texts.size(); ++r) {
+        float h = 0;
+        _wrapped[r].resize(_texts[r].size());
+        for (size_t c = 0; c < _texts[r].size(); ++c) {
+            // Wider than its column now: wrapped to it.
+            const float         maxW = std::max(1.f, _colW[c] - 2 * kPadX);
+            const text::Layout *l    = _natural[r][c].get();
+            if (l->width() > maxW) {
+                text::LayoutOptions o;
+                o.maxWidth     = maxW;
+                _wrapped[r][c] = text::Layout::build(_texts[r][c], o, _scale);
+                l              = _wrapped[r][c].get();
+            }
+            h = std::max(h, l->height());
+        }
+        if (h == 0)
+            h = emptyRowH;
+        _rowH[r] = std::ceil(h) + 2 * kPadY;
+        _tableH += _rowH[r];
+    }
+}
+
+void TableGrid::paint(
+    gfx::Painter                   &p,
+    ui::View                       &v,
+    float                           y0,
+    float                           top,
+    float                           bottom,
+    Context                        *ctx,
+    const std::vector<std::string> &images,
+    EmojiFrameTimer                *anim
+) const {
+    const float tw = _tableW;
+    // The table's chrome: header tint, a hairline under it, row
+    // rules, a 1-px frame of radius 6; no vertical lines.
+    float       y  = y0;
+    for (size_t r = 0; r < _rowH.size() && y < bottom; y += _rowH[r], ++r) {
+        const float rh = _rowH[r];
+        if (y + rh <= top)
+            continue;
+        if (r == 0) {
+            p.save();
+            p.clipRoundRect({0, y0, tw, _tableH}, 6);
+            p.fillRect({0, y, tw, rh}, ui::color(C::TableHeaderBg));
+            p.restore();
+        } else {
+            p.fillRect({1, y, tw - 2, 1}, ui::color(r == 1 ? C::TableBorder : C::TableRowRule));
+        }
+        float x = 0;
+        for (size_t c = 0; c < _natural[r].size(); ++c) {
+            const text::Layout &l = _wrapped[r][c] ? *_wrapped[r][c] : *_natural[r][c];
+            const ui::PointF    o = v.snapPx({x + kPadX, y + kPadY});
+            l.paint(p, o);
+            if (ctx && !images.empty())
+                anim->schedule(paintEmojiBoxes(*ctx, p, l, o, images, &v));
+            x += _colW[c];
+        }
+    }
+    p.strokeRoundRect({0, y0, tw, _tableH}, 6, 1, ui::color(C::TableBorder));
+}
+
+// ── TableView ───────────────────────────────────────────────────────────────
+
 TableView::TableView(Context &ctx, std::vector<std::vector<std::string>> cells)
     : _ctx(ctx), _cells(std::move(cells)) {
     setHoverRepaint(true);
@@ -42,6 +139,7 @@ std::string TableView::accessibleName() const {
 }
 
 void TableView::styleChanged() {
+    _grid   = TableGrid(); // the cells' colours and sizes are the style's
     _builtW = -1;
     _pillText.reset();
     View::styleChanged();
@@ -49,80 +147,39 @@ void TableView::styleChanged() {
 
 void TableView::build(float width) {
     const float scale = windowScale();
-    if (_builtW == width && _builtScale == scale)
-        return;
-    _builtW            = width;
-    _builtScale        = scale;
-    const size_t total = _cells.size();
-    const size_t shown = std::min(total, size_t(kMaxInlineTableRows));
-    size_t       cols  = 0;
-    for (size_t r = 0; r < shown; ++r)
-        cols = std::max(cols, _cells[r].size());
-    // Rich cells (mentions, links, emoji) as the body draws them; the
-    // header bold, the last row dimmed when rows were cut ("more below").
-    // Custom emoji boxes are numbered across the table (the measuring pass
-    // keeps none).
-    _images.clear();
-    auto cellText = [&](size_t r, size_t c, std::vector<std::string> *images) {
-        RichOptions o;
-        o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
-        o.color = shown < total && r + 1 == shown ? C::TextFaint : C::Text;
-        return richText(_ctx, _cells[r][c], o, images);
-    };
-    std::vector<std::string> measured;
-    std::vector<float>       nat(cols, 2 * kPadX);
-    _layouts.clear();
-    _layouts.resize(shown);
-    for (size_t r = 0; r < shown; ++r)
-        for (size_t c = 0; c < _cells[r].size(); ++c) {
-            text::AttributedText t = cellText(r, c, &measured);
-            ui::resolveSpans(t);
-            nat[c] = std::max(
-                nat[c], std::ceil(text::Layout::build(std::move(t), {}, scale)->width()) + 2 * kPadX
-            );
-        }
-    float sum = 0;
-    for (float v : nat)
-        sum += v;
-    _colW     = nat;
-    _squeezed = sum > width + 0.5f;
-    if (_squeezed)
-        for (float &v : _colW)
-            v = std::max(2 * kPadX + 8, std::floor(v * width / sum));
-    _tableW = 0;
-    for (float v : _colW)
-        _tableW += v;
-    _rowH.assign(shown, 0);
-    _tableH = 0;
-    for (size_t r = 0; r < shown; ++r) {
-        float h = 0;
-        for (size_t c = 0; c < cols; ++c) {
-            if (c >= _cells[r].size()) {
-                _layouts[r].push_back(nullptr);
-                continue;
+    if (_grid.scale() != scale) {
+        // Rich cells (mentions, links, emoji) as the body draws them; the
+        // header bold, the last row dimmed when rows were cut ("more
+        // below"). Custom emoji boxes are numbered across the table.
+        const size_t total = _cells.size();
+        const size_t shown = std::min(total, size_t(kMaxInlineTableRows));
+        std::vector<std::vector<text::AttributedText>> texts(shown);
+        _images.clear();
+        for (size_t r = 0; r < shown; ++r)
+            for (size_t c = 0; c < _cells[r].size(); ++c) {
+                RichOptions o;
+                o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
+                o.color = shown < total && r + 1 == shown ? C::TextFaint : C::Text;
+                texts[r].push_back(richText(_ctx, _cells[r][c], o, &_images));
+                ui::resolveSpans(texts[r].back());
             }
-            text::AttributedText t = cellText(r, c, &_images);
-            ui::resolveSpans(t);
-            text::LayoutOptions o;
-            o.maxWidth = std::max(1.f, _colW[c] - 2 * kPadX);
-            _layouts[r].push_back(text::Layout::build(std::move(t), o, scale));
-            h = std::max(h, _layouts[r].back()->height());
-        }
-        if (h == 0)
-            h = text::metrics(ui::font(ui::Font::Body), scale).ascent +
-                text::metrics(ui::font(ui::Font::Body), scale).descent;
-        _rowH[r] = std::ceil(h) + 2 * kPadY;
-        _tableH += _rowH[r];
+        _grid.setCells(std::move(texts), scale);
+        _builtW = -1;
     }
+    if (_builtW == width)
+        return;
+    _builtW               = width;
+    const text::Metrics m = text::metrics(ui::font(ui::Font::Body), scale);
+    _grid.fit(width, 2 * kPadX + 8, m.ascent + m.descent);
 }
 
 bool TableView::clipped() {
-    return _cells.size() > size_t(kMaxInlineTableRows) || _squeezed;
+    return _cells.size() > size_t(kMaxInlineTableRows) || _grid.squeezed();
 }
 
 ui::SizeF TableView::measureContent(float aw, float) {
     build(aw >= ui::kInf ? 600 : aw);
-    return {_tableW, _tableH + 2 * kMarginV};
+    return {_grid.width(), _grid.height() + 2 * kMarginV};
 }
 
 void TableView::layout() {
@@ -131,33 +188,7 @@ void TableView::layout() {
 
 void TableView::paint(gfx::Painter &p) {
     build(width());
-    const float y0 = kMarginV, tw = _tableW;
-    // The table's chrome: header tint, a hairline under it, row
-    // rules, a 1-px frame of radius 6; no vertical lines.
-    float       y = y0;
-    for (size_t r = 0; r < _layouts.size(); ++r) {
-        const float rh = _rowH[r];
-        if (r == 0) {
-            p.save();
-            p.clipRoundRect({0, y0, tw, _tableH}, 6);
-            p.fillRect({0, y, tw, rh}, ui::color(C::TableHeaderBg));
-            p.restore();
-        } else {
-            p.fillRect({1, y, tw - 2, 1}, ui::color(r == 1 ? C::TableBorder : C::TableRowRule));
-        }
-        float x = 0;
-        for (size_t c = 0; c < _layouts[r].size(); ++c) {
-            if (const text::Layout *l = _layouts[r][c].get()) {
-                const ui::PointF o = snapPx({x + kPadX, y + kPadY});
-                l->paint(p, o);
-                if (!_images.empty())
-                    _anim->schedule(paintEmojiBoxes(_ctx, p, *l, o, _images, this));
-            }
-            x += _colW[c];
-        }
-        y += rh;
-    }
-    p.strokeRoundRect({0, y0, tw, _tableH}, 6, 1, ui::color(C::TableBorder));
+    _grid.paint(p, *this, kMarginV, -ui::kInf, ui::kInf, &_ctx, _images, _anim.get());
 }
 
 ui::RectF TableView::pillRect() const {
@@ -168,9 +199,9 @@ ui::RectF TableView::pillRect() const {
     const ui::RectF  win   = windowRect();
     const ui::PointF o     = mapToWindow({0, 0});
     const float      top   = std::max(kMarginV, win.y - o.y);
-    const float      bot   = std::min(kMarginV + _tableH, win.y + win.h - o.y);
+    const float      bot   = std::min(kMarginV + _grid.height(), win.y + win.h - o.y);
     const float      left  = std::max(0.f, win.x - o.x);
-    const float      right = std::min(_tableW, win.x + win.w - o.x);
+    const float      right = std::min(_grid.width(), win.x + win.w - o.x);
     if (bot <= top || right <= left)
         return {};
     const float w = std::ceil(_pillText->width()) + kPillIconPad;

@@ -491,24 +491,9 @@ std::string hexColor(Color c) {
 }
 
 bool parseHexColor(std::string_view s, Color *out) {
-    if (!s.empty() && s[0] == '#')
-        s.remove_prefix(1);
-    if (s.size() != 6 && s.size() != 3)
-        return false;
-    uint32_t v = 0;
-    for (char ch : s) {
-        const int d = ch >= '0' && ch <= '9'   ? ch - '0'
-                      : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
-                      : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10
-                                               : -1;
-        if (d < 0)
-            return false;
-        v = v << 4 | uint32_t(d);
-        if (s.size() == 3)
-            v = v << 4 | uint32_t(d);
-    }
-    *out = 0xff000000u | v;
-    return true;
+    // Settings files hold opaque RGB: 3 or 6 digits only.
+    const size_t n = s.size() - (!s.empty() && s[0] == '#');
+    return (n == 3 || n == 6) && gfx::parseHexColor(s, out);
 }
 
 Color colorIn(C c, bool dark) {

@@ -128,10 +128,6 @@ void saveAttachmentAs(
     });
 }
 
-std::function<void(const model::File &)> saveFileHook(Context &ctx) {
-    return [&ctx](const model::File &f) { saveAttachmentAs(ctx, f); };
-}
-
 std::vector<std::string> droppedFiles(const plat::Event *raw) {
     return raw ? localPaths(raw->uris) : std::vector<std::string>();
 }

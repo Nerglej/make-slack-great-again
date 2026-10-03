@@ -28,6 +28,11 @@ private:
 
 // The plain file chip (the message list's, the forward preview's).
 ui::Clickable *addFileChip(ui::View *parent, const model::File &f, MessageList *list, Ts ts);
+// A file card's frame: the file chip fill under a 1-px border (file chips,
+// canvas and audio cards, message previews).
+void           paintCardFrame(
+    gfx::Painter &p, ui::RectF r, float radius = 8, ui::C border = ui::C::FileChipBorder
+);
 
 class RichLabel;
 
@@ -72,13 +77,16 @@ public:
     bool        tooltipImmediate() const override { return true; }
 
 private:
-    void buildMessage(const model::Message &m, bool grouped);
-    void buildSystem(const model::Message &m);
-    void buildHeader(ui::View *col, const model::Message &m, bool tight);
+    void      buildMessage(const model::Message &m, bool grouped);
+    // The author's avatar (the profile card on hover) or, for a bot, its
+    // picture over its name's letter.
+    ui::View *addAvatar(ui::View *parent, const model::Message &m);
+    void      buildSystem(const model::Message &m);
+    void      buildHeader(ui::View *col, const model::Message &m, bool tight);
     // The message's content under the header: body or blocks, buttons,
     // files, attachments (index ≥ 0 cards get the dismiss "×"), reactions.
-    void buildContent(ui::View *col, const model::Message &m, bool root);
-    void buildBlocks(
+    void      buildContent(ui::View *col, const model::Message &m, bool root);
+    void      buildBlocks(
         ui::View                        *col,
         const std::vector<model::Block> &blocks,
         Ts                               ts,

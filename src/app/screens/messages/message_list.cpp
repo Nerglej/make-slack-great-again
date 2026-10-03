@@ -4,7 +4,9 @@
 #include "app/model/jobs.h"
 #include "app/screens/common/downloads.h"
 #include "app/screens/common/file_dialogs.h"
+#include "app/screens/common/icon_button.h"
 #include "app/screens/common/loading_indicator.h"
+#include "app/screens/common/message_rules.h"
 #include "app/screens/common/message_text.h"
 #include "app/screens/common/remote_images.h"
 
@@ -17,14 +19,14 @@
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/log.h"
+#include "base/mime.h"
+#include "base/str.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
 #include "ui/controls.h"
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -38,32 +40,18 @@ using Kind = MessageList::ItemKind;
 
 namespace {
 
-constexpr float   kTypingH     = 22;
-constexpr int64_t kGroupMicros = 300LL * 1000000; // collapse if within 5 minutes
-constexpr int     kEdgeDelayMs = 60;
+constexpr float  kTypingH        = 22;
+constexpr int    kEdgeDelayMs    = 60;
+// Canvas previews kept for cards scrolled back to (the HTML of each).
+constexpr size_t kCanvasPreviews = 16;
 
-bool isSystem(const model::Message &m) {
-    const std::string &s = m.subtype();
-    return s.size() > 5 && (s.compare(s.size() - 5, 5, "_join") == 0 ||
-                            s.compare(s.size() - 6, 6, "_leave") == 0 || s == "channel_topic" ||
-                            s == "channel_purpose" || s == "channel_name" || s == "pinned_item");
-}
-
-const std::string &botName(const model::Message &m) {
-    static const std::string none;
-    return m.extra ? m.extra->botName : none;
-}
-
-// A run of messages by one author within five minutes shows the avatar and
-// name once. Thread roots and system lines always stand alone.
-bool groupable(const model::Message &prev, const model::Message &cur) {
-    if (isSystem(prev) || isSystem(cur) || prev.user != cur.user || botName(prev) != botName(cur))
-        return false;
-    if (prev.isHuddle() || cur.isHuddle()) // each huddle its own row (its tile and name)
-        return false;
-    if (prev.replyCount > 0 || cur.replyCount > 0)
-        return false;
-    return cur.ts - prev.ts < kGroupMicros;
+// The file of a message by its path (rows name files by path), or null.
+const model::File *fileAt(const model::Message *m, const std::string &path) {
+    if (m)
+        for (const model::File &f : m->files())
+            if (f.path == path)
+                return &f;
+    return nullptr;
 }
 
 uint64_t keyOf(const MessageList::Item &it) {
@@ -120,9 +108,7 @@ public:
         img->style().size(
             std::floor(float(w > 0 ? w : 400) * s), std::floor(float(h > 0 ? h : 300) * s)
         );
-        const std::string_view ext =
-            path.size() > 4 ? std::string_view(path).substr(path.size() - 4) : std::string_view();
-        img->setAnimated(ext == ".gif");
+        img->setAnimated(isGifPath(path));
         img->setPlaceholder(C::None);
         // text.onDarkDim, centred, until it loads.
         img->setLoadingText(tr("Loading image\xE2\x80\xA6"), C::OnDarkDim);
@@ -189,9 +175,8 @@ public:
             actions && !(f.permalink.empty() && f.path.empty())
         )
             ->onClick = [this] {
-            const std::string &url = _file.permalink.empty() ? _file.path : _file.permalink;
             if (_ctx.openUrl)
-                _ctx.openUrl(url.find("://") == std::string::npos ? file::toFileUrl(url) : url);
+                _ctx.openUrl(fileUrl(_file.permalink.empty() ? _file.path : _file.permalink));
         };
         auto *more    = button(gfx::Icon::MoreHorizontal, N_("More actions"), actions);
         more->onClick = [this, more] {
@@ -205,7 +190,7 @@ public:
         _thumb = add<CachedImage>(ctx.images, shown, ImageCache::Shape::Square);
         _thumb->setPlaceholder(C::None);
         _thumb->setLoadingText(tr("Loading image\xE2\x80\xA6"), C::OnDarkDim);
-        _thumb->setAnimated(file::extension(shown.substr(0, shown.find('?'))) == "gif");
+        _thumb->setAnimated(isGifPath(shown));
         if (f.isImage() && f.source() != f.path) {
             _full = add<CachedImage>(ctx.images, f.source(), ImageCache::Shape::Square);
             _full->setPlaceholder(C::None);
@@ -234,9 +219,9 @@ public:
 private:
     static constexpr float kBarH = 56, kMargin = 24;
     // A round button on the dark bar: 20-px onDark icon, a white wash on hover.
-    class ViewerButton final : public ui::Clickable {
+    class ViewerButton final : public IconButton {
     public:
-        ViewerButton(gfx::Icon icon, std::string tip) : _icon(icon) {
+        ViewerButton(gfx::Icon icon, std::string tip) : IconButton(icon, 20, C::TooltipText) {
             style().size(36, 36).noShrink();
             setTooltip(std::move(tip));
             setFocusable(false);
@@ -245,11 +230,8 @@ private:
         void paint(gfx::Painter &p) override {
             if (hovered())
                 p.fillRoundRect(bounds(), 18, 0x26ffffffU);
-            gfx::drawIcon(p, _icon, {8, 8, 20, 20}, ui::color(C::TooltipText));
+            paintIcon(p);
         }
-
-    private:
-        gfx::Icon _icon;
     };
     ui::RectF imageRect() const {
         const ui::RectF avail{
@@ -484,26 +466,19 @@ private:
 // A toolbar button: a 16-px icon in icon.strong, the message.hover wash
 // (radius 5, inset 1) under the pointer, its tooltip at once (toolbar tips
 // show on mouse move, without the usual delay).
-class ActionButton final : public ui::Clickable {
+class ActionButton final : public IconButton {
 public:
-    ActionButton(gfx::Icon icon, std::string tip) : _icon(icon) {
+    ActionButton(gfx::Icon icon, std::string tip) : IconButton(icon, 16, C::FormIconStrong) {
         style().size(28, 28).noShrink();
         setTooltip(std::move(tip));
         setFocusable(false);
-    }
-    void setIcon(gfx::Icon i) {
-        _icon = i;
-        update();
     }
     bool tooltipImmediate() const override { return true; }
     void paint(gfx::Painter &p) override {
         if (hovered())
             p.fillRoundRect({1, 1, 26, 26}, 5, ui::color(C::RowHover));
-        gfx::drawIcon(p, _icon, {6, 6, 16, 16}, ui::color(C::FormIconStrong));
+        paintIcon(p);
     }
-
-private:
-    gfx::Icon _icon;
 };
 
 // ── MessageList ─────────────────────────────────────────────────────────────
@@ -594,21 +569,15 @@ void MessageList::toggleSaved(Ts ts) {
 }
 
 void MessageList::downloadFile(Ts ts, const std::string &path) {
-    // "Save file" at $HOME/<name>, then the
+    // "Save file" at ~/<name>, then the
     // original (source(): for audio, path is Slack's transcode) to it, the
     // footer's cog running from the choice until the bytes are on disk.
     const model::Message *m = message(ts);
-    if (!m || m->pending)
-        return;
-    const model::File *f = nullptr;
-    for (const model::File &x : m->files())
-        if (x.path == path)
-            f = &x;
+    const model::File    *f = m && !m->pending ? fileAt(m, path) : nullptr;
     if (!f)
         return;
     const std::string name   = f->name.empty() ? std::string(tr("file")) : f->name;
     const std::string source = f->source();
-    const char       *home   = std::getenv("HOME");
     Context          &ctx    = _ctx; // outlives the list; the download may outlive it
     screens::saveFile(
         _ctx,
@@ -629,7 +598,7 @@ void MessageList::downloadFile(Ts ts, const std::string &path) {
                 }
             );
         },
-        home ? std::string(home) : std::string()
+        _ctx.app.platform().standardDir(plat::StandardDir::Home)
     );
 }
 
@@ -680,7 +649,19 @@ MessageList::~MessageList() {
 }
 
 const model::Message *MessageList::message(Ts ts) const {
-    return _conv == model::kNoConv ? nullptr : _ctx.store().findMessage(_conv, ts);
+    if (_conv == model::kNoConv)
+        return nullptr;
+    const model::Store &st = _ctx.store();
+    if (_root && ts != _root)
+        if (const std::vector<model::Message> *r = st.replies(_conv, _root)) {
+            const auto it =
+                std::lower_bound(r->begin(), r->end(), ts, [](const model::Message &m, Ts t) {
+                    return m.ts < t;
+                });
+            if (it != r->end() && it->ts == ts)
+                return &*it;
+        }
+    return st.findMessage(_conv, ts);
 }
 
 void MessageList::subscribe() {
@@ -781,18 +762,39 @@ const model::Message &deref(const model::Message &m) {
 const model::Message &deref(const model::Message *m) {
     return *m;
 }
+
+// base::localDay for times in order: one localtime per day, not one per
+// message. The window it trusts keeps an hour clear of both midnights (a DST
+// change moves the wall clock by up to an hour).
+class DayOf {
+public:
+    int64_t operator()(int64_t secs) {
+        if (secs < _lo || secs >= _hi) {
+            const base::CivilTime c    = base::localTime(secs);
+            const int64_t         wall = c.hour * 3600 + c.minute * 60 + c.second;
+            _day                       = base::daysFromCivil(c.year, c.month, c.day);
+            _lo                        = secs - wall + 3600;
+            _hi                        = secs - wall + 22 * 3600;
+        }
+        return _day;
+    }
+
+private:
+    int64_t _lo = 0, _hi = 0, _day = 0;
+};
 } // namespace
 
 void MessageList::rebuild(bool notify) {
     std::vector<Item> items;
     if (_conv != model::kNoConv) {
-        const model::Conversation &c      = _ctx.store().conversation(_conv);
+        const model::Conversation &c = _ctx.store().conversation(_conv);
+        DayOf                      dayOf;
         auto                       addRun = [&](const auto &msgs, bool days) {
             const model::Message *prev    = nullptr;
             int64_t               prevDay = INT64_MIN;
             for (const auto &e : msgs) {
                 const model::Message &m   = deref(e);
-                const int64_t         day = base::localDay(model::tsSecs(m.ts));
+                const int64_t         day = dayOf(model::tsSecs(m.ts));
                 if (days && day != prevDay) {
                     items.push_back({m.ts, day, Kind::Day, false});
                     prev = nullptr;
@@ -887,6 +889,23 @@ std::string MessageList::stateText() const {
     return _state->text();
 }
 
+bool MessageList::groupingHolds(size_t i) const {
+    const auto at = [this](size_t j) -> const model::Message * {
+        return j < _items.size() &&
+                       (_items[j].kind == Kind::Message || _items[j].kind == Kind::System)
+                   ? message(_items[j].ts)
+                   : nullptr;
+    };
+    const model::Message *m = at(i);
+    if (!m || isSystem(*m) != (_items[i].kind == Kind::System))
+        return false;
+    const model::Message *prev = i > 0 ? at(i - 1) : nullptr;
+    if ((prev && groupable(*prev, *m)) != _items[i].grouped)
+        return false;
+    const model::Message *next = at(i + 1);
+    return !next || groupable(*m, *next) == _items[i + 1].grouped;
+}
+
 int MessageList::itemIndex(Ts ts) const {
     for (size_t i = _items.size(); i-- > 0;)
         if (_items[i].ts == ts &&
@@ -929,11 +948,18 @@ void MessageList::onChange(const model::Change &ch) {
         hideToolbar();
         rebuild(false);
         _list->reset();
+    } else if (ch.kind == CK::Update) {
+        // Most updates (a reaction, an edit, a poll's same page) leave the
+        // items as they are: only the row is bound again.
+        int i = itemIndex(ch.ts);
+        if (i < 0 || !groupingHolds(size_t(i))) {
+            rebuild(true);
+            i = itemIndex(ch.ts);
+        }
+        if (i >= 0)
+            _list->itemsChanged(i, 1);
     } else {
         rebuild(true);
-        if (ch.kind == CK::Update)
-            if (const int i = itemIndex(ch.ts); i >= 0)
-                _list->itemsChanged(i, 1);
     }
     applyOpenTarget();
     applyJump();
@@ -942,26 +968,62 @@ void MessageList::onChange(const model::Change &ch) {
 
 namespace {
 
-// Whether message `m` draws any of `ids`' users: as its author, pinner,
-// thread participant, reactor or huddle attendee, or by id in its text,
-// attachments or blocks (mentions). A quoted message's author may come from
-// the Store's linked authors: such unfurls always count.
-bool touchesUsers(
-    const model::Message                &m,
-    const std::vector<model::UserRef>   &refs,
-    const std::vector<std::string_view> &ids
-) {
+// What a Users burst changed that rows draw: profiles, and in the text
+// change (custom emoji, user groups, the names of channels the roster
+// doesn't list) what each looks like in message text.
+using ChannelNames = std::vector<std::pair<std::string, std::string>>;
+
+struct Changed {
+    std::vector<model::UserRef>   users;
+    // Found in message text: user ids, ":emoji:" codes, user group ids.
+    std::vector<std::string_view> needles;
+    std::vector<std::string_view> emoji; // custom emoji names (reactions)
+    // Set when channel names may have changed: the Store, the names the rows
+    // were bound with, and where the new ones go once every row is checked.
+    const model::Store           *store = nullptr;
+    const ChannelNames           *seen  = nullptr;
+    ChannelNames                 *now   = nullptr;
+};
+
+// A mention of a channel the roster doesn't list ("<#C0…>", its name from
+// Backend::resolveChannel) whose name is not the one last seen ("\x01":
+// none; an id not seen yet was shown without one).
+bool renamedChannel(const Changed &c, std::string_view text) {
+    for (size_t at = text.find("<#"); at != std::string_view::npos; at = text.find("<#", at + 2)) {
+        const size_t           end = text.find_first_of("|>", at + 2);
+        const std::string_view id =
+            end == std::string_view::npos ? std::string_view() : text.substr(at + 2, end - at - 2);
+        if (id.empty() || c.store->findConversation(id) != model::kNoConv)
+            continue;
+        const std::string *name = c.store->channelName(id);
+        const std::string  is   = name ? *name : std::string("\x01");
+        const auto         was  = std::find_if(c.seen->begin(), c.seen->end(), [&](const auto &s) {
+            return s.first == id;
+        });
+        if (is == (was == c.seen->end() ? std::string("\x01") : was->second))
+            continue;
+        c.now->emplace_back(id, is);
+        return true;
+    }
+    return false;
+}
+
+// Whether message `m` draws any of it: as its author, pinner, thread
+// participant, reactor or huddle attendee, or in its text, attachments or
+// blocks (mentions, emoji). A quoted message's author may come from the
+// Store's linked authors: such unfurls count when users changed.
+bool touches(const model::Message &m, const Changed &c) {
     const auto in = [&](model::UserRef u) {
-        return u != model::kNoUser && std::find(refs.begin(), refs.end(), u) != refs.end();
+        return u != model::kNoUser && std::find(c.users.begin(), c.users.end(), u) != c.users.end();
     };
     const auto anyIn = [&](const std::vector<model::UserRef> &v) {
         return std::any_of(v.begin(), v.end(), in);
     };
     const auto names = [&](std::string_view text) {
-        for (std::string_view id : ids)
-            if (text.find(id) != std::string_view::npos)
+        for (std::string_view n : c.needles)
+            if (text.find(n) != std::string_view::npos)
                 return true;
-        return false;
+        return c.store && renamedChannel(c, text);
     };
     const auto blocks = [&](const std::vector<model::Block> &bs) {
         for (const model::Block &b : bs) {
@@ -976,16 +1038,25 @@ bool touchesUsers(
     };
     if (in(m.user) || in(m.pinnedBy) || anyIn(m.replyUsers) || names(m.text))
         return true;
-    for (const model::Reaction &r : m.reactions)
+    for (const model::Reaction &r : m.reactions) {
         if (anyIn(r.users))
             return true;
+        for (std::string_view e : c.emoji) // "name", or "name::skin-tone-N"
+            if (str::startsWith(r.name, e) &&
+                (r.name.size() == e.size() || str::startsWith(r.name.substr(e.size()), "::")))
+                return true;
+    }
     if (!m.extra)
         return false;
     if (anyIn(m.extra->huddle.attendees) || blocks(m.extra->blocks))
         return true;
+    if (!c.emoji.empty()) // a canvas card's preview draws emoji too
+        for (const model::File &f : m.extra->files)
+            if (f.isCanvas())
+                return true;
     for (const model::Attachment &a : m.extra->attachments) {
-        if (a.msgUnfurl || names(a.pretext) || names(a.author) || names(a.title) || names(a.text) ||
-            blocks(a.blocks))
+        if ((a.msgUnfurl && !c.users.empty()) || names(a.pretext) || names(a.author) ||
+            names(a.title) || names(a.text) || blocks(a.blocks))
             return true;
         for (const model::AttachmentField &f : a.fields)
             if (names(f.title) || names(f.value))
@@ -994,35 +1065,126 @@ bool touchesUsers(
     return false;
 }
 
+uint64_t hashOf(std::string_view s) {
+    return std::hash<std::string_view>{}(s);
+}
+
 } // namespace
+
+// The custom emoji and user groups against what was seen last (`diff`; else
+// only noted): the custom emoji names that changed (with the aliases of them)
+// first in *names, *emoji of them, then the user group ids. False when that
+// is too much to look for, or an emoji went away: re-bind everything.
+bool MessageList::textChanges(
+    const model::Store &st, std::vector<std::string> *names, size_t *emoji, bool diff
+) {
+    constexpr size_t kMax = 64;
+    bool             ok   = true;
+    if (st.customEmojiRevision() != _seenEmoji || !diff) {
+        // Both lists in name order: a merge finds what is new, changed or gone.
+        _seenEmoji                        = st.customEmojiRevision();
+        const auto                   &all = st.customEmoji();
+        std::string                   seen;
+        std::vector<uint64_t>         values;
+        std::vector<std::string_view> changed;       // names (the Store's keys)
+        size_t                        at = 0, k = 0; // the old list's next name, its value
+        const auto                    oldName = [&] {
+            return std::string_view(_emojiNames).substr(at, _emojiNames.find('\n', at) - at);
+        };
+        for (const std::string_view name : st.customEmojiNames()) {
+            const uint64_t v = hashOf(all.find(std::string(name))->second);
+            seen.append(name).push_back('\n');
+            values.push_back(v);
+            if (!diff)
+                continue;
+            for (; at < _emojiNames.size() && oldName() < name; at += oldName().size() + 1, ++k)
+                ok = false; // gone: its rows go back to ":name:"
+            if (at < _emojiNames.size() && oldName() == name) {
+                if (_emojiValues[k] != v)
+                    changed.push_back(name);
+                at += name.size() + 1, ++k;
+            } else {
+                changed.push_back(name);
+            }
+        }
+        ok           = ok && at >= _emojiNames.size();
+        _emojiNames  = std::move(seen);
+        _emojiValues = std::move(values);
+        if (changed.size() > kMax)
+            ok = false;
+        else if (ok && !changed.empty())
+            for (const auto &[name, value] : all) // the changed ones and their aliases
+                if (std::find(changed.begin(), changed.end(), name) != changed.end() ||
+                    (str::startsWith(value, "alias:") &&
+                     std::find(changed.begin(), changed.end(), std::string_view(value).substr(6)) !=
+                         changed.end()))
+                    names->push_back(name);
+    }
+    *emoji             = names->size();
+    // User groups as lines "\n<id> <handle> <name>\n": an id whose line is
+    // new or gone is one whose mentions read differently.
+    std::string groups = "\n";
+    for (const model::Store::Usergroup &g : st.usergroups())
+        groups += str::concat({g.id, " ", g.handle, " ", g.name, "\n"});
+    for (const std::string *a : {&groups, &_groupsSeen})
+        for (size_t at = 1; diff && at < a->size();) {
+            const size_t           nl   = a->find('\n', at);
+            const std::string_view line = std::string_view(*a).substr(at - 1, nl - at + 2);
+            if ((a == &groups ? _groupsSeen : groups).find(line) == std::string::npos)
+                names->emplace_back(line.substr(1, line.find(' ') - 1));
+            at = nl + 1;
+        }
+    _groupsSeen = std::move(groups);
+    return ok && names->size() <= kMax;
+}
 
 // Users changed: presence and DND aren't drawn in message rows, so only a
 // profile change (a name, an avatar, a bot flag) re-binds the rows that show
-// that user; emoji, user groups and channel names re-bind them all.
+// that user; a text change (emoji, user groups, channel names) the rows that
+// draw what changed.
 void MessageList::usersChanged() {
     const model::Store &st    = _ctx.store();
-    const bool          full  = &st != _seenStore || st.textRevision() != _seenText;
+    const bool          other = &st != _seenStore;
+    const bool          text  = other || st.textRevision() != _seenText;
     const uint64_t      since = _seenProfile;
     _seenStore                = &st;
     _seenText                 = st.textRevision();
     _seenProfile              = st.profileRevision();
-    if (!full && _seenProfile == since)
+    if (!text && _seenProfile == since)
         return;
+    std::vector<std::string> names; // what c's needles point into
+    size_t                   emoji = 0;
+    // Another Store: everything, and what it has becomes what was seen.
+    const bool               full  = (text && !textChanges(st, &names, &emoji, !other)) || other;
+    Changed                  c;
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (i < emoji) { // found in text as ":name:"
+            names[i] = ":" + names[i] + ":";
+            c.emoji.push_back(std::string_view(names[i]).substr(1, names[i].size() - 2));
+        }
+        c.needles.push_back(names[i]);
+    }
+    ChannelNames renamed;
+    if (other)
+        _channelsSeen.clear();
+    if (text) {
+        c.store = &st;
+        c.seen  = &_channelsSeen;
+        c.now   = &renamed;
+    }
     rebuild(true); // a bot flag regroups rows
     if (_items.empty())
         return;
-    std::vector<model::UserRef>   refs;
-    std::vector<std::string_view> ids;
-    if (!full)
+    if (!full && _seenProfile != since)
         for (model::UserRef u = 0; u < st.userCount(); ++u)
             if (st.userRevision(u) > since) {
-                refs.push_back(u);
+                c.users.push_back(u);
                 if (!st.user(u).id.empty())
-                    ids.push_back(st.user(u).id);
+                    c.needles.push_back(st.user(u).id);
             }
     // A roster reload that changed many people: re-binding all is cheaper
     // than searching every message for each of them.
-    if (full || refs.size() > 64) {
+    if (full || c.users.size() > 64) {
         _list->itemsChanged(0, int(_items.size()));
         return;
     }
@@ -1033,15 +1195,25 @@ void MessageList::usersChanged() {
         const model::Message *m = message(it.ts);
         if (!m)
             continue;
-        bool hit = touchesUsers(*m, refs, ids);
+        bool hit = touches(*m, c);
         // An inline thread's replies draw in their root's row.
         if (!hit && _root == 0 && has(_inlineThreads, it.ts))
             if (const auto *replies = st.replies(_conv, it.ts))
                 for (const model::Message &r : *replies)
-                    if ((hit = touchesUsers(r, refs, ids)))
+                    if ((hit = touches(r, c)))
                         break;
         if (hit)
             _list->itemsChanged(int(i), 1);
+    }
+    // Every row checked against the old names: the new ones are what is seen.
+    for (auto &[id, name] : renamed) {
+        auto was = std::find_if(_channelsSeen.begin(), _channelsSeen.end(), [&](const auto &s) {
+            return s.first == id;
+        });
+        if (was == _channelsSeen.end())
+            _channelsSeen.emplace_back(std::move(id), std::move(name));
+        else
+            was->second = std::move(name);
     }
 }
 
@@ -1512,20 +1684,17 @@ void addSeparator(std::vector<ui::MenuItem> &out) {
         out.push_back(ui::MenuItem::separatorItem());
 }
 
+// An image's type by its name: the known ones, else "image/<ext>", else PNG.
 std::string imageMime(std::string_view path) {
-    std::string e(file::extension(path));
-    for (char &c : e)
-        c = char(c | 0x20);
-    if (e == "jpg")
-        e = "jpeg";
+    if (const std::string_view m = mime::fromName(path); !m.empty())
+        return std::string(m);
+    const std::string e = str::asciiLower(file::extension(path));
     return "image/" + (e.empty() ? std::string("png") : e);
 }
 
-// A CSV file, by name or type.
+// A CSV file, by type or name (any case).
 bool isCsv(const model::File &f) {
-    const size_t n = f.name.size();
-    return f.mime == "text/csv" || (n > 4 && (f.name.compare(n - 4, 4, ".csv") == 0 ||
-                                              f.name.compare(n - 4, 4, ".CSV") == 0));
+    return f.mime == "text/csv" || mime::fromName(f.name) == "text/csv";
 }
 
 // Due times of the presets, from `now` (local): +20 min, +1 h, +3 h,
@@ -1618,13 +1787,9 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
 
 std::vector<ui::MenuItem> MessageList::fileMenuItems(Ts ts, const std::string &path) const {
     std::vector<ui::MenuItem> items;
-    const model::Message     *m = message(ts);
-    const model::File        *f = nullptr;
-    if (m)
-        for (const model::File &x : m->files())
-            if (x.path == path)
-                f = &x;
-    const bool image = !f || f->isImage();
+    const model::Message     *m     = message(ts);
+    const model::File        *f     = fileAt(m, path);
+    const bool                image = !f || f->isImage();
     if (f && isCsv(*f))
         addItem(items, kPreview); // the table viewer
     addItem(items, image ? kCopyImageLink : kCopyFileLink);
@@ -1747,7 +1912,7 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         copy = firstLink(msg->text);
         break;
     case kCopyText: // shortened link labels copy as their full URLs
-        copy = plainText(_ctx, msg->text, true);
+        copy = plainText(_ctx.store(), msg->text, true);
         break;
     case kPin:
     case kUnpin:
@@ -1795,32 +1960,23 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         break;
     }
     case kPreview:
-        for (const model::File &f : msg->files())
-            if (f.path == path) {
-                openCsvPreview(f);
-                break;
-            }
+        if (const model::File *f = fileAt(msg, path))
+            openCsvPreview(*f);
         break;
     case kCopyImageLink:
     case kCopyFileLink: // the file's permalink, else the original (never a thumbnail)
-        copy = fileUrl(path);
-        for (const model::File &f : msg->files())
-            if (f.path == path)
-                copy = f.permalink.empty() ? fileUrl(f.source()) : f.permalink;
+        if (const model::File *f = fileAt(msg, path))
+            copy = f->permalink.empty() ? fileUrl(f->source()) : f->permalink;
+        else
+            copy = fileUrl(path);
         break;
     case kDeleteFile:
-        for (const model::File &f : msg->files())
-            if (f.path == path) {
-                _ctx.backend.deleteFile(conv, ts, f.id);
-                break;
-            }
+        if (const model::File *f = fileAt(msg, path))
+            _ctx.backend.deleteFile(conv, ts, f->id);
         break;
     case kCopyImage:
-        for (const model::File &f : msg->files())
-            if (f.path == path) {
-                copyImage(f);
-                break;
-            }
+        if (const model::File *f = fileAt(msg, path))
+            copyImage(*f);
         break;
     default:
         break;
@@ -2293,14 +2449,8 @@ void MessageList::toggleUnfurl(Ts ts, int attachment) {
 }
 
 void MessageList::openFileViewer(Ts ts, const std::string &path) {
-    const model::Message *m = message(ts);
-    if (!m || !window())
-        return;
-    for (const model::File &f : m->files())
-        if (f.path == path) {
-            showFileViewer(_ctx, *window(), this, ts, f);
-            return;
-        }
+    if (const model::File *f = fileAt(message(ts), path); f && window())
+        showFileViewer(_ctx, *window(), this, ts, *f);
 }
 
 void MessageList::openCanvas(const model::File &f) {
@@ -2310,16 +2460,20 @@ void MessageList::openCanvas(const model::File &f) {
         _ctx.openUrl(f.permalink);
 }
 
-const std::string *MessageList::canvasPreview(const std::string &id, ui::View *waiter, int *state) {
+const std::string *MessageList::canvasPreview(const std::string &id, int *state) {
     for (CanvasPreview &p : _canvasPreviews)
         if (p.id == id) {
             *state = p.state;
-            if (p.state == 0 &&
-                std::find(p.waiters.begin(), p.waiters.end(), waiter) == p.waiters.end())
-                p.waiters.push_back(waiter);
             return p.state == 1 ? &p.html : nullptr;
         }
-    _canvasPreviews.push_back({id, {}, 0, {waiter}});
+    // The oldest finished one makes room (one still loading is waited for).
+    if (_canvasPreviews.size() >= kCanvasPreviews)
+        for (size_t i = 0; i < _canvasPreviews.size(); ++i)
+            if (_canvasPreviews[i].state != 0) {
+                _canvasPreviews.erase(_canvasPreviews.begin() + ptrdiff_t(i));
+                break;
+            }
+    _canvasPreviews.push_back({id, {}, 0});
     *state                    = 0;
     std::weak_ptr<char> alive = _alive;
     _ctx.backend.loadCanvasContent(id, [this, alive, id](std::string html, std::string error) {
@@ -2329,9 +2483,8 @@ const std::string *MessageList::canvasPreview(const std::string &id, ui::View *w
             if (p.id == id) {
                 p.html  = std::move(html);
                 p.state = error.empty() && !p.html.empty() ? 1 : -1;
-                p.waiters.clear();
             }
-        // The cards re-read it when rebound (a waiter may be recycled).
+        // The cards read it when bound again.
         for (size_t i = 0; i < _items.size(); ++i)
             if (const model::Message *m = message(_items[i].ts))
                 for (const model::File &f : m->files())
@@ -2345,20 +2498,16 @@ void MessageList::openHtmlFile(const model::File &f) {
     // The page itself in the browser, not Slack's file
     // page (which only offers a download). url_private needs credentials:
     // fetched once to the cache, the browser gets the local copy.
-    auto url = [](const std::string &p) {
-        return p.find("://") == std::string::npos ? file::toFileUrl(p) : p;
-    };
     if (!RemoteImages::isRemote(f.path)) { // a pending upload, a demo file
         if (_ctx.openUrl)
-            _ctx.openUrl(url(f.path));
+            _ctx.openUrl(fileUrl(f.path));
         return;
     }
     std::string name(file::baseName(f.name));
     for (char &c : name)
         if (std::strchr("\\/:*?\"<>|", c))
             c = '_';
-    const std::string_view ext = file::extension(name);
-    if (!(ext == "html" || ext == "htm" || ext == "HTML" || ext == "HTM"))
+    if (mime::fromName(name) != "text/html")
         name += ".html";
     const std::string cache = identity::cacheDir(_ctx.app.platform());
     if (cache.empty())

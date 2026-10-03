@@ -4,6 +4,8 @@
 #include "app/screens/common/avatar_initial.h"
 #include "app/screens/common/canvas_doc.h"
 #include "app/screens/common/file_dialogs.h"
+#include "app/screens/common/message_rules.h"
+#include "app/screens/common/message_text.h"
 #include "app/screens/common/tag_badge.h"
 #include "app/screens/messages/audio_card.h"
 #include "app/screens/messages/rich.h"
@@ -40,6 +42,15 @@ constexpr float kBannerH = 18; // the mini-banner rows
 constexpr C kBannerColors[4] = {C::PinnedBg, C::FormIcon, C::ReminderBg, C::FormLink};
 gfx::Color  bannerColor(int i) {
     return ui::color(kBannerColors[i]);
+}
+
+// An attachment's raw colour ("#3FCB8E"); the strong border when it is
+// anything but six hex digits.
+gfx::Color barColor(std::string_view hex) {
+    gfx::Color c = ui::color(C::BorderStrong);
+    if (hex.size() - (!hex.empty() && hex[0] == '#') == 6)
+        gfx::parseHexColor(hex, &c);
+    return c;
 }
 
 // A strip of a raw data colour (attachment side bars).
@@ -198,14 +209,11 @@ public:
         _code                = isCodeExt(ext);
         _color               = typeColor(f, _code);
         if (ext.size() >= 1 && ext.size() <= 5)
-            _label = std::string(ext.substr(0, 4));
+            _label = str::asciiUpper(ext.substr(0, 4));
         else if (!f.prettyType.empty())
-            _label = f.prettyType.substr(0, 4);
+            _label = str::asciiUpper(std::string_view(f.prettyType).substr(0, 4));
         else
             _label = "FILE";
-        for (char &c : _label)
-            if (c >= 'a' && c <= 'z')
-                c = char(c - 32);
         _sub = f.prettyType;
         if (const std::string sz = str::byteSize(f.size, str::ByteSize::File); !sz.empty())
             _sub = _sub.empty() ? sz : _sub + " \xC2\xB7 " + sz;
@@ -222,17 +230,25 @@ public:
     }
     ui::SizeF measureContent(float aw, float) override {
         build();
-        const float textW = std::max(std::ceil(_n->width()), _s ? std::ceil(_s->width()) : 0.f);
-        float       w     = std::clamp(12 + 36 + 12 + textW + 12 + 1, 220.f, 640.f);
+        float w = std::clamp(12 + 36 + 12 + textWidth() + 12 + 1, 220.f, 640.f);
         if (aw > 0 && aw < w)
             w = aw;
         return {w, 60};
     }
     void paint(gfx::Painter &p) override {
         build();
+        const text::Layout *n = _n.get(), *s = _s.get();
+        if (const float aw = width() - 60 - 12; aw < textWidth()) {
+            // Narrower than the name or the type line: those elided to it.
+            if (!_nCut || _cutW != aw) {
+                _nCut = line(_name, nameStyle(), aw);
+                _sCut = _sub.empty() ? nullptr : line(_sub, subStyle(), aw);
+                _cutW = aw;
+            }
+            n = _nCut.get(), s = _sCut.get();
+        }
         const ui::RectF b = bounds();
-        p.fillRoundRect(b, 8, ui::color(C::FileChipBg));
-        p.strokeRoundRect(b, 8, 1, ui::color(C::FileChipBorder));
+        paintCardFrame(p, b);
         const ui::RectF icon{12, 12, 36, 36};
         p.fillRoundRect(icon, 6, _color);
         if (_code) {
@@ -246,11 +262,11 @@ public:
                 )
             );
         }
-        const float textH = _n->height() + (_s ? 2 + _s->height() : 0);
+        const float textH = n->height() + (s ? 2 + s->height() : 0);
         const float top   = std::floor((60 - textH) / 2);
-        _n->paint(p, snapPx({60, top}));
-        if (_s)
-            _s->paint(p, snapPx({60, top + _n->height() + 2}));
+        n->paint(p, snapPx({60, top}));
+        if (s)
+            s->paint(p, snapPx({60, top + n->height() + 2}));
     }
 
 private:
@@ -287,38 +303,45 @@ private:
             return 0xff555555U;
         return 0xff888888U;
     }
-    void build() {
-        if (_n)
-            return;
-        const float          k  = windowScale();
-        const float          aw = width() > 0 ? width() - 60 - 12 : 1e9f;
-        text::AttributedText n, s, l;
-        n.append(_name, ui::pxFont(15, text::Weight::Bold, ui::color(C::FormText)));
+    static text::Style nameStyle() {
+        return ui::pxFont(15, text::Weight::Bold, ui::color(C::FormText));
+    }
+    static text::Style subStyle() {
+        return ui::pxFont(15 * 0.82f, text::Weight::Regular, ui::color(C::FormTextMuted));
+    }
+    // One line, "…" past maxW (the whole text when it fits).
+    std::unique_ptr<text::Layout> line(const std::string &s, const text::Style &st, float maxW) {
+        text::AttributedText t;
+        t.append(s, st);
         text::LayoutOptions o;
         o.maxLines = 1;
         o.ellipsis = true;
-        o.maxWidth = aw;
-        _n         = text::Layout::build(n, o, k);
-        if (!_sub.empty()) {
-            s.append(
-                _sub, ui::pxFont(15 * 0.82f, text::Weight::Regular, ui::color(C::FormTextMuted))
-            );
-            _s = text::Layout::build(s, o, k);
-        }
-        l.append(_label, ui::pxFont(15 * 0.66f, text::Weight::Bold, 0xffffffffU));
-        _l = text::Layout::build(l, {}, k);
+        o.maxWidth = maxW;
+        return text::Layout::build(t, o, windowScale());
     }
-    void layout() override {
-        _n.reset(); // the elision width follows the frame
-        _s.reset();
-        _l.reset();
-        Clickable::layout();
+    // The texts at their natural width, shaped once per style and scale.
+    void build() {
+        if (_n && _scale == windowScale())
+            return;
+        _scale = windowScale();
+        _n     = line(_name, nameStyle(), 1e9f);
+        _s     = _sub.empty() ? nullptr : line(_sub, subStyle(), 1e9f);
+        _nCut.reset();
+        _sCut.reset();
+        text::AttributedText l;
+        l.append(_label, ui::pxFont(15 * 0.66f, text::Weight::Bold, 0xffffffffU));
+        _l = text::Layout::build(l, {}, _scale);
+    }
+    float textWidth() const {
+        return std::max(std::ceil(_n->width()), _s ? std::ceil(_s->width()) : 0.f);
     }
 
     MessageList                  *_list; // null: a preview (no file bar)
     Ts                            _ts;
     std::string                   _path, _name, _label, _sub;
     std::unique_ptr<text::Layout> _n, _s, _l;
+    std::unique_ptr<text::Layout> _nCut, _sCut; // elided to _cutW (a narrow frame)
+    float                         _cutW = 0, _scale = 0;
     gfx::Color                    _color = 0;
     bool                          _code  = false;
 };
@@ -495,10 +518,6 @@ private:
     model::Button::Style _style;
 };
 
-bool isBot(const Store &st, const model::Message &m) {
-    return m.subtype() == "bot_message" || (m.user != model::kNoUser && st.user(m.user).bot);
-}
-
 // An attachment card: tells the row it is hovered (the dismiss "×").
 class AttachCard final : public ui::View {
 public:
@@ -538,7 +557,7 @@ bool onlyBlocks(const model::Attachment &a, model::Block::Kind kind) {
 // A canvas title: entities decoded, :codes: as emoji, <@U…>
 // mentions as names.
 std::string canvasTitle(const Context &ctx, const model::File &f) {
-    return f.title.empty() ? f.name : std::string(str::trim(plainText(ctx, f.title)));
+    return f.title.empty() ? f.name : std::string(str::trim(plainText(ctx.store(), f.title)));
 }
 
 text::AttributedText canvasPreviewText(
@@ -712,7 +731,7 @@ namespace {
 class CanvasCard final : public ui::Clickable {
 public:
     CanvasCard(MessageList &list, const model::File &f)
-        : _list(list), _file(f), _anim(list.ctx(), *this) {
+        : _list(list), _file(f), _titleText(canvasTitle(list.ctx(), f)), _anim(list.ctx(), *this) {
         setLook({C::None, C::None, C::None, C::None, 8});
         style().height(300).noShrink();
         onClick = [this] { _list.openCanvas(_file); };
@@ -720,6 +739,7 @@ public:
     ui::SizeF measureContent(float aw, float) override { return {std::min(600.f, aw), 300}; }
     void      styleChanged() override {
         _title.reset(), _sub.reset(), _body.reset();
+        _parsed = false; // its colours are the theme's
         Clickable::styleChanged();
     }
     void layout() override {
@@ -730,8 +750,7 @@ public:
         constexpr float kPad = 14, kTile = 36, kHdr = 60;
         const ui::RectF b     = bounds();
         const float     scale = windowScale();
-        p.fillRoundRect(b, 8, ui::color(C::FileChipBg));
-        p.strokeRoundRect(b, 8, 1, ui::color(C::FileChipBorder));
+        paintCardFrame(p, b);
         const ui::RectF tile{kPad, std::floor((kHdr - kTile) / 2), kTile, kTile};
         p.fillRoundRect(tile, 8, 0xff1d9bd1U);
         gfx::drawIcon(p, gfx::Icon::Canvas, {tile.x + 8, tile.y + 8, 20, 20}, 0xffffffffU);
@@ -742,7 +761,7 @@ public:
             o.ellipsis = true;
             o.maxWidth = textW;
             text::AttributedText t, s;
-            t.append(canvasTitle(_list.ctx(), _file), ui::font(Font::BodyBold));
+            t.append(_titleText, ui::font(Font::BodyBold));
             s.append(
                 _file.prettyType.empty() ? std::string(tr("Canvas")) : _file.prettyType,
                 ui::pxFont(15 * 0.85f, text::Weight::Regular, ui::color(C::TextMuted))
@@ -757,7 +776,7 @@ public:
         p.fillRect({1, kHdr, b.w - 2, 1}, ui::color(C::FileChipBorder));
         const ui::RectF    body{kPad, kHdr + 10, b.w - 2 * kPad, b.h - kHdr - 10 - 1};
         int                state = 0;
-        const std::string *html  = _list.canvasPreview(_file.id, this, &state);
+        const std::string *html  = _list.canvasPreview(_file.id, &state);
         if (!html) {
             if (!_body) {
                 text::AttributedText t;
@@ -772,12 +791,15 @@ public:
             return;
         }
         if (!_body || !_bodyLoaded) {
-            _images.clear();
-            text::AttributedText t = canvasPreviewText(_list.ctx(), *html, _file, &_images);
-            ui::resolveSpans(t);
+            if (!_parsed) {
+                _images.clear();
+                _bodyText = canvasPreviewText(_list.ctx(), *html, _file, &_images);
+                ui::resolveSpans(_bodyText);
+                _parsed = true;
+            }
             text::LayoutOptions o;
             o.maxWidth  = body.w;
-            _body       = text::Layout::build(std::move(t), o, scale);
+            _body       = text::Layout::build(_bodyText, o, scale);
             _bodyLoaded = true;
         }
         p.save();
@@ -801,10 +823,12 @@ public:
 private:
     MessageList                  &_list;
     model::File                   _file;
+    std::string                   _titleText;
     std::unique_ptr<text::Layout> _title, _sub, _body;
-    std::vector<std::string>      _images; // the body's custom emoji, box id i: [i - 1]
+    text::AttributedText          _bodyText; // the document as parsed (once _parsed)
+    std::vector<std::string>      _images;   // the body's custom emoji, box id i: [i - 1]
     EmojiFrameTimer               _anim;
-    bool                          _bodyLoaded = false;
+    bool                          _bodyLoaded = false, _parsed = false;
 };
 
 // The reply bar: participants, "N replies" and — by state — "Last reply
@@ -913,6 +937,11 @@ private:
 };
 
 } // namespace
+
+void paintCardFrame(gfx::Painter &p, ui::RectF r, float radius, ui::C border) {
+    p.fillRoundRect(r, radius, ui::color(C::FileChipBg));
+    p.strokeRoundRect(r, radius, 1, ui::color(border));
+}
 
 std::vector<std::string> selectableTexts(Context &ctx, const model::Message &m) {
     // What MessageRow registers, in the same order (buildBlocks / buildBody).
@@ -1056,7 +1085,7 @@ void MessageRow::buildSystem(const model::Message &m) {
         ctx.images, ctx.store().user(m.user).avatar, ImageCache::Shape::Rounded, 4
     );
     av->style().size(20, 20);
-    std::string text = plainText(ctx, m.text);
+    std::string text = plainText(ctx.store(), m.text);
     if (text.empty())
         text = arg(tr("%1 joined."), ctx.store().user(m.user).label());
     auto *l = add<ui::Label>(std::move(text), Font::Body, C::TextMuted);
@@ -1075,8 +1104,7 @@ void MessageRow::buildHeader(ui::View *col, const model::Message &m, bool tight)
     const std::string name =
         m.isHuddle()
             ? std::string(x->huddle.ended ? tr("A huddle happened") : tr("A huddle started"))
-        : bot && x && !x->botName.empty() ? x->botName
-                                          : std::string(st.user(m.user).label());
+            : std::string(authorName(st, m));
     auto                          *nameL = hdr->add<RichLabel>(ctx, this);
     std::vector<RichLabel::Target> targets;
     uint32_t                       link = 0;
@@ -1098,10 +1126,7 @@ void MessageRow::buildHeader(ui::View *col, const model::Message &m, bool tight)
 }
 
 void MessageRow::buildMessage(const model::Message &m, bool grouped) {
-    Context     &ctx = _list.ctx();
-    const Store &st  = ctx.store;
-    const bool   bot = isBot(st, m);
-    const auto  &x   = m.extra;
+    const Store &st = _list.ctx().store;
     // The banners stack above the message, before its padding.
     _pinText.clear();
     _savedText.clear();
@@ -1135,19 +1160,7 @@ void MessageRow::buildMessage(const model::Message &m, bool grouped) {
         add<ui::View>()->style().size(kAvSize, 1);
         _hoverTime = base::formatTime(model::tsSecs(m.ts));
     } else {
-        const std::string &avatar =
-            bot && x && !x->botAvatar.empty() ? x->botAvatar : st.user(m.user).avatar;
-        ui::View *av = nullptr;
-        if (m.isHuddle())
-            av = add<HuddleTile>();
-        else if (m.user != model::kNoUser && !bot)
-            av = add<AuthorAvatar>(ctx, avatar, m.user);
-        else
-            av = add<LetterAvatar>(
-                ctx.images,
-                avatar,
-                x && !x->botName.empty() ? std::string_view(x->botName) : st.user(m.user).label()
-            );
+        ui::View *av = m.isHuddle() ? add<HuddleTile>() : addAvatar(this, m);
         av->style().size(kAvSize, kAvSize).margins(0, 2, 0, 0).noShrink();
     }
     auto *col = add<ui::View>();
@@ -1160,6 +1173,15 @@ void MessageRow::buildMessage(const model::Message &m, bool grouped) {
         if (_list.inlineOpen(m.ts))
             buildInlineThread(col, m);
     }
+}
+
+ui::View *MessageRow::addAvatar(ui::View *parent, const model::Message &m) {
+    Context           &ctx    = _list.ctx();
+    const Store       &st     = ctx.store;
+    const std::string &avatar = authorAvatar(st, m);
+    if (m.user != model::kNoUser && !isBot(st, m))
+        return parent->add<AuthorAvatar>(ctx, avatar, m.user);
+    return parent->add<LetterAvatar>(ctx.images, avatar, authorName(st, m));
 }
 
 void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root) {
@@ -1303,13 +1325,10 @@ ui::View *MessageRow::addThumb(
     if (w <= 0 || h <= 0)
         ctx.images.naturalSize(path, &w, &h);
     float       tw = w > 0 ? float(w) : float(maxW), th = h > 0 ? float(h) : float(maxH) * 0.66f;
-    const float s               = std::min({1.f, float(maxW) / tw, float(maxH) / th});
-    tw                          = std::floor(tw * s);
-    th                          = std::floor(th * s);
-    const std::string      bare = path.substr(0, path.find('?')); // ext views into it
-    const std::string_view ext  = file::extension(bare);
-    const bool             gif  = ext == "gif" || ext == "GIF";
-    auto                  *img  = col->add<Thumb>(_list, path, w, h, tw, th, gif, _ts, file);
+    const float s = std::min({1.f, float(maxW) / tw, float(maxH) / th});
+    tw            = std::floor(tw * s);
+    th            = std::floor(th * s);
+    auto *img     = col->add<Thumb>(_list, path, w, h, tw, th, isGifPath(path), _ts, file);
     img->style().alignSelf(Align::Start).margins(0, gapAbove, 0, 2);
     return img;
 }
@@ -1318,17 +1337,15 @@ void MessageRow::buildGallery(ui::View *col, const std::vector<const model::File
     auto *g = col->add<Gallery>();
     g->style().alignSelf(Align::Start).margins(0, 6, 0, 2);
     for (const model::File *f : files) {
-        const std::string     &src  = f->isImage() ? f->path : f->thumb;
-        const std::string      bare = src.substr(0, src.find('?'));
-        const std::string_view ext  = file::extension(bare);
-        auto                  *t    = g->add<Thumb>(
+        const std::string &src = f->isImage() ? f->path : f->thumb;
+        auto              *t   = g->add<Thumb>(
             _list,
             src,
             f->width,
             f->height,
             Gallery::kTileH,
             Gallery::kTileH,
-            ext == "gif" || ext == "GIF",
+            isGifPath(src),
             ts,
             true
         );
@@ -1383,9 +1400,7 @@ void MessageRow::buildFile(ui::View *col, const model::File &f, Ts ts) {
         else if (_list.ctx().openUrl) {
             const std::string &url = file.permalink.empty() ? file.path : file.permalink;
             if (!url.empty())
-                _list.ctx().openUrl(
-                    url.find("://") == std::string::npos ? file::toFileUrl(url) : url
-                );
+                _list.ctx().openUrl(fileUrl(url));
         }
     };
 }
@@ -1419,7 +1434,7 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
     const bool barless =
         onlyBlocks(a, model::Block::Kind::Image) || onlyBlocks(a, model::Block::Kind::Table);
     if (!barless)
-        card->add<ColorBar>(parseHexColor(a.color, ui::color(C::BorderStrong)));
+        card->add<ColorBar>(barColor(a.color));
     auto *c = card->add<ui::View>();
     c->style().flex(1).spacing(3).padding(0, 2);
     if (!a.service.empty() || !a.favicon.empty()) {
@@ -1622,10 +1637,8 @@ void MessageRow::buildInlineThread(ui::View *col, const model::Message &root) {
     } else {
         const model::Message *prev = nullptr;
         for (const model::Message &r : *replies) {
-            // Collapsed: same author within five minutes.
-            const bool grouped = prev && prev->user == r.user &&
-                                 r.subtype().find("_join") == std::string::npos &&
-                                 r.ts - prev->ts < 300LL * 1000000;
+            // Collapsed as in the list: same author within five minutes.
+            const bool grouped = prev && groupable(*prev, r);
             prev               = &r;
             auto *rr           = box->add<ui::View>();
             rr->style()
@@ -1635,19 +1648,10 @@ void MessageRow::buildInlineThread(ui::View *col, const model::Message &root) {
                 .padding(
                     0, grouped ? kPadVGrouped : kPadV, 0, grouped ? kPadVGrouped : kPadVBottom
                 );
-            if (grouped) {
+            if (grouped)
                 rr->add<ui::View>()->style().size(kAvSize, 1).noShrink();
-            } else {
-                const bool         bot    = isBot(st, r);
-                const std::string &avatar = bot && r.extra && !r.extra->botAvatar.empty()
-                                                ? r.extra->botAvatar
-                                                : st.user(r.user).avatar;
-                ui::View          *av =
-                    r.user != model::kNoUser && !bot
-                        ? static_cast<ui::View *>(rr->add<AuthorAvatar>(ctx, avatar, r.user))
-                        : rr->add<LetterAvatar>(ctx.images, avatar, st.user(r.user).label());
-                av->style().size(kAvSize, kAvSize).margins(0, 2, 0, 0).noShrink();
-            }
+            else
+                addAvatar(rr, r)->style().size(kAvSize, kAvSize).margins(0, 2, 0, 0).noShrink();
             auto *rc = rr->add<ui::View>();
             rc->style().flex(1).spacing(0);
             if (!grouped)

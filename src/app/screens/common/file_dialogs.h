@@ -42,10 +42,6 @@ void saveAttachmentAs(
     Context &ctx, const model::File &f, std::function<void(bool ok, std::string path)> done = {}
 );
 
-// The same as a Context::saveFile hook (the message context menu's "Save
-// file…" / "Save image…"): ctx.saveFile = screens::saveFileHook(ctx);
-std::function<void(const model::File &)> saveFileHook(Context &ctx);
-
 // Drag and drop of files: whether a DropEnter/DropMove offers any (a URI
 // list), and a Drop's local paths (file:// URIs decoded; others skipped).
 bool                     dragOffersFiles(const plat::Event *raw);

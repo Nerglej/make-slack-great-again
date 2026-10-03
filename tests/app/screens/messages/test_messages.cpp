@@ -8,6 +8,9 @@
 #include "app/media/audio_player.h"
 #include "support/fake_llm_server.h"
 #include "app/model/jobs.h"
+#include "app/screens/common/avatar_initial.h"
+#include "app/screens/common/message_rules.h"
+#include "app/screens/common/message_text.h"
 #include "app/screens/common/remote_images.h"
 #include "app/screens/messages/audio_card.h"
 #include "app/screens/messages/image_cache.h"
@@ -130,9 +133,11 @@ struct DownloadingBackend : fake::FakeBackend {
     struct Asked {
         std::string url, to;
     };
-    std::vector<Asked> asked;
-    bool               reminders = true; // Capabilities::messageReminders
-    Capabilities       capabilities() const override {
+    std::vector<Asked>       asked;
+    std::vector<std::string> resolved;         // resolveChannel ids
+    bool                     reminders = true; // Capabilities::messageReminders
+    void         resolveChannel(const std::string &id) override { resolved.push_back(id); }
+    Capabilities capabilities() const override {
         Capabilities c     = FakeBackend::capabilities();
         c.messageReminders = reminders;
         return c;
@@ -350,6 +355,27 @@ TEST("image: natural sizes are memoised, from decodes too, with a negative entry
     }
 }
 
+TEST("image: failed entries are bounded, oldest dropped first") {
+    ImageCache cache(app().platform());
+    for (int i = 0; i < 300; ++i)
+        cache.get(ImageCache::Ref{"/no/such/image-" + std::to_string(i) + ".png", 8, 8});
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    CHECK(cache.entryCount() == 256);
+    // The newest are still remembered as failed; the oldest are asked for again.
+    CHECK(cache.failed(ImageCache::Ref{"/no/such/image-299.png", 8, 8}));
+    CHECK_FALSE(cache.failed(ImageCache::Ref{"/no/such/image-0.png", 8, 8}));
+}
+
+TEST("image: avatar tiles take the letter's hue; hsl() is the one colour formula") {
+    CHECK(hsl(0, 1, 0.5f) == 0xffff0000u);
+    CHECK(hsl(120, 1, 0.5f) == 0xff00ff00u);
+    CHECK(hsl(240, 1, 0.25f) == 0xff000080u);
+    CHECK(hsl(300, 0, 0.5f) == 0xff808080u);
+    // 'A': hue 65 · 37 mod 360 = 245, HSL(245, 130, 100) on 0-255 scales.
+    CHECK(initialHue("A") == 0xff3a3197u);
+    CHECK(initialHue("a") != initialHue("A"));
+}
+
 TEST("image: animations decode at the asked size, frame by frame") {
     ImageCache                cache(app().platform());
     const ImageCache::Request r{asset("gifs/party-confetti.gif"), 80, 60};
@@ -397,17 +423,88 @@ TEST("grouping: same author within 5 minutes; roots and system lines stand alone
     e.store.addMessage(c, msg(1, t0 + 530, "live 2"));
     pump();
     CHECK(e.list->items()[10].grouped);
+    // An edit keeps the items; replies make "live" a root, which stands
+    // alone and ends the group under it.
+    e.store.updateMessage(c, (t0 + 520) * 1000000, [](model::Message &m) { m.text = "edited"; });
+    pump();
+    CHECK(e.list->items().size() == 11 && e.list->items()[10].grouped);
+    e.store.updateMessage(c, (t0 + 520) * 1000000, [](model::Message &m) { m.replyCount = 1; });
+    pump();
+    CHECK(!e.list->items()[9].grouped && !e.list->items()[10].grouped);
+    // Inline, a thread's replies group by the same rules.
+    model::Message bot1   = msg(1, t0 + 600, "build ok");
+    bot1.extras().botName = "CI";
+    model::Message bot2   = msg(1, t0 + 610, "deploy ok");
+    bot2.extras().botName = "CD";
+    CHECK_FALSE(groupable(bot1, bot2));
+}
+
+TEST("grouping: the rules — system lines, bots, authors, GIF paths") {
+    model::Store st;
+    model::User  mira;
+    mira.id                = "U2";
+    mira.displayName       = "Mira";
+    mira.avatar            = "/a/mira.png";
+    const model::UserRef u = st.addUser(mira);
+    model::User          bot;
+    bot.id                       = "B1";
+    bot.displayName              = "deploybot";
+    bot.bot                      = true;
+    const model::UserRef b       = st.addUser(bot);
+    auto                 withBot = [](model::Message m, const char *name, const char *avatar) {
+        m.extras().botName   = name;
+        m.extras().botAvatar = avatar;
+        return m;
+    };
+    // A person posting through an app stays that person; a bot (or a
+    // message with no user) is its own name and picture.
+    const model::Message viaApp = withBot(msg(u, 100, "hi"), "Zapier", "/z.png");
+    CHECK_STR(std::string(authorName(st, viaApp)), "Mira");
+    CHECK_STR(authorAvatar(st, viaApp), "/a/mira.png");
+    const model::Message byBot = withBot(msg(b, 100, "hi"), "Deploys", "/d.png");
+    CHECK_STR(std::string(authorName(st, byBot)), "Deploys");
+    CHECK_STR(authorAvatar(st, byBot), "/d.png");
+    CHECK(isBot(st, byBot) && !isBot(st, viaApp));
+    const model::Message noUser = withBot(msg(model::kNoUser, 100, "hi"), "Webhook", "/w.png");
+    CHECK_STR(std::string(authorName(st, noUser)), "Webhook");
+    CHECK_STR(authorAvatar(st, noUser), "/w.png");
+    CHECK_STR(std::string(authorName(st, msg(u, 100, "plain"))), "Mira");
+
+    model::Message join   = msg(u, 100, "joined");
+    join.extras().subtype = "channel_join";
+    CHECK(isSystem(join));
+    model::Message pin   = msg(u, 100, "pinned");
+    pin.extras().subtype = "pinned_item";
+    CHECK(isSystem(pin) && !isSystem(byBot) && !isSystem(msg(u, 1, "x")));
+    // Grouping: one author (and bot name), within five minutes.
+    CHECK(groupable(msg(u, 100, "a"), msg(u, 399, "b")));
+    CHECK_FALSE(groupable(msg(u, 100, "a"), msg(u, 400, "b")));
+    CHECK_FALSE(groupable(msg(u, 100, "a"), join));
+    CHECK_FALSE(
+        groupable(withBot(msg(b, 100, "a"), "One", ""), withBot(msg(b, 101, "b"), "Two", ""))
+    );
+    model::Message root = msg(u, 100, "root");
+    root.replyCount     = 1;
+    CHECK_FALSE(groupable(root, msg(u, 101, "b")));
+
+    CHECK(isGifPath("/x/party.gif"));
+    CHECK(isGifPath("/x/PARTY.GIF"));
+    CHECK(isGifPath("https://media.giphy.com/a/giphy.Gif?cid=1&rid=giphy.webp"));
+    CHECK_FALSE(isGifPath("https://e/a.png?x=.gif"));
+    CHECK_FALSE(isGifPath("/x/gif"));
 }
 
 TEST("users: a presence flip re-binds no row; a name re-binds only the rows showing it") {
     Env                         e(false);
     const int64_t               t0 = base::nowSecs() - 3600;
     std::vector<model::Message> ms;
-    ms.push_back(msg(0, t0, "one"));
-    ms.push_back(msg(0, t0 + 400, "hi <@U3>"));
-    ms.push_back(msg(1, t0 + 800, "two"));
+    ms.push_back(msg(0, t0, "one :party: for <!subteam^S1>"));
+    ms.push_back(msg(0, t0 + 400, "hi <@U3> in <#C9>"));
+    ms.push_back(msg(1, t0 + 800, "two :partying: <!subteam^S2>"));
+    ms.back().reactions.push_back({"cake::skin-tone-2", 1, {}});
     const ConvRef c = addConv(e.store, std::move(ms));
-    model::User   lena;
+    e.store.setUsergroups({{"S1", "design", "Design", {}}, {"S2", "ops", "Ops", {}}});
+    model::User lena;
     lena.id                 = "U3";
     lena.displayName        = "Lena";
     const model::UserRef u3 = e.store.addUser(lena);
@@ -440,11 +537,71 @@ TEST("users: a presence flip re-binds no row; a name re-binds only the rows show
     e.store.usersChanged();
     pump(8);
     CHECK(e.list->rowBinds() == binds + 2);
-    // Custom emoji draw anywhere: every row.
+    // A text change: only the rows that draw what changed. A custom emoji
+    // (":party:", not ":partying:"); an alias of it.
     e.store.setCustomEmoji("party", "https://e/p.png");
     e.store.usersChanged();
     pump(8);
-    CHECK(e.list->rowBinds() == binds + 2 + 3);
+    CHECK(e.list->rowBinds() == binds + 3);
+    e.store.setCustomEmoji("partying", "alias:party");
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 4);
+    e.store.setCustomEmoji("party", "https://e/p2.png"); // the alias's row too
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 6);
+    // A reaction's emoji (any skin tone).
+    e.store.setCustomEmoji("cake", "https://e/c.png");
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 7);
+    // A user group's handle.
+    e.store.setUsergroups({{"S1", "design", "Design", {}}, {"S2", "sre", "Ops", {}}});
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 8);
+    // The name of a channel the roster doesn't list.
+    e.store.setChannelName("C9", "launch");
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 9);
+    // An emoji gone (its rows show ":code:" again): everything.
+    e.store.replaceCustomEmoji({{"cake", "https://e/c.png"}});
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 9 + 3);
+}
+
+TEST("actions: Copy message is the text as read, with full URLs, and asks the backend nothing") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 3600;
+    std::vector<model::Message> ms;
+    ms.push_back(
+        msg(0,
+            t0,
+            "*hi* <@U2> in <#C7> :thumbsup::skin-tone-3: "
+            "<https://example.com/a/b/c/d|example.com/a/…/d>")
+    );
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    e.backend.resolved.clear();
+    const Ts ts = e.list->items().back().ts;
+    e.list->runMenuAction(ts, MessageList::kCopyText);
+    std::string got;
+    bool        done = false;
+    app().platform().requestClipboard(
+        "text/plain;charset=utf-8", [&](std::optional<std::string> s) {
+            got  = s.value_or("");
+            done = true;
+        }
+    );
+    REQUIRE(until([&] { return done; }));
+    CHECK_STR(got, "hi @Mira in #C7 \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBC https://example.com/a/b/c/d");
+    CHECK(e.backend.resolved.empty());
+    // Elsewhere the label stays as Slack wrote it.
+    CHECK_STR(
+        plainText(e.store, "<https://example.com/a/b/c/d|example.com/a/…/d>"), "example.com/a/…/d"
+    );
 }
 
 TEST("rows: scrolling back over seen messages rebuilds nothing; edits and reactions do") {
@@ -1632,6 +1789,7 @@ TEST("actions: the file bar's Download saves the original where asked, a job unt
         plat::FileDialogDesc d;
         REQUIRE(hooks->lastFileDialog(&d));
         CHECK_STR(d.suggestedName, "signups-week-37.csv");
+        CHECK_STR(d.initialDir, app().platform().standardDir(plat::StandardDir::Home));
         REQUIRE(until([&] { return model::jobs().count() == 0; }));
         REQUIRE(e.backend.asked.size() == 1);
         CHECK_STR(e.backend.asked[0].url, "https://files.csv.test/files/signups-week-37.csv");
@@ -2337,6 +2495,25 @@ TEST("blocks: headers, dividers, images and tables; ten rows and the pill; cards
     row2 = e.row((t0 + 600) * 1000000);
     REQUIRE(row2 != nullptr);
     CHECK(findLeaf(row2, "quoted words") == nullptr);
+}
+
+TEST("blocks: a table shapes its cells once; a narrower column shapes only what wraps") {
+    Env                                   e(false);
+    std::vector<std::vector<std::string>> cells = {
+        {"*Step*", "Drop-off"}, {"Visited the page", "0%"}, {"Signed up for the newsletter", "12%"}
+    };
+    auto *tv = e.win->root().add<TableView>(e.ctx, cells);
+    tv->measure(600, ui::kInf);
+    const size_t shaped = text::layoutBuilds();
+    const float  wide   = tv->measure(700, ui::kInf).w;
+    CHECK(text::layoutBuilds() == shaped); // fits either way: nothing shaped
+    CHECK_FALSE(tv->clipped());
+    const ui::SizeF narrow = tv->measure(150, ui::kInf);
+    CHECK(narrow.w <= 150 && narrow.w < wide && tv->clipped());
+    const size_t wrapped = text::layoutBuilds() - shaped;
+    CHECK(wrapped > 0 && wrapped < 6); // the cells that wrap; "0%" and "12%" fit
+    tv->measure(700, ui::kInf);
+    CHECK(text::layoutBuilds() - shaped == wrapped); // back to the natural ones
 }
 
 TEST("blocks: the full table is rich; a canvas card names mentions and draws emoji") {

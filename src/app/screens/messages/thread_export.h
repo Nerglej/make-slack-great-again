@@ -34,7 +34,7 @@ void exportThread(
 );
 
 // The header label exportThread takes for conv (the
-// peer for a DM, "#name" for a channel).
+// people of a DM or group DM, "#name" for a channel; "" when unnamed).
 std::string threadExportTitle(const Store &store, ConvRef conv);
 
 } // namespace screens

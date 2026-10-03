@@ -5,6 +5,7 @@
 #include "app/media/audio_player.h"
 #include "app/model/jobs.h"
 #include "app/screens/common/downloads.h"
+#include "app/screens/common/message_rules.h"
 #include "app/screens/common/remote_images.h"
 #include "app/screens/messages/message_list.h"
 #include "app/screens/messages/rows.h"
@@ -106,9 +107,7 @@ bool live(AudioPlayer::State s) {
 std::string subtitleFor(Context &ctx, const model::Message *m, const std::string &by) {
     std::string s;
     if (m) {
-        const std::string who  = m->extra && !m->extra->botName.empty()
-                                     ? m->extra->botName
-                                     : std::string(ctx.store().user(m->user).label());
+        const std::string who(authorName(ctx.store(), *m));
         const std::string when = base::formatTime(model::tsSecs(m->ts));
         s                      = who.empty() ? when : arg(tr("%1 at %2"), who, when);
     }
@@ -407,8 +406,7 @@ public:
         const ui::RectF chip{0, 0, width(), kAudioCardH};
 
         // Card
-        p.fillRoundRect(chip, kRadius, ui::color(C::FileChipBg));
-        p.strokeRoundRect({0, 0, chip.w, chip.h}, kRadius, 1, ui::color(C::FileChipBorder));
+        paintCardFrame(p, chip, kRadius);
 
         // Title block: name, then "0:05 (79 KB)" / Loading… / the error.
         const float         textX = kPad + kBtn + kPad;

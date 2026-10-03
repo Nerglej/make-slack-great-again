@@ -1,6 +1,7 @@
 #include "app/screens/messages/emoji_picker.h"
 
 #include "app/mrkdwn/emoji.h"
+#include "app/screens/common/icon_button.h"
 #include "app/screens/messages/image_cache.h"
 #include "base/i18n.h"
 #include "base/str.h"
@@ -87,7 +88,6 @@ public:
         _glyphs.resize(_cells.size());
         _headers.clear();
         _headers.resize(_sections.size());
-        _images.clear();
         _sel = _hover = -1;
         relayout();
     }
@@ -302,7 +302,6 @@ private:
     std::vector<Section>                       _sections;
     std::vector<Row>                           _rows;
     std::vector<std::unique_ptr<text::Layout>> _glyphs, _headers;
-    std::vector<int>                           _images;
     float                                      _contentH = 0;
     int                                        _sel = -1, _hover = -1;
 };
@@ -311,27 +310,17 @@ namespace {
 
 // A category tab: the icon, a 2 px accent underline while its section is on
 // top; a highlight wash on hover.
-class CatTab final : public Clickable {
+class CatTab final : public IconButton {
 public:
-    explicit CatTab(Icon i) : icon(i) {
+    explicit CatTab(Icon i) : IconButton(i, 18, C::FormIcon) {
         setLook({C::None, C::FormHighlight, C::FormHighlight, C::None, 4});
         style().flex(1).height(28);
         setRole(Role::Tab);
-    }
-    void paint(gfx::Painter &p) override {
-        Clickable::paint(p);
-        gfx::drawIcon(
-            p,
-            icon,
-            {snapPx((width() - 18) / 2), snapPx((height() - 18) / 2), 18, 18},
-            color(C::FormIcon)
-        );
     }
     void paintOver(gfx::Painter &p) override {
         if (checked())
             p.fillRect({0, height() - 2, width(), 2}, color(C::Accent));
     }
-    Icon icon;
 };
 
 struct CatDef {
@@ -644,7 +633,5 @@ void EmojiPicker::syncTabs() {
     for (size_t i = 0; i < _tabs.size(); ++i)
         _tabs[i]->setChecked(_tabSection[i] == s);
 }
-
-void EmojiPicker::rebuildTabs() {}
 
 } // namespace screens

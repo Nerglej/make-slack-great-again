@@ -135,10 +135,7 @@ uint32_t previewCut(std::string_view mrkdwnText, int *maxChars, int *maxLines);
 // when their rows are gone.
 std::vector<std::string> bodyTexts(Context &ctx, std::string_view mrkdwnText, const RichOptions &o);
 
-// Plain text of a mrkdwn string as the user reads it (copy text, previews):
-// markup stripped, mentions resolved to names, emoji as Unicode. fullUrls:
-// a link label Slack shortened ("host/…/…") is its full URL instead ("Copy
-// message").
+// plainText (common/message_text.h) of the Context's Store.
 std::string plainText(const Context &ctx, std::string_view mrkdwnText, bool fullUrls = false);
 
 // A link from a message: mailto: opens the mail app — none registered, the
@@ -148,13 +145,10 @@ void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at
 // A tooltip chip above a click for `ms`.
 void showClickToast(Context &ctx, ui::Window &w, const std::string &text, int ms, ui::PointF at);
 
-// A raw colour ("#3FCB8E") from attachment data; `fallback` when malformed.
 // A conversation's place label: "#name", a DM peer's name, a group DM's name or
 // "group message"; "" for a conversation this workspace can't see.
 std::string placeLabel(const Store &st, std::string_view convId);
 // What a message permalink's chip reads.
 std::string messageLinkLabel(const Store &st, const mrkdwn::MessageRef &ref);
-
-gfx::Color parseHexColor(std::string_view hex, gfx::Color fallback);
 
 } // namespace screens

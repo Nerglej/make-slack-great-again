@@ -6,13 +6,14 @@
 #include "base/file.h"
 #include "base/log.h"
 #include "base/str.h"
+#include "base/time.h"
 #include "plat/plat.h"
 
 #include <algorithm>
-#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 namespace screens {
 
@@ -25,25 +26,11 @@ constexpr int     kSweepEveryMs    = 30 * 60 * 1000;
 constexpr int64_t kSweepAfterBytes = int64_t(32) << 20;
 constexpr int64_t kDefaultLimit    = int64_t(250) << 20;
 
-double nowMs() {
-    using namespace std::chrono;
-    return double(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-}
-
 // What gfx can decode (PNG, JPEG, GIF, WebP), by magic bytes. Anything else
 // — Slack's HTML sign-in page for a file fetched without auth, a JSON error —
 // is not kept, so it can't poison the disk cache.
 bool looksLikeImage(std::string_view b) {
     return str::startsWith(mime::sniff(b), "image/");
-}
-
-int64_t treeBytes(const std::string &dir) {
-    std::vector<file::DirEntry> all;
-    int64_t                     n = 0;
-    if (file::listDir(dir, &all))
-        for (const file::DirEntry &e : all)
-            n += e.isDir ? treeBytes(file::join(dir, e.name)) : e.size;
-    return n;
 }
 
 // The cache sweep: while everything (the blob folders and the
@@ -72,7 +59,7 @@ int64_t sweepDirs(
     total = blobBytes;
     if (limit != INT64_MAX) // only measuring: the kept folders don't matter
         for (const std::string &dir : keptDirs)
-            total += treeBytes(dir);
+            total += file::treeBytes(dir);
     // Oldest first, one at a time: a sweep usually deletes a handful, and a
     // sort would be one more template instantiation in the binary.
     while (total > limit) {
@@ -109,16 +96,14 @@ struct RemoteImages::Impl {
         net::RequestId    req     = 0;
         bool              started = false;
     };
-    std::vector<Pending> pending; // running ones and the queue, in order
-    int                  active = 0;
-    struct Failure {
-        std::string url;
-        double      until; // ms, steady clock
-    };
-    std::vector<Failure> failed; // few: a flat list
-    int64_t              limit = kDefaultLimit, disk = 0, sinceSweep = 0;
-    plat::TimerId        firstSweep = 0, everySweep = 0;
-    bool                 alive = true; // UI thread; false once destroyed
+    std::vector<Pending>                     pending; // running ones and the queue, in order
+    int                                      active = 0;
+    // Failed URLs → until when they stay failed (ms, base::monotonicMs);
+    // the ones over are dropped as new ones come.
+    std::unordered_map<std::string, int64_t> failed;
+    int64_t                                  limit = kDefaultLimit, disk = 0, sinceSweep = 0;
+    plat::TimerId                            firstSweep = 0, everySweep = 0;
+    bool                                     alive = true; // UI thread; false once destroyed
 
     // The worker: disk writes, mtime bumps, sweeps.
     std::mutex                         m;
@@ -160,13 +145,6 @@ struct RemoteImages::Impl {
         for (Pending &p : pending)
             if (p.url == url)
                 return &p;
-        return nullptr;
-    }
-
-    Failure *failure(const std::string &url) {
-        for (Failure &f : failed)
-            if (f.url == url)
-                return &f;
         return nullptr;
     }
 
@@ -254,10 +232,9 @@ struct RemoteImages::Impl {
         const std::shared_ptr<Impl> &self, const std::string &url, const std::string &path, size_t n
     ) {
         if (path.empty()) {
-            if (Failure *f = self->failure(url))
-                f->until = nowMs() + kCooldownMs;
-            else
-                self->failed.push_back({url, nowMs() + kCooldownMs});
+            const int64_t now = base::monotonicMs();
+            std::erase_if(self->failed, [now](const auto &f) { return f.second <= now; });
+            self->failed[url] = now + kCooldownMs;
         }
         std::vector<Done> waiters;
         for (size_t i = 0; i < self->pending.size(); ++i)
@@ -338,8 +315,8 @@ std::string RemoteImages::cachedPath(const std::string &url) {
 }
 
 bool RemoteImages::failedRecently(const std::string &url) const {
-    const Impl::Failure *f = _impl->failure(url);
-    return f && nowMs() < f->until;
+    const auto f = _impl->failed.find(url);
+    return f != _impl->failed.end() && base::monotonicMs() < f->second;
 }
 
 void RemoteImages::fetch(const std::string &url, Done done) {

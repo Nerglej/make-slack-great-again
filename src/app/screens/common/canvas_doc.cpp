@@ -9,15 +9,6 @@ namespace screens::canvas {
 
 namespace {
 
-bool ieq(std::string_view a, std::string_view b) {
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if ((a[i] | 0x20) != (b[i] | 0x20))
-            return false;
-    return true;
-}
-
 // An attribute's value in an opening tag ("" if absent).
 std::string_view attr(std::string_view tag, std::string_view name) {
     for (size_t at = tag.find(name); at != std::string_view::npos; at = tag.find(name, at + 1)) {
@@ -153,14 +144,14 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
         while (ne < tag.size() && tag[ne] != ' ' && tag[ne] != '/' && tag[ne] != '\t')
             ++ne;
         const std::string_view name = tag.substr(0, ne);
-        if (ieq(name, "style") || ieq(name, "script")) {
+        if (str::iequals(name, "style") || str::iequals(name, "script")) {
             skip += closing ? -1 : 1;
             skip = std::max(skip, 0);
             continue;
         }
         if (skip)
             continue;
-        if (ieq(name, "br")) {
+        if (str::iequals(name, "br")) {
             br = lines.hasText; // a break inside a block: the rest on its own line
             continue;
         }
@@ -173,7 +164,7 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
             br = false;
             continue;
         }
-        if (ieq(name, "ul") || ieq(name, "ol")) {
+        if (str::iequals(name, "ul") || str::iequals(name, "ol")) {
             if (closing) {
                 if (!lists.empty())
                     lists.pop_back();
@@ -184,7 +175,7 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
                 // data-section-style says which kind (5 bullets, 6
                 // numbers, 7 checklist).
                 List l;
-                l.ordered   = ieq(name, "ol") || sectionStyle == 6;
+                l.ordered   = str::iequals(name, "ol") || sectionStyle == 6;
                 l.checklist = sectionStyle == 7 ||
                               attr(tag, "class").find("checklist") != std::string_view::npos;
                 lists.push_back(l);
@@ -192,7 +183,7 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
             }
             continue;
         }
-        if (ieq(name, "li")) {
+        if (str::iequals(name, "li")) {
             if (closing) {
                 lines.end();
             } else {
@@ -216,24 +207,24 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
             br = false;
             continue;
         }
-        if (ieq(name, "blockquote")) {
+        if (str::iequals(name, "blockquote")) {
             lines.end();
             quote = std::max(0, quote + (closing ? -1 : 1));
             continue;
         }
-        if (ieq(name, "pre")) { // a fenced block, a line per line
+        if (str::iequals(name, "pre")) { // a fenced block, a line per line
             lines.start("```");
             lines.hasText = true;
             lines.end();
             pre = std::max(0, pre + (closing ? -1 : 1));
             continue;
         }
-        if (ieq(name, "table")) {
+        if (str::iequals(name, "table")) {
             lines.end();
             firstRow = true;
             continue;
         }
-        if (ieq(name, "tr")) {
+        if (str::iequals(name, "tr")) {
             if (closing) {
                 lines.markup(" |");
                 lines.hasText   = true;
@@ -253,7 +244,7 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
             }
             continue;
         }
-        if (ieq(name, "td") || ieq(name, "th")) {
+        if (str::iequals(name, "td") || str::iequals(name, "th")) {
             if (!closing && rowCells >= 0) {
                 lines.markup(rowCells ? " | " : " ");
                 lines.space = false;
@@ -261,12 +252,12 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
             }
             continue;
         }
-        if (ieq(name, "div")) {
+        if (str::iequals(name, "div")) {
             if (!closing)
                 sectionStyle = std::atoi(std::string(attr(tag, "data-section-style")).c_str());
             continue;
         }
-        if (ieq(name, "p")) {
+        if (str::iequals(name, "p")) {
             if (rowCells >= 0 || !lists.empty())
                 continue; // a cell's or an item's paragraph stays on its line
             // A code block: one <p class="prettyprint">, lines split by <br>.
@@ -305,12 +296,12 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
         };
         bool known = false;
         for (const auto &k : kInline)
-            if (ieq(name, k.from)) {
+            if (str::iequals(name, k.from)) {
                 lines.markup(str::concat({closing ? "</" : "<", k.to, ">"}));
                 known = true;
                 break;
             }
-        if (!known && (ieq(name, "a") || ieq(name, "lnk"))) {
+        if (!known && (str::iequals(name, "a") || str::iequals(name, "lnk"))) {
             if (closing)
                 lines.markup("</a>");
             else
@@ -493,7 +484,7 @@ size_t elementEnd(std::string_view h, size_t start, std::string_view name) {
         while (ne < tag.size() && tag[ne] != ' ' && tag[ne] != '/' && tag[ne] != '\t' &&
                tag[ne] != '\n')
             ++ne;
-        if (ieq(tag.substr(0, ne), name) && !(tag.size() && tag.back() == '/')) {
+        if (str::iequals(tag.substr(0, ne), name) && !(tag.size() && tag.back() == '/')) {
             depth += closing ? -1 : 1;
             if (depth == 0)
                 return gt + 1;
@@ -597,7 +588,7 @@ bool baseChunks(
         const std::string name(open.substr(0, ne));
         // A top-level picture: invisible context (its section is never
         // rewritten, so the picture survives on the server).
-        if (ieq(name, "img") || ieq(name, "br")) {
+        if (str::iequals(name, "img") || str::iequals(name, "br")) {
             pos = gt + 1;
             continue;
         }
@@ -608,11 +599,14 @@ bool baseChunks(
         pos                            = end;
         std::string_view id;
         bool             fragile = false;
-        if (name.size() == 2 && (name[0] | 0x20) == 'h' && name[1] >= '1' && name[1] <= '6') {
+        if (name.size() == 2 && str::asciiLower(name[0]) == 'h' && name[1] >= '1' &&
+            name[1] <= '6') {
             id = tagId(open);
-        } else if (ieq(name, "p")) {
+        } else if (str::iequals(name, "p")) {
             id = tagId(open);
-        } else if (ieq(name, "div") || ieq(name, "ul") || ieq(name, "ol")) {
+        } else if (
+            str::iequals(name, "div") || str::iequals(name, "ul") || str::iequals(name, "ol")
+        ) {
             // A list: the <ul> carries the section id.
             size_t ul = element.find("<ul");
             if (ul == std::string_view::npos)
@@ -620,7 +614,7 @@ bool baseChunks(
             if (ul == std::string_view::npos)
                 return false;
             id = tagId(element.substr(ul, element.find('>', ul) - ul));
-        } else if (ieq(name, "blockquote") || ieq(name, "table")) {
+        } else if (str::iequals(name, "blockquote") || str::iequals(name, "table")) {
             fragile = true;
         } else {
             return false; // <hr>, embeds, …: the whole-document save

@@ -1,6 +1,8 @@
 #include "app/screens/messages/thread_export.h"
 
 #include "app/model/jobs.h"
+#include "app/screens/common/message_rules.h"
+#include "app/screens/common/message_text.h"
 #include "app/screens/messages/rich.h"
 #include "base/file.h"
 #include "base/i18n.h"
@@ -97,8 +99,7 @@ void collect(Export &x) {
     for (const model::Message *m : msgs) {
         Raw r;
         r.ts     = m->ts;
-        r.who    = m->extra && !m->extra->botName.empty() ? m->extra->botName
-                                                          : std::string(st.user(m->user).label());
+        r.who    = authorName(st, *m);
         r.text   = m->text;
         r.edited = m->edited;
         for (const model::File &f : m->files())
@@ -119,7 +120,7 @@ std::string entry(const Context &ctx, const Raw &m, int64_t now) {
          m.edited ? tr("(edited)") : "",
          "\n"}
     );
-    const std::string text(str::trim(plainText(ctx, m.text)));
+    const std::string text(str::trim(plainText(ctx.store(), m.text)));
     if (!text.empty())
         out += text + "\n";
     for (const std::string &f : m.files)
@@ -187,8 +188,10 @@ void resolve(std::shared_ptr<Export> x) {
 std::string threadExportTitle(const Store &st, ConvRef conv) {
     if (conv >= st.conversationCount())
         return {};
-    const auto &c = st.conversation(conv);
-    return c.isDirect() ? std::string(st.displayName(conv)) : "#" + c.name;
+    // A DM or group DM by its people (or a renamed session's name), which
+    // the link chips' place label leaves out; a channel as they name it.
+    const model::Conversation &c = st.conversation(conv);
+    return c.isDirect() ? st.displayName(conv) : placeLabel(st, c.id);
 }
 
 void exportThread(

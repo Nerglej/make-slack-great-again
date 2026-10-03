@@ -15,27 +15,15 @@ namespace {
 constexpr uint16_t kBold = TextEdit::Bold, kItalic = TextEdit::Italic;
 constexpr uint16_t kStrike = TextEdit::Strike, kCode = TextEdit::Code;
 
+// Text as HTML: a line break is <br> in text and a space in an attribute.
 void escape(std::string &out, std::string_view s, bool attr) {
-    for (char c : s) {
-        switch (c) {
-        case '&':
-            out += "&amp;";
-            break;
-        case '<':
-            out += "&lt;";
-            break;
-        case '>':
-            out += "&gt;";
-            break;
-        case '"':
-            out += attr ? "&quot;" : "\"";
-            break;
-        case '\n':
-            out += attr ? " " : "<br>";
-            break;
-        default:
-            out.push_back(c);
-        }
+    for (size_t at = 0;;) {
+        const size_t nl = s.find('\n', at);
+        str::appendEscapedHtml(&out, s.substr(at, nl - at), attr);
+        if (nl == std::string_view::npos)
+            return;
+        out += attr ? " " : "<br>";
+        at = nl + 1;
     }
 }
 
@@ -43,7 +31,7 @@ bool icontains(std::string_view hay, const char *needle) {
     const size_t n = std::strlen(needle);
     for (size_t i = 0; i + n <= hay.size(); ++i) {
         size_t k = 0;
-        while (k < n && (hay[i + k] | 0x20) == needle[k])
+        while (k < n && str::asciiLower(hay[i + k]) == needle[k])
             ++k;
         if (k == n)
             return true;

@@ -162,6 +162,35 @@ int notificationCount() {
 
 } // namespace
 
+TEST(
+    "settings: a theme reads from the ia_theme JSON, palette names and pins, or the share string"
+) {
+    ui::CustomPalette t;
+    REQUIRE(
+        settings::parseSlackTheme(
+            R"({"primary":{"hex":"#112233"},"highlight1":{"palette":"Jade"},"highlight2":"ocean",
+            "brightness":14,"sidebarInverted":false,"pins":{"itemText":"#abc"}})",
+            &t
+        )
+    );
+    CHECK(t.primary == 0xff112233u);
+    CHECK(t.highlight1 == 0xff2bac76u); // the swatch, any case
+    CHECK(t.highlight2 == 0xff0e2a40u);
+    CHECK(t.important == ui::CustomPalette().important); // not named: the default's
+    CHECK(t.brightness == 10 && !t.sidebarInverted && t.gradient);
+    CHECK(t.itemText == 0xffaabbccu && t.itemHover == 0);
+    // Some other JSON is not a theme; hex keeps to opaque RGB.
+    CHECK_FALSE(settings::parseSlackTheme(R"({"name":"x"})", &t));
+    REQUIRE(settings::parseSlackTheme(R"({"primary":"#11223344"})", &t));
+    CHECK(t.primary == ui::CustomPalette().primary);
+    REQUIRE(
+        settings::parseSlackTheme(
+            "#3F0E40,#350d36,#1164A3,#FFFFFF,#350D36,#FFFFFF,#2BAC76,#CD2553", &t
+        )
+    );
+    CHECK(t.primary == 0xff3f0e40u && t.itemSelText == 0xffffffffu);
+}
+
 TEST("settings: every value survives the file, which is owner-only") {
     const std::string path = testPath();
     file::remove(path);

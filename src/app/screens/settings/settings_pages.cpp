@@ -161,15 +161,9 @@ uint64_t privateBytes() {
 #endif
 }
 
+// "412.3 MB", "1.2 GB"; a dash when unknown.
 std::string formatRam(uint64_t b) {
-    if (!b)
-        return "\xE2\x80\x94";
-    char buf[32];
-    if (b >= (uint64_t(1) << 30))
-        std::snprintf(buf, sizeof buf, "%.1f GB", double(b) / double(1 << 30));
-    else
-        std::snprintf(buf, sizeof buf, "%.1f MB", double(b) / double(1 << 20));
-    return buf;
+    return b ? str::byteSize(int64_t(b), str::ByteSize::Exact) : std::string("\xE2\x80\x94");
 }
 
 std::string timeAgo(int64_t secs) {

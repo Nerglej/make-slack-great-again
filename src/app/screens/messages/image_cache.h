@@ -159,8 +159,9 @@ private:
     std::shared_ptr<Impl>                                    _impl;
     RemoteImages                                            *_remote = nullptr;
     std::unordered_map<Key, std::shared_ptr<Entry>, KeyHash> _entries;
-    std::unordered_map<uint64_t, Entry *>                    _loading;    // by id, until delivered
-    std::unordered_set<Entry *>                              _waited;     // entries with waiters
+    std::unordered_map<uint64_t, Entry *>                    _loading; // by id, until delivered
+    std::unordered_set<Entry *>                              _waited;  // entries with waiters
+    std::vector<std::weak_ptr<Entry>> _failed; // failed entries, oldest first
     std::unordered_map<uint64_t, std::function<void(gfx::Bitmap)>> _once; // decodeOnce
     Entry *_lruHead = nullptr, *_lruTail = nullptr; // ready entries, most recent first
     struct Listener {
@@ -169,10 +170,10 @@ private:
     };
     std::vector<Listener> _listeners;
     struct SizeMemo {
-        int    w = 0, h = 0;
-        bool   ok      = false;
-        bool   missing = false; // a URL not on disk (yet)
-        double at      = 0;     // ms, when `missing` was found
+        int     w = 0, h = 0;
+        bool    ok      = false;
+        bool    missing = false; // a URL not on disk (yet)
+        int64_t at      = 0;     // ms (base::monotonicMs), when `missing` was found
     };
     std::unordered_map<std::string, SizeMemo> _sizes; // bounded (kMaxSizeMemos)
     size_t                                    _bytes = 0, _budget, _sizeProbes = 0;

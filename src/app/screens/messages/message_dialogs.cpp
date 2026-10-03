@@ -1,12 +1,16 @@
 #include "app/screens/messages/message_dialogs.h"
 
+#include "app/screens/common/message_rules.h"
+#include "app/screens/common/message_text.h"
 #include "app/screens/messages/image_cache.h"
 #include "app/screens/messages/rich.h"
 #include "app/screens/messages/rows.h"
+#include "app/screens/messages/table_view.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/str.h"
 #include "base/time.h"
+#include "base/utf8.h"
 #include "gfx/icons_generated.h"
 #include "ui/controls.h"
 #include "ui/datetime.h"
@@ -25,41 +29,31 @@ using V = ui::Button::Kind;
 
 namespace {
 
-// A rounded frame: 1-px border, fill.
-class Frame final : public ui::View {
+// The preview card: the file card's frame, radius 6, a stronger border.
+class PreviewCard final : public ui::View {
 public:
-    Frame(C border, C fill, float radius) : _b(border), _f(fill), _r(radius) {}
     void paint(gfx::Painter &p) override {
-        const ui::RectF b = bounds();
-        p.fillRoundRect(b, _r, ui::color(_f));
-        p.strokeRoundRect(b, _r, 1, ui::color(_b));
+        paintCardFrame(p, bounds(), 6, C::FormHighlightStrong);
         View::paint(p);
     }
-
-private:
-    C     _b, _f;
-    float _r;
 };
-
-std::string authorName(const Context &ctx, const model::Message &m) {
-    if (m.extra && !m.extra->botName.empty())
-        return m.extra->botName;
-    return std::string(ctx.store().user(m.user).label());
-}
 
 } // namespace
 
 ui::View *addMessagePreview(
     Context &ctx, ui::View *parent, const model::Message &m, float bodyH, bool files
 ) {
-    auto *card = parent->add<Frame>(C::FormHighlightStrong, C::FileChipBg, 6);
+    auto *card = parent->add<PreviewCard>();
     card->style().padding(0, 8, 0, 8).spacing(4).noShrink();
     // "<b>name</b>  <time>" (the time in 11 px: tertiary in the forward
     // dialog, secondary in the delete dialog; both read the same here).
     auto *head = card->add<ui::View>();
     head->style().row().padding(12, 0, 12, 0).spacing(8).items(Align::End);
     ui::styledLabel(
-        head, authorName(ctx, m), ui::pxFont(15, text::Weight::Bold, ui::color(C::FormText)), 1
+        head,
+        std::string(authorName(ctx.store(), m)),
+        ui::pxFont(15, text::Weight::Bold, ui::color(C::FormText)),
+        1
     );
     ui::styledLabel(
         head,
@@ -128,7 +122,7 @@ std::string movedMessageText(const Context &ctx, const model::Message &m, bool w
         const int64_t     secs = model::tsSecs(m.ts);
         const std::string note =
             arg(tr("Moved from the channel \xC2\xB7 originally posted by %1 on %2 at %3"),
-                authorName(ctx, m),
+                authorName(ctx.store(), m),
                 base::formatDate(secs, base::nowSecs()),
                 base::formatTime(secs));
         out = str::concat({"_", note, "_"});
@@ -154,17 +148,14 @@ public:
     ThreadRow(Context &ctx, const model::Message &root, int index) : index(index) {
         setLook({C::None, C::None, C::None, C::None, 0});
         style().row().height(60).padding(24, 0, 24, 0).spacing(12).items(Align::Center);
-        const std::string author = authorName(ctx, root);
-        auto             *av     = add<CachedImage>(
-            ctx.images,
-            root.extra && !root.extra->botAvatar.empty() ? root.extra->botAvatar
-                                                         : ctx.store().user(root.user).avatar,
-            ImageCache::Shape::Circle
+        const std::string author(authorName(ctx.store(), root));
+        auto             *av = add<CachedImage>(
+            ctx.images, authorAvatar(ctx.store(), root), ImageCache::Shape::Circle
         );
         av->style().size(36, 36).noShrink();
         auto *col = add<ui::View>();
         col->style().flex(1).spacing(1);
-        std::string title = plainText(ctx, root.text);
+        std::string title = plainText(ctx.store(), root.text);
         for (char &c : title)
             if (c == '\n')
                 c = ' ';
@@ -183,9 +174,6 @@ public:
             col, sub, ui::pxFont(15 * 0.88f, text::Weight::Regular, ui::color(C::FormTextMuted)), 1
         );
         key = str::concat({title, " ", author});
-        for (char &c : key)
-            if (c >= 'A' && c <= 'Z')
-                c = char(c + 32);
     }
     void paint(gfx::Painter &p) override {
         p.fillRect(
@@ -199,7 +187,7 @@ public:
         View::paint(p);
     }
     int         index;
-    std::string key;
+    std::string key; // what the filter matches (title and author)
     bool        selected = false;
 };
 
@@ -256,13 +244,11 @@ public:
 
 private:
     void refilter() {
-        std::string q(str::trim(_filter->edit().text()));
-        for (char &c : q)
-            if (c >= 'A' && c <= 'Z')
-                c = char(c + 32);
-        int first = -1;
+        // Any case, any script ("örjan" finds "Örjan").
+        const std::string q     = utf8::foldCase(str::trim(_filter->edit().text()));
+        int               first = -1;
         for (ThreadRow *r : _rows) {
-            const bool on = q.empty() || r->key.find(q) != std::string::npos;
+            const bool on = q.empty() || utf8::containsFoldedNeedle(r->key, q);
             r->setVisible(on);
             if (on && first < 0)
                 first = r->index;
@@ -458,6 +444,11 @@ public:
         style().dir = ui::Dir::None;
     }
     void layout() override { _built = false; }
+    void styleChanged() override {
+        _grid  = TableGrid(); // the cells' colours and sizes are the style's
+        _built = false;
+        Popup::styleChanged();
+    }
     void paint(gfx::Painter &p) override {
         p.fillRect(bounds(), ui::color(C::ViewerBackdrop));
         build();
@@ -466,33 +457,8 @@ public:
         p.save();
         p.clipRect({c.x + 12, c.y + 12, c.w - 24, c.h - 24});
         p.translate(c.x + 12, c.y + 12 - _scroll);
-        // The table's chrome: header tint, a hairline under it,
-        // row rules, a 1-px outer border radius 6; no vertical lines.
-        const float tw = _tableW, y0 = 8;
-        float       y = y0;
-        for (size_t r = 0; r < _cells.size(); ++r) {
-            const float rh = _rowH[r];
-            if (r == 0) {
-                p.save();
-                p.clipRoundRect({0, y0, tw, _tableH}, 6);
-                p.fillRect({0, y, tw, rh}, ui::color(C::TableHeaderBg));
-                p.restore();
-            } else {
-                p.fillRect({1, y, tw - 2, 1}, ui::color(r == 1 ? C::TableBorder : C::TableRowRule));
-            }
-            float x = 0;
-            for (size_t k = 0; k < _cells[r].size(); ++k) {
-                if (const text::Layout *l = _cells[r][k].get()) {
-                    const ui::PointF o = snapPx({x + 12, y + 5});
-                    l->paint(p, o);
-                    if (_ctx && !_images.empty())
-                        _anim->schedule(paintEmojiBoxes(*_ctx, p, *l, o, _images, this));
-                }
-                x += _colW[k];
-            }
-            y += rh;
-        }
-        p.strokeRoundRect({0, y0, tw, _tableH}, 6, 1, ui::color(C::TableBorder));
+        // Only the rows in the card (a CSV has hundreds).
+        _grid.paint(p, *this, 8, _scroll, _scroll + c.h - 24, _ctx, _images, _anim.get());
         p.restore();
     }
     bool onEvent(ui::Event &e) override {
@@ -553,85 +519,47 @@ private:
         _built            = true;
         const float textW = std::max(50.f, width() - 96 - 24);
         const float k     = windowScale();
-        size_t      cols  = 0;
-        for (auto &r : _rows)
-            cols = std::max(cols, r.size());
+        if (_grid.scale() != k) {
+            // Row 0 is the header, in bold. Custom emoji boxes are numbered
+            // across the whole table.
+            std::vector<std::vector<text::AttributedText>> texts(_rows.size());
+            _images.clear();
+            for (size_t r = 0; r < _rows.size(); ++r)
+                for (size_t c = 0; c < _rows[r].size(); ++c) {
+                    text::AttributedText &t = texts[r].emplace_back();
+                    if (_ctx) {
+                        RichOptions o;
+                        o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
+                        o.color = C::FormText;
+                        t       = richText(*_ctx, _rows[r][c], o, &_images);
+                        ui::resolveSpans(t);
+                    } else {
+                        t.append(
+                            _rows[r][c],
+                            ui::pxFont(
+                                15,
+                                r == 0 ? text::Weight::Bold : text::Weight::Regular,
+                                ui::color(C::FormText)
+                            )
+                        );
+                    }
+                }
+            _grid.setCells(std::move(texts), k);
+        }
         // Automatic table layout, roughly: natural widths, shrunk in
         // proportion (wrapping) when they don't fit.
-        std::vector<float> nat(cols, 24);
-        // Row 0 is the header, in bold. Custom emoji boxes are numbered
-        // across the whole table (the measuring pass keeps none).
-        _images.clear();
-        auto cellText = [&](size_t r, size_t c, std::vector<std::string> *images) {
-            text::AttributedText t;
-            if (_ctx) {
-                RichOptions o;
-                o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
-                o.color = C::FormText;
-                t       = richText(*_ctx, _rows[r][c], o, images);
-                ui::resolveSpans(t);
-            } else {
-                t.append(
-                    _rows[r][c],
-                    ui::pxFont(
-                        15,
-                        r == 0 ? text::Weight::Bold : text::Weight::Regular,
-                        ui::color(C::FormText)
-                    )
-                );
-            }
-            return t;
-        };
-        std::vector<std::string> measured;
-        for (size_t r = 0; r < _rows.size(); ++r)
-            for (size_t c = 0; c < _rows[r].size(); ++c) {
-                text::AttributedText t = cellText(r, c, &measured);
-                nat[c]                 = std::max(
-                    nat[c], std::ceil(text::Layout::build(std::move(t), {}, k)->width()) + 24
-                );
-            }
-        float sum = 0;
-        for (float v : nat)
-            sum += v;
-        _idealW = sum;
-        _colW   = nat;
-        if (sum > textW)
-            for (float &v : _colW)
-                v = std::floor(v * textW / sum);
-        _tableW = 0;
-        for (float v : _colW)
-            _tableW += v;
-        _cells.clear();
-        _rowH.clear();
-        _tableH = 0;
-        for (size_t r = 0; r < _rows.size(); ++r) {
-            _cells.emplace_back();
-            float h = 0;
-            for (size_t c = 0; c < cols; ++c) {
-                if (c >= _rows[r].size()) {
-                    _cells.back().push_back(nullptr);
-                    continue;
-                }
-                text::AttributedText t = cellText(r, c, &_images);
-                text::LayoutOptions  o;
-                o.maxWidth = std::max(1.f, _colW[c] - 24);
-                _cells.back().push_back(text::Layout::build(std::move(t), o, k));
-                h = std::max(h, _cells.back().back()->height());
-            }
-            _rowH.push_back(std::ceil(h) + 10);
-            _tableH += _rowH.back();
-        }
-        _docH = _tableH + 16; // the table's 8-px margins
+        _grid.fit(textW, 0, 0);
+        _idealW = _grid.naturalWidth();
+        _docH   = _grid.height() + 16; // the table's 8-px margins
     }
 
-    std::vector<std::vector<std::string>>                   _rows;
-    Context                                                *_ctx = nullptr;
-    std::unique_ptr<EmojiFrameTimer>                        _anim;
-    std::vector<std::string>                                _images; // emoji box id i: [i - 1]
-    std::vector<std::vector<std::unique_ptr<text::Layout>>> _cells;
-    std::vector<float>                                      _colW, _rowH;
-    float _idealW = 0, _tableW = 0, _tableH = 0, _docH = 0, _scroll = 0;
-    bool  _built = false;
+    std::vector<std::vector<std::string>> _rows;
+    Context                              *_ctx = nullptr;
+    std::unique_ptr<EmojiFrameTimer>      _anim;
+    std::vector<std::string>              _images; // emoji box id i: [i - 1]
+    TableGrid                             _grid;
+    float                                 _idealW = 0, _docH = 0, _scroll = 0;
+    bool                                  _built = false;
 };
 
 } // namespace

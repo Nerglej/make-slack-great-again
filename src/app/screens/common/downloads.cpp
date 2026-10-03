@@ -42,13 +42,9 @@ std::string tempDownloadPath(plat::App &app, std::string_view name) {
     unsigned char r[8];
     if (!crypto::randomBytes(r, sizeof r))
         return {};
-    static const char kHex[] = "0123456789abcdef";
-    std::string       id;
-    for (unsigned char c : r) {
-        id += kHex[c >> 4];
-        id += kHex[c & 15];
-    }
-    const std::string dir = file::join(file::join(tmp, "msga/downloads"), id);
+    const std::string dir = file::join(
+        file::join(tmp, "msga/downloads"), crypto::hex({reinterpret_cast<char *>(r), sizeof r})
+    );
     if (!file::makeDirs(dir))
         return {};
     // Only the last path component, and never "" / "." / "..".

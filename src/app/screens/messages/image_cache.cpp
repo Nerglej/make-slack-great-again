@@ -3,9 +3,9 @@
 #include "app/model/image_size.h"
 #include "app/screens/common/remote_images.h"
 #include "base/file.h"
+#include "base/time.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <deque>
@@ -17,15 +17,12 @@ namespace screens {
 namespace {
 
 // naturalSize's memo stays this small (it is cleared when full).
-constexpr size_t kMaxSizeMemos  = 4096;
+constexpr size_t  kMaxSizeMemos  = 4096;
 // How long "a URL not on disk yet" is believed without a new look.
-constexpr double kMissingMemoMs = 5000;
-
-double monoMs() {
-    using namespace std::chrono;
-    return double(duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count()) /
-           1000.0;
-}
+constexpr int64_t kMissingMemoMs = 5000;
+// Failed entries kept (each answers failed() and stops a retry storm); the
+// oldest beyond go, so a long session's dead links don't pile up.
+constexpr size_t  kMaxFailed     = 256;
 
 } // namespace
 
@@ -386,6 +383,7 @@ void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool o
     } else {
         e->state = Entry::Failed;
         e->retry = transient; // the download failed, not the decode: ask again later
+        _failed.push_back(_entries.find(e->key())->second);
     }
     std::vector<ui::View *> waiters = std::move(e->waiters);
     e->waiters.clear();
@@ -407,6 +405,14 @@ void ImageCache::evict() {
         _bytes -= victim.bytes;
         _entries.erase(victim.key()); // destroys it; held handles expire
     }
+    // Failed ones, oldest first (one asked for again since is not failed now).
+    if (_failed.size() <= kMaxFailed)
+        return;
+    const size_t drop = _failed.size() - kMaxFailed;
+    for (size_t i = 0; i < drop; ++i)
+        if (const std::shared_ptr<Entry> e = _failed[i].lock(); e && e->state == Entry::Failed)
+            _entries.erase(e->key());
+    _failed.erase(_failed.begin(), _failed.begin() + ptrdiff_t(drop));
 }
 
 void ImageCache::setBudget(size_t b) {
@@ -450,7 +456,7 @@ bool ImageCache::naturalSize(const std::string &path, int *w, int *h) {
             *h = m.h;
             return m.ok;
         }
-        if (monoMs() - m.at < kMissingMemoMs)
+        if (base::monotonicMs() - m.at < kMissingMemoMs)
             return false;
         _sizes.erase(it); // look again
     }
@@ -462,7 +468,7 @@ bool ImageCache::naturalSize(const std::string &path, int *w, int *h) {
         if (file.empty()) {
             if (_sizes.size() >= kMaxSizeMemos)
                 _sizes.clear();
-            _sizes[path] = {0, 0, false, true, monoMs()};
+            _sizes[path] = {0, 0, false, true, base::monotonicMs()};
             return false;
         }
     }
