@@ -50,16 +50,13 @@ void fieldFrame(gfx::Painter &p, RectF r, bool active, bool enabled) {
     p.fillRoundRect(r, metric(M::RadiusM), color(enabled ? C::FormBg : C::FormSunken));
     const float w = active ? 2.f : 1.f;
     p.strokeRoundRect(
-        {r.x + w / 2, r.y + w / 2, r.w - w, r.h - w},
-        metric(M::RadiusM) - w / 2,
-        w,
-        color(active ? C::FieldBorderFocus : C::FieldBorder)
+        r, metric(M::RadiusM), w, color(active ? C::FieldBorderFocus : C::FieldBorder)
     );
 }
 
-// A one-pixel stroke inside `r` (strokes are centred on the path).
+// A one-pixel stroke inside `r` (strokeRoundRect strokes inside the outline).
 void innerStroke(gfx::Painter &p, RectF r, float radius, Color c) {
-    p.strokeRoundRect({r.x + 0.5f, r.y + 0.5f, r.w - 1, r.h - 1}, radius - 0.5f, 1, c);
+    p.strokeRoundRect(r, radius, 1, c);
 }
 
 } // namespace

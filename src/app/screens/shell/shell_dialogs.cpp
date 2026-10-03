@@ -103,7 +103,7 @@ public:
             l->paint(p, snapPx({12, y + std::floor((rowH() - l->height()) / 2)}));
         }
         p.restore();
-        p.strokeRoundRect({0.5f, 0.5f, b.w - 1, b.h - 1}, 4, 1, ui::color(C::FormDividerStrong));
+        p.strokeRoundRect(b, 4, 1, ui::color(C::FormDividerStrong));
     }
     bool    onEvent(Event &e) override;
     uint8_t cursorAt(PointF p) const override {
@@ -159,12 +159,7 @@ public:
     void paint(gfx::Painter &p) override {
         const RectF b = bounds();
         p.fillRoundRect(b, 4, 0xffffffffU); // literal white, also in dark mode
-        p.strokeRoundRect(
-            {0.5f, 0.5f, b.w - 1, b.h - 1},
-            4,
-            1,
-            ui::color(_edit->focused() ? C::Accent : C::FormDividerStrong)
-        );
+        p.strokeRoundRect(b, 4, 1, ui::color(_edit->focused() ? C::Accent : C::FormDividerStrong));
         if (_chip->visible()) { // the chip: accent.subtleBg, radius 12
             const RectF c = _chip->frame(), l = _chipLabel->frame();
             p.fillRoundRect({c.x + l.x, c.y + l.y, l.w, l.h}, 12, ui::color(C::AccentSubtle));

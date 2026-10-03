@@ -408,9 +408,7 @@ public:
 
         // Card
         p.fillRoundRect(chip, kRadius, ui::color(C::FileChipBg));
-        p.strokeRoundRect(
-            {0.5f, 0.5f, chip.w - 1, chip.h - 1}, kRadius, 1, ui::color(C::FileChipBorder)
-        );
+        p.strokeRoundRect({0, 0, chip.w, chip.h}, kRadius, 1, ui::color(C::FileChipBorder));
 
         // Title block: name, then "0:05 (79 KB)" / Loading… / the error.
         const float         textX = kPad + kBtn + kPad;

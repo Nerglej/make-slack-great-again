@@ -32,7 +32,7 @@ public:
     void paint(gfx::Painter &p) override {
         const ui::RectF b = bounds();
         p.fillRoundRect(b, _r, ui::color(_f));
-        p.strokeRoundRect({b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, _r, 1, ui::color(_b));
+        p.strokeRoundRect(b, _r, 1, ui::color(_b));
         View::paint(p);
     }
 
@@ -492,7 +492,7 @@ public:
             }
             y += rh;
         }
-        p.strokeRoundRect({0.5f, y0 + 0.5f, tw - 1, _tableH - 1}, 6, 1, ui::color(C::TableBorder));
+        p.strokeRoundRect({0, y0, tw, _tableH}, 6, 1, ui::color(C::TableBorder));
         p.restore();
     }
     bool onEvent(ui::Event &e) override {

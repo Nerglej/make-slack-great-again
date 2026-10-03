@@ -156,7 +156,7 @@ void TableView::paint(gfx::Painter &p) {
         }
         y += rh;
     }
-    p.strokeRoundRect({0.5f, y0 + 0.5f, tw - 1, _tableH - 1}, 6, 1, ui::color(C::TableBorder));
+    p.strokeRoundRect({0, y0, tw, _tableH}, 6, 1, ui::color(C::TableBorder));
 }
 
 ui::RectF TableView::pillRect() const {

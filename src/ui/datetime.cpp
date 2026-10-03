@@ -431,7 +431,7 @@ void DateTimeField::paint(gfx::Painter &p) {
     const bool  focus = focused();
     p.fillRoundRect(b, kRadius, ui::color(C::FormBg));
     p.strokeRoundRect(
-        {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1},
+        b,
         kRadius,
         1,
         ui::color(

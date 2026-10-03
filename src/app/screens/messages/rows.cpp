@@ -128,9 +128,7 @@ protected:
         const bool  dark = ui::app()->dark();
         const float rr   = _tile ? radius : 0;
         p.fillRoundRect(r, rr, dark ? 0xff262626U : 0xfff5f5f5U);
-        p.strokeRoundRect(
-            {r.x + 0.5f, r.y + 0.5f, r.w - 1, r.h - 1}, rr, 1, dark ? 0xff3e3e3eU : 0xffccccccU
-        );
+        p.strokeRoundRect(r, rr, 1, dark ? 0xff3e3e3eU : 0xffccccccU);
     }
 
 private:
@@ -234,9 +232,7 @@ public:
         build();
         const ui::RectF b = bounds();
         p.fillRoundRect(b, 8, ui::color(C::FileChipBg));
-        p.strokeRoundRect(
-            {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, 8, 1, ui::color(C::FileChipBorder)
-        );
+        p.strokeRoundRect(b, 8, 1, ui::color(C::FileChipBorder));
         const ui::RectF icon{12, 12, 36, 36};
         p.fillRoundRect(icon, 6, _color);
         if (_code) {
@@ -488,9 +484,7 @@ public:
             p.fillRoundRect(
                 b, 4, dark ? (hov ? 0xff2e2e2eU : 0xff222222U) : (hov ? 0xfff8f8f8U : 0xffffffffU)
             );
-            p.strokeRoundRect(
-                {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, 4, 1, dark ? 0xff5e5e5eU : 0x4d1d1c1dU
-            );
+            p.strokeRoundRect(b, 4, 1, dark ? 0xff5e5e5eU : 0x4d1d1c1dU);
         }
     }
 
@@ -737,9 +731,7 @@ public:
         const ui::RectF b     = bounds();
         const float     scale = windowScale();
         p.fillRoundRect(b, 8, ui::color(C::FileChipBg));
-        p.strokeRoundRect(
-            {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, 8, 1, ui::color(C::FileChipBorder)
-        );
+        p.strokeRoundRect(b, 8, 1, ui::color(C::FileChipBorder));
         const ui::RectF tile{kPad, std::floor((kHdr - kTile) / 2), kTile, kTile};
         p.fillRoundRect(tile, 8, 0xff1d9bd1U);
         gfx::drawIcon(p, gfx::Icon::Canvas, {tile.x + 8, tile.y + 8, 20, 20}, 0xffffffffU);
@@ -870,9 +862,7 @@ public:
             return;
         const ui::RectF b = bounds();
         p.fillRoundRect(b, 6, ui::byTheme(0xff282828U, 0xfff8f8f8U));
-        p.strokeRoundRect(
-            {b.x + 0.5f, b.y + 0.5f, b.w - 1, b.h - 1}, 6, 1, ui::byTheme(0xff3e3e3eU, 0xffd1d5dbU)
-        );
+        p.strokeRoundRect(b, 6, 1, ui::byTheme(0xff3e3e3eU, 0xffd1d5dbU));
     }
 
 private:
