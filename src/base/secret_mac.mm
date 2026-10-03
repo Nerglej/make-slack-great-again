@@ -21,6 +21,7 @@
 // needs a keychain-access-groups entitlement, i.e. a Developer ID signed app.
 #include "base/secret.h"
 
+#include "base/cfstr.h"
 #include "base/old_settings.h"
 #include "base/process.h"
 
@@ -43,15 +44,7 @@ namespace {
 // keychain must not turn into a prompt per call.
 bool g_refused = false;
 
-CFStringRef cfString(std::string_view s) {
-    return CFStringCreateWithBytes(
-        nullptr,
-        reinterpret_cast<const UInt8 *>(s.data()),
-        CFIndex(s.size()),
-        kCFStringEncodingUTF8,
-        false
-    );
-}
+using base::cfString;
 
 // Tests (base::testProcess(): base::test marks them) never use a keychain: a
 // keychain may prompt, over ssh it blocks for good, and the user's is no

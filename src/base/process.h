@@ -64,6 +64,9 @@ RunResult run(const std::string &exe, const std::vector<std::string> &args, cons
 std::string findExecutable(std::string_view name);
 // getenv as a string ("" when unset).
 std::string env(const char *name);
+// The user's home directory: $HOME, on Windows %USERPROFILE% with '/'
+// separators; "" when unset.
+std::string homeDir();
 
 // A test process: one the test harness marked (base::test, before main —
 // for good, whatever a test does to the environment), or a child of one

@@ -79,9 +79,15 @@ void maskRoundedRect(Bitmap &b, float radius) {
 }
 
 void clearDisc(Bitmap &b, float cx, float cy, float r) {
-    uint32_t *px = b.pixels();
-    for (int y = 0; y < b.height(); ++y)
-        for (int x = 0; x < b.width(); ++x) {
+    uint32_t   *px    = b.pixels();
+    // Only pixels whose centre is within r + 0.5 of the centre change.
+    const float reach = r + 0.5f;
+    const int   y0    = std::max(0, int(std::floor(cy - reach)));
+    const int   y1    = std::min(b.height(), int(std::ceil(cy + reach)) + 1);
+    const int   x0    = std::max(0, int(std::floor(cx - reach)));
+    const int   x1    = std::min(b.width(), int(std::ceil(cx + reach)) + 1);
+    for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x) {
             const float k = std::clamp(
                 std::hypot(float(x) + 0.5f - cx, float(y) + 0.5f - cy) - r + 0.5f, 0.f, 1.f
             );

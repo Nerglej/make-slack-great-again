@@ -11,6 +11,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -134,12 +135,7 @@ std::string encodeString(std::string_view s) {
 
 namespace {
 
-int hexVal(char c) {
-    return c >= '0' && c <= '9'   ? c - '0'
-           : c >= 'a' && c <= 'f' ? c - 'a' + 10
-           : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                  : -1;
-}
+using str::hexDigit;
 
 bool isLetterOrDigit(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
@@ -162,7 +158,7 @@ std::string unescapeKey(std::string_view k) {
             uint32_t     cp     = 0;
             bool         ok     = first + digits <= k.size();
             for (size_t d = 0; ok && d < digits; ++d) {
-                const int h = hexVal(k[first + d]);
+                const int h = hexDigit(k[first + d]);
                 ok          = h >= 0;
                 cp          = cp * 16 + uint32_t(h);
             }
@@ -221,7 +217,7 @@ std::string escapeValue(std::string_view s) {
         const unsigned char c = static_cast<unsigned char>(ch);
         if (c == ';' || c == ',' || c == '=')
             quotes = true;
-        if (escapeDigit && hexVal(char(c)) >= 0) {
+        if (escapeDigit && hexDigit(char(c)) >= 0) {
             hexEscape(out, c);
             continue;
         }
@@ -320,7 +316,7 @@ Value unescapeValue(std::string_view str) {
                     uint32_t  v    = e == 'x' ? 0 : uint32_t(e - '0');
                     int       n    = e == 'x' ? 0 : 1;
                     while (i < str.size()) {
-                        const int d = base == 16                       ? hexVal(str[i])
+                        const int d = base == 16                       ? hexDigit(str[i])
                                       : str[i] >= '0' && str[i] <= '7' ? str[i] - '0'
                                                                        : -1;
                         if (d < 0)
@@ -686,6 +682,26 @@ Map iniLoad(std::string_view app) {
     return parseIni(text);
 }
 
+// get() is asked for one key after another (the importer at start-up): the
+// file is read each time, but parsed again only when its bytes changed.
+Value iniGet(std::string_view key, std::string_view app) {
+    static std::mutex  mutex;
+    static std::string lastPath, lastText;
+    static Map         lastMap;
+    std::string        text;
+    const std::string  path = iniPath(app);
+    if (path.empty() || !file::readAll(path, &text))
+        return {};
+    std::lock_guard<std::mutex> lock(mutex);
+    if (path != lastPath || text != lastText) {
+        lastMap  = parseIni(text);
+        lastPath = path;
+        lastText = std::move(text);
+    }
+    const auto it = lastMap.find(key);
+    return it == lastMap.end() ? Value() : it->second;
+}
+
 } // namespace
 
 #if defined(_WIN32) || defined(__APPLE__)
@@ -723,9 +739,7 @@ Value get(std::string_view key, std::string_view app) {
     if (nativeStore())
         return native::get(key, app);
 #endif
-    const Map  m  = iniLoad(app);
-    const auto it = m.find(key);
-    return it == m.end() ? Value() : it->second;
+    return iniGet(key, app);
 }
 
 bool write(std::string_view key, std::string_view value, std::string_view app) {

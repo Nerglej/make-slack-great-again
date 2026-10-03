@@ -125,7 +125,7 @@ void setPreferredLanguage(const std::vector<std::string> &tags) {
         for (char c : t) {
             if (c == '-' || c == '_' || c == '.' || c == '@')
                 break;
-            code += char(c >= 'A' && c <= 'Z' ? c + 32 : c);
+            code += str::asciiLower(c);
         }
         if (code == "c" || code == "posix")
             code = "en";

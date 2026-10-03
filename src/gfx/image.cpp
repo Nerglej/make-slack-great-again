@@ -3,6 +3,8 @@
 // Windows/macOS builds can swap it for WIC/ImageIO.
 #include "gfx/internal.h"
 
+#include "base/mime.h"
+
 #include "stb/stb_config.h"
 #include "stb/stb_image.h"
 
@@ -57,14 +59,12 @@ bool decodeWebp(std::string_view bytes, Bitmap *out) {
 } // namespace
 
 bool canDecodeImage(std::string_view head) {
-    const auto starts = [&](std::string_view m) {
-        return head.size() >= m.size() && head.compare(0, m.size(), m) == 0;
-    };
-    if (starts("\x89PNG") || starts("\xFF\xD8\xFF") || isGif(head))
+    const std::string_view m = mime::sniff(head);
+    if (m == "image/png" || m == "image/jpeg" || m == "image/gif")
         return true;
 #ifdef MSGA_GFX_WEBP
     WebPBitstreamFeatures f;
-    if (head.size() >= 12 && starts("RIFF") && head.compare(8, 4, "WEBP") == 0)
+    if (m == "image/webp")
         return WebPGetFeatures(reinterpret_cast<const uint8_t *>(head.data()), head.size(), &f) ==
                    VP8_STATUS_OK &&
                !f.has_animation; // WebPDecodeRGBA refuses those

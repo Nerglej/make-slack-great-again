@@ -173,4 +173,25 @@ TEST("old settings: the Linux store is msga.conf under XDG_CONFIG_HOME") {
     CHECK_STR(oldsettings::iniPath("MSGA"), file::join(file::dirName(path), "MSGA.conf"));
     file::remove(path);
 }
+
+// get() keeps the parsed file between calls: a change of the same size, by
+// us or another process, within one timestamp tick, is still seen.
+TEST("old settings: get() sees every change to the file") {
+    const std::string path = oldsettings::iniPath();
+    file::remove(path);
+    CHECK(oldsettings::get("a/k").kind == Value::Kind::None);
+    REQUIRE(oldsettings::write("a/k", "one"));
+    CHECK_STR(oldsettings::get("a/k").text(), "one");
+    REQUIRE(oldsettings::write("a/k", "two"));
+    CHECK_STR(oldsettings::get("a/k").text(), "two");
+    std::string text;
+    REQUIRE(file::readAll(path, &text));
+    const size_t at = text.find("two");
+    REQUIRE(at != std::string::npos);
+    text.replace(at, 3, "six"); // another process's edit
+    REQUIRE(file::overwrite(path, text));
+    CHECK_STR(oldsettings::get("a/k").text(), "six");
+    file::remove(path);
+    CHECK(oldsettings::get("a/k").kind == Value::Kind::None);
+}
 #endif

@@ -2,6 +2,8 @@
 
 #include "text/font_index.h"
 
+#include "base/str.h"
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -113,9 +115,7 @@ struct State {
 };
 State *g = nullptr;
 
-bool startsWith(const char *s, const char *p) {
-    return std::strncmp(s, p, std::strlen(p)) == 0;
-}
+using str::startsWith;
 
 int findFamily(const char *name) {
     for (size_t i = 0; i < g->fams.size(); ++i)
@@ -145,12 +145,12 @@ const char *cjkFamily() {
     return "noto sans cjk jp";
 }
 
-int rankFamily(const Family &f) {
+int rankFamily(const Family &f, const char *cjk) {
     const char    *n    = g->ix.str(f.name);
     const FaceRec &face = g->ix.faces[f.faces[0]];
     if (face.flags & kColor)
         return 90; // emoji fonts are chosen explicitly, not as text fallback
-    if (!std::strcmp(n, cjkFamily()))
+    if (!std::strcmp(n, cjk))
         return 0;
     if (face.flags & kMono)
         return 40;
@@ -181,8 +181,9 @@ void buildFamilies() {
         g->fams.back().faces.push_back(f);
         g->famOfFace[f] = uint16_t(g->fams.size() - 1);
     }
+    const char *cjk = cjkFamily();
     for (auto &f : g->fams)
-        f.rank = rankFamily(f);
+        f.rank = rankFamily(f, cjk);
     for (size_t i = 0; i < g->fams.size(); ++i)
         g->fallbackOrder.push_back(uint16_t(i));
     std::sort(g->fallbackOrder.begin(), g->fallbackOrder.end(), [](uint16_t a, uint16_t b) {

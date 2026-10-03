@@ -16,10 +16,9 @@ namespace text::uni {
 int      category(uint32_t cp);
 uint32_t script(uint32_t cp); // hb_script_t
 
-bool isExtPict(uint32_t cp);          // Extended_Pictographic (emoji bases), approximated by blocks
-bool isEmojiDefault(uint32_t cp);     // emoji presentation by default (no VS16 needed)
-bool isRegional(uint32_t cp);         // regional indicator (flags)
-bool isDefaultIgnorable(uint32_t cp); // ZWJ, VS, tags… — never need a glyph of their own
+bool isExtPict(uint32_t cp);      // Extended_Pictographic (emoji bases), approximated by blocks
+bool isEmojiDefault(uint32_t cp); // emoji presentation by default (no VS16 needed)
+bool isRegional(uint32_t cp);     // regional indicator (flags)
 // Not utf8::isSpace (White_Space): NBSP, U+2007 and the newlines are left out.
 bool isBreakSpace(uint32_t cp); // a break-after space (not NBSP)
 bool isNewline(uint32_t cp);    // mandatory paragraph break

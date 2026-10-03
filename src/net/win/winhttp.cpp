@@ -16,11 +16,14 @@
 // gets) drops the handle's reference.
 #include "base/str.h"
 #include "base/utf8.h"
+#include "base/winstr.h"
 #include "net/transport.h"
 
 #include <winsock2.h>
 #include <windows.h>
 #include <winhttp.h>
+
+#include <algorithm>
 
 #include <deque>
 #include <mutex>
@@ -34,15 +37,7 @@ constexpr DWORD  kWsKeepAliveMs = 20000;     // see session()
 constexpr DWORD  kSlice         = 250; // how often a wait looks at `cancel` without a wake event
 constexpr size_t kMaxQueued = 64 * 1024 * 1024; // unsent WebSocket data beyond this: send() fails
 
-std::wstring wide(std::string_view s) {
-    std::wstring out;
-    if (s.empty())
-        return out;
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    out.resize(size_t(n));
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), out.data(), n);
-    return out;
-}
+using base::wide;
 
 // WinHTTP hands response headers back widened byte by byte, so code units
 // below 0x100 are the raw bytes (UTF-8 passes through untouched); anything
@@ -460,6 +455,8 @@ struct Exchange {
         const Progress          &progress,
         int64_t                  total
     ) {
+        if (total > 0) // one allocation for the whole body (a sane size of one)
+            body.reserve(size_t(std::min<int64_t>(total, int64_t(64) << 20)));
         for (;;) {
             if (!WinHttpReadData(request, op->buf, kChunk, nullptr))
                 return failure(GetLastError());

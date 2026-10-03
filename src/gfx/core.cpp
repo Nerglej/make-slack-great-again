@@ -1,6 +1,8 @@
 // Painter state, Path, Bitmap — the cold, generic part of gfx (-Os).
 #include "gfx/internal.h"
 
+#include "base/str.h"
+
 #include <cmath>
 
 namespace gfx {
@@ -17,6 +19,26 @@ Color withAlpha(Color c, float opacity) {
     float a = float(c >> 24) * opacity;
     a       = a < 0 ? 0 : a > 255 ? 255 : a;
     return (uint32_t(a + 0.5f) << 24) | (c & 0xffffff);
+}
+
+bool parseHexColor(std::string_view s, Color *out) {
+    if (!s.empty() && s[0] == '#')
+        s.remove_prefix(1);
+    const size_t n = s.size();
+    if (n != 3 && n != 4 && n != 6 && n != 8)
+        return false;
+    uint32_t v = 0;
+    for (const char ch : s) {
+        const int d = str::hexDigit(ch);
+        if (d < 0)
+            return false;
+        v = v << 4 | uint32_t(d);
+        if (n < 6)
+            v = v << 4 | uint32_t(d);
+    }
+    // RRGGBB[AA] → AARRGGBB
+    *out = n == 3 || n == 6 ? 0xff000000u | v : v << 24 | v >> 8;
+    return true;
 }
 
 uint32_t premultiply(Color c, float opacity) {
@@ -49,10 +71,6 @@ void Path::moveTo(float x, float y) {
 void Path::lineTo(float x, float y) {
     _cmds.push_back(Line);
     _pts.insert(_pts.end(), {x, y});
-}
-void Path::quadTo(float cx, float cy, float x, float y) {
-    _cmds.push_back(Quad);
-    _pts.insert(_pts.end(), {cx, cy, x, y});
 }
 void Path::cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y) {
     _cmds.push_back(Cubic);

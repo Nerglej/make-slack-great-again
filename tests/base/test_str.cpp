@@ -88,3 +88,75 @@ TEST("str: trim and case") {
     CHECK(str::trim("   ").empty());
     CHECK_STR(str::asciiLower("AbC\xC3\x84"), "abc\xC3\x84");
 }
+
+TEST("str: trimSpace takes Unicode whitespace off both ends") {
+    CHECK(str::trimSpace("\xC2\xA0\t a b\xE2\x80\x83\n\xE3\x80\x80") == "a b");
+    CHECK(str::trimSpace("\xC2\xA0\xC2\xA0").empty());
+    CHECK(str::trimSpace("").empty());
+    CHECK(str::trimSpace("x") == "x");
+    // Not whitespace: a non-breaking letter-like character stays.
+    CHECK(str::trimSpace(" \xC3\xA4 ") == "\xC3\xA4");
+}
+
+TEST("str: hexDigit and one character's asciiLower") {
+    CHECK(str::hexDigit('0') == 0);
+    CHECK(str::hexDigit('9') == 9);
+    CHECK(str::hexDigit('a') == 10);
+    CHECK(str::hexDigit('F') == 15);
+    for (char c : {'g', 'G', '/', ':', '@', '`', ' ', '\0', '\xC3'})
+        CHECK(str::hexDigit(c) == -1);
+    CHECK(str::asciiLower('Q') == 'q');
+    CHECK(str::asciiLower('q') == 'q');
+    CHECK(str::asciiLower('@') == '@');
+    CHECK(str::asciiLower('\xC3') == '\xC3');
+}
+
+TEST("str: split and Splitter keep empty parts") {
+    const auto parts = [](const std::vector<std::string_view> &v) {
+        std::string out;
+        for (std::string_view p : v)
+            out += str::concat({"[", p, "]"});
+        return out;
+    };
+    CHECK_STR(parts(str::split("a,,b", ',')), "[a][][b]");
+    CHECK_STR(parts(str::split("a\n", '\n')), "[a][]");
+    CHECK_STR(parts(str::split("", ',')), "[]");
+    CHECK_STR(parts(str::split("abc", ',')), "[abc]");
+    str::Splitter    sp(",x,", ',');
+    std::string      got;
+    std::string_view p;
+    while (sp.next(&p))
+        got += str::concat({"[", p, "]"});
+    CHECK_STR(got, "[][x][]");
+    CHECK_FALSE(sp.next(&p));
+}
+
+TEST("str: escapeHtml") {
+    CHECK_STR(str::escapeHtml("a <b> & \"c\" 'd'"), "a &lt;b&gt; &amp; \"c\" 'd'");
+    CHECK_STR(str::escapeHtml("a \"c\"", true), "a &quot;c&quot;");
+    CHECK_STR(str::escapeHtml("r\xC3\xA4k"), "r\xC3\xA4k");
+    std::string out = "x";
+    str::appendEscapedHtml(&out, "<&>");
+    CHECK_STR(out, "x&lt;&amp;&gt;");
+}
+
+TEST("str: percentEncode and percentDecode") {
+    CHECK_STR(str::percentEncode("a b/c?d=e&f~g.h_i-j"), "a%20b%2Fc%3Fd%3De%26f~g.h_i-j");
+    CHECK_STR(str::percentEncode("/a b/c", "/"), "/a%20b/c");
+    CHECK_STR(str::percentEncode("\xC3\xA4"), "%C3%A4");
+    CHECK_STR(str::percentEncode(std::string_view("a\0b", 3)), "a%00b");
+    CHECK_STR(str::percentDecode("a%20b%2fc%C3%A4+d"), "a b/c\xC3\xA4+d");
+    // A malformed or cut escape stays as it is.
+    CHECK_STR(str::percentDecode("100% %zz %4"), "100% %zz %4");
+    for (std::string_view s : {"", "plain", "a b&c=d/\xF0\x9F\x98\x80", "%25"})
+        CHECK_STR(str::percentDecode(str::percentEncode(s)), std::string(s));
+}
+
+TEST("str: decodeEntities looks for a ';' only nearby") {
+    // Every '&' used to scan to the end for its ';': quadratic on this.
+    const std::string many = std::string(200000, '&') + ";";
+    CHECK(str::decodeEntities(many) == many);
+    CHECK_STR(str::decodeEntities("&#x1F600;&amp;"), "\xF0\x9F\x98\x80&");
+    CHECK_STR(str::decodeEntities("&#12345678;"), "\xEF\xBF\xBD");  // ';' 10 bytes on: still read
+    CHECK_STR(str::decodeEntities("&#123456789;"), "&#123456789;"); // 11: literal
+}

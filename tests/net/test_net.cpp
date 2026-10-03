@@ -858,6 +858,33 @@ TEST("error: cancel — no callback, prompt") {
     CHECK(pumpUntil([&] { return second; }));
 }
 
+// A request cancelled while it waits for a free worker is never sent — not
+// even over a kept-alive connection, where the request would be written out
+// before anything looked at its cancel flag.
+TEST("error: cancel — a queued request is never sent") {
+    NEED_SERVER();
+    const int   before = std::atoi(get(srv.base + "/swallowed").body.c_str());
+    net::Client c(app());
+    int         slow = 0;
+    for (int i = 0; i < 4; ++i) // every worker busy; their connections stay warm
+        c.send({.url = srv.base + "/slow?ms=600"}, [&](net::Response) { ++slow; });
+    bool       called = false;
+    const auto id     = c.send(
+        {.method = "POST", .url = srv.base + "/post-swallow", .body = "x"},
+        [&](net::Response) { called = true; }
+    );
+    pumpFor(50);
+    c.cancel(id);
+    CHECK(pumpUntil([&] { return slow == 4; }));
+    pumpFor(400); // a worker free again would have sent it by now
+    CHECK_FALSE(called);
+    CHECK(std::atoi(get(srv.base + "/swallowed").body.c_str()) == before);
+    // The workers are free for what comes next.
+    bool next = false;
+    c.send({.url = srv.base + "/plain"}, [&](net::Response r) { next = r.status == 200; });
+    CHECK(pumpUntil([&] { return next; }));
+}
+
 // The transport sleeps on the request's Cancel object, not on a 250 ms poll
 // of its flag: set() ends a blocked exchange at once.
 TEST("error: cancel wakes a blocked exchange at once") {

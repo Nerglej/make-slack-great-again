@@ -36,10 +36,6 @@ constexpr Label kLabels[] = {
     {"video/quicktime", "MOV"},
 };
 
-bool starts(std::string_view s, std::string_view prefix) {
-    return s.substr(0, prefix.size()) == prefix;
-}
-
 } // namespace
 
 std::string_view fromName(std::string_view name) {
@@ -56,17 +52,17 @@ std::string_view fromNameOr(std::string_view name) {
 }
 
 std::string_view sniff(std::string_view h) {
-    if (starts(h, "\x89PNG\r\n\x1a\n"))
+    if (str::startsWith(h, "\x89PNG\r\n\x1a\n"))
         return "image/png";
-    if (starts(h, "\xFF\xD8\xFF"))
+    if (str::startsWith(h, "\xFF\xD8\xFF"))
         return "image/jpeg";
-    if (starts(h, "GIF87a") || starts(h, "GIF89a"))
+    if (str::startsWith(h, "GIF87a") || str::startsWith(h, "GIF89a"))
         return "image/gif";
-    if (h.size() >= 12 && starts(h, "RIFF") && h.substr(8, 4) == "WEBP")
+    if (h.size() >= 12 && str::startsWith(h, "RIFF") && h.substr(8, 4) == "WEBP")
         return "image/webp";
-    if (starts(h, "%PDF-"))
+    if (str::startsWith(h, "%PDF-"))
         return "application/pdf";
-    if (starts(h, "ID3"))
+    if (str::startsWith(h, "ID3"))
         return "audio/mpeg";
     return {};
 }

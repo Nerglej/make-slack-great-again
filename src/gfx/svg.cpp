@@ -409,38 +409,11 @@ const struct {
     {"gold", 0xffd700},    {"pink", 0xffc0cb},
 };
 
-int hexv(char c) {
-    return c >= '0' && c <= '9'                 ? c - '0'
-           : (c | 32) >= 'a' && (c | 32) <= 'f' ? (c | 32) - 'a' + 10
-                                                : -1;
-}
-
 // Straight 0xAARRGGBB; false if unparseable. currentColor → `current`.
 bool color(sv s, Color current, Color *out) {
     s = trim(s);
-    if (s.size() > 1 && s[0] == '#') {
-        uint32_t v = 0;
-        for (size_t i = 1; i < s.size(); ++i) {
-            const int h = hexv(s[i]);
-            if (h < 0)
-                return false;
-            v = v << 4 | uint32_t(h);
-        }
-        const size_t n = s.size() - 1;
-        if (n == 3 || n == 4) { // #rgb[a] → #rrggbb[aa]
-            uint32_t w = 0;
-            for (int i = int(n) - 1; i >= 0; --i)
-                w |= ((v >> (4 * i)) & 15) * 17 << (8 * i);
-            v = w;
-        }
-        if (n == 3 || n == 6)
-            *out = 0xff000000u | v;
-        else if (n == 4 || n == 8)
-            *out = (v << 24 | v >> 8);
-        else
-            return false;
-        return true;
-    }
+    if (s.size() > 1 && s[0] == '#')
+        return parseHexColor(s, out);
     if (s.substr(0, 4) == "rgb(" || s.substr(0, 5) == "rgba(") {
         const char *p = s.data() + s.find('(') + 1, *e = s.data() + s.size();
         float       c[4] = {0, 0, 0, 1};
@@ -836,7 +809,7 @@ struct Ctx {
     }
 };
 
-void paint(Ctx &c, sv v, const Style &parent, const Style &s, Paint *out) {
+void paint(Ctx &c, sv v, const Style &s, Paint *out) {
     v = trim(v);
     if (v.empty() || v == "inherit")
         return;
@@ -866,7 +839,6 @@ void paint(Ctx &c, sv v, const Style &parent, const Style &s, Paint *out) {
     Color col;
     if (color(v, s.color, &col))
         *out = {1, col};
-    (void)parent;
 }
 
 float opacityOf(sv v, float def) {
@@ -884,8 +856,8 @@ Style computeStyle(Ctx &c, int n, const Style &parent) {
     sv    v;
     if (!(v = c.d.get(n, KColor)).empty())
         color(v, parent.color, &s.color);
-    paint(c, c.d.get(n, KFill), parent, s, &s.fill);
-    paint(c, c.d.get(n, KStroke), parent, s, &s.stroke);
+    paint(c, c.d.get(n, KFill), s, &s.fill);
+    paint(c, c.d.get(n, KStroke), s, &s.stroke);
     if (!(v = c.d.get(n, KFillOpacity)).empty())
         s.fillOp = opacityOf(v, 1);
     if (!(v = c.d.get(n, KStrokeOpacity)).empty())
@@ -1315,7 +1287,7 @@ bool svgSize(std::string_view svg, float *w, float *h) {
     return true;
 }
 
-bool renderSvgOwn(std::string_view svg, int width, int height, Bitmap *out) {
+bool renderSvg(std::string_view svg, int width, int height, Bitmap *out) {
     if (width <= 0 || height <= 0 || int64_t(width) * height > kMaxImagePixels ||
         svg.size() > kMaxInput)
         return false;

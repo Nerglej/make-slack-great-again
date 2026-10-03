@@ -166,6 +166,9 @@ std::vector<IconMask> g_masks;
 size_t                g_maskBytes = 0;
 uint32_t              g_maskTick  = 0;
 uint8_t               g_fixedColour[kIconCount]; // 0 unknown, 1 plain, 2 has fixed colours
+// Per icon, where its last mask sat in g_masks: icons mostly repeat at one
+// size, so a draw rarely scans. Stale after an eviction moved it: checked.
+uint16_t              g_lastMask[kIconCount];
 
 } // namespace
 
@@ -189,12 +192,13 @@ void drawIcon(Painter &p, Icon icon, RectF r, Color tint) {
         paintIcon(p, i, k, ox, oy, tint, false);
         return;
     }
-    IconMask *m = nullptr;
-    for (auto &e : g_masks)
-        if (e.icon == i && e.k == k) {
-            m = &e;
-            break;
-        }
+    IconMask    *m    = nullptr;
+    const size_t last = g_lastMask[i];
+    if (last < g_masks.size() && g_masks[last].icon == i && g_masks[last].k == k)
+        m = &g_masks[last];
+    for (size_t j = 0; !m && j < g_masks.size(); ++j)
+        if (g_masks[j].icon == i && g_masks[j].k == k)
+            m = &g_masks[j];
     // Strokes may reach up to 2 viewBox units outside it.
     const int margin = int(std::ceil(2 * iconData::kUnit * k)) + 1;
     if (!m) {
@@ -239,7 +243,8 @@ void drawIcon(Painter &p, Icon icon, RectF r, Color tint) {
                 m->a[size_t(y) * size_t(cw) + size_t(x)] =
                     uint8_t(tmp.pixels()[size_t(y + cy0) * size_t(w) + size_t(x + cx0)] >> 24);
     }
-    m->used = ++g_maskTick;
+    m->used       = ++g_maskTick;
+    g_lastMask[i] = uint16_t(m - g_masks.data());
     PainterImpl::maskAt(
         p,
         {m->a.data(), m->w, m->h, m->w},

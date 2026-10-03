@@ -7,6 +7,7 @@
 
 #include "base/process.h"
 #include "base/str.h"
+#include "base/winstr.h"
 
 #include <windows.h>
 
@@ -14,23 +15,7 @@ namespace oldsettings {
 
 namespace {
 
-std::wstring wide(std::string_view s) {
-    if (s.empty())
-        return {};
-    const int    n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    std::wstring w(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    return w;
-}
-
-std::string narrow(const wchar_t *w, size_t len) {
-    if (!len)
-        return {};
-    const int   n = WideCharToMultiByte(CP_UTF8, 0, w, int(len), nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w, int(len), s.data(), n, nullptr, nullptr);
-    return s;
-}
+using base::wide;
 
 std::wstring root(std::string_view app) {
     const bool tests = base::testProcess();
@@ -51,7 +36,7 @@ void split(std::string_view key, std::wstring *sub, std::wstring *name) {
 }
 
 std::string qtKey(const std::wstring &path) {
-    std::string k = narrow(path.data(), path.size());
+    std::string k = base::narrow(path);
     for (char &c : k)
         c = c == '\\' ? '/' : c == '/' ? '\\' : c;
     return k;

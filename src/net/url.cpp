@@ -10,16 +10,6 @@ int defaultPort(std::string_view scheme) {
     return scheme == "https" || scheme == "wss" ? 443 : 80;
 }
 
-int hexValue(char c) {
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    return -1;
-}
-
 // "/a/b/../c/./d" → "/a/c/d" (RFC 3986 remove_dot_segments, path only).
 std::string removeDots(std::string_view path) {
     std::vector<std::string_view> segs;
@@ -157,40 +147,6 @@ std::string Url::resolve(std::string_view ref) const {
     return out.str();
 }
 
-std::string percentEncode(std::string_view s) {
-    static const char hex[] = "0123456789ABCDEF";
-    std::string       out;
-    out.reserve(s.size());
-    for (unsigned char c : s) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '.' || c == '_' || c == '~') {
-            out += char(c);
-        } else {
-            out += '%';
-            out += hex[c >> 4];
-            out += hex[c & 15];
-        }
-    }
-    return out;
-}
-
-std::string percentDecode(std::string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size()) {
-            const int hi = hexValue(s[i + 1]), lo = hexValue(s[i + 2]);
-            if (hi >= 0 && lo >= 0) {
-                out += char(hi * 16 + lo);
-                i += 2;
-                continue;
-            }
-        }
-        out += s[i];
-    }
-    return out;
-}
-
 std::string formEncode(std::initializer_list<std::pair<std::string_view, std::string_view>> kv) {
     std::string out;
     for (const auto &[k, v] : kv) {
@@ -244,10 +200,8 @@ std::string Multipart::body() {
 std::string queryValue(std::string_view query, std::string_view name) {
     if (!query.empty() && query[0] == '?')
         query.remove_prefix(1);
-    while (!query.empty()) {
-        const size_t     amp  = query.find('&');
-        std::string_view pair = query.substr(0, amp);
-        query = amp == std::string_view::npos ? std::string_view() : query.substr(amp + 1);
+    str::Splitter pairs(query, '&');
+    for (std::string_view pair; pairs.next(&pair);) {
         const size_t eq = pair.find('=');
         std::string  key(pair.substr(0, eq));
         for (char &c : key) // '+' means space in a form key, not only a value

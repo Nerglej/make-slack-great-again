@@ -1,7 +1,9 @@
 #include "support/test.h"
 #include "base/utf8.h"
 
+#include <cstdio>
 #include <cstring>
+#include <vector>
 
 TEST("utf8: decode and append round trip") {
     const std::string s = "a\xC3\xA5\xE2\x82\xAC\xF0\x9F\x9A\x80"; // a å € 🚀
@@ -155,4 +157,36 @@ TEST("utf8: overlong forms of every length are rejected") {
     // The shortest forms right next to them are fine.
     for (std::string_view s : {"\xC2\x80", "\xE0\xA0\x80", "\xF0\x90\x80\x80", "\xED\x9F\xBF"})
         CHECK(utf8::isValid(s));
+}
+
+TEST("utf8: truncateAt is the largest boundary at or below the limit") {
+    // Valid sequences of every length, a stray continuation byte, a cut
+    // sequence, an invalid lead and a lone lead at the end.
+    const std::string s =
+        "a\xC3\xA4\xE2\x82\xAC\xF0\x9F\x98\x80\x80\xE2\x82z\xF8\xF0\x9F\x98\x80\xC3";
+    std::vector<size_t> bounds{0};
+    for (size_t i = 0; i < s.size();)
+        bounds.push_back(i = utf8::nextBoundary(s, i));
+    for (size_t max = 0; max <= s.size() + 2; ++max) {
+        size_t want = 0;
+        for (size_t b : bounds)
+            if (b <= max)
+                want = b;
+        if (!CHECK(utf8::truncateAt(s, max) == want))
+            std::fprintf(
+                stderr, "    max %zu: %zu, want %zu\n", max, utf8::truncateAt(s, max), want
+            );
+    }
+    CHECK(utf8::truncateAt("", 0) == 0);
+    CHECK(utf8::truncateAt("\x80\x80\x80\x80\x80", 3) == 3);
+}
+
+TEST("utf8: containsFoldedNeedle takes the needle folded once") {
+    const std::string needle = utf8::foldCase("\xC3\x96RJAN"); // "ÖRJAN"
+    CHECK(utf8::containsFoldedNeedle("Hej \xC3\x96rjan!", needle));
+    CHECK(utf8::containsFoldedNeedle("\xC3\xB6rjan", needle));
+    CHECK_FALSE(utf8::containsFoldedNeedle("orjan", needle));
+    CHECK(utf8::containsFoldedNeedle("anything", ""));
+    CHECK_FALSE(utf8::containsFoldedNeedle("", "x"));
+    CHECK(utf8::containsFolded("Hej \xC3\x96rjan!", "\xC3\xB6RJ"));
 }

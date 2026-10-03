@@ -145,3 +145,15 @@ TEST("process: an exit by signal is 128 + the signal") {
     CHECK(sh("kill -TERM $$").code == 128 + 15);
 }
 #endif
+
+TEST("process: homeDir") {
+#ifdef _WIN32
+    std::string want = base::env("USERPROFILE");
+    for (char &c : want)
+        if (c == '\\')
+            c = '/';
+    CHECK_STR(base::homeDir(), want);
+#else
+    CHECK_STR(base::homeDir(), base::env("HOME"));
+#endif
+}

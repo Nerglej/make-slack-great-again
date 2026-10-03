@@ -2,6 +2,7 @@
 
 #include "base/file.h"
 #include "base/process.h"
+#include "base/str.h"
 #include "base/utf8.h"
 
 #include <algorithm>
@@ -9,6 +10,8 @@
 #include <cstring>
 
 #ifdef _WIN32
+#include "base/winstr.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -38,19 +41,7 @@ struct PathInfo {
 };
 
 #ifdef _WIN32
-std::wstring wide(const std::string &s) {
-    const int    n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    std::wstring w(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    return w;
-}
-
-std::string utf8(const wchar_t *w) {
-    const int   n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n > 0 ? n - 1 : 0), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
-    return s;
-}
+using base::wide;
 
 bool pathInfo(const std::string &path, PathInfo *out) {
     WIN32_FILE_ATTRIBUTE_DATA a;
@@ -74,7 +65,7 @@ std::vector<std::string> listNames(const std::string &dir) {
     if (h == INVALID_HANDLE_VALUE)
         return names;
     do
-        names.push_back(utf8(e.cFileName));
+        names.push_back(base::narrow(e.cFileName));
     while (FindNextFileW(h, &e));
     FindClose(h);
     return names;
@@ -224,8 +215,7 @@ std::string familyName(const Buf &name) {
         }
     }
     for (auto &c : out)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c + 32);
+        c = str::asciiLower(c);
     return out;
 }
 
@@ -427,15 +417,10 @@ std::vector<std::string> fontRoots() {
     const char sep = ':';
 #endif
     if (const char *o = std::getenv("MSGA_NEXT_FONT_DIRS")) { // tests / packaging
-        std::string s = o;
-        for (size_t a = 0; a <= s.size();) {
-            size_t b = s.find(sep, a);
-            if (b == std::string::npos)
-                b = s.size();
-            if (b > a)
-                roots.push_back(s.substr(a, b - a));
-            a = b + 1;
-        }
+        str::Splitter dirs(o, sep);
+        for (std::string_view d; dirs.next(&d);)
+            if (!d.empty())
+                roots.emplace_back(d);
         return roots;
     }
 #ifdef _WIN32
@@ -464,19 +449,16 @@ std::vector<std::string> fontRoots() {
     std::string dataDirs = "/usr/local/share:/usr/share";
     if (const char *x = std::getenv("XDG_DATA_DIRS"); x && *x)
         dataDirs = std::string(x) + ":" + dataDirs;
-    for (size_t a = 0; a <= dataDirs.size();) {
-        size_t b = dataDirs.find(':', a);
-        if (b == std::string::npos)
-            b = dataDirs.size();
-        if (b > a) {
-            std::string d = dataDirs.substr(a, b - a);
-            while (d.size() > 1 && d.back() == '/')
-                d.pop_back();
-            d += "/fonts";
-            if (std::find(roots.begin(), roots.end(), d) == roots.end())
-                roots.push_back(d);
-        }
-        a = b + 1;
+    str::Splitter dirs(dataDirs, ':');
+    for (std::string_view part; dirs.next(&part);) {
+        if (part.empty())
+            continue;
+        std::string d(part);
+        while (d.size() > 1 && d.back() == '/')
+            d.pop_back();
+        d += "/fonts";
+        if (std::find(roots.begin(), roots.end(), d) == roots.end())
+            roots.push_back(d);
     }
     return roots;
 }
@@ -702,6 +684,21 @@ bool loadIndex(Index *out, std::string *error) {
     Pool  pool{&ix.pool};
     for (auto &[d, mt] : found.dirs)
         ix.dirs.push_back({pool.add(d), 0, mt});
+    // The old faces grouped by file (facesOf[file] .. facesOf[file + 1] in
+    // byFile), so a reused file copies its faces without a scan.
+    std::vector<uint32_t> facesOf, byFile;
+    if (haveOld) {
+        facesOf.assign(old.files.size() + 1, 0);
+        for (const FaceRec &ofr : old.faces)
+            ++facesOf[ofr.file + 1];
+        for (size_t i = 1; i < facesOf.size(); ++i)
+            facesOf[i] += facesOf[i - 1];
+        byFile.resize(old.faces.size());
+        std::vector<uint32_t> at(facesOf.begin(), facesOf.end() - 1);
+        for (uint32_t fi = 0; fi < old.faces.size(); ++fi)
+            byFile[at[old.faces[fi].file]++] = fi;
+    }
+    uint32_t next = 0; // the walk is in the same order as last time: look there first
     for (auto &f : found.files) {
         const auto fileIdx = uint32_t(ix.files.size());
         ix.files.push_back({pool.add(f.path), 0, f.mtime, f.size});
@@ -709,18 +706,23 @@ bool loadIndex(Index *out, std::string *error) {
         // most of the scan time.
         bool reused = false;
         if (haveOld) {
-            for (uint32_t oi = 0; oi < old.files.size() && !reused; ++oi) {
+            const auto same = [&](uint32_t oi) {
                 const FileRec &of = old.files[oi];
-                if (of.mtime != f.mtime || of.size != f.size || f.path != old.str(of.path))
-                    continue;
+                return of.mtime == f.mtime && of.size == f.size && f.path == old.str(of.path);
+            };
+            uint32_t oi = next;
+            if (oi >= old.files.size() || !same(oi))
+                for (oi = 0; oi < old.files.size() && !same(oi);)
+                    ++oi;
+            if (oi < old.files.size()) {
                 reused = true;
-                for (const FaceRec &ofr : old.faces) {
-                    if (ofr.file != oi)
-                        continue;
-                    FaceRec nf = ofr;
-                    nf.file    = fileIdx;
-                    nf.family  = pool.add(old.str(ofr.family));
-                    nf.covOff  = uint32_t(ix.cov.size());
+                next   = oi + 1;
+                for (uint32_t k = facesOf[oi]; k < facesOf[oi + 1]; ++k) {
+                    const FaceRec &ofr = old.faces[byFile[k]];
+                    FaceRec        nf  = ofr;
+                    nf.file            = fileIdx;
+                    nf.family          = pool.add(old.str(ofr.family));
+                    nf.covOff          = uint32_t(ix.cov.size());
                     ix.cov.insert(
                         ix.cov.end(),
                         old.cov.begin() + ofr.covOff,

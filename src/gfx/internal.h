@@ -114,13 +114,6 @@ void shaderRow(const Shader &s, int y, int x0, int x1, uint32_t *out);
 // white would leave there.
 void fillMask(const Path &path, FillRule rule, uint8_t *mask, int x, int y, int w, int h);
 
-// gfx's own SVG renderer (svg.cpp); renderSvg() tries the OS first where
-// there is one. Exposed for tests on every platform.
-bool       renderSvgOwn(std::string_view svg, int width, int height, Bitmap *out);
-// Which renderer produced the last renderSvg() result: 0 own, 1 the OS's.
-// For tests and diagnostics.
-extern int g_svgBackend;
-
 // The rasterizer's edge tables (blend.cpp).
 struct RasterEdge {
     float x, dxdy, top, bot; // x at `top`
@@ -138,7 +131,7 @@ struct PaintScratch::Data {
     std::vector<RasterEdge>   edges; // rasterize()
     std::vector<RasterActive> act;
     std::vector<float>        cov, diff;
-    Flat                      flat; // icon geometry (icons.cpp)
+    Flat                      flat, dashed; // geometry: icons.cpp, fill/strokePath
     std::vector<Seg>          segs, fill;
     Path                      path;
 };

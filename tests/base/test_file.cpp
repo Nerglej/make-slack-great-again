@@ -129,3 +129,42 @@ TEST("file: byte ranges and in-place overwrite") {
     file::remove(path);
     CHECK(file::remove(dir));
 }
+
+TEST("file: stat, treeBytes and removeTree, links not followed") {
+    const std::string dir = tempDir();
+    const std::string t = file::join(dir, "t"), a = file::join(t, "a"), b = file::join(t, "sub/b");
+    REQUIRE(file::writeAtomic(a, "abc"));
+    REQUIRE(file::writeAtomic(b, "12345"));
+    file::Stat st;
+    REQUIRE(file::stat(a, &st));
+    CHECK(st.size == 3);
+    CHECK_FALSE(st.isDir);
+    CHECK(st.mtimeMicros > 1600000000LL * 1000000);
+    CHECK(st.birthMicros > 1600000000LL * 1000000);
+    CHECK(st.birthMicros <= st.mtimeMicros + 1000000);
+    REQUIRE(file::stat(t, &st));
+    CHECK(st.isDir);
+    CHECK(st.size == 0);
+    const file::Stat before = st;
+    CHECK_FALSE(file::stat(file::join(dir, "missing"), &st));
+    CHECK(st.mtimeMicros == before.mtimeMicros); // untouched
+    CHECK_FALSE(file::stat("", &st));
+
+    CHECK(file::treeBytes(t) == 8);
+    CHECK(file::treeBytes(a) == 3);
+    CHECK(file::treeBytes(file::join(dir, "missing")) == 0);
+#ifndef _WIN32
+    const std::string keep = file::join(dir, "keep/k");
+    REQUIRE(file::writeAtomic(keep, "1234567"));
+    REQUIRE(::symlink(file::join(dir, "keep").c_str(), file::join(t, "link").c_str()) == 0);
+    CHECK(file::treeBytes(t) == 8); // the link is not followed
+#endif
+    CHECK(file::removeTree(t));
+    CHECK_FALSE(file::exists(t));
+#ifndef _WIN32
+    CHECK(file::exists(keep)); // what the link pointed at is still there
+#endif
+    CHECK(file::removeTree(t)); // nothing there: done
+    CHECK(file::removeTree(dir));
+    CHECK_FALSE(file::exists(dir));
+}

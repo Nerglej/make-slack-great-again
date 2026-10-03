@@ -44,6 +44,8 @@ struct Style {
     // Layout::boxes(). The span's text is ignored for rendering.
     uint32_t   inlineBoxId = 0;
     float      boxWidth = 0, boxHeight = 0;
+
+    bool operator==(const Style &) const = default;
 };
 
 // A UTF-8 string with styled spans. Spans must not overlap and must cover the
@@ -157,9 +159,5 @@ struct Metrics {
     float capHeight = 0;                        // logical: flat capitals and digits
 };
 Metrics metrics(const Style &s, float scale);
-
-// Upper bound for the rasterised-glyph cache in bytes (default 8 MB). Pages
-// of glyphs not drawn recently are dropped past it.
-void setGlyphCacheBudget(size_t bytes);
 
 } // namespace text

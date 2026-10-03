@@ -13,6 +13,7 @@
 // the issuer of the top certificate it was sent (the trusted-CA callback)
 // and we parse just the candidates whose subject matches, in place.
 #include "base/crypto.h"
+#include "base/file.h"
 #include "base/str.h"
 #include "net/posix/posix.h"
 
@@ -124,28 +125,10 @@ void CaStore::addPem(std::string_view pem) {
     }
 }
 
-bool readFile(const char *path, std::string *out) {
-    const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
-        return false;
-    struct stat st;
-    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > 16 * 1024 * 1024) {
-        ::close(fd);
-        return false;
-    }
-    out->resize(size_t(st.st_size));
-    size_t got = 0;
-    while (got < out->size()) {
-        const ssize_t r = ::read(fd, &(*out)[got], out->size() - got);
-        if (r < 0 && errno == EINTR)
-            continue;
-        if (r <= 0)
-            break;
-        got += size_t(r);
-    }
-    ::close(fd);
-    out->resize(got);
-    return true;
+// A certificate file (a regular one): a bundle is a few hundred KB, so
+// anything past 16 MB is not one.
+bool readFile(std::string_view path, std::string *out) {
+    return file::size(path) <= 16 * 1024 * 1024 && file::readAll(path, out);
 }
 
 // $SSL_CERT_FILE, then where the distributions put their bundle, then every
@@ -179,7 +162,7 @@ void loadSystemCas(CaStore *store) {
         const std::string_view name = e->d_name;
         if (!str::endsWith(name, ".pem") && !str::endsWith(name, ".crt"))
             continue;
-        if (readFile(str::concat({dir, "/", name}).c_str(), &text))
+        if (readFile(str::concat({dir, "/", name}), &text))
             store->addPem(text);
     }
     closedir(d);

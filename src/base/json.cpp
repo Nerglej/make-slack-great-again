@@ -1,5 +1,6 @@
 #include "base/json.h"
 
+#include "base/str.h"
 #include "base/utf8.h"
 
 #include <charconv>
@@ -182,21 +183,12 @@ private:
         return true;
     }
 
-    static int hexVal(char c) {
-        if (c >= '0' && c <= '9')
-            return c - '0';
-        c |= 0x20;
-        if (c >= 'a' && c <= 'f')
-            return c - 'a' + 10;
-        return -1;
-    }
-
     bool hex4(uint32_t &out) {
         if (_n - _p < 4)
             return fail("truncated \\u escape");
         out = 0;
         for (int k = 0; k < 4; ++k) {
-            const int h = hexVal(_s[_p + k]);
+            const int h = str::hexDigit(_s[_p + k]);
             if (h < 0)
                 return fail("invalid \\u escape");
             out = (out << 4) | uint32_t(h);

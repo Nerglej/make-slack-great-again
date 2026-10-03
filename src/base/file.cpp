@@ -6,6 +6,10 @@
 #include <cstring>
 
 #ifdef _WIN32
+#include "base/winstr.h"
+
+#include <algorithm>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -16,57 +20,77 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #endif
 
 namespace file {
 
+bool readAll(std::string_view path, std::string *out) {
+    return readRange(path, 0, SIZE_MAX, out);
+}
+
 #ifdef _WIN32
 namespace {
-std::wstring wide(std::string_view s) {
-    std::wstring w;
-    if (s.empty())
-        return w;
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    w.resize(size_t(n));
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    for (auto &c : w)
-        if (c == L'/')
-            c = L'\\';
-    return w;
-}
-} // namespace
+using base::widePath;
 
-bool readAll(std::string_view path, std::string *out) {
-    out->clear();
-    HANDLE h = CreateFileW(
-        wide(path).c_str(),
-        GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr
+bool dotName(const wchar_t *n) {
+    return n[0] == L'.' && (!n[1] || (n[1] == L'.' && !n[2]));
+}
+
+// FILETIME (100 ns ticks since 1601) → unix microseconds.
+int64_t unixMicros(const FILETIME &t) {
+    const uint64_t ft = (uint64_t(t.dwHighDateTime) << 32) | t.dwLowDateTime;
+    return int64_t(ft / 10) - 11644473600LL * 1000000;
+}
+
+bool removeTreeW(const std::wstring &path) {
+    const DWORD a = GetFileAttributesW(path.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES)
+        return true;
+    if (a & FILE_ATTRIBUTE_READONLY)
+        SetFileAttributesW(path.c_str(), a & ~DWORD(FILE_ATTRIBUTE_READONLY));
+    if (!(a & FILE_ATTRIBUTE_DIRECTORY))
+        return DeleteFileW(path.c_str());
+    if (!(a & FILE_ATTRIBUTE_REPARSE_POINT)) { // a junction or link: only itself goes
+        WIN32_FIND_DATAW d;
+        HANDLE           h = FindFirstFileW((path + L"\\*").c_str(), &d);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (!dotName(d.cFileName))
+                    removeTreeW(path + L"\\" + d.cFileName);
+            } while (FindNextFileW(h, &d));
+            FindClose(h);
+        }
+    }
+    return RemoveDirectoryW(path.c_str());
+}
+
+int64_t treeBytesW(const std::wstring &dir) {
+    int64_t          n = 0;
+    WIN32_FIND_DATAW d;
+    HANDLE           h = FindFirstFileExW(
+        (dir + L"\\*").c_str(), FindExInfoBasic, &d, FindExSearchNameMatch, nullptr, 0
     );
     if (h == INVALID_HANDLE_VALUE)
-        return false;
-    LARGE_INTEGER sz;
-    bool          ok = GetFileSizeEx(h, &sz) && sz.QuadPart < (1ll << 31);
-    if (ok) {
-        out->resize(size_t(sz.QuadPart));
-        DWORD got = 0;
-        ok = out->empty() ||
-             (ReadFile(h, out->data(), DWORD(out->size()), &got, nullptr) && got == out->size());
-    }
-    CloseHandle(h);
-    if (!ok)
-        out->clear();
-    return ok;
+        return 0;
+    do {
+        if (dotName(d.cFileName) || (d.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+            continue; // links are not followed, nor counted
+        n += (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                 ? treeBytesW(dir + L"\\" + d.cFileName)
+                 : int64_t((uint64_t(d.nFileSizeHigh) << 32) | d.nFileSizeLow);
+    } while (FindNextFileW(h, &d));
+    FindClose(h);
+    return n;
 }
+} // namespace
 
 bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::string *out) {
     out->clear();
     HANDLE h = CreateFileW(
-        wide(path).c_str(),
+        widePath(path).c_str(),
         GENERIC_READ,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr,
@@ -81,9 +105,12 @@ bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::stri
     bool ok = offset >= 0 && GetFileSizeEx(h, &sz) && SetFilePointerEx(h, at, nullptr, FILE_BEGIN);
     if (ok && offset < sz.QuadPart) {
         const int64_t left = sz.QuadPart - offset;
-        out->resize(size_t(left < int64_t(maxBytes) ? left : int64_t(maxBytes)));
+        const int64_t want = maxBytes < uint64_t(left) ? int64_t(maxBytes) : left;
+        ok                 = want < (1ll << 31); // one ReadFile, and a sane amount to hold
+        if (ok)
+            out->resize(size_t(want));
         DWORD got = 0;
-        ok        = ReadFile(h, out->data(), DWORD(out->size()), &got, nullptr);
+        ok        = ok && ReadFile(h, out->data(), DWORD(out->size()), &got, nullptr);
         out->resize(ok ? size_t(got) : 0);
     }
     CloseHandle(h);
@@ -92,7 +119,7 @@ bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::stri
 
 bool overwrite(std::string_view path, std::string_view data) {
     HANDLE h = CreateFileW(
-        wide(path).c_str(),
+        widePath(path).c_str(),
         GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr,
@@ -112,7 +139,7 @@ bool overwrite(std::string_view path, std::string_view data) {
 bool writeAtomic(std::string_view path, std::string_view data, int mode) {
     (void)mode; // NTFS: the user's profile ACLs apply
     makeDirs(dirName(path));
-    const std::wstring target = wide(path);
+    const std::wstring target = widePath(path);
     const std::wstring tmp    = target + L".tmp~";
     HANDLE             h      = CreateFileW(
         tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr
@@ -134,44 +161,50 @@ bool writeAtomic(std::string_view path, std::string_view data, int mode) {
 }
 
 bool exists(std::string_view path) {
-    return GetFileAttributesW(wide(path).c_str()) != INVALID_FILE_ATTRIBUTES;
+    return GetFileAttributesW(widePath(path).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
 bool isDir(std::string_view path) {
-    const DWORD a = GetFileAttributesW(wide(path).c_str());
+    const DWORD a = GetFileAttributesW(widePath(path).c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
 int64_t size(std::string_view path) {
     WIN32_FILE_ATTRIBUTE_DATA d;
-    if (!GetFileAttributesExW(wide(path).c_str(), GetFileExInfoStandard, &d))
+    if (!GetFileAttributesExW(widePath(path).c_str(), GetFileExInfoStandard, &d))
         return -1;
     return (int64_t(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
+}
+
+bool stat(std::string_view path, Stat *out) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (path.empty() || !GetFileAttributesExW(widePath(path).c_str(), GetFileExInfoStandard, &d))
+        return false;
+    out->isDir       = d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
+    out->size        = out->isDir ? 0 : (int64_t(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
+    out->mtimeMicros = unixMicros(d.ftLastWriteTime);
+    out->birthMicros = unixMicros(d.ftCreationTime);
+    return true;
 }
 
 bool listDir(std::string_view dir, std::vector<DirEntry> *out) {
     out->clear();
     WIN32_FIND_DATAW d;
     HANDLE           h = FindFirstFileExW(
-        wide(join(dir, "*")).c_str(), FindExInfoBasic, &d, FindExSearchNameMatch, nullptr, 0
+        widePath(join(dir, "*")).c_str(), FindExInfoBasic, &d, FindExSearchNameMatch, nullptr, 0
     );
     if (h == INVALID_HANDLE_VALUE)
         return false;
     do {
         const wchar_t *n = d.cFileName;
-        if (n[0] == L'.' && (!n[1] || (n[1] == L'.' && !n[2])))
+        if (dotName(n))
             continue;
-        DirEntry  e;
-        const int len = WideCharToMultiByte(CP_UTF8, 0, n, -1, nullptr, 0, nullptr, nullptr);
-        e.name.resize(size_t(len > 0 ? len - 1 : 0));
-        WideCharToMultiByte(CP_UTF8, 0, n, -1, e.name.data(), len, nullptr, nullptr);
+        DirEntry e;
+        e.name   = base::narrow(n);
         e.isDir  = d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
         e.hidden = (d.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) || n[0] == L'.';
         e.size   = e.isDir ? 0 : (int64_t(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
-        // FILETIME: 100 ns ticks since 1601.
-        const uint64_t ft =
-            (uint64_t(d.ftLastWriteTime.dwHighDateTime) << 32) | d.ftLastWriteTime.dwLowDateTime;
-        e.mtime = int64_t(ft / 10000000ULL) - 11644473600LL;
+        e.mtime  = unixMicros(d.ftLastWriteTime) / 1000000;
         out->push_back(std::move(e));
     } while (FindNextFileW(h, &d));
     FindClose(h);
@@ -179,17 +212,29 @@ bool listDir(std::string_view dir, std::vector<DirEntry> *out) {
 }
 
 static bool makeDir(std::string_view p) {
-    return CreateDirectoryW(wide(p).c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
+    return CreateDirectoryW(widePath(p).c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
 }
 
 bool remove(std::string_view path) {
-    const std::wstring w = wide(path);
+    const std::wstring w = widePath(path);
     return isDir(path) ? RemoveDirectoryW(w.c_str()) : DeleteFileW(w.c_str());
+}
+
+bool removeTree(std::string_view path) {
+    return removeTreeW(widePath(path)) || !exists(path);
+}
+
+int64_t treeBytes(std::string_view path) {
+    const std::wstring w = widePath(path);
+    const DWORD        a = GetFileAttributesW(w.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES)
+        return 0;
+    return (a & FILE_ATTRIBUTE_DIRECTORY) ? treeBytesW(w) : std::max<int64_t>(size(path), 0);
 }
 
 bool touch(std::string_view path) {
     HANDLE h = CreateFileW(
-        wide(path).c_str(),
+        widePath(path).c_str(),
         FILE_WRITE_ATTRIBUTES,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr,
@@ -218,9 +263,7 @@ std::string absolute(std::string_view path) {
     const DWORD n = GetCurrentDirectoryW(MAX_PATH, buf);
     std::string cwd;
     if (n > 0 && n < MAX_PATH) {
-        const int len = WideCharToMultiByte(CP_UTF8, 0, buf, int(n), nullptr, 0, nullptr, nullptr);
-        cwd.resize(size_t(len));
-        WideCharToMultiByte(CP_UTF8, 0, buf, int(n), cwd.data(), len, nullptr, nullptr);
+        cwd = base::narrow(std::wstring_view(buf, n));
         for (auto &c : cwd)
             if (c == '\\')
                 c = '/';
@@ -232,32 +275,11 @@ std::string absolute(std::string_view path) {
     return join(cwd, path);
 }
 #else
-bool readAll(std::string_view path, std::string *out) {
-    out->clear();
-    const std::string p(path);
-    const int         fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
-        return false;
-    struct stat st;
-    bool        ok = fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
-    if (ok) {
-        out->resize(size_t(st.st_size));
-        size_t got = 0;
-        while (got < out->size()) {
-            const ssize_t r = ::read(fd, out->data() + got, out->size() - got);
-            if (r < 0 && errno == EINTR)
-                continue;
-            if (r <= 0)
-                break;
-            got += size_t(r);
-        }
-        out->resize(got); // the file may have shrunk under us
-    }
-    ::close(fd);
-    if (!ok)
-        out->clear();
-    return ok;
+namespace {
+bool dotName(const char *n) {
+    return n[0] == '.' && (!n[1] || (n[1] == '.' && !n[2]));
 }
+} // namespace
 
 bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::string *out) {
     out->clear();
@@ -268,8 +290,8 @@ bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::stri
     struct stat st;
     const bool  ok = offset >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
     if (ok && offset < int64_t(st.st_size)) {
-        const int64_t left = int64_t(st.st_size) - offset;
-        out->resize(size_t(left < int64_t(maxBytes) ? left : int64_t(maxBytes)));
+        const auto left = uint64_t(st.st_size) - uint64_t(offset);
+        out->resize(left < maxBytes ? size_t(left) : maxBytes);
         size_t got = 0;
         while (got < out->size()) {
             const ssize_t r =
@@ -280,7 +302,7 @@ bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::stri
                 break;
             got += size_t(r);
         }
-        out->resize(got);
+        out->resize(got); // the file may have shrunk under us
     }
     ::close(fd);
     return ok;
@@ -354,6 +376,32 @@ int64_t size(std::string_view path) {
     return int64_t(st.st_size);
 }
 
+bool stat(std::string_view path, Stat *out) {
+    const std::string p(path);
+    struct stat       st;
+    if (p.empty() || ::stat(p.c_str(), &st) != 0)
+        return false;
+    out->isDir = S_ISDIR(st.st_mode);
+    out->size  = out->isDir ? 0 : int64_t(st.st_size);
+#ifdef __APPLE__
+    out->mtimeMicros = int64_t(st.st_mtimespec.tv_sec) * 1000000 + st.st_mtimespec.tv_nsec / 1000;
+    out->birthMicros =
+        int64_t(st.st_birthtimespec.tv_sec) * 1000000 + st.st_birthtimespec.tv_nsec / 1000;
+#else
+    out->mtimeMicros = int64_t(st.st_mtim.tv_sec) * 1000000 + st.st_mtim.tv_nsec / 1000;
+    out->birthMicros = out->mtimeMicros;
+#if defined(SYS_statx) && defined(STATX_BTIME)
+    // The birth time, on file systems that keep one (a raw syscall: older C
+    // libraries have no statx wrapper).
+    struct statx sx;
+    if (::syscall(SYS_statx, AT_FDCWD, p.c_str(), 0, STATX_BTIME, &sx) == 0 &&
+        (sx.stx_mask & STATX_BTIME))
+        out->birthMicros = int64_t(sx.stx_btime.tv_sec) * 1000000 + sx.stx_btime.tv_nsec / 1000;
+#endif
+#endif
+    return true;
+}
+
 bool listDir(std::string_view dir, std::vector<DirEntry> *out) {
     out->clear();
     const std::string d(dir);
@@ -362,7 +410,7 @@ bool listDir(std::string_view dir, std::vector<DirEntry> *out) {
         return false;
     while (const dirent *e = ::readdir(h)) {
         const char *n = e->d_name;
-        if (n[0] == '.' && (!n[1] || (n[1] == '.' && !n[2])))
+        if (dotName(n))
             continue;
         DirEntry de;
         de.name   = n;
@@ -386,6 +434,39 @@ static bool makeDir(std::string_view p) {
 
 bool remove(std::string_view path) {
     return ::remove(std::string(path).c_str()) == 0;
+}
+
+bool removeTree(std::string_view path) {
+    const std::string p(path);
+    struct stat       st;
+    if (::lstat(p.c_str(), &st) != 0)
+        return true; // nothing there
+    if (!S_ISDIR(st.st_mode))
+        return ::unlink(p.c_str()) == 0;
+    if (DIR *d = ::opendir(p.c_str())) {
+        while (const dirent *e = ::readdir(d))
+            if (!dotName(e->d_name))
+                removeTree(join(p, e->d_name));
+        ::closedir(d);
+    }
+    return ::rmdir(p.c_str()) == 0;
+}
+
+int64_t treeBytes(std::string_view path) {
+    const std::string p(path);
+    struct stat       st;
+    if (::lstat(p.c_str(), &st) != 0)
+        return 0;
+    if (!S_ISDIR(st.st_mode))
+        return S_ISREG(st.st_mode) ? int64_t(st.st_size) : 0; // a link counts as nothing
+    int64_t n = 0;
+    if (DIR *d = ::opendir(p.c_str())) {
+        while (const dirent *e = ::readdir(d))
+            if (!dotName(e->d_name))
+                n += treeBytes(join(p, e->d_name));
+        ::closedir(d);
+    }
+    return n;
 }
 
 bool touch(std::string_view path) {
@@ -497,19 +578,7 @@ std::string toFileUrl(std::string_view path) {
         out += '/'; // "C:/x" → "file:///C:/x"
     // RFC 3986 pchar: unreserved, sub-delims, ':',
     // '@' and '/' as they are, every other byte (UTF-8 too) as %XX.
-    static const char kHex[] = "0123456789ABCDEF";
-    for (; i < p.size(); ++i) {
-        const unsigned char c    = (unsigned char)p[i];
-        const bool          keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                                   (c >= '0' && c <= '9') || std::strchr("-._~!$&'()*+,;=:@/", c);
-        if (keep && c) {
-            out += char(c);
-        } else {
-            out += '%';
-            out += kHex[c >> 4];
-            out += kHex[c & 15];
-        }
-    }
+    out += str::percentEncode(std::string_view(p).substr(i), "!$&'()*+,;=:@/");
     return out;
 }
 
@@ -529,22 +598,7 @@ std::string fromFileUrl(std::string_view url) {
         (void)host; // another machine's file: its path here, as before
 #endif
     }
-    const auto hex = [](char c) {
-        return c >= '0' && c <= '9'   ? c - '0'
-               : c >= 'a' && c <= 'f' ? c - 'a' + 10
-               : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                      : -1;
-    };
-    for (size_t i = 0; i < rest.size(); ++i) {
-        int hi = -1, lo = -1;
-        if (rest[i] == '%' && i + 2 < rest.size() && (hi = hex(rest[i + 1])) >= 0 &&
-            (lo = hex(rest[i + 2])) >= 0) {
-            out += char(hi << 4 | lo);
-            i += 2;
-        } else {
-            out += rest[i];
-        }
-    }
+    out += str::percentDecode(rest);
 #ifdef _WIN32
     if (out.size() > 2 && out[0] == '/' && out[2] == ':')
         out.erase(0, 1); // "/C:/x"

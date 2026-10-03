@@ -1,12 +1,16 @@
 #include "base/process.h"
 
 #include "base/file.h"
+#include "base/str.h"
+#include "base/time.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
 #ifdef _WIN32
+#include "base/winstr.h"
+
 #include <windows.h>
 #else
 #include <cerrno>
@@ -33,6 +37,16 @@ std::string env(const char *name) {
     return v ? v : "";
 }
 
+std::string homeDir() {
+#ifdef _WIN32
+    std::string home = env("USERPROFILE");
+    std::replace(home.begin(), home.end(), '\\', '/');
+    return home;
+#else
+    return env("HOME");
+#endif
+}
+
 namespace {
 bool g_testProcess = false;
 }
@@ -54,25 +68,21 @@ std::string findExecutable(std::string_view name) {
     const char sep = ':';
 #endif
     const std::string path = env("PATH");
-    size_t            i    = 0;
-    while (i <= path.size()) {
-        size_t j = path.find(sep, i);
-        if (j == std::string::npos)
-            j = path.size();
-        if (j > i) {
-            std::string cand = file::join(std::string_view(path).substr(i, j - i), name);
+    str::Splitter     dirs(path, sep);
+    for (std::string_view dir; dirs.next(&dir);) {
+        if (dir.empty())
+            continue;
+        std::string cand = file::join(dir, name);
 #ifdef _WIN32
-            if (!file::exists(cand))
-                cand += ".exe";
+        if (!file::exists(cand))
+            cand += ".exe";
 #endif
-            if (file::exists(cand) && !file::isDir(cand)) {
+        if (file::exists(cand) && !file::isDir(cand)) {
 #ifndef _WIN32
-                if (::access(cand.c_str(), X_OK) == 0)
+            if (::access(cand.c_str(), X_OK) == 0)
 #endif
-                    return cand;
-            }
+                return cand;
         }
-        i = j + 1;
     }
     return {};
 }
@@ -87,13 +97,7 @@ Process::~Process() {
 #ifdef _WIN32
 
 namespace {
-std::wstring wide(std::string_view s) {
-    std::wstring w(
-        size_t(MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0)), L'\0'
-    );
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), int(w.size()));
-    return w;
-}
+using base::wide;
 
 // CommandLineToArgvW's quoting rules, in reverse.
 void appendQuoted(std::wstring &cmd, const std::wstring &arg) {
@@ -120,14 +124,20 @@ void appendQuoted(std::wstring &cmd, const std::wstring &arg) {
     cmd.append(slashes * 2, L'\\');
     cmd += L'"';
 }
+
+// exe and its arguments as one command line.
+std::wstring commandLine(const std::string &exe, const std::vector<std::string> &args) {
+    std::wstring cmd;
+    appendQuoted(cmd, wide(exe));
+    for (const auto &a : args)
+        appendQuoted(cmd, wide(a));
+    return cmd;
+}
 } // namespace
 
 bool Process::start(const std::string &exe, const std::vector<std::string> &args) {
-    const std::wstring wexe = wide(exe);
-    std::wstring       cmd;
-    appendQuoted(cmd, wexe);
-    for (const auto &a : args)
-        appendQuoted(cmd, wide(a));
+    const std::wstring  wexe = wide(exe);
+    std::wstring        cmd  = commandLine(exe, args);
     STARTUPINFOW        si{};
     PROCESS_INFORMATION pi{};
     si.cb = sizeof si;
@@ -342,10 +352,7 @@ RunResult run(const std::string &exe, const std::vector<std::string> &args, cons
         return r;
     }
 
-    std::wstring cmd;
-    appendQuoted(cmd, wide(exe));
-    for (const auto &a : args)
-        appendQuoted(cmd, wide(a));
+    std::wstring        cmd = commandLine(exe, args);
     std::wstring        env = o.env.empty() ? std::wstring() : envBlock(o.env);
     const std::wstring  dir = wide(o.cwd);
     PROCESS_INFORMATION pi{};
@@ -421,35 +428,50 @@ RunResult run(const std::string &exe, const std::vector<std::string> &args, cons
 
 #else
 
-bool Process::start(const std::string &exe, const std::vector<std::string> &args) {
+namespace {
+
+// exec's argv: exe, the arguments, a null.
+std::vector<char *> argvOf(const std::string &exe, const std::vector<std::string> &args) {
     std::vector<char *> argv;
+    argv.reserve(args.size() + 2);
     argv.push_back(const_cast<char *>(exe.c_str()));
     for (const auto &a : args)
         argv.push_back(const_cast<char *>(a.c_str()));
     argv.push_back(nullptr);
+    return argv;
+}
+
+// A clean signal state — our threads' masks (SIGCHLD blocked) and ignored
+// signals are not the child's business — and a session of its own, so the
+// group can be signalled as a whole (see process.h).
+void initSpawnAttr(posix_spawnattr_t *attr) {
+    posix_spawnattr_init(attr);
+    sigset_t none, all;
+    sigemptyset(&none);
+    sigfillset(&all);
+    posix_spawnattr_setsigmask(attr, &none);
+    posix_spawnattr_setsigdefault(attr, &all);
+    short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
+#ifdef POSIX_SPAWN_SETSID
+    flags |= POSIX_SPAWN_SETSID;
+#else
+    flags |= POSIX_SPAWN_SETPGROUP;
+    posix_spawnattr_setpgroup(attr, 0);
+#endif
+    posix_spawnattr_setflags(attr, flags);
+}
+
+} // namespace
+
+bool Process::start(const std::string &exe, const std::vector<std::string> &args) {
+    std::vector<char *>        argv = argvOf(exe, args);
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
     posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
     posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-    // A clean signal state: our threads' masks (SIGCHLD blocked) and ignored
-    // signals are not the child's business.
-    sigset_t none, all;
-    sigemptyset(&none);
-    sigfillset(&all);
-    posix_spawnattr_setsigmask(&attr, &none);
-    posix_spawnattr_setsigdefault(&attr, &all);
-    short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
-    // Its own session: the group can be signalled as a whole (see process.h).
-#ifdef POSIX_SPAWN_SETSID
-    flags |= POSIX_SPAWN_SETSID;
-#else
-    flags |= POSIX_SPAWN_SETPGROUP;
-    posix_spawnattr_setpgroup(&attr, 0);
-#endif
-    posix_spawnattr_setflags(&attr, flags);
+    initSpawnAttr(&attr);
     pid_t     pid = 0;
     const int rc  = posix_spawn(&pid, exe.c_str(), &fa, &attr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&fa);
@@ -484,12 +506,6 @@ void Process::kill(bool force) {
 // ── run() ───────────────────────────────────────────────────────────────────
 
 namespace {
-
-int64_t monoMs() {
-    timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return int64_t(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
-}
 
 bool makePipe(int fds[2]) {
     if (::pipe(fds) != 0)
@@ -612,27 +628,8 @@ RunResult run(const std::string &exe, const std::vector<std::string> &args, cons
 #endif
     }
     posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-    // As Process::start: a clean signal state, and a session of its own.
-    sigset_t none, all;
-    sigemptyset(&none);
-    sigfillset(&all);
-    posix_spawnattr_setsigmask(&attr, &none);
-    posix_spawnattr_setsigdefault(&attr, &all);
-    short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
-#ifdef POSIX_SPAWN_SETSID
-    flags |= POSIX_SPAWN_SETSID;
-#else
-    flags |= POSIX_SPAWN_SETPGROUP;
-    posix_spawnattr_setpgroup(&attr, 0);
-#endif
-    posix_spawnattr_setflags(&attr, flags);
-
-    std::vector<char *> argv;
-    argv.push_back(const_cast<char *>(exe.c_str()));
-    for (const auto &a : args)
-        argv.push_back(const_cast<char *>(a.c_str()));
-    argv.push_back(nullptr);
+    initSpawnAttr(&attr); // as Process::start
+    std::vector<char *>      argv = argvOf(exe, args);
     std::vector<std::string> envStore;
     std::vector<char *>      envp;
     if (!o.env.empty()) {
@@ -673,12 +670,12 @@ RunResult run(const std::string &exe, const std::vector<std::string> &args, cons
         pthread_sigmask(SIG_BLOCK, &pipeSet, &oldMask);
     }
 
-    const int64_t deadline = o.timeoutMs > 0 ? monoMs() + o.timeoutMs : 0;
-    auto          left    = [&]() -> int64_t { return deadline ? deadline - monoMs() : INT64_MAX; };
-    size_t        written = 0;
-    bool          outOpen = true, exited = false;
-    int           status = 0;
-    auto          reap   = [&](int opts) {
+    const int64_t deadline = o.timeoutMs > 0 ? monotonicMs() + o.timeoutMs : 0;
+    auto   left    = [&]() -> int64_t { return deadline ? deadline - monotonicMs() : INT64_MAX; };
+    size_t written = 0;
+    bool   outOpen = true, exited = false;
+    int    status = 0;
+    auto   reap   = [&](int opts) {
         const pid_t w = ::waitpid(pid, &status, opts);
         if (w == pid || (w < 0 && errno == ECHILD)) { // ECHILD: reaped elsewhere, status gone
             exited = true;
@@ -751,10 +748,7 @@ std::string executablePath() {
         }
         buf.resize(buf.size() * 2);
     }
-    const int len =
-        WideCharToMultiByte(CP_UTF8, 0, buf.data(), int(buf.size()), nullptr, 0, nullptr, nullptr);
-    std::string out(size_t(len), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, buf.data(), int(buf.size()), out.data(), len, nullptr, nullptr);
+    std::string out = narrow(buf);
     std::replace(out.begin(), out.end(), '\\', '/');
     return out;
 #elif defined(__APPLE__)
@@ -790,13 +784,9 @@ void relaunchNow() {
     p.start(exe, *g_relaunchArgs);
 #else
     std::fflush(nullptr);
-    std::vector<char *> argv;
-    argv.push_back(const_cast<char *>(exe.c_str()));
-    for (std::string &a : *g_relaunchArgs)
-        argv.push_back(a.data());
-    argv.push_back(nullptr);
+    std::vector<char *> argv = argvOf(exe, *g_relaunchArgs);
     // exec keeps the signal mask; the new image starts with a clean one.
-    sigset_t none;
+    sigset_t            none;
     sigemptyset(&none);
     pthread_sigmask(SIG_SETMASK, &none, nullptr);
     ::execv(exe.c_str(), argv.data());

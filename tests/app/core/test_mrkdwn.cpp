@@ -247,6 +247,14 @@ TEST("mrkdwn: decodeEntities decodes ampersand last") {
     CHECK_STR(mrkdwn::decodeEntities("a &lt;b&gt; &amp; c"), "a <b> & c");
 }
 
+TEST("mrkdwn: escapeEntities escapes Slack's three, and decodeEntities undoes it") {
+    CHECK_STR(mrkdwn::escapeEntities("a <b> & \"c\" 'd'"), "a &lt;b&gt; &amp; \"c\" 'd'");
+    CHECK_STR(mrkdwn::escapeEntities("&lt;"), "&amp;lt;");
+    CHECK_STR(mrkdwn::escapeEntities(""), "");
+    for (const char *s : {"<@U1> & <#C2|x>", "&amp;lt;", "plain", "1 < 2 > 0 &"})
+        CHECK_STR(mrkdwn::decodeEntities(mrkdwn::escapeEntities(s)), s);
+}
+
 TEST("mrkdwn: msga's &#NN; references are literal characters, never marks") {
     auto r = mrkdwn::parse("&#42;not bold&#42; &#95;x&#95; a&#58;b: &#126;s&#126; &#96;c&#96;");
     CHECK_STR(r.text, "*not bold* _x_ a:b: ~s~ `c`");

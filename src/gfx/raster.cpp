@@ -63,19 +63,6 @@ void flatten(const Path &path, float s, float ox, float oy, Flat *out) {
             add(map(0));
             p += 2;
             break;
-        case Path::Quad: {
-            const PointF p0 = cur, p1 = map(0), p2 = map(2);
-            const int    n = segsFor(len(p0.x - 2 * p1.x + p2.x, p0.y - 2 * p1.y + p2.y), 0.25f);
-            for (int i = 1; i <= n; ++i) {
-                const float t = float(i) / float(n), u = 1 - t;
-                add(
-                    {u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x,
-                     u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y}
-                );
-            }
-            p += 4;
-            break;
-        }
         case Path::Cubic: {
             const PointF p0 = cur, p1 = map(0), p2 = map(2), p3 = map(4);
             const float  dd = std::fmax(
@@ -330,28 +317,39 @@ bool dashFlat(const Flat &in, const float *dashes, int count, float offset, Flat
 // ── Painter entry points ────────────────────────────────────────────────────
 namespace {
 
+// The path's fill edges in the painter's scratch (an animation fills paths
+// every frame): flattened at phys = p * scale + (ox, oy).
+const std::vector<Seg> &fillEdges(Painter &p, const Path &path, float scale, float ox, float oy) {
+    PaintScratch::Data &sc = PainterImpl::scratch(p);
+    sc.flat.pts.clear();
+    sc.flat.polys.clear();
+    flatten(path, scale, ox, oy, &sc.flat);
+    sc.fill.clear();
+    fillSegs(sc.flat, &sc.fill);
+    return sc.fill;
+}
+
 void fillWith(Painter &p, const Path &path, FillRule rule, uint32_t pm, const Shader *sh) {
-    Flat         f;
     const Affine m = PainterImpl::physToLogical(p);
-    flatten(path, 1 / m.a, -m.e / m.a, -m.f / m.a, &f);
-    std::vector<Seg> segs;
-    fillSegs(f, &segs);
-    PainterImpl::rasterize(p, segs, pm, rule, sh);
+    PainterImpl::rasterize(p, fillEdges(p, path, 1 / m.a, -m.e / m.a, -m.f / m.a), pm, rule, sh);
 }
 
 void strokeWith(Painter &p, const Path &path, const Stroke &st, uint32_t pm, const Shader *sh) {
-    const Affine m = PainterImpl::physToLogical(p);
-    const float  s = 1 / m.a;
-    Flat         f, dashed;
+    const Affine        m  = PainterImpl::physToLogical(p);
+    const float         s  = 1 / m.a;
+    PaintScratch::Data &sc = PainterImpl::scratch(p);
+    Flat               &f  = sc.flat;
+    f.pts.clear();
+    f.polys.clear();
     flatten(path, s, -m.e * s, -m.f * s, &f);
     float d[64];
     int   nd = st.dashes ? std::min(st.dashCount, 64) : 0;
     for (int i = 0; i < nd; ++i)
         d[i] = st.dashes[i] * s;
-    const Flat      &use = nd && dashFlat(f, d, nd, st.dashOffset * s, &dashed) ? dashed : f;
-    std::vector<Seg> segs;
-    strokeSegs(use, {st.width * 0.5f * s, st.cap, st.join, st.miterLimit}, &segs);
-    PainterImpl::rasterize(p, segs, pm, FillRule::NonZero, sh);
+    const Flat &use = nd && dashFlat(f, d, nd, st.dashOffset * s, &sc.dashed) ? sc.dashed : f;
+    sc.fill.clear();
+    strokeSegs(use, {st.width * 0.5f * s, st.cap, st.join, st.miterLimit}, &sc.fill);
+    PainterImpl::rasterize(p, sc.fill, pm, FillRule::NonZero, sh);
 }
 
 } // namespace
@@ -361,11 +359,7 @@ void fillMask(const Path &path, FillRule rule, uint8_t *mask, int x, int y, int 
         return;
     Painter p({nullptr, w, h, w}, 1); // only its clip and scratch rows are used
     PainterImpl::placeTarget(p, x, y);
-    Flat f;
-    flatten(path, 1, 0, 0, &f);
-    std::vector<Seg> segs;
-    fillSegs(f, &segs);
-    PainterImpl::rasterize(p, segs, 0xffffffffu, rule, nullptr, mask);
+    PainterImpl::rasterize(p, fillEdges(p, path, 1, 0, 0), 0xffffffffu, rule, nullptr, mask);
 }
 
 void Painter::fillPath(const Path &path, Color c) {

@@ -17,7 +17,6 @@ add_library(msga_gfx STATIC
     icons.cpp
     icons_generated.cpp
     svg.cpp
-    svg_os.cpp
 )
 # renderSvg() is gfx's own renderer on every OS (decided 2026-09-30): the
 # Direct2D/NSImage paths were measured and dropped — same pixels everywhere,

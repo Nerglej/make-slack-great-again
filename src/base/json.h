@@ -94,8 +94,7 @@ public:
         return parse(std::string(text), error);
     }
 
-    Value  root() const { return _nodes.empty() ? Value() : Value(this, 0); }
-    size_t nodeCount() const { return _nodes.size(); }
+    Value root() const { return _nodes.empty() ? Value() : Value(this, 0); }
 
     // Nesting deeper than this is rejected (bounded recursion, no stack
     // overflow on hostile input).

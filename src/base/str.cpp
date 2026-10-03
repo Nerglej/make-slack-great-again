@@ -34,11 +34,27 @@ std::string_view trim(std::string_view s) {
     return s;
 }
 
+std::string_view trimSpace(std::string_view s) {
+    size_t b = 0, e = s.size();
+    while (b < e) {
+        size_t i = b;
+        if (!utf8::isSpace(utf8::decode(s, i)))
+            break;
+        b = i;
+    }
+    while (e > b) {
+        size_t p = utf8::prevBoundary(s, e), i = p;
+        if (!utf8::isSpace(utf8::decode(s, i)))
+            break;
+        e = p;
+    }
+    return s.substr(b, e - b);
+}
+
 std::string asciiLower(std::string_view s) {
     std::string out(s);
     for (auto &c : out)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c + 32);
+        c = asciiLower(c);
     return out;
 }
 
@@ -71,15 +87,36 @@ std::string simplified(std::string_view s) {
 bool iequals(std::string_view a, std::string_view b) {
     if (a.size() != b.size())
         return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        char x = a[i], y = b[i];
-        if (x >= 'A' && x <= 'Z')
-            x = char(x + 32);
-        if (y >= 'A' && y <= 'Z')
-            y = char(y + 32);
-        if (x != y)
+    for (size_t i = 0; i < a.size(); ++i)
+        if (asciiLower(a[i]) != asciiLower(b[i]))
             return false;
-    }
+    return true;
+}
+
+int hexDigit(char c) {
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    c = asciiLower(c);
+    return c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+
+std::vector<std::string_view> split(std::string_view s, char sep) {
+    std::vector<std::string_view> out;
+    Splitter                      parts(s, sep);
+    for (std::string_view p; parts.next(&p);)
+        out.push_back(p);
+    return out;
+}
+
+bool Splitter::next(std::string_view *part) {
+    if (_done)
+        return false;
+    const size_t at = _rest.find(_sep);
+    *part           = _rest.substr(0, at);
+    if (at == std::string_view::npos)
+        _done = true;
+    else
+        _rest.remove_prefix(at + 1);
     return true;
 }
 
@@ -87,8 +124,9 @@ std::string decodeEntities(std::string_view s, bool nbspAsSpace) {
     std::string out;
     out.reserve(s.size());
     for (size_t i = 0; i < s.size(); ++i) {
-        const size_t semi = s[i] == '&' ? s.find(';', i) : std::string_view::npos;
-        if (semi == std::string_view::npos || semi - i > 10) {
+        // The ';' is looked for nearby only: a stray '&' never scans the rest.
+        const size_t semi = s[i] == '&' ? s.substr(0, i + 11).find(';', i) : std::string_view::npos;
+        if (semi == std::string_view::npos) {
             out += s[i];
             continue;
         }
@@ -97,11 +135,9 @@ std::string decodeEntities(std::string_view s, bool nbspAsSpace) {
         if (!name.empty() && name[0] == '#') {
             const bool hex = name.size() > 1 && (name[1] | 0x20) == 'x';
             for (size_t k = hex ? 2 : 1; k < name.size(); ++k) {
-                const char c = name[k];
-                const int  d = c >= '0' && c <= '9' ? c - '0'
-                               : hex && (c | 0x20) >= 'a' && (c | 0x20) <= 'f'
-                                   ? (c | 0x20) - 'a' + 10
-                                   : -1;
+                const int d = hex                                ? hexDigit(name[k])
+                              : name[k] >= '0' && name[k] <= '9' ? name[k] - '0'
+                                                                 : -1;
                 if (d < 0)
                     break;
                 // Saturate: anything past U+10FFFF encodes as U+FFFD anyway.
@@ -125,6 +161,69 @@ std::string decodeEntities(std::string_view s, bool nbspAsSpace) {
         }
         utf8::append(out, nbspAsSpace && cp == 0xA0 ? ' ' : cp);
         i = semi;
+    }
+    return out;
+}
+
+void appendEscapedHtml(std::string *out, std::string_view s, bool quotes) {
+    for (const char c : s) {
+        switch (c) {
+        case '&':
+            *out += "&amp;";
+            break;
+        case '<':
+            *out += "&lt;";
+            break;
+        case '>':
+            *out += "&gt;";
+            break;
+        case '"':
+            *out += quotes ? "&quot;" : "\"";
+            break;
+        default:
+            *out += c;
+        }
+    }
+}
+
+std::string escapeHtml(std::string_view s, bool quotes) {
+    std::string out;
+    out.reserve(s.size());
+    appendEscapedHtml(&out, s, quotes);
+    return out;
+}
+
+std::string percentEncode(std::string_view s, std::string_view keep) {
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string       out;
+    out.reserve(s.size());
+    for (const char ch : s) {
+        const auto c = uint8_t(ch);
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '.' || c == '_' || c == '~' ||
+            keep.find(ch) != std::string_view::npos) {
+            out += ch;
+        } else {
+            out += '%';
+            out += kHex[c >> 4];
+            out += kHex[c & 15];
+        }
+    }
+    return out;
+}
+
+std::string percentDecode(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        int hi = -1, lo = -1;
+        if (s[i] == '%' && i + 2 < s.size() && (hi = hexDigit(s[i + 1])) >= 0 &&
+            (lo = hexDigit(s[i + 2])) >= 0) {
+            out += char(hi << 4 | lo);
+            i += 2;
+        } else {
+            out += s[i];
+        }
     }
     return out;
 }

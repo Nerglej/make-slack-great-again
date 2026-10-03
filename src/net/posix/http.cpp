@@ -4,6 +4,7 @@
 #include "net/posix/posix.h"
 #include "net/transport.h"
 
+#include <cstring>
 #include <mutex>
 
 namespace net::detail {
@@ -80,11 +81,12 @@ void putIdle(const std::string &key, std::unique_ptr<Stream> s) {
 // ── Reading ─────────────────────────────────────────────────────────────────
 
 // Appends what the stream has (blocking) to *buf. > 0, 0 at the end, < 0.
+// Read on the stack, so *buf grows by what came, not by a zero-filled chunk.
 long fill(Stream &s, std::string *buf, const Waiter &w, std::string *error) {
-    const size_t old = buf->size();
-    buf->resize(old + kReadChunk);
-    const long r = s.read(&(*buf)[old], kReadChunk, w, error);
-    buf->resize(old + size_t(r > 0 ? r : 0));
+    char       chunk[kReadChunk];
+    const long r = s.read(chunk, sizeof chunk, w, error);
+    if (r > 0)
+        buf->append(chunk, size_t(r));
     return r;
 }
 
@@ -116,9 +118,9 @@ struct Body {
     const Progress *progress = nullptr;
     int64_t         total    = 0;
 
-    void report(const std::string &out) const {
+    void report(size_t got) const {
         if (progress && *progress)
-            (*progress)(int64_t(out.size()), total);
+            (*progress)(int64_t(got), total);
     }
     bool more() {
         if (pos > 0) {
@@ -146,6 +148,29 @@ struct Body {
                 return false;
         }
     }
+    // A Content-Length body into *out (empty): what is buffered, then read
+    // straight into its place, with no staging copy.
+    bool exact(size_t n, std::string *out) {
+        const size_t have = std::min(n, buf->size() - pos);
+        out->resize(n);
+        std::memcpy(out->data(), buf->data() + pos, have);
+        pos += have;
+        size_t got = have;
+        if (got)
+            report(got);
+        while (got < n) {
+            const long r = s.read(&(*out)[got], n - got, w, error);
+            if (r <= 0) {
+                if (r == 0)
+                    *error = "protocol: truncated body";
+                out->resize(got);
+                return false;
+            }
+            got += size_t(r);
+            report(got);
+        }
+        return true;
+    }
     bool take(size_t n, std::string *out) {
         while (n > 0) {
             if (pos == buf->size() && !more())
@@ -154,7 +179,7 @@ struct Body {
             out->append(*buf, pos, k);
             pos += k;
             n -= k;
-            report(*out);
+            report(out->size());
         }
         return true;
     }
@@ -165,10 +190,7 @@ struct Body {
                 return false;
             size_t size = 0, digits = 0;
             for (char c : l) {
-                const int v = c >= '0' && c <= '9'   ? c - '0'
-                              : c >= 'a' && c <= 'f' ? c - 'a' + 10
-                              : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                                     : -1;
+                const int v = str::hexDigit(c);
                 if (v < 0)
                     break; // ";ext" or spaces
                 size = size * 16 + size_t(v);
@@ -273,8 +295,7 @@ Outcome exchange(
             *error = "protocol: body too large";
             return Outcome::Failed;
         }
-        resp.body.reserve(size_t(n));
-        if (!body.take(size_t(n), &resp.body))
+        if (!body.exact(size_t(n), &resp.body))
             return Outcome::Failed;
     } else {
         // Neither: the body runs until the server closes.
@@ -282,7 +303,7 @@ Outcome exchange(
         for (;;) {
             const long r = fill(s, &resp.body, w, error);
             if (r > 0)
-                body.report(resp.body);
+                body.report(resp.body.size());
             if (r == 0)
                 return Outcome::Done;
             if (r < 0)

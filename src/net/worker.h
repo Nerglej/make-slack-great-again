@@ -17,7 +17,6 @@ public:
 
     bool start(std::function<void()> fn, size_t stackBytes = 256 * 1024);
     void join();
-    bool running() const { return _handle != nullptr; }
 
 private:
     void *_handle = nullptr; // pthread_t* / HANDLE

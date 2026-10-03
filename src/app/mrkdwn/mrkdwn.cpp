@@ -724,6 +724,10 @@ std::string percentDecode(std::string_view s) {
 
 } // namespace
 
+std::string escapeEntities(std::string_view s) {
+    return str::escapeHtml(s);
+}
+
 std::string decodeEntities(std::string_view s) {
     // Slack escapes exactly these three. One left-to-right pass is equivalent
     // to replacing &lt;, then &gt;, then &amp;: "&amp;lt;"

@@ -65,6 +65,9 @@ Rich        resolveTokens(std::string_view src);
 // and msga's "&#42;"-style references (printable ASCII: a mark character
 // meant literally, as a backend's words of its own escape it) to theirs.
 std::string decodeEntities(std::string_view s);
+// The other way: & < > → &amp; &lt; &gt;, the three Slack escapes (text sent
+// as mrkdwn, a plain_text object's text). decodeEntities undoes it.
+std::string escapeEntities(std::string_view s);
 
 // Slack renders a single quote level; deeper '>' stays literal text. It also
 // keeps pathological input ("> > > > …") from building deep layouts.

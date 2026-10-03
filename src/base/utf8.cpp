@@ -150,14 +150,16 @@ size_t prevBoundary(std::string_view s, size_t i) {
 size_t truncateAt(std::string_view s, size_t maxBytes) {
     if (maxBytes >= s.size())
         return s.size();
-    size_t i = 0;
-    while (i < s.size()) {
-        const size_t next = nextBoundary(s, i);
-        if (next > maxBytes)
-            break;
-        i = next;
-    }
-    return i;
+    // Only a sequence that starts up to three bytes back can span maxBytes;
+    // a byte that isn't a continuation byte always starts one.
+    size_t lead = maxBytes;
+    for (int k = 0; k < 3 && lead > 0 && (uint8_t(s[lead]) & 0xC0) == 0x80; ++k)
+        --lead;
+    if ((uint8_t(s[lead]) & 0xC0) == 0x80)
+        return maxBytes; // a stray continuation byte: a sequence of its own
+    size_t end = lead;
+    decode(s, end);
+    return end > maxBytes ? lead : maxBytes;
 }
 
 bool isSpace(uint32_t cp) {
@@ -245,9 +247,12 @@ std::string foldCase(std::string_view s) {
 }
 
 bool containsFolded(std::string_view haystack, std::string_view needle) {
-    if (needle.empty())
+    return needle.empty() || containsFoldedNeedle(haystack, foldCase(needle));
+}
+
+bool containsFoldedNeedle(std::string_view haystack, std::string_view n) {
+    if (n.empty())
         return true;
-    const std::string n = foldCase(needle);
     for (size_t start = 0; start < haystack.size(); start = nextBoundary(haystack, start)) {
         size_t h = start, k = 0;
         bool   match = true;

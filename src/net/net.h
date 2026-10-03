@@ -19,6 +19,8 @@
 // and only the last hop carries the token).
 #pragma once
 
+#include "base/str.h"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -144,9 +146,10 @@ struct Url {
     std::string str() const; // "scheme://host[:port]target"
 };
 
-// RFC 3986 unreserved characters pass, everything else becomes %XX.
-std::string percentEncode(std::string_view s);
-std::string percentDecode(std::string_view s); // '+' is left alone
+// RFC 3986 unreserved characters pass, everything else becomes %XX; and
+// back ('+' is left alone). base/str.h's, under the names net callers know.
+using str::percentDecode;
+using str::percentEncode;
 // application/x-www-form-urlencoded: "a=1&b=x%20y".
 std::string formEncode(std::initializer_list<std::pair<std::string_view, std::string_view>> kv);
 // The value of `name` in a query string or form body ("a=1&b=2"), decoded

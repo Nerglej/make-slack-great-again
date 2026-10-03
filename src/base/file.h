@@ -31,10 +31,29 @@ int64_t size(std::string_view path); // -1 when missing
 // mkdir -p. True if the directory exists afterwards.
 bool    makeDirs(std::string_view path);
 bool    remove(std::string_view path); // a file or an empty directory
+// rm -r: a file, or a directory with everything in it. Links (and Windows
+// junctions) are removed as themselves, never followed. True when nothing
+// is left at `path` (also when nothing was there).
+bool    removeTree(std::string_view path);
+// The bytes of the regular files under `path` (a file: its size), links
+// not followed; 0 when there is nothing.
+int64_t treeBytes(std::string_view path);
 // Copies a regular file's bytes to `to` (atomically, as writeAtomic).
 bool    copy(std::string_view from, std::string_view to);
 // Sets the modification time to now (LRU disk caches stamp "last used").
 bool    touch(std::string_view path);
+
+// What the file system says about a path (links followed).
+struct Stat {
+    int64_t size        = 0; // bytes; 0 for a directory
+    int64_t mtimeMicros = 0; // last modification, unix microseconds
+    // Creation, where the file system keeps it (Windows, macOS, Linux statx);
+    // else mtimeMicros.
+    int64_t birthMicros = 0;
+    bool    isDir       = false;
+};
+// False (*out untouched) when the path is missing or can't be looked at.
+bool stat(std::string_view path, Stat *out);
 
 // One directory entry ("." and ".." are never listed).
 struct DirEntry {

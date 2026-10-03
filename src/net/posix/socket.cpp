@@ -50,12 +50,6 @@ void Cancel::set() {
     }
 }
 
-int64_t nowMs() {
-    timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return int64_t(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
-}
-
 Wait waitFd(int fd, short events, const Waiter &w, bool returnOnWake) {
     for (;;) {
         if (w.cancel && w.cancel->load(std::memory_order_relaxed))
@@ -451,14 +445,15 @@ bool Stream::pending() const {
 
 long Stream::read(char *buf, size_t n, const Waiter &w, std::string *error) {
     for (;;) {
-        if (!pending()) {
-            // Poll first even when data may be there: the cancel flag and
-            // the deadline are checked on every call.
-            const Wait r = waitFd(_fd, POLLIN, w);
-            if (r != Wait::Ready) {
-                *error = waitError(r);
-                return -1;
-            }
+        // The cancel flag and the deadline are checked on every call, also
+        // when data is waiting; a poll only when a read would block.
+        if (w.cancel && w.cancel->load(std::memory_order_relaxed)) {
+            *error = waitError(Wait::Cancelled);
+            return -1;
+        }
+        if (w.deadline && nowMs() >= w.deadline) {
+            *error = waitError(Wait::Timeout);
+            return -1;
         }
         const long got = tryRead(buf, n);
         if (got >= 0)
@@ -467,12 +462,11 @@ long Stream::read(char *buf, size_t n, const Waiter &w, std::string *error) {
             *error = _error;
             return -1;
         }
-        if (_want == POLLOUT) { // TLS wants to write first (rare)
-            const Wait r = waitFd(_fd, POLLOUT, w);
-            if (r != Wait::Ready) {
-                *error = waitError(r);
-                return -1;
-            }
+        // POLLOUT when TLS wants to write first (rare).
+        const Wait r = waitFd(_fd, _want == POLLOUT ? POLLOUT : POLLIN, w);
+        if (r != Wait::Ready) {
+            *error = waitError(r);
+            return -1;
         }
     }
 }

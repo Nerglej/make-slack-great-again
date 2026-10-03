@@ -11,6 +11,7 @@ add_library(msga_base STATIC
     mime.cpp
     crypto.cpp
     process.cpp
+    observers.cpp
     old_settings.cpp
 )
 # The keychain (secret.h): macOS has one; elsewhere the settings store of
@@ -20,11 +21,11 @@ if(APPLE)
     # Objective-C++ only by file type (it uses the C API); OBJCXX sources do
     # not get msga_flags' C++-only -fno-exceptions/-fno-rtti, hence repeated.
     enable_language(OBJCXX)
-    target_sources(msga_base PRIVATE secret_mac.mm old_settings_mac.mm)
+    target_sources(msga_base PRIVATE secret_mac.mm old_settings_mac.mm cfstr.cpp)
     set_source_files_properties(secret_mac.mm old_settings_mac.mm PROPERTIES COMPILE_OPTIONS "-fno-exceptions;-fno-rtti")
     target_link_libraries(msga_base PUBLIC "-framework Security" "-framework CoreFoundation")
 elseif(WIN32)
-    target_sources(msga_base PRIVATE secret_settings.cpp old_settings_win.cpp)
+    target_sources(msga_base PRIVATE secret_settings.cpp old_settings_win.cpp winstr.cpp)
 else()
     target_sources(msga_base PRIVATE secret_settings.cpp)
 endif()

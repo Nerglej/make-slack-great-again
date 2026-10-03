@@ -10,12 +10,14 @@
 #include <cstring>
 
 #if defined(_WIN32)
+#include "base/winstr.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 #elif defined(__APPLE__)
-#include <CoreFoundation/CoreFoundation.h>
+#include "base/cfstr.h"
 #endif
 
 namespace base {
@@ -50,35 +52,14 @@ std::string qtPattern(std::string_view p) {
 
 #if defined(_WIN32)
 
-std::string utf8(const wchar_t *w) {
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    if (n <= 1)
-        return {};
-    std::string s(size_t(n - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
-    return s;
-}
-
 // The current user's value, their overrides included.
 std::string info(LCTYPE type) {
     wchar_t buf[128];
-    return GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, type, buf, 128) > 0 ? utf8(buf)
+    return GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, type, buf, 128) > 0 ? narrow(buf)
                                                                          : std::string();
 }
 
 #elif defined(__APPLE__)
-
-std::string utf8(CFStringRef s) {
-    if (!s)
-        return {};
-    const CFIndex len = CFStringGetLength(s);
-    const CFIndex max = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
-    std::string   out(size_t(max), '\0');
-    if (!CFStringGetCString(s, out.data(), max, kCFStringEncodingUTF8))
-        return {};
-    out.resize(std::strlen(out.c_str()));
-    return out;
-}
 
 // `count` strings of a formatter's array property into `out`.
 bool symbols(CFDateFormatterRef f, CFStringRef key, std::string *out, CFIndex count) {
@@ -87,14 +68,14 @@ bool symbols(CFDateFormatterRef f, CFStringRef key, std::string *out, CFIndex co
         return false;
     const bool ok = CFArrayGetCount(arr) == count;
     for (CFIndex i = 0; ok && i < count; ++i)
-        out[i] = utf8(static_cast<CFStringRef>(CFArrayGetValueAtIndex(arr, i)));
+        out[i] = fromCFString(static_cast<CFStringRef>(CFArrayGetValueAtIndex(arr, i)));
     CFRelease(arr);
     return ok;
 }
 
 std::string symbol(CFDateFormatterRef f, CFStringRef key) {
     auto       *s   = static_cast<CFStringRef>(CFDateFormatterCopyProperty(f, key));
-    std::string out = utf8(s);
+    std::string out = fromCFString(s);
     if (s)
         CFRelease(s);
     return out;
@@ -118,10 +99,10 @@ std::string osLocale() {
 #if defined(_WIN32)
     wchar_t name[LOCALE_NAME_MAX_LENGTH];
     if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0)
-        tag = utf8(name);
+        tag = narrow(name);
 #elif defined(__APPLE__)
     if (CFLocaleRef loc = CFLocaleCopyCurrent()) {
-        tag = utf8(CFLocaleGetIdentifier(loc)); // "sv_SE", "en_US@rg=sezzzz"
+        tag = fromCFString(CFLocaleGetIdentifier(loc)); // "sv_SE", "en_US@rg=sezzzz"
         CFRelease(loc);
     }
 #else
@@ -181,7 +162,7 @@ bool osDateNames(const std::string &tag, OsDateNames &out) {
     out.am  = symbol(f, kCFDateFormatterAMSymbol);
     out.pm  = symbol(f, kCFDateFormatterPMSymbol);
     if (CFStringRef fmt = CFDateFormatterGetFormat(f))
-        out.shortDate = qtPattern(utf8(fmt));
+        out.shortDate = qtPattern(fromCFString(fmt));
     CFRelease(f);
     if (CFCalendarRef cal = CFCalendarCopyCurrent()) { // 1 = Sunday
         out.firstDay = int(CFCalendarGetFirstWeekday(cal) - 1) % 7;

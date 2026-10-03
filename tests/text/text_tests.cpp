@@ -14,6 +14,7 @@
 #include <cstring>
 #include <iterator>
 #include <string>
+#include <vector>
 
 using namespace text;
 using text::fonts::FontKey;
@@ -755,6 +756,46 @@ void measureCache() {
     CHECK(measure(txt, bold, 1.25f) != w1);
 }
 
+// Long lines: stepping back (prevGrapheme) and word starts land where
+// stepping forward does, wrapped or not, through clusters of every kind and
+// right-to-left runs.
+void caretLongLine() {
+    const std::string flag   = "\xF0\x9F\x87\xB8\xF0\x9F\x87\xAA";
+    const std::string eacute = "e\xCC\x81";
+    const std::string zwj    = "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9";
+    const std::string hebrew = "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D";
+    std::string       s;
+    for (int i = 0; i < 150; ++i)
+        s += "word " + flag + eacute + " " + hebrew + " " + zwj + "x, ";
+    for (float maxW : {1e9f, 180.f}) {
+        auto                  l = lay(s, maxW);
+        std::vector<uint32_t> fwd{0};
+        for (uint32_t off = 0; off < s.size();) {
+            const uint32_t next = l->moveCaret(off, 1, 0);
+            if (next <= off)
+                break;
+            fwd.push_back(off = next);
+        }
+        CHECK(fwd.back() == s.size());
+        std::vector<uint32_t> back{uint32_t(s.size())};
+        for (uint32_t off = uint32_t(s.size()); off > 0;) {
+            const uint32_t prev = l->moveCaret(off, -1, 0);
+            if (prev >= off)
+                break;
+            back.push_back(off = prev);
+        }
+        CHECK(std::vector<uint32_t>(back.rbegin(), back.rend()) == fwd);
+        // A caret inside a cluster steps back to the cluster's start.
+        const uint32_t inFlag = uint32_t(s.find(flag) + 4);
+        CHECK(l->moveCaret(inFlag, -1, 0) == s.find(flag));
+    }
+    // One long word: its start is found from its end.
+    const std::string word(4000, 'a');
+    auto              w = lay("x " + word);
+    CHECK(w->wordStart(uint32_t(2 + word.size())) == 2);
+    CHECK(w->wordStart(1000) == 2);
+}
+
 struct Case {
     const char *name;
     void (*fn)();
@@ -780,6 +821,7 @@ constexpr Case kCases[] = {
     {"recolor", recolor},
     {"build_move", buildMove},
     {"measure_cache", measureCache},
+    {"caret_long_line", caretLongLine},
 };
 
 } // namespace

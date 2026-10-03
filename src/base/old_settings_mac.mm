@@ -6,6 +6,7 @@
 // never the .plist file, which cfprefsd may not have flushed.
 #include "base/old_settings.h"
 
+#include "base/cfstr.h"
 #include "base/process.h"
 #include "base/str.h"
 #include "base/utf8.h"
@@ -16,33 +17,9 @@ namespace oldsettings {
 
 namespace {
 
-CFStringRef cf(std::string_view s) {
-    return CFStringCreateWithBytes(
-        nullptr,
-        reinterpret_cast<const UInt8 *>(s.data()),
-        CFIndex(s.size()),
-        kCFStringEncodingUTF8,
-        false
-    );
-}
-
-std::string utf8Of(CFStringRef s) {
-    if (!s)
-        return {};
-    if (const char *p = CFStringGetCStringPtr(s, kCFStringEncodingUTF8))
-        return p;
-    const CFIndex max =
-        CFStringGetMaximumSizeForEncoding(CFStringGetLength(s), kCFStringEncodingUTF8) + 1;
-    std::string out(size_t(max), '\0');
-    if (!CFStringGetCString(s, out.data(), max, kCFStringEncodingUTF8))
-        return {};
-    out.resize(std::char_traits<char>::length(out.c_str()));
-    return out;
-}
-
 CFStringRef domain(std::string_view app) {
     const bool tests = base::testProcess();
-    return cf(str::concat({tests ? "com.msga-tests." : "com.msga.", app}));
+    return base::cfString(str::concat({tests ? "com.msga-tests." : "com.msga.", app}));
 }
 
 // rotateSlashesDotsAndMiddots, one way or the other.
@@ -66,7 +43,7 @@ Value valueOf(CFPropertyListRef v) {
         return out;
     const CFTypeID t = CFGetTypeID(v);
     if (t == CFStringGetTypeID())
-        return decodeString(utf8Of(static_cast<CFStringRef>(v)));
+        return decodeString(base::fromCFString(static_cast<CFStringRef>(v)));
     if (t == CFBooleanGetTypeID()) {
         out.kind = Value::Kind::Bool;
         out.n    = CFBooleanGetValue(static_cast<CFBooleanRef>(v)) ? 1 : 0;
@@ -95,7 +72,7 @@ Value valueOf(CFPropertyListRef v) {
 
 bool setValue(std::string_view key, CFPropertyListRef value, std::string_view app) {
     CFStringRef d = domain(app);
-    CFStringRef k = cf(rotate(key, true));
+    CFStringRef k = base::cfString(rotate(key, true));
     CFPreferencesSetValue(k, value, d, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     const bool ok = CFPreferencesSynchronize(d, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     CFRelease(k);
@@ -117,7 +94,7 @@ Map load(std::string_view app) {
             CFStringRef       k = static_cast<CFStringRef>(CFArrayGetValueAtIndex(keys, i));
             CFPropertyListRef v =
                 CFPreferencesCopyValue(k, d, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-            out.insert_or_assign(rotate(utf8Of(k), false), valueOf(v));
+            out.insert_or_assign(rotate(base::fromCFString(k), false), valueOf(v));
             if (v)
                 CFRelease(v);
         }
@@ -129,7 +106,7 @@ Map load(std::string_view app) {
 
 Value get(std::string_view key, std::string_view app) {
     CFStringRef       d = domain(app);
-    CFStringRef       k = cf(rotate(key, true));
+    CFStringRef       k = base::cfString(rotate(key, true));
     CFPropertyListRef v =
         CFPreferencesCopyValue(k, d, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     Value out = valueOf(v);
@@ -141,7 +118,7 @@ Value get(std::string_view key, std::string_view app) {
 }
 
 bool write(std::string_view key, std::string_view value, std::string_view app) {
-    CFStringRef v  = cf(encodeString(value));
+    CFStringRef v  = base::cfString(encodeString(value));
     const bool  ok = v && setValue(key, v, app);
     if (v)
         CFRelease(v);

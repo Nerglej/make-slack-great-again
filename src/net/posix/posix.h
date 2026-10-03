@@ -4,6 +4,7 @@
 #pragma once
 
 #include "base/str.h"
+#include "base/time.h"
 #include "net/net.h"
 #include "net/transport.h"
 
@@ -17,7 +18,9 @@
 
 namespace net::detail {
 
-int64_t nowMs(); // monotonic
+inline int64_t nowMs() { // monotonic
+    return base::monotonicMs();
+}
 
 // A process-wide object that is never destroyed (workers may outlive static
 // destructors), kept in static storage rather than on the heap so that what
@@ -65,7 +68,7 @@ public:
     bool open(const Url &url, const Waiter &w, std::string *error);
 
     static constexpr long Again = -1; // would block: wait for wantEvents()
-    static constexpr long Fail  = -2; // the stream is dead, see error()
+    static constexpr long Fail  = -2; // the stream is dead
     // > 0 bytes, 0 at the end of the stream, Again or Fail.
     long                  tryRead(char *buf, size_t n);
     long                  tryWrite(const char *buf, size_t n);
@@ -73,7 +76,6 @@ public:
     // Decrypted bytes are buffered inside TLS: read them before polling.
     bool                  pending() const;
     int                   fd() const { return _fd; }
-    std::string           error() const { return _error; }
 
     // Blocking forms. read: > 0, 0 at the end, < 0 with *error set
     // ("timeout", "cancelled", "connect: reset" …).

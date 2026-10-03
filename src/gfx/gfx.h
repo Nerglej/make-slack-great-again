@@ -28,6 +28,9 @@ constexpr Color rgba(uint32_t rgb, uint8_t a) {
     return (uint32_t(a) << 24) | (rgb & 0xffffff);
 }
 Color withAlpha(Color c, float opacity); // multiplies the alpha
+// "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa" (the '#' optional, either case;
+// a short form doubles each digit). False, *out untouched, for anything else.
+bool  parseHexColor(std::string_view s, Color *out);
 
 struct PointF {
     float x = 0, y = 0;
@@ -74,7 +77,6 @@ class Path {
 public:
     void moveTo(float x, float y);
     void lineTo(float x, float y);
-    void quadTo(float cx, float cy, float x, float y);
     void cubicTo(float c1x, float c1y, float c2x, float c2y, float x, float y);
     void close();
     // A full circle as four cubics (clockwise in y-down coordinates).
@@ -83,7 +85,7 @@ public:
     bool empty() const { return _cmds.empty(); }
 
     // Flattened representation the rasterizer consumes.
-    enum Cmd : uint8_t { Move, Line, Quad, Cubic, Close };
+    enum Cmd : uint8_t { Move, Line, Cubic, Close };
     const std::vector<uint8_t> &cmds() const { return _cmds; }
     const std::vector<float>   &pts() const { return _pts; }
 
@@ -163,8 +165,6 @@ public:
     Painter(BitmapView target, float scale, PaintScratch *scratch = nullptr);
 
     float scale() const { return _scale; }
-    int   physicalWidth() const { return _target.width; }
-    int   physicalHeight() const { return _target.height; }
 
     // State stack: transform (translation only) + clip + opacity.
     void  save();

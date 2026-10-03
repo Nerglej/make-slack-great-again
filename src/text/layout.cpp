@@ -29,11 +29,9 @@ namespace {
 std::atomic<size_t> gBuilds{0};
 std::atomic<size_t> gOwned{0};
 
-bool sameStyle(const Style &a, const Style &b) {
-    return a.size == b.size && a.weight == b.weight && a.italic == b.italic && a.mono == b.mono &&
-           a.underline == b.underline && a.strike == b.strike && a.color == b.color &&
-           a.background == b.background && a.linkId == b.linkId && a.inlineBoxId == b.inlineBoxId &&
-           a.boxWidth == b.boxWidth && a.boxHeight == b.boxHeight;
+// Same primary font at the same size.
+bool sameFont(const Style &a, const Style &b) {
+    return a.size == b.size && a.weight == b.weight && a.italic == b.italic && a.mono == b.mono;
 }
 
 enum Kind : uint8_t { KText, KBox, KNewline, KEllipsis };
@@ -174,7 +172,7 @@ public:
 private:
     void paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color *tint) const;
     void shapeRun(Run &r, const char *utf8, int len, int itemOff, int itemLen, uint32_t script);
-    void makeLine(uint32_t u0, uint32_t u1, bool ellipsis, bool soft, const LayoutOptions &o);
+    void makeLine(uint32_t u0, uint32_t u1, bool ellipsis, bool soft);
     int  lineOf(uint32_t off) const;
     template <class F>
     void     forEachInk(F &&f) const;
@@ -186,18 +184,21 @@ private:
     uint32_t spanEnd(int span) const;
     bool     sameRun(uint16_t a, uint16_t b) const;
 
-    std::string            _own;  // empty when the text is borrowed
-    std::string_view       _text; // _own, or the caller's bytes (buildBorrowed)
-    std::vector<Style>     _styles;
-    std::vector<uint32_t>  _spanStart; // byte start per span
-    std::vector<SpanInfo>  _spanInfo;
-    std::vector<G>         _glyphs;
-    std::vector<Run>       _runs;
-    std::vector<Piece>     _pieces;
-    std::vector<Line>      _lines;
-    std::vector<InlineBox> _boxes;
-    float                  _scale = 1, _width = 0, _height = 0, _maxW = 1e9f;
-    bool                   _truncated = false;
+    std::string                   _own;  // empty when the text is borrowed
+    std::string_view              _text; // _own, or the caller's bytes (buildBorrowed)
+    std::vector<Style>            _styles;
+    std::vector<uint32_t>         _spanStart; // byte start per span
+    std::vector<SpanInfo>         _spanInfo;
+    std::vector<G>                _glyphs;
+    std::vector<Run>              _runs;
+    std::vector<Piece>            _pieces;
+    std::vector<Line>             _lines;
+    std::vector<InlineBox>        _boxes;
+    // Grapheme starts, one bit per byte: made by the first prevGrapheme()
+    // (caret moves, double-click words), so stepping back is no rescan.
+    mutable std::vector<uint64_t> _graphemeStarts;
+    float                         _scale = 1, _width = 0, _height = 0, _maxW = 1e9f;
+    bool                          _truncated = false;
 };
 
 // Spans that differ only in colour, links or decoration shape as one run,
@@ -207,8 +208,7 @@ bool LayoutImpl::sameRun(uint16_t a, uint16_t b) const {
     if (a == b)
         return true;
     const Style &x = _styles[a], &y = _styles[b];
-    return x.size == y.size && x.weight == y.weight && x.italic == y.italic && x.mono == y.mono &&
-           !x.background && !y.background && !x.inlineBoxId && !y.inlineBoxId;
+    return sameFont(x, y) && !x.background && !y.background && !x.inlineBoxId && !y.inlineBoxId;
 }
 
 void LayoutImpl::shapeRun(
@@ -514,7 +514,7 @@ void LayoutImpl::build(
     size_t      u0   = 0;
     bool        done = units.empty();
     if (done)
-        makeLine(0, 0, false, false, o);
+        makeLine(0, 0, false, false);
     while (!done) {
         float  x         = 0;
         size_t lastBreak = 0, end = units.size();
@@ -541,17 +541,17 @@ void LayoutImpl::build(
             if (o.ellipsis)
                 while (cut < units.size() && !(cut > u0 && units[cut].brk == uni::Break::Mandatory))
                     ++cut;
-            makeLine(uint32_t(u0), uint32_t(cut), o.ellipsis, false, o);
+            makeLine(uint32_t(u0), uint32_t(cut), o.ellipsis, false);
             break;
         }
         const bool soft = more && units[end].brk != uni::Break::Mandatory;
-        makeLine(uint32_t(u0), uint32_t(end), false, soft, o);
+        makeLine(uint32_t(u0), uint32_t(end), false, soft);
         u0   = end;
         done = !more;
         // A trailing newline opens one more (empty) line, like an editor.
         if (done && !units.empty() && units.back().nl &&
             !(o.maxLines > 0 && int(_lines.size()) >= o.maxLines))
-            makeLine(uint32_t(units.size()), uint32_t(units.size()), false, false, o);
+            makeLine(uint32_t(units.size()), uint32_t(units.size()), false, false);
     }
 
     // Vertical placement and alignment.
@@ -590,9 +590,7 @@ void LayoutImpl::build(
 // reorder, metrics. With `ellipsis`, cuts the line so "…" fits after it.
 // `soft`: the line ends at a wrap, so its trailing spaces hang (they don't
 // count towards its width or alignment).
-void LayoutImpl::makeLine(
-    uint32_t u0, uint32_t u1, bool ellipsis, bool soft, const LayoutOptions &o
-) {
+void LayoutImpl::makeLine(uint32_t u0, uint32_t u1, bool ellipsis, bool soft) {
     Scratch &sc    = scratch();
     auto    &units = sc.units;
     Line     l{};
@@ -653,16 +651,23 @@ void LayoutImpl::makeLine(
             pc.end = units[u].end;
             ++u;
         }
-        pc.w  = w;
-        // Glyphs of this run whose clusters fall inside [start, end).
+        pc.w = w;
+
+        // Glyphs of this run whose clusters fall inside [start, end): one
+        // stretch, found by bisection — a run's clusters are monotonic in
+        // glyph order (ascending, descending when right-to-left).
+        const G   *g0 = _glyphs.data() + r.g0, *g1 = _glyphs.data() + r.g1;
+        const bool rtl    = r.level & 1;
+        const auto before = [&](uint32_t at) { // first glyph past the clusters before `at`
+            return std::partition_point(g0, g1, [&](const G &g) {
+                return rtl ? g.cluster >= at : g.cluster < at;
+            });
+        };
+        const G *a = before(rtl ? pc.end : pc.start), *b = before(rtl ? pc.start : pc.end);
         pc.g0 = pc.g1 = r.g0;
-        bool found    = false;
-        for (uint32_t g = r.g0; g < r.g1; ++g) {
-            const bool in = _glyphs[g].cluster >= pc.start && _glyphs[g].cluster < pc.end;
-            if (in && !found)
-                pc.g0 = g, found = true;
-            if (in)
-                pc.g1 = g + 1;
+        if (a < b) {
+            pc.g0 = uint32_t(a - _glyphs.data());
+            pc.g1 = uint32_t(b - _glyphs.data());
         }
         lp.push_back(pc);
     }
@@ -744,7 +749,6 @@ void LayoutImpl::makeLine(
     l.baseline = A; // made absolute once all lines are known
     l.asc      = tA;
     l.desc     = tD;
-    (void)o;
     _lines.push_back(l);
 }
 
@@ -987,10 +991,20 @@ uint32_t LayoutImpl::spanEnd(int span) const {
 }
 
 int LayoutImpl::lineOf(uint32_t off) const {
-    int i = 0;
-    while (i + 1 < int(_lines.size()) && off >= _lines[i + 1].start)
-        ++i;
-    return i;
+    if (_lines.size() < 2)
+        return 0;
+    const auto it =
+        std::upper_bound(_lines.begin() + 1, _lines.end(), off, [](uint32_t o, const Line &l) {
+            return o < l.start;
+        });
+    return int(it - _lines.begin()) - 1;
+}
+
+// segments() output for hitTest/caretRect/selectionRects: they run per
+// mouse move, so the vector is reused (per thread, as measure's memo is).
+std::vector<Seg> &segScratch() {
+    static thread_local std::vector<Seg> segs;
+    return segs;
 }
 
 void LayoutImpl::segments(int li, std::vector<Seg> &out) const {
@@ -1055,7 +1069,7 @@ std::vector<gfx::RectF> LayoutImpl::selectionRects(uint32_t from, uint32_t to) c
         std::swap(from, to);
     if (from == to)
         return out;
-    std::vector<Seg> segs;
+    std::vector<Seg> &segs = segScratch();
     for (int li = 0; li < int(_lines.size()); ++li) {
         const Line &l = _lines[li];
         if (l.next <= from && li + 1 < int(_lines.size()))
@@ -1114,11 +1128,13 @@ HitResult LayoutImpl::hitTest(gfx::PointF pt) const {
     if (_lines.empty())
         return r;
     const float px = pt.x * _scale, py = pt.y * _scale;
-    int         li = 0;
-    while (li + 1 < int(_lines.size()) && py >= _lines[li].top + _lines[li].height)
-        ++li;
-    const Line      &l = _lines[li];
-    std::vector<Seg> segs;
+    // The first line whose bottom is below py, else the last.
+    const auto  below = std::partition_point(_lines.begin(), _lines.end() - 1, [&](const Line &l) {
+        return py >= l.top + l.height;
+    });
+    const int   li    = int(below - _lines.begin());
+    const Line &l     = _lines[li];
+    std::vector<Seg> &segs = segScratch();
     segments(li, segs);
     if (segs.empty()) {
         r.offset = l.start;
@@ -1165,7 +1181,7 @@ gfx::RectF LayoutImpl::caretRect(uint32_t off) const {
     float       x  = l.x;
     if (l.para & 1)
         x = l.x + l.w;
-    std::vector<Seg> segs;
+    std::vector<Seg> &segs = segScratch();
     segments(li, segs);
     const Seg *lastLogical = nullptr;
     bool       found       = false;
@@ -1185,15 +1201,8 @@ gfx::RectF LayoutImpl::caretRect(uint32_t off) const {
 }
 
 int LayoutImpl::boxSpanAt(uint32_t off) const {
-    for (size_t i = 0; i < _styles.size(); ++i) {
-        if (!_styles[i].inlineBoxId)
-            continue;
-        const uint32_t a = _spanStart[i];
-        const uint32_t b = i + 1 < _spanStart.size() ? _spanStart[i + 1] : uint32_t(_text.size());
-        if (off > a && off < b)
-            return int(i);
-    }
-    return -1;
+    const int i = spanAt(off);
+    return _styles[i].inlineBoxId && off > _spanStart[i] && off < spanEnd(i) ? i : -1;
 }
 
 uint32_t LayoutImpl::nextGrapheme(uint32_t off) const {
@@ -1218,15 +1227,15 @@ uint32_t LayoutImpl::nextGrapheme(uint32_t off) const {
 uint32_t LayoutImpl::prevGrapheme(uint32_t off) const {
     if (off == 0)
         return 0;
-    // Scan forward from a safe start (a line start is always a boundary).
-    uint32_t pos = _lines[lineOf(off - 1)].start;
-    if (pos >= off)
-        pos = 0;
-    uint32_t last = pos;
-    while (pos < off) {
-        last = pos;
-        pos  = nextGrapheme(pos);
+    if (_graphemeStarts.empty()) { // nextGrapheme's steps from the start, once
+        _graphemeStarts.assign(_text.size() / 64 + 1, 0);
+        for (uint32_t p = 0; p < _text.size(); p = nextGrapheme(p))
+            _graphemeStarts[p >> 6] |= uint64_t(1) << (p & 63);
     }
+    off           = std::min<uint32_t>(off, uint32_t(_text.size()));
+    uint32_t last = off - 1;
+    while (last > 0 && !(_graphemeStarts[last >> 6] >> (last & 63) & 1))
+        --last;
     if (int b = boxSpanAt(last); b >= 0)
         last = _spanStart[b];
     return last;
@@ -1298,8 +1307,7 @@ void AttributedText::append(std::string_view utf8, const Style &s) {
         return;
     const auto start = uint32_t(text.size());
     text.append(utf8);
-    if (!spans.empty() && spans.back().end == start && !s.inlineBoxId &&
-        sameStyle(spans.back().style, s))
+    if (!spans.empty() && spans.back().end == start && !s.inlineBoxId && spans.back().style == s)
         spans.back().end = uint32_t(text.size());
     else
         spans.push_back({start, uint32_t(text.size()), s});
@@ -1372,8 +1380,7 @@ float measure(std::string_view utf8, const Style &s, float scale) {
     static thread_local Slot memo[kSlots];
     const auto               same = [&](const Slot &m) {
         const Style &a = m.style;
-        return m.used && m.scale == scale && a.size == s.size && a.weight == s.weight &&
-               a.italic == s.italic && a.mono == s.mono && a.underline == s.underline &&
+        return m.used && m.scale == scale && sameFont(a, s) && a.underline == s.underline &&
                a.strike == s.strike && (a.background != 0) == (s.background != 0) &&
                a.inlineBoxId == s.inlineBoxId && a.boxWidth == s.boxWidth &&
                a.boxHeight == s.boxHeight && m.text == utf8;
@@ -1406,10 +1413,6 @@ float measure(std::string_view utf8, const Style &s, float scale) {
 Metrics metrics(const Style &s, float scale) {
     const auto &m = fonts::metrics(fonts::primary(s));
     return {m.ascent * s.size, m.descent * s.size, m.lineGap * s.size, m.capHeight * s.size};
-}
-
-void setGlyphCacheBudget(size_t bytes) {
-    cache::setBudget(bytes);
 }
 
 } // namespace text

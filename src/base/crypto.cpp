@@ -250,6 +250,7 @@ std::string base64url(std::string_view data) {
 
 bool base64Decode(std::string_view in, std::string *out) {
     out->clear();
+    out->reserve(in.size() / 4 * 3 + 3);
     uint32_t acc = 0;
     int      n   = 0;
     for (char c : in) {

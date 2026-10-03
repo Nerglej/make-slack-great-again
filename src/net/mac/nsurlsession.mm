@@ -19,6 +19,7 @@
 #import <Security/Security.h>
 
 #include "base/str.h"
+#include "base/time.h"
 #include "net/transport.h"
 
 #include <arpa/inet.h>
@@ -180,12 +181,8 @@ std::string reason(NSError *e) {
     return str::concat({why, ": ", utf8(e.domain), " ", str::number(int64_t(e.code))});
 }
 
-int64_t nowMs() {
-    return int64_t(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000);
-}
-
 int64_t deadlineAfter(int timeoutMs) {
-    return timeoutMs > 0 ? nowMs() + timeoutMs : INT64_MAX;
+    return timeoutMs > 0 ? base::monotonicMs() + timeoutMs : INT64_MAX;
 }
 
 enum class Wait { Done, Cancelled, TimedOut };
@@ -201,7 +198,7 @@ Wait waitFor(
     for (;;) {
         if (cancel.load())
             return Wait::Cancelled;
-        const int64_t left = deadline - nowMs();
+        const int64_t left = deadline - base::monotonicMs();
         if (left <= 0)
             return Wait::TimedOut;
         const int64_t         slice = tick && left > kSliceMs ? kSliceMs : left;
@@ -480,8 +477,19 @@ void perform(
             return;
         }
         r.HTTPMethod = ns(req.method);
-        if (!req.body.empty())
-            r.HTTPBody = [NSData dataWithBytes:req.body.data() length:req.body.size()];
+
+        // The body moves into the NSData instead of being copied (an upload
+        // can be tens of megabytes); it comes back once the server answered
+        // (a 307 sends it again). The NSData frees what is left of it.
+        std::string *held = nullptr;
+        if (!req.body.empty()) {
+            held       = new std::string(std::move(req.body));
+            r.HTTPBody = [[NSData alloc] initWithBytesNoCopy:held->data()
+                                                      length:held->size()
+                                                 deallocator:^(void *, NSUInteger) {
+                                                   delete held;
+                                                 }];
+        }
         __block NSData        *data     = nil;
         __block NSURLResponse *response = nil;
         __block NSError       *error    = nil;
@@ -508,6 +516,8 @@ void perform(
             };
         switch (waitFor(sem, deadline, cancel.flag(), tick)) {
         case Wait::Done:
+            if (held) // the finished task reads it no more
+                req.body = std::move(*held);
             break;
         case Wait::Cancelled:
             [task cancel];

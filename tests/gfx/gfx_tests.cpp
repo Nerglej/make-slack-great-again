@@ -353,9 +353,6 @@ void append(Path &dst, const Path &src) {
         case Path::Line:
             dst.lineTo(pt[0], pt[1]), pt += 2;
             break;
-        case Path::Quad:
-            dst.quadTo(pt[0], pt[1], pt[2], pt[3]), pt += 4;
-            break;
         case Path::Cubic:
             dst.cubicTo(pt[0], pt[1], pt[2], pt[3], pt[4], pt[5]), pt += 6;
             break;
@@ -409,8 +406,8 @@ void testPath() {
         Bitmap  d(20, 20);
         Painter r(d.view(), 1);
         Path    qd;
-        qd.moveTo(0, 20);
-        qd.quadTo(10, -20, 20, 20);
+        qd.moveTo(0, 20); // the quadratic through (10, -20), as its cubic
+        qd.cubicTo(20 / 3.f, -20 / 3.f, 40 / 3.f, -20 / 3.f, 20, 20);
         qd.close();
         r.fillPath(qd, kWhite);
         std::printf("  parabola area %.2f (expect %.2f)\n", alphaSum(d), 2 / 3.0 * 400);
@@ -1070,187 +1067,175 @@ struct Probe {
     int      x, y;
     uint32_t want; // straight 0xAARRGGBB
     int      tol;
-    bool     portable; // also expected from the OS renderers (D2D, NSImage)
 };
 
 void checkSvg(const char *name, std::initializer_list<Probe> probes, int size = 100) {
     const std::string svg = fixture(name);
-    for (int backend = 0; backend < 2; ++backend) {
-        Bitmap     b;
-        const bool ok =
-            backend ? renderSvg(svg, size, size, &b) : renderSvgOwn(svg, size, size, &b);
-        CHECK(ok);
-        if (!ok)
-            continue;
-        if (backend)
-            std::printf(
-                "  %-20s renderSvg used the %s renderer\n", name, g_svgBackend ? "OS" : "own"
+    Bitmap            b;
+    const bool        ok = renderSvg(svg, size, size, &b);
+    CHECK(ok);
+    if (!ok)
+        return;
+    CHECK(premulValid(b));
+    for (const Probe &pr : probes) {
+        if (!near(px(b, pr.x, pr.y), pr.want, pr.tol)) {
+            std::fprintf(
+                stderr,
+                "  %s at %d,%d: %08x, expected ~%08x\n",
+                name,
+                pr.x,
+                pr.y,
+                unpremul(px(b, pr.x, pr.y)),
+                pr.want
             );
-        CHECK(premulValid(b));
-        for (const Probe &pr : probes) {
-            if (backend && !pr.portable)
-                continue;
-            if (!near(px(b, pr.x, pr.y), pr.want, pr.tol)) {
-                std::fprintf(
-                    stderr,
-                    "  %s (%s) at %d,%d: %08x, expected ~%08x\n",
-                    name,
-                    backend ? "renderSvg" : "own",
-                    pr.x,
-                    pr.y,
-                    unpremul(px(b, pr.x, pr.y)),
-                    pr.want
-                );
-                ++g_fail;
-            }
+            ++g_fail;
         }
     }
 }
 
 void testSvg() {
+    // Hex colours (SVG, theme files, attachment bars): every length, either
+    // case, with or without '#'.
+    Color c = 0;
+    CHECK(parseHexColor("#1d1C1d", &c) && c == 0xff1d1c1du);
+    CHECK(parseHexColor("abc", &c) && c == 0xffaabbccu);
+    CHECK(parseHexColor("#abcd", &c) && c == 0xddaabbccu);
+    CHECK(parseHexColor("#11223380", &c) && c == 0x80112233u);
+    for (const char *bad : {"", "#", "#12", "#12345", "#1234567", "#123456789", "#12g", "red"}) {
+        c = 7;
+        CHECK(!parseHexColor(bad, &c) && c == 7);
+    }
     const uint32_t T = 0; // transparent
     checkSvg(
         "shapes.svg",
-        {{25, 25, 0xffff0000, 2, true},
-         {75, 25, 0xff00ff00, 2, true},
-         {56, 6, T, 8, true},
-         {25, 75, 0xff0000ff, 2, true},
-         {75, 75, 0xffffff00, 2, true},
-         {75, 92, 0xffff00ff, 8, true},
-         {10, 50, 0xff000000, 8, true},
-         {50, 25, 0xff00ffff, 2, true},
-         {2, 2, T, 2, true}}
+        {{25, 25, 0xffff0000, 2},
+         {75, 25, 0xff00ff00, 2},
+         {56, 6, T, 8},
+         {25, 75, 0xff0000ff, 2},
+         {75, 75, 0xffffff00, 2},
+         {75, 92, 0xffff00ff, 8},
+         {10, 50, 0xff000000, 8},
+         {50, 25, 0xff00ffff, 2},
+         {2, 2, T, 2}}
     );
     checkSvg(
         "path.svg",
-        {{15, 15, 0xffff0000, 2, true},
-         {45, 15, 0xff00ff00, 2, true},
-         {75, 15, 0xff0000ff, 2, true},
-         {15, 45, 0xffffff00, 2, true},
-         {45, 45, 0xffff00ff, 2, true},
-         {75, 45, 0xff00ffff, 2, true},
-         {7, 67, 0xff000000, 2, true},
-         {15, 75, T, 2, true},
-         {37, 67, 0xff808080, 2, true},
-         {45, 75, T, 2, true},
-         {80, 60, 0xff800000, 2, true},
-         {80, 80, 0xff800000, 2, true},
-         {66, 52, T, 2, true}}
+        {{15, 15, 0xffff0000, 2},
+         {45, 15, 0xff00ff00, 2},
+         {75, 15, 0xff0000ff, 2},
+         {15, 45, 0xffffff00, 2},
+         {45, 45, 0xffff00ff, 2},
+         {75, 45, 0xff00ffff, 2},
+         {7, 67, 0xff000000, 2},
+         {15, 75, T, 2},
+         {37, 67, 0xff808080, 2},
+         {45, 75, T, 2},
+         {80, 60, 0xff800000, 2},
+         {80, 80, 0xff800000, 2},
+         {66, 52, T, 2}}
     );
     checkSvg(
         "stroke.svg",
-        {{15, 10, T, 2, true},
-         {22, 10, 0xffff0000, 2, true},
-         {50, 10, 0xffff0000, 2, true},
-         {16, 30, 0xff00ff00, 40, true},
-         {13, 30, T, 2, true},
-         {16, 50, 0xff0000ff, 2, true},
-         {13, 50, T, 2, true},
-         {15, 70, 0xff000000, 2, true},
-         {25, 70, T, 2, true},
-         {35, 70, 0xff000000, 2, true},
-         {50, 78, 0xffff00ff, 2, true}}
+        {{15, 10, T, 2},
+         {22, 10, 0xffff0000, 2},
+         {50, 10, 0xffff0000, 2},
+         {16, 30, 0xff00ff00, 40},
+         {13, 30, T, 2},
+         {16, 50, 0xff0000ff, 2},
+         {13, 50, T, 2},
+         {15, 70, 0xff000000, 2},
+         {25, 70, T, 2},
+         {35, 70, 0xff000000, 2},
+         {50, 78, 0xffff00ff, 2}}
     );
     checkSvg(
         "transform.svg",
-        {{60, 10, 0xffff0000, 2, true},
-         {85, 5, 0xff00ff00, 2, true},
-         {25, 75, 0xff0000ff, 2, true},
-         {25, 63, 0xff0000ff, 2, true},
-         {14, 64, T, 2, true},
-         {70, 70, 0xffffff00, 2, true},
-         {10, 45, 0xffff00ff, 2, true},
-         {85, 15, 0xff00ffff, 2, true}}
+        {{60, 10, 0xffff0000, 2},
+         {85, 5, 0xff00ff00, 2},
+         {25, 75, 0xff0000ff, 2},
+         {25, 63, 0xff0000ff, 2},
+         {14, 64, T, 2},
+         {70, 70, 0xffffff00, 2},
+         {10, 45, 0xffff00ff, 2},
+         {85, 15, 0xff00ffff, 2}}
     );
-    // macOS CoreSVG interpolates gradients in another colour space (up to
-    // ~40 off mid-ramp), pads instead of reflecting and ignores paint
-    // fallbacks: only the coarse shape of the ramps is portable.
     checkSvg(
         "gradients.svg",
-        {{1, 10, 0xfffb0004, 8, false},
-         {1, 10, 0xffff0000, 48, true},
-         {98, 10, 0xff0400fb, 8, false},
-         {98, 10, 0xff0000ff, 56, true},
-         {50, 10, 0xff800080, 10, false},
-         {10, 26, 0xfff8000a, 10, false},
-         {10, 64, 0xff0a00f8, 10, false},
-         {50, 30, 0xff818181, 8, false},
-         {50, 30, 0xff818181, 24, true},
-         {65, 65, 0xffffffff, 12, true},
-         {65, 47, 0xff1aff1a, 24, false},
-         {25, 95, 0xffff8000, 12, false},
-         {50, 95, 0xffffff00, 12, true},
-         {75, 95, 0xffff8000, 12, false},
-         {35, 45, 0xffff00ff, 2, false}}
+        {{1, 10, 0xfffb0004, 8},
+         {1, 10, 0xffff0000, 48},
+         {98, 10, 0xff0400fb, 8},
+         {98, 10, 0xff0000ff, 56},
+         {50, 10, 0xff800080, 10},
+         {10, 26, 0xfff8000a, 10},
+         {10, 64, 0xff0a00f8, 10},
+         {50, 30, 0xff818181, 8},
+         {50, 30, 0xff818181, 24},
+         {65, 65, 0xffffffff, 12},
+         {65, 47, 0xff1aff1a, 24},
+         {25, 95, 0xffff8000, 12},
+         {50, 95, 0xffffff00, 12},
+         {75, 95, 0xffff8000, 12},
+         {35, 45, 0xffff00ff, 2}}
     );
     checkSvg(
         "opacity.svg",
-        {{20, 20, 0x80ff0000, 3, true},
-         {40, 40, 0x80ff0000, 3, true},
-         {60, 60, 0x80ff0000, 3, true},
-         {20, 85, 0x800000ff, 3, true},
-         {75, 85, 0x800000ff, 3, true},
-         {59, 85, 0x800000ff, 3, true}}
+        {{20, 20, 0x80ff0000, 3},
+         {40, 40, 0x80ff0000, 3},
+         {60, 60, 0x80ff0000, 3},
+         {20, 85, 0x800000ff, 3},
+         {75, 85, 0x800000ff, 3},
+         {59, 85, 0x800000ff, 3}}
     );
     checkSvg(
         "clip.svg",
-        {{50, 50, 0xffff0000, 2, true},
-         {50, 15, T, 2, true},
-         {50, 23, 0xffff0000, 2, true},
-         {2, 2, 0xff0000ff, 2, true},
-         {10, 10, T, 2, false}}
-    ); // CoreSVG ignores clip-rule
+        {{50, 50, 0xffff0000, 2},
+         {50, 15, T, 2},
+         {50, 23, 0xffff0000, 2},
+         {2, 2, 0xff0000ff, 2},
+         {10, 10, T, 2}}
+    );
     checkSvg(
         "use.svg",
-        {{20, 20, 0xffff0000, 2, true},
-         {70, 20, 0xff0000ff, 2, true},
-         {25, 75, 0xff00ff00, 2, true},
-         {90, 90, 0xff000000, 2, false},
-         {50, 50, T, 2, true}}
+        {{20, 20, 0xffff0000, 2},
+         {70, 20, 0xff0000ff, 2},
+         {25, 75, 0xff00ff00, 2},
+         {90, 90, 0xff000000, 2},
+         {50, 50, T, 2}}
     );
     checkSvg(
         "colors.svg",
-        {{10, 10, 0xffff0000, 2, true},
-         {30, 10, 0xff0000ff, 2, true},
-         {50, 10, 0xffffff00, 2, true},
-         {70, 10, 0xff000080, 2, true},
-         {90, 10, 0xff00ff00, 2, true},
-         {10, 30, 0xffff00ff, 2, false}, // CoreSVG: no !important
-         {30, 30, 0x80ff0000, 3, false},
-         {50, 30, 0x800000ff, 3, true},
-         {70, 30, 0x8800ff00, 3, false},
-         {90, 30, 0xffffa500, 2, true},
-         {10, 50, 0xff00ffff, 2, true},
-         {30, 50, 0xff00ffff, 2, true},
-         {50, 50, 0xffff0000, 2, true},
-         {70, 50, T, 2, true},
-         {90, 50, T, 2, false}, // CoreSVG ignores display="none"
-         {10, 70, T, 2, false}, // … and visibility="hidden"
-         {30, 70, 0xff000000, 2, true}}
+        {{10, 10, 0xffff0000, 2},
+         {30, 10, 0xff0000ff, 2},
+         {50, 10, 0xffffff00, 2},
+         {70, 10, 0xff000080, 2},
+         {90, 10, 0xff00ff00, 2},
+         {10, 30, 0xffff00ff, 2},
+         {30, 30, 0x80ff0000, 3},
+         {50, 30, 0x800000ff, 3},
+         {70, 30, 0x8800ff00, 3},
+         {90, 30, 0xffffa500, 2},
+         {10, 50, 0xff00ffff, 2},
+         {30, 50, 0xff00ffff, 2},
+         {50, 50, 0xffff0000, 2},
+         {70, 50, T, 2},
+         {90, 50, T, 2}, // display="none"
+         {10, 70, T, 2}, // visibility="hidden"
+         {30, 70, 0xff000000, 2}}
     );
     checkSvg(
         "aspect.svg",
-        {{25, 50, 0xffff0000, 2, true},
-         {75, 50, 0xff0000ff, 2, true},
-         {50, 10, T, 2, true},
-         {50, 90, T, 2, true}}
+        {{25, 50, 0xffff0000, 2}, {75, 50, 0xff0000ff, 2}, {50, 10, T, 2}, {50, 90, T, 2}}
     );
-    // What the OS renderers do with these differs (they have text, filters,
-    // masks, CSS); ours skips them and renders the rest.
+    // Text, filters, masks and CSS are skipped; the rest renders.
     checkSvg(
         "unsupported.svg",
-        {{20, 20, 0xff00ff00, 2, false},
-         {70, 20, 0xffff0000, 2, false},
-         {20, 70, 0xff0000ff, 2, false},
-         {70, 70, T, 2, false}}
+        {{20, 20, 0xff00ff00, 2}, {70, 20, 0xffff0000, 2}, {20, 70, 0xff0000ff, 2}, {70, 70, T, 2}}
     );
     checkSvg(
-        "inkscape-badge.svg",
-        {{32, 10, 0xff923bbd, 24, true}, {1, 1, T, 2, true}, {22, 37, 0xffffffff, 2, true}},
-        64
+        "inkscape-badge.svg", {{32, 10, 0xff923bbd, 24}, {1, 1, T, 2}, {22, 37, 0xffffffff, 2}}, 64
     );
-    checkSvg("logo-orbit.svg", {{50, 50, 0xffecb22e, 2, true}, {1, 1, T, 2, true}}, 100);
-    checkSvg("logo-signal.svg", {{50, 50, 0xff2eb67d, 2, true}, {50, 30, T, 2, true}}, 100);
+    checkSvg("logo-orbit.svg", {{50, 50, 0xffecb22e, 2}, {1, 1, T, 2}}, 100);
+    checkSvg("logo-signal.svg", {{50, 50, 0xff2eb67d, 2}, {50, 30, T, 2}}, 100);
 
     // The repo's own artwork renders too.
     for (const char *f :
@@ -1265,7 +1250,7 @@ void testSvg() {
         std::string svg;
         CHECK(readFile(std::string(GFX_REPO_ART) + "/" + f, &svg));
         Bitmap b;
-        CHECK(renderSvgOwn(svg, 64, 64, &b) && alphaSum(b) > 64 * 64 * 0.2);
+        CHECK(renderSvg(svg, 64, 64, &b) && alphaSum(b) > 64 * 64 * 0.2);
     }
     { // engineer.svg: blue tile with a white code glyph
         std::string svg;
@@ -1293,7 +1278,7 @@ void testSvgSize() {
     CHECK(!renderSvg(fixture("shapes.svg"), 0, 10, &b));
     CHECK(!renderSvg(fixture("shapes.svg"), 100000, 100000, &b));
     // No viewBox, width/height only: that is the coordinate system.
-    CHECK(renderSvgOwn(
+    CHECK(renderSvg(
         "<svg width='10' height='10'><rect width='5' height='10' fill='red'/></svg>", 20, 20, &b
     ));
     CHECK(near(px(b, 4, 10), 0xffff0000u, 2) && near(px(b, 15, 10), 0, 2));
@@ -1320,33 +1305,33 @@ void testSvgFuzz() {
         const std::string svg = fixture(n);
         Bitmap            b;
         for (size_t cut = 0; cut < svg.size(); cut += svg.size() / 60 + 1)
-            renderSvgOwn(std::string_view(svg).substr(0, cut), 24, 24, &b);
+            renderSvg(std::string_view(svg).substr(0, cut), 24, 24, &b);
         for (int i = 0; i < 200; ++i) {
             std::string f = svg;
             for (int k = 0; k < 3; ++k) {
                 rng                      = rng * 1103515245 + 12345;
                 f[(rng >> 8) % f.size()] = char(rng >> 24);
             }
-            renderSvgOwn(f, 24, 24, &b);
+            renderSvg(f, 24, 24, &b);
         }
     }
     Bitmap b;
-    CHECK(!renderSvgOwn("<<<<>>>>&&&&;;;", 16, 16, &b));
-    CHECK(!renderSvgOwn("<svg", 16, 16, &b) || true);
-    renderSvgOwn(
+    CHECK(!renderSvg("<<<<>>>>&&&&;;;", 16, 16, &b));
+    CHECK(!renderSvg("<svg", 16, 16, &b) || true);
+    renderSvg(
         "<svg viewBox='0 0 1 1'><path d='M0 0L1e30 1e30L-1e30 0z M 0 0 A 1e30 1e-30 0 1 1 1 "
         "1'/></svg>",
         16,
         16,
         &b
     );
-    renderSvgOwn(
+    renderSvg(
         "<svg viewBox='0 0 0 0' width='-5' height='nan'><rect width='1e39' height='1'/></svg>",
         16,
         16,
         &b
     );
-    renderSvgOwn(
+    renderSvg(
         "<svg><path d='M0 0 c' stroke='red' stroke-dasharray='0.0000001 0'/></svg>", 16, 16, &b
     );
     // Exponential <use> fan-out ("billion laughs") stops at the shape budget.
@@ -1358,18 +1343,18 @@ void testSvgFuzz() {
         bomb += "</g>";
     }
     bomb += "</defs><use href='#l9'/></svg>";
-    CHECK(renderSvgOwn(bomb, 16, 16, &b));
+    CHECK(renderSvg(bomb, 16, 16, &b));
     // Deep nesting beyond the depth limit.
     std::string deep = "<svg viewBox='0 0 10 10'>";
     for (int i = 0; i < 20000; ++i)
         deep += "<g opacity='0.99' clip-path='url(#c)'>";
     deep += "<rect width='10' height='10'/>";
-    CHECK(renderSvgOwn(deep, 16, 16, &b));
+    CHECK(renderSvg(deep, 16, 16, &b));
     // Too many elements.
     std::string many = "<svg>";
     for (int i = 0; i < 210000; ++i)
         many += "<g/>";
-    CHECK(!renderSvgOwn(many + "</svg>", 16, 16, &b));
+    CHECK(!renderSvg(many + "</svg>", 16, 16, &b));
 }
 
 uint32_t g_rnd = 1;
@@ -1508,6 +1493,28 @@ void testCover() {
     CHECK_PX(px(holed, 10, 10), 0u);
     CHECK_PX(px(holed, 0, 0), 0xffffffffu);
     CHECK(alphaSum(holed) < 400 - 40 && alphaSum(holed) > 400 - 60); // ~π·4² cleared
+    // Only the disc's pixels are visited, also one cut by the edges: every
+    // pixel matches the coverage formula.
+    const struct {
+        float x, y, r;
+    } discs[] = {{10, 10, 4}, {18.3f, 1.6f, 5.5f}, {-2, 12, 6}, {40, 40, 3}};
+    for (const auto &d : discs) {
+        const float c[3] = {d.x, d.y, d.r};
+        Bitmap      b(20, 20);
+        fillBitmap(b, 0xffffffffu);
+        clearDisc(b, c[0], c[1], c[2]);
+        int bad = 0;
+        for (int y = 0; y < 20; ++y)
+            for (int x = 0; x < 20; ++x) {
+                const float k = std::clamp(
+                    std::hypot(float(x) + 0.5f - c[0], float(y) + 0.5f - c[1]) - c[2] + 0.5f,
+                    0.f,
+                    1.f
+                );
+                bad += std::abs(alphaAt(b, x, y) - int(std::lround(k * 255))) > 1;
+            }
+        CHECK(bad == 0);
+    }
 
     // An SVG renders covering the box, at least that big.
     const std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'>"
@@ -1546,8 +1553,8 @@ void testSvgLayers() {
     }
     const int W = 1000, H = 750; // drawn at a quarter: the shapes sit near the far corner
     Bitmap    bare, layered;
-    CHECK(renderSvgOwn(bareSvg + "</svg>", W, H, &bare));
-    CHECK(renderSvgOwn(layeredSvg + "</svg>", W, H, &layered));
+    CHECK(renderSvg(bareSvg + "</svg>", W, H, &bare));
+    CHECK(renderSvg(layeredSvg + "</svg>", W, H, &layered));
     CHECK(countNonZero(bare) > 1000);
     CHECK(bare.width() == layered.width() && bare.height() == layered.height());
     int diff = 0;
@@ -1566,7 +1573,7 @@ void testSvgLayers() {
     Bitmap big;
     g_heapPeak = g_heapLive, g_heapLargest = 0, g_heapTrack = true;
     const size_t before = g_heapLive;
-    CHECK(renderSvgOwn(small, 4000, 3000, &big));
+    CHECK(renderSvg(small, 4000, 3000, &big));
     g_heapTrack         = false;
     const size_t canvas = size_t(4000) * 3000 * 4; // the output itself
     CHECK(g_heapLargest == canvas);

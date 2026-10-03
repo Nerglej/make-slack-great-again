@@ -11,6 +11,7 @@ add_executable(msga_base_tests
     test_old_settings.cpp
     test_crypto.cpp
     test_process.cpp
+    test_observers.cpp
     main.cpp
 )
 target_link_libraries(msga_base_tests PRIVATE msga_base msga_test)

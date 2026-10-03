@@ -258,6 +258,8 @@ void Client::Impl::workerLoop(Worker *self) {
 }
 
 void Client::Impl::run(Job &job) {
+    if (job.cancel->isSet())
+        return; // cancelled while it waited in the queue: never sent
     Response resp;
     Url      url;
     if (!url.parse(job.req.url) || url.scheme == "ws" || url.scheme == "wss") {
@@ -305,6 +307,8 @@ void Client::Impl::run(Job &job) {
                     ++i;
             }
         }
+        if (job.cancel->isSet())
+            return; // no next hop for a request cancelled meanwhile
         const std::string cookie = jar.headerFor(url.host);
         if (!cookie.empty())
             req.headers.push_back({"Cookie", cookie});
@@ -457,6 +461,13 @@ void Client::cancel(RequestId id) {
     if (auto it = d.flags.find(id); it != d.flags.end()) {
         it->second->set();
         d.flags.erase(it);
+        // Still queued: it goes now (run() would skip it anyway).
+        std::lock_guard<std::mutex> lock(d.mutex);
+        for (auto q = d.queue.begin(); q != d.queue.end(); ++q)
+            if (q->id == id) {
+                d.queue.erase(q);
+                break;
+            }
     }
     d.done.erase(id);
     d.progress.erase(id);

@@ -292,13 +292,6 @@ bool isRegional(uint32_t cp) {
     return cp >= 0x1F1E6 && cp <= 0x1F1FF;
 }
 
-bool isDefaultIgnorable(uint32_t cp) {
-    return cp == 0x200B || cp == 0x200C || cp == 0x200D || cp == 0x2060 || cp == 0xFEFF ||
-           (cp >= 0x200E && cp <= 0x200F) || (cp >= 0x202A && cp <= 0x202E) ||
-           (cp >= 0x2066 && cp <= 0x2069) || (cp >= 0xFE00 && cp <= 0xFE0F) ||
-           (cp >= 0xE0000 && cp <= 0xE0FFF) || cp == 0x20E3 || cp == 0x00AD;
-}
-
 bool isBreakSpace(uint32_t cp) {
     return cp == ' ' || cp == '\t' || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x2006) ||
            (cp >= 0x2008 && cp <= 0x200A) || cp == 0x205F || cp == 0x3000;
