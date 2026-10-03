@@ -157,24 +157,7 @@ std::vector<std::string> Jobs::descriptions() const {
 }
 
 Jobs::ObserverId Jobs::observe(std::function<void()> fn) {
-    const ObserverId id = _nextObserver++;
-    _observers.push_back({id, std::move(fn)});
-    return id;
-}
-
-void Jobs::unobserve(ObserverId id) {
-    for (Slot &s : _observers)
-        if (s.id == id)
-            s.fn = nullptr; // compacted by changed(): safe inside a callback
-}
-
-void Jobs::changed() {
-    ++_dispatching;
-    for (size_t i = 0; i < _observers.size(); ++i) // observe() inside a callback appends
-        if (std::function<void()> fn = _observers[i].fn)
-            fn();
-    if (--_dispatching == 0)
-        std::erase_if(_observers, [](const Slot &s) { return !s.fn; });
+    return _observers.add([fn = std::move(fn)](const std::string &) { fn(); });
 }
 
 Jobs &jobs() {

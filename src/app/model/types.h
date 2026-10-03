@@ -75,6 +75,7 @@ struct Reaction {
     std::string          name;      // shortcode, may carry "::skin-tone-N"
     uint32_t             count = 0; // can exceed users.size() (Slack truncates the list)
     std::vector<UserRef> users;
+    bool                 operator==(const Reaction &) const; // store.cpp (all equality is)
 };
 
 struct File {
@@ -110,11 +111,13 @@ struct File {
     bool isCanvas() const { return mime == "application/vnd.slack-docs"; }
     bool isHtml() const;
     const std::string &source() const { return original.empty() ? path : original; }
+    bool               operator==(const File &) const;
 };
 
 struct AttachmentField {
     std::string title;
     std::string value; // mrkdwn
+    bool        operator==(const AttachmentField &) const;
 };
 
 // A Block Kit block drawn as a structure rather than as text: kept only for messages and
@@ -128,6 +131,7 @@ struct Block {
     std::string                           alt;   // Image: alt text (shown without a URL)
     int32_t                               width = 0, height = 0;
     std::vector<std::vector<std::string>> rows; // Table: mrkdwn cells, row 0 the header
+    bool                                  operator==(const Block &) const;
 };
 
 // Legacy attachments and link previews (unfurls): Slack sends both as
@@ -151,6 +155,7 @@ struct Attachment {
     Ts                           ts = 0;              // the quoted message's time
     std::vector<Block>           blocks;              // structural blocks (see Block)
     std::vector<File>            files;               // the quoted message's files
+    bool                         operator==(const Attachment &) const;
 };
 
 // A button under a message (Claude Code's permission question: its options);
@@ -164,6 +169,7 @@ struct Button {
     // Slack's Block Kit buttons: a link button opens `url` instead of being
     // pressed; the others are pressed with their block and value.
     std::string url, blockId, value;
+    bool        operator==(const Button &) const;
 };
 
 // A huddle_thread message's summary: who was in it and
@@ -172,6 +178,7 @@ struct Huddle {
     std::vector<UserRef> attendees; // live: the participants; ended: everyone who was
     int64_t              startSec = 0, endSec = 0;
     bool                 ended = false;
+    bool                 operator==(const Huddle &) const;
 };
 
 // The parts most messages don't have.
@@ -190,6 +197,7 @@ struct MessageExtras {
     MessageExtras();
     MessageExtras(const MessageExtras &);
     ~MessageExtras();
+    bool operator==(const MessageExtras &) const;
 };
 
 struct Message {
@@ -221,6 +229,8 @@ struct Message {
     Message &operator=(Message &&) noexcept;
     ~Message();
     Message clone() const; // deep copy (messages are move-only to avoid accidental copies)
+    // Every field and part equal (a refetched page's unchanged messages).
+    bool    operator==(const Message &) const;
 };
 
 struct Thread {

@@ -15,6 +15,8 @@
 // Jobs is UI-thread only; runInBackground may be called from it alone too.
 #pragma once
 
+#include "base/observers.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -62,26 +64,20 @@ public:
     std::vector<std::string> descriptions() const;
 
     // After every begin / end. Returns an id for unobserve().
-    using ObserverId = uint32_t;
+    using ObserverId = base::Observers::Id;
     ObserverId observe(std::function<void()> fn);
-    void       unobserve(ObserverId id);
+    void       unobserve(ObserverId id) { _observers.remove(id); }
 
 private:
-    void changed();
+    void changed() { _observers.notify(); }
 
     struct Job {
         int         id;
         std::string description;
     };
-    struct Slot {
-        ObserverId            id;
-        std::function<void()> fn;
-    };
-    std::vector<Job>  _active; // ids grow: oldest first
-    std::vector<Slot> _observers;
-    int               _nextId       = 1;
-    ObserverId        _nextObserver = 1;
-    int               _dispatching  = 0; // nesting depth of changed()
+    std::vector<Job> _active; // ids grow: oldest first
+    base::Observers  _observers;
+    int              _nextId = 1;
 };
 
 // The app's one registry.

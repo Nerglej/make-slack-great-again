@@ -7,6 +7,8 @@
 //                        local name
 //   users.json           every known user and bot
 //   emoji.json           custom emoji, aliases included
+//   usergroups.json      every user group with its members (meta.json's
+//                        "x"."ug" held them before; read once, then moved)
 //   meta.json            me, the last open conversation, my user groups,
 //                        muted threads, reminders, and the backend's own
 //                        state ("x": Slack's saved items, followed threads,
@@ -20,9 +22,13 @@
 //
 // Writing: the cache observes the Store and writes what changed at most
 // once per kWriteDelayMs (1 s), on close(),
-// and only when a file's bytes differ from what it last wrote. Files are
-// written atomically and owner-only (0600), on the UI thread: the files are
-// small (users.json is the big one).
+// and only when a file's bytes differ from what it last wrote. A file is
+// only re-serialised when something it holds moved: roster.json when a
+// conversation's record differs from the one written, meta.json when the
+// marks (Store::localRevision), my groups or the backend's state changed,
+// usergroups.json with the groups. Files are written atomically and
+// owner-only (0600), on the UI thread: the files are small (users.json is
+// the big one).
 //
 // Wiping: remove() on sign-out of that workspace, clearAll() for Settings →
 // "Clear cache" — after which caches still open write nothing more this
@@ -68,6 +74,11 @@ public:
     static int64_t     diskBytes(plat::App &app);
     // Settings → "Clear cache": every workspace's files.
     static void        clearAll(plat::App &app);
+    // The same two with the walk on a worker (model::runInBackground):
+    // `done` runs on the UI thread. clearAllAsync stops the open caches'
+    // writes at once, like clearAll.
+    static void        diskBytesAsync(plat::App &app, std::function<void(int64_t)> done);
+    static void        clearAllAsync(plat::App &app, std::function<void()> done);
     // Sign-out: that workspace's files.
     static void        remove(plat::App &app, std::string_view workspaceKey);
 
@@ -98,8 +109,9 @@ public:
     void close(bool keep);
 
 private:
-    enum Dirty : uint8_t { kConvs = 1, kUsers = 2, kEmoji = 4, kMeta = 8 };
+    enum Dirty : uint8_t { kConvs = 1, kUsers = 2, kEmoji = 4, kMeta = 8, kGroups = 16 };
     void        onChange(const model::Change &ch);
+    bool        conversationChanged(model::ConvRef c);
     void        mark(uint8_t what);
     void        schedule();
     bool        tracked(model::ConvRef c) const { return c < _tracked.size() && _tracked[c]; }
@@ -118,6 +130,11 @@ private:
     // flip doesn't re-serialise the roster (it is saved at close, or with
     // the next profile change).
     uint64_t                                  _usersProfileRev = 0, _usersPresenceRev = 0;
+    // The Store's localRevision / usergroupRevision meta.json and
+    // usergroups.json were last marked for.
+    uint64_t                                  _localRev = 0, _groupsRev = 0;
+    // Per conversation: the hash of its roster record as last written.
+    std::vector<uint64_t>                     _convHash;
     std::vector<uint8_t>                      _tracked, _checked, _msgDirty; // by ConvRef
     std::unordered_map<std::string, uint64_t> _written; // file → hash of its bytes
 };

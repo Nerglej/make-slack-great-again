@@ -74,25 +74,14 @@ bool SocketMode::connected() const {
     return _ws && _ws->isOpen();
 }
 
-// A socket that is done with: destroyed later, not inside its own callback.
-void SocketMode::retire(std::unique_ptr<net::WebSocket> &sock) {
-    if (!sock)
-        return;
-    sock->onOpen   = nullptr;
-    sock->onText   = nullptr;
-    sock->onClosed = nullptr;
-    std::shared_ptr<net::WebSocket> dead(sock.release());
-    _app.post([dead] {});
-}
-
 void SocketMode::teardown() {
     // The handshake in flight is cancelled (its answer must never open a
     // competing socket), and both sockets go without a word.
     if (_openReq)
         _client.cancel(_openReq);
     _openReq = 0;
-    retire(_pending);
-    retire(_ws);
+    retireSocket(_app, _pending);
+    retireSocket(_app, _ws);
     _connecting = false;
 }
 
@@ -140,7 +129,7 @@ void SocketMode::openAndConnect() {
 
 void SocketMode::connectWs(const std::string &url) {
     // Into _pending; _ws (if any) stays live until onOpen promotes this one.
-    retire(_pending);
+    retireSocket(_app, _pending);
     _pending             = std::make_unique<net::WebSocket>(_app);
     net::WebSocket *sock = _pending.get();
     sock->onOpen         = [this, sock] { onOpen(sock); };
@@ -245,7 +234,7 @@ void SocketMode::onOpen(net::WebSocket *sock) {
         return; // superseded
     // Promote; an old socket still live (a recycle overlap) goes only now.
     if (_ws) {
-        retire(_ws);
+        retireSocket(_app, _ws);
         // Slack's next num_connections may still count the one just dropped.
         _overlapPromoted = wallMs();
     }
@@ -259,7 +248,7 @@ void SocketMode::onClosed(net::WebSocket *sock, int code) {
     if (sock == _pending.get()) {
         // Never opened (code 0) or dropped before promotion: the attempt
         // failed. A live _ws (an overlap) keeps serving meanwhile.
-        retire(_pending);
+        retireSocket(_app, _pending);
         _connecting = false;
         if (!_stopped)
             scheduleReconnect();
@@ -273,7 +262,7 @@ void SocketMode::onClosed(net::WebSocket *sock, int code) {
     // first: an eviction from the app's pool, or a network that drops our
     // keepalives — told apart by the hello counts (maybeNotifyContention).
     const bool bareClose  = !expected && code == 1000;
-    retire(_ws);
+    retireSocket(_app, _ws);
     // A replacement already in flight finishes instead of racing a second.
     if (_connecting || _pending)
         return;

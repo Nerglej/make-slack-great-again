@@ -1,6 +1,7 @@
 #include "app/model/store.h"
 
 #include "app/mrkdwn/emoji.h"
+#include "base/crypto.h"
 #include "base/str.h"
 #include "base/time.h"
 
@@ -123,6 +124,27 @@ Message Message::clone() const {
     return m;
 }
 
+bool Reaction::operator==(const Reaction &) const               = default;
+bool File::operator==(const File &) const                       = default;
+bool AttachmentField::operator==(const AttachmentField &) const = default;
+bool Block::operator==(const Block &) const                     = default;
+bool Attachment::operator==(const Attachment &) const           = default;
+bool Button::operator==(const Button &) const                   = default;
+bool Huddle::operator==(const Huddle &) const                   = default;
+bool MessageExtras::operator==(const MessageExtras &) const     = default;
+
+bool Message::operator==(const Message &o) const {
+    if (ts != o.ts || threadTs != o.threadTs || latestReply != o.latestReply || user != o.user ||
+        pinnedBy != o.pinnedBy || replyCount != o.replyCount || edited != o.edited ||
+        pinned != o.pinned || saved != o.saved || pending != o.pending || text != o.text ||
+        replyUsers != o.replyUsers || reactions != o.reactions)
+        return false;
+    // No extras and empty extras read the same (files() etc. are empty).
+    if (!extra || !o.extra)
+        return (extra ? *extra : kNoExtras) == (o.extra ? *o.extra : kNoExtras);
+    return *extra == *o.extra;
+}
+
 // ── Store ───────────────────────────────────────────────────────────────────
 
 Store::Store()  = default;
@@ -149,11 +171,15 @@ void Store::clear() {
     _usergroups.clear();
     _channelNames.clear();
     _linkedAuthors.clear();
+    ++_localRev;
+    ++_groupRev;
     _unreadThreads     = 0;
     workspaceMuted     = false;
     answersAreMentions = false;
     me                 = kNoUser;
     ++_textRev;
+    textUnlisted();
+    _allUsersDirty = true;
     emit({ChangeKind::Roster});
     emit({ChangeKind::Users});
 }
@@ -162,40 +188,56 @@ UserRef Store::addUser(User u) {
     if (const auto it = _userIndex.find(u.id); it != _userIndex.end()) {
         _users[it->second]             = std::move(u); // same ref: messages keep pointing at it
         _users[it->second].placeholder = false;
+        _touchedUsers.push_back(it->second);
         return it->second;
     }
     const UserRef ref = UserRef(_users.size());
     _userIndex.emplace(u.id, ref);
     _users.push_back(std::move(u));
+    _touchedUsers.push_back(ref);
     return ref;
 }
 
 void Store::usersChanged() {
+    _allUsersDirty = true;
+    emit({ChangeKind::Users});
+}
+
+void Store::usersChanged(UserRef u) {
+    if (u < _users.size())
+        _touchedUsers.push_back(u);
     emit({ChangeKind::Users});
 }
 
 namespace {
 
 uint64_t mixHash(uint64_t h, std::string_view v) {
-    for (const char c : v)
-        h = (h ^ uint8_t(c)) * 1099511628211ull;
-    return (h ^ 0x1f) * 1099511628211ull; // a separator: "ab","c" ≠ "a","bc"
+    // A separator after each field: "ab","c" ≠ "a","bc".
+    return crypto::fnv1a(std::string_view("\x1f", 1), crypto::fnv1a(v, h));
 }
 
 } // namespace
 
-// O(users) hashing per Users emit: far cheaper than what an observer would
-// redo without it (re-binding every message row, re-serialising users.json).
+// Hashing the users touched since the last Users emit (all of them after an
+// in-place change that didn't say whose): far cheaper than what an observer
+// would redo without it (re-binding every message row, re-serialising
+// users.json).
 void Store::noteUserRevisions() {
     const size_t n       = _users.size();
     bool         profile = n < _profileHash.size(), presence = false;
+    // Many touched (a users.list load): one pass over all is as cheap.
+    const bool   all = _allUsersDirty || profile || _touchedUsers.size() > n / 2;
     _profileHash.resize(n, 0);
     _presenceHash.resize(n, 0);
     _userRev.resize(n, 0);
     const uint64_t next = _profileRev + 1;
-    for (size_t i = 0; i < n; ++i) {
+    const size_t   todo = all ? n : _touchedUsers.size();
+    for (size_t k = 0; k < todo; ++k) {
+        const size_t i = all ? k : _touchedUsers[k];
+        if (i >= n)
+            continue;
         const User &u = _users[i];
-        uint64_t    h = 14695981039346656037ull;
+        uint64_t    h = crypto::kFnvOffset;
         for (const std::string *f :
              {&u.id,
               &u.name,
@@ -230,6 +272,8 @@ void Store::noteUserRevisions() {
             presence         = true;
         }
     }
+    _touchedUsers.clear();
+    _allUsersDirty = false;
     if (profile)
         _profileRev = next;
     if (presence)
@@ -301,6 +345,27 @@ bool sameMeta(const Conversation &a, const Conversation &b) {
 } // namespace
 
 ConvRef Store::addConversation(Conversation c) {
+    bool          added = false;
+    const ConvRef ref   = mergeConversation(std::move(c), &added);
+    if (added)
+        emit({ChangeKind::Roster});
+    return ref;
+}
+
+void Store::addConversations(std::vector<Conversation> convs) {
+    bool added = false;
+    for (Conversation &c : convs) {
+        bool one = false;
+        mergeConversation(std::move(c), &one);
+        added = added || one;
+    }
+    if (added)
+        emit({ChangeKind::Roster});
+}
+
+// addConversation without the Roster emit for a new one (*added says).
+ConvRef Store::mergeConversation(Conversation c, bool *added) {
+    *added = false;
     if (const auto it = _convIndex.find(c.id); it != _convIndex.end()) {
         Conversation &old      = _convs[it->second];
         // Keep the loaded messages: a roster refresh only brings metadata.
@@ -322,7 +387,7 @@ ConvRef Store::addConversation(Conversation c) {
     _convIndex.emplace(c.id, ref);
     _convs.push_back(std::move(c));
     _typing.emplace_back();
-    emit({ChangeKind::Roster});
+    *added = true;
     return ref;
 }
 
@@ -477,6 +542,10 @@ void Store::addPage(ConvRef ref, std::vector<Message> page) {
     for (auto &m : page) {
         if (!empty) {
             if (auto it = lowerByTs(list, m.ts); it != list.end() && it->ts == m.ts) {
+                // A refetched page is mostly what we hold: only a real change
+                // is an Update (each one re-lays the list out and is saved).
+                if (*it == m)
+                    continue;
                 *it = std::move(m);
                 updated.push_back(it->ts);
                 continue;
@@ -729,6 +798,7 @@ void Store::setThreadMuted(ConvRef c, Ts root, bool on) {
         _mutedThreads.erase(it);
     else
         return;
+    ++_localRev;
     emit({ChangeKind::Meta, c}); // app-local state: the workspace cache keeps it
 }
 
@@ -741,7 +811,8 @@ void Store::setAiTranscript(const std::string &fileId, std::string text, std::st
     if (fileId.empty())
         return;
     _aiTranscripts[fileId] = {std::move(text), std::move(by)};
-    const auto has         = [&](const Message &m) {
+    ++_localRev;
+    const auto has = [&](const Message &m) {
         for (const File &f : m.files())
             if (f.id == fileId)
                 return true;
@@ -766,6 +837,8 @@ int64_t Store::reminderAt(ConvRef c, Ts ts) const {
 
 void Store::setReminderAt(ConvRef c, Ts ts, int64_t due) {
     auto it = findMark(_reminders, c, ts);
+    if (it != _reminders.end() ? it->value != due : due > 0)
+        ++_localRev; // the workspace cache saves it
     if (it != _reminders.end())
         _reminders.erase(it);
     if (due > 0)
@@ -786,10 +859,13 @@ void takePreview(Store::SavedItem &s, const Message &m) {
 } // namespace
 
 std::vector<Store::SavedItem> Store::savedItems() const {
-    std::vector<SavedItem> out = _saved;
-    std::sort(out.begin(), out.end(), [](const SavedItem &a, const SavedItem &b) {
-        // Reminders (soonest first) ahead of plain
-        // bookmarks (newest first).
+    return _saved; // kept in order by sortSaved
+}
+
+// Reminders (soonest first) ahead of plain bookmarks (newest first). After
+// one item moved the list is nearly sorted: an insertion pass.
+void Store::sortSaved() {
+    const auto before = [](const SavedItem &a, const SavedItem &b) {
         if ((a.due > 0) != (b.due > 0))
             return a.due > 0;
         if (a.due > 0 && a.due != b.due)
@@ -797,8 +873,10 @@ std::vector<Store::SavedItem> Store::savedItems() const {
         if (a.savedAt != b.savedAt)
             return a.savedAt > b.savedAt;
         return a.ts > b.ts;
-    });
-    return out;
+    };
+    for (size_t i = 1; i < _saved.size(); ++i)
+        for (size_t j = i; j > 0 && before(_saved[j], _saved[j - 1]); --j)
+            std::swap(_saved[j], _saved[j - 1]);
 }
 
 const Store::SavedItem *Store::findSaved(ConvRef c, Ts ts) const {
@@ -833,6 +911,7 @@ void Store::setSavedItem(ConvRef c, Ts ts, bool on, int64_t due, int64_t savedAt
         if (!it->previewed)
             if (const Message *m = findMessage(c, ts))
                 takePreview(*it, *m);
+        sortSaved();
     }
     emit({ChangeKind::Update, c, 0, ts});
 }
@@ -897,9 +976,19 @@ void Store::setUsergroups(std::vector<Usergroup> groups) {
     for (const Usergroup &g : groups)
         if (!meId.empty() && std::find(g.users.begin(), g.users.end(), meId) != g.users.end())
             mine.push_back(g.id);
-    myGroups    = std::move(mine);
-    _usergroups = std::move(groups);
+    myGroups = std::move(mine);
     ++_textRev;
+    ++_groupRev;
+    // Which groups changed: added, removed or edited.
+    for (const Usergroup &g : groups)
+        if (const Usergroup *old = findUsergroup(g.id); !old || !(*old == g))
+            logText(TextChange::Kind::Usergroup, g.id);
+    for (const Usergroup &g : _usergroups)
+        if (std::none_of(groups.begin(), groups.end(), [&](const Usergroup &x) {
+                return x.id == g.id;
+            }))
+            logText(TextChange::Kind::Usergroup, g.id);
+    _usergroups = std::move(groups);
     emit({ChangeKind::Users});
 }
 
@@ -919,9 +1008,39 @@ void Store::setLinkedAuthor(std::string_view conv, std::string_view ts, UserRef 
 }
 
 void Store::setChannelName(std::string id, std::string name) {
-    _channelNames[std::move(id)] = std::move(name);
     ++_textRev;
+    logText(TextChange::Kind::Channel, id);
+    _channelNames[std::move(id)] = std::move(name);
     emit({ChangeKind::Users});
+}
+
+// At most this many changes are listed; past it, observers re-bind all.
+constexpr size_t kTextLogMax = 256;
+
+void Store::logText(TextChange::Kind kind, std::string id) {
+    if (_textLogFloor == _textRev)
+        return; // this step is unlisted already
+    if (_textLog.size() >= kTextLogMax) {
+        // Drop the older half; whoever saw less than the dropped can't list.
+        const size_t drop = _textLog.size() / 2;
+        _textLogFloor     = _textLog[drop - 1].rev;
+        _textLog.erase(_textLog.begin(), _textLog.begin() + long(drop));
+    }
+    _textLog.push_back({_textRev, {kind, std::move(id)}});
+}
+
+void Store::textUnlisted() {
+    _textLog.clear();
+    _textLogFloor = _textRev;
+}
+
+bool Store::textChangesSince(uint64_t since, std::vector<TextChange> *out) const {
+    if (since < _textLogFloor)
+        return false;
+    for (const LoggedText &l : _textLog)
+        if (l.rev > since)
+            out->push_back(l.change);
+    return true;
 }
 
 void Store::announceReply(ConvRef c, const Message &m) {
@@ -1049,13 +1168,29 @@ void Store::setCustomEmoji(std::string name, std::string value) {
         return; // a reload of the same set changes nothing
     it->second = std::move(value);
     customEmojiChanged();
+    logText(TextChange::Kind::Emoji, it->first);
 }
 
 void Store::replaceCustomEmoji(std::unordered_map<std::string, std::string> all) {
     if (all == _customEmoji)
         return;
+    // The names added, changed or removed.
+    std::vector<std::string> changed;
+    for (const auto &[name, value] : all)
+        if (const auto it = _customEmoji.find(name);
+            it == _customEmoji.end() || it->second != value)
+            changed.push_back(name);
+    for (const auto &[name, value] : _customEmoji)
+        if (!all.count(name))
+            changed.push_back(name);
     _customEmoji = std::move(all);
     customEmojiChanged();
+    if (changed.size() > kTextLogMax / 2) {
+        textUnlisted(); // a first load: everything is new anyway
+        return;
+    }
+    for (std::string &name : changed)
+        logText(TextChange::Kind::Emoji, std::move(name));
 }
 
 Store::EmojiGlyph Store::emojiFor(std::string_view name) const {

@@ -302,6 +302,101 @@ TEST("slack cache: reminder previews persist, so a restart doesn't fetch them ag
     CHECK(it->thread == 0);
 }
 
+TEST("slack cache: user groups have a file of their own; meta.json's old copy moves there") {
+    if (!haveServer())
+        return;
+    coldStart();
+    const std::string dir    = cacheDir();
+    const std::string groups = file::join(dir, "usergroups.json");
+    const std::string meta   = file::join(dir, "meta.json");
+    std::string       text;
+    REQUIRE(file::readAll(groups, &text));
+    CHECK(text.find("\"S1\"") != std::string::npos);
+    REQUIRE(file::readAll(meta, &text));
+    CHECK(text.find("\"ug\"") == std::string::npos);
+
+    // A cache from before: the groups only in meta.json's "x"."ug".
+    REQUIRE(file::remove(groups));
+    const size_t x = text.find("\"x\":{");
+    REQUIRE(x != std::string::npos);
+    text.insert(x + 5, R"("ug":[["S7","old","Old",["UME"]]],)");
+    REQUIRE(file::writeAtomic(meta, text));
+    {
+        Env e(false);
+        REQUIRE(e.warm);
+        const model::Store::Usergroup *g = e.store.findUsergroup("S7");
+        REQUIRE(g);
+        CHECK_STR(g->handle, "old");
+        CHECK(e.store.myGroups.size() == 1);
+        // A reminder is app-local: meta.json follows it.
+        e.store.setReminderAt(e.conv("C1"), model::parseTs("1700000002.000000"), 1900000000);
+        REQUIRE(pumpUntil([&] { return file::exists(groups); }, 3000));
+    }
+    REQUIRE(file::readAll(groups, &text));
+    CHECK(text.find("\"S7\"") != std::string::npos);
+    REQUIRE(file::readAll(meta, &text));
+    CHECK(text.find("\"ug\"") == std::string::npos);
+    CHECK(text.find("1900000000") != std::string::npos);
+    Env again(false);
+    REQUIRE(again.warm);
+    CHECK(again.store.findUsergroup("S7") != nullptr);
+    CHECK(
+        again.store.reminderAt(again.conv("C1"), model::parseTs("1700000002.000000")) == 1900000000
+    );
+}
+
+TEST("slack cache: a roster record is written when it changed, not for every Meta") {
+    if (!haveServer())
+        return;
+    coldStart();
+    const std::string roster = file::join(cacheDir(), "roster.json");
+    Env               e(false);
+    REQUIRE(e.warm);
+    // A Meta that roster.json doesn't hold (a huddle) leaves it as it is.
+    e.store.updateConversation(e.conv("C1"), [](model::Conversation &x) { x.huddleActive = true; });
+    fakeslack::pumpFor(1500);
+    std::string before;
+    REQUIRE(file::readAll(roster, &before));
+    // One it does (a local name) is written.
+    e.store.updateConversation(e.conv("C1"), [](model::Conversation &x) {
+        x.localName = "General (renamed here)";
+    });
+    REQUIRE(pumpUntil(
+        [&] {
+            std::string now;
+            return file::readAll(roster, &now) &&
+                   now.find("General (renamed here)") != std::string::npos;
+        },
+        3000
+    ));
+    // And it still reads back.
+    e.be.reset();
+    Env warm(false);
+    REQUIRE(warm.warm);
+    CHECK_STR(warm.c("C1").localName, "General (renamed here)");
+    CHECK_STR(warm.c("C1").topic, "Company news");
+}
+
+TEST("slack cache: the Settings walks run on a worker") {
+    if (!haveServer())
+        return;
+    coldStart();
+    int64_t bytes = -1;
+    cache::WorkspaceCache::diskBytesAsync(app(), [&](int64_t n) { bytes = n; });
+    REQUIRE(pumpUntil([&] { return bytes >= 0; }, 3000));
+    CHECK(bytes == cache::WorkspaceCache::diskBytes(app()));
+    CHECK(bytes > 0);
+    bool cleared = false;
+    {
+        Env e(false);
+        REQUIRE(e.warm);
+        cache::WorkspaceCache::clearAllAsync(app(), [&] { cleared = true; });
+        REQUIRE(pumpUntil([&] { return cleared; }, 3000));
+        e.store.updateConversation(e.conv("C1"), [](model::Conversation &x) { x.localName = "x"; });
+    } // an open cache writes nothing after the clear
+    CHECK(!file::exists(cacheDir()));
+}
+
 TEST("slack cache: sign-out and Clear cache wipe it; an open cache then writes nothing") {
     if (!haveServer())
         return;

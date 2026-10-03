@@ -8,9 +8,14 @@
 #include "net/net.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace plat {
+class App;
+}
 
 namespace slack {
 
@@ -43,6 +48,12 @@ using ApiDone = std::function<void(const json::Document &doc, const std::string 
 bool isTransportError(const std::string &error);
 // Slack's own "likely a transient issue on our end" codes.
 bool isTransientSlackError(const std::string &error);
+// The endpoint itself is refused for this token (an internal method on
+// OAuth, a missing scope, a Grid restriction), never a passing failure:
+// callers give the endpoint up for the run.
+bool isMethodUnavailable(const std::string &error);
+// The credentials are dead (not a network hiccup): sign in again.
+bool isAuthError(const std::string &error);
 // The retry backoff: 1 s, 2 s, 4 s … capped at 60 s, for retry `attempt`
 // (0-based).
 int  retryBackoffMs(int attempt);
@@ -50,9 +61,19 @@ int  retryBackoffMs(int attempt);
 net::RequestId apiCall(
     net::Client &client, const Auth &auth, std::string_view method, std::string form, ApiDone done
 );
+// What apiCall makes of an answer, for requests it can't send itself (a
+// multipart upload): fills *doc and returns the ApiDone error.
+std::string parseApiResponse(net::Response r, json::Document *doc);
 
 // The headers every authenticated request to Slack carries (files, images).
 void addAuthHeaders(std::vector<net::Header> &headers, const Auth &auth);
+
+// A WebSocket that is done with (Socket Mode, the presence link): its
+// callbacks unhooked, destroyed on a later loop turn, never inside its own
+// callback. `sock` is left empty.
+void    retireSocket(plat::App &app, std::unique_ptr<net::WebSocket> &sock);
+// MSGA_SLACK_TEST_SPEEDUP (> 1): tests compress every delay by it; else 1.
+int64_t testSpeedup();
 
 // The workspace a Slack file URL belongs to: the team id its path starts
 // with (files.slack.com/files-pri/T0123-F0456/…, files-tmb/T0123-F0456-…/…);

@@ -159,25 +159,10 @@ void richText(std::string &out, const Value &block) {
 // A text object: mrkdwn as is; plain_text escaped so it stays literal.
 void textObject(std::string &out, const Value &o) {
     const std::string_view t = o["text"].str();
-    if (o["type"].str() == "mrkdwn") {
+    if (o["type"].str() == "mrkdwn")
         out.append(t);
-        return;
-    }
-    for (char ch : t) {
-        switch (ch) {
-        case '<':
-            out += "&lt;";
-            break;
-        case '>':
-            out += "&gt;";
-            break;
-        case '&':
-            out += "&amp;";
-            break;
-        default:
-            out += ch;
-        }
-    }
+    else // plain_text: escaped as Slack escapes stored text
+        out += mrkdwn::escapeEntities(t);
 }
 
 // Block types whose content `text` already mirrors (most rich_text blocks
@@ -253,6 +238,39 @@ std::string blocksToMrkdwn(const json::Value &blocks) {
     std::string out;
     for (const Value b : blocks) {
         std::string part = blockMrkdwn(b);
+        if (part.empty())
+            continue;
+        if (!out.empty())
+            out += '\n';
+        out += part;
+    }
+    return out;
+}
+
+// What blocksToMrkdwn makes of the blocks toBlocks kept (it keeps every
+// block with text): the text again without rendering each block twice.
+std::string structureMrkdwn(const std::vector<model::Block> &blocks) {
+    using K = model::Block::Kind;
+    std::string out;
+    for (const model::Block &b : blocks) {
+        std::string part;
+        if (b.kind == K::Text) {
+            part = b.text;
+        } else if (b.kind == K::Header) {
+            wrapMark(part, b.text, '*');
+        } else if (b.kind == K::Table) {
+            for (const std::vector<std::string> &row : b.rows) {
+                std::string line;
+                for (size_t i = 0; i < row.size(); ++i) {
+                    if (i)
+                        line += " | ";
+                    line += row[i];
+                }
+                if (!part.empty())
+                    part += '\n';
+                part += line;
+            }
+        }
         if (part.empty())
             continue;
         if (!out.empty())
@@ -664,16 +682,17 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
         if (b["type"].str() == "rich_text")
             noteLinkedAuthors(b, store);
     }
-    m.text = owned(o["text"]);
+    std::vector<model::Block> structure = toBlocks(blocks);
+    m.text                              = owned(o["text"]);
     if (richer || m.text.empty()) {
-        std::string fromBlocks = blocksToMrkdwn(blocks);
+        std::string fromBlocks =
+            structure.empty() ? blocksToMrkdwn(blocks) : structureMrkdwn(structure);
         if (!fromBlocks.empty())
             m.text = std::move(fromBlocks);
     }
 
-    const std::string_view    subtype   = o["subtype"].str();
-    const bool                bot       = o.has("bot_id");
-    std::vector<model::Block> structure = toBlocks(blocks);
+    const std::string_view subtype = o["subtype"].str();
+    const bool             bot     = o.has("bot_id");
     if (!subtype.empty() || bot || o["files"].size() || o["attachments"].size() ||
         !structure.empty()) {
         model::MessageExtras &x = m.extras();
@@ -685,10 +704,7 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
             x.botName           = owned(o["username"]);
             if (x.botName.empty())
                 x.botName = owned(profile["name"]);
-            const Value icons = profile["icons"];
-            for (const char *k : {"image_72", "image_48", "image_36"})
-                if (x.botAvatar.empty())
-                    x.botAvatar = owned(icons[k]);
+            x.botAvatar = firstIcon(profile["icons"]);
             if (x.botAvatar.empty())
                 x.botAvatar = owned(o["icon_url"]);
         }
@@ -760,6 +776,50 @@ void starredConversationIds(const json::Value &items, std::vector<std::string> &
         if (const std::string_view id = it["channel"].str(); !id.empty())
             out.emplace_back(id);
     }
+}
+
+std::string firstIcon(const Value &icons) {
+    for (const char *k : {"image_72", "image_48", "image_36"})
+        if (const std::string_view v = icons[k].str(); !v.empty())
+            return std::string(v);
+    return {};
+}
+
+int64_t epochSecs(const Value &v) {
+    return v.isString() ? std::strtoll(std::string(v.str()).c_str(), nullptr, 10) : v.integer();
+}
+
+bool toFeedThread(const Value &t, model::Store &store, FeedThread &out) {
+    const Value rootObj = t["root_msg"];
+    if (rootObj.has("subscribed") && !rootObj["subscribed"].boolean())
+        return false;
+    // root_msg is a whole message and, unlike history ones, names its channel.
+    out.conv     = store.findConversation(rootObj["channel"].str());
+    out.root     = model::parseTs(rootObj["ts"].str());
+    out.lastRead = model::parseTs(rootObj["last_read"].str());
+    if (out.conv == model::kNoConv || !out.root)
+        return false;
+    // latest_replies on a read thread, unread_replies (alone) on one with
+    // news: both, deduplicated.
+    const std::string &me = store.user(store.me).id;
+    for (const char *k : {"latest_replies", "unread_replies"})
+        for (const Value r : t[k]) {
+            model::Message m = toMessage(r, store);
+            if (!m.ts || std::any_of(out.replies.begin(), out.replies.end(), [&](const auto &x) {
+                    return x.ts == m.ts;
+                }))
+                continue;
+            m.threadTs = out.root;
+            out.replies.push_back(std::move(m));
+            out.parentIsMe.push_back(!me.empty() && r["parent_user_id"].str() == me);
+        }
+    // Oldest first, the flags with them (a handful: insertion order).
+    for (size_t i = 1; i < out.replies.size(); ++i)
+        for (size_t j = i; j > 0 && out.replies[j].ts < out.replies[j - 1].ts; --j) {
+            std::swap(out.replies[j], out.replies[j - 1]);
+            std::swap(out.parentIsMe[j], out.parentIsMe[j - 1]);
+        }
+    return true;
 }
 
 } // namespace slack::mapjson

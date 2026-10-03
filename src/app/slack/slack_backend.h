@@ -193,7 +193,15 @@ public:
     // A Web API call with this workspace's auth; tracked so the destructor
     // cancels it (done never runs after ~SlackBackend). An auth error also
     // fires onAuthLost (once).
-    void               api(std::string_view method, std::string form, ApiDone done);
+    void api(std::string_view method, std::string form, ApiDone done);
+    // The same for a call whose answer is ok or an error (slack_actions.cpp):
+    // a cancel is silent, a failure is logged and `done` hears it; on ok
+    // onOk(doc) runs first, then done(true). Either may be null.
+    void
+                       api(std::string_view                            method,
+                           std::string                                 form,
+                           std::function<void(const json::Document &)> onOk,
+                           Done                                        done);
     // "C0123" for a ConvRef ("" if unknown). Ts ↔ "1712345678.123456":
     // model::parseTs / model::formatTs.
     const std::string &convId(model::ConvRef conv) const;
@@ -246,11 +254,25 @@ private:
         model::ConvRef c, bool active, std::string link, std::vector<model::UserRef> participants
     );
     // My read cursor in a followed thread moved (the Threads entry).
-    void threadRead(model::ConvRef c, model::Ts root, model::Ts upTo);
+    void                     threadRead(model::ConvRef c, model::Ts root, model::Ts upTo);
+    // The DM read-cursor sweeps (the DM activity sweep, resyncUnreads;
+    // slack_backend.cpp): which conversations, and one conversations.info
+    // on the paced lane (null: it failed; channel_not_found marks it dead).
+    std::vector<std::string> directConversationIds() const;
+    void sweepInfo(const std::string &id, std::function<void(model::Conversation *info)> done);
     // A read call — or a write that is safe to repeat — with rate limits,
     // lost connections and transient errors waited out; background: the
     // paced 1.2 s lane, which holds while a Normal call is outstanding.
     void readCall(std::string method, std::string form, ApiDone done, bool background = false);
+    // Every page of a cursored read call (next_cursor), on the read lane:
+    // onPage(root[key]) per page, then onDone("" or the first error).
+    void readPages(
+        std::string                              method,
+        std::string                              form,
+        std::string                              key,
+        std::function<void(const json::Value &)> onPage,
+        std::function<void(const std::string &)> onDone
+    );
     // The read half's poll tick (slack_realtime.cpp): the socket's health
     // check, and a poll that found what the socket should have pushed.
     void realtimeTick();

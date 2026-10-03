@@ -10,6 +10,7 @@
 #pragma once
 
 #include "app/llm/wire.h"
+#include "base/observers.h"
 
 #include <cstdint>
 #include <functional>
@@ -38,26 +39,19 @@ public:
     // then guards itself (a weak alive flag).
     using Done = std::function<void(const TranscriptionResult &)>;
     void transcribe(const std::string &fileId, TranscriptionInput in, Done done);
-    void clearCache() { _done.clear(); } // tests
 
     // `fileId` started or finished (either way): repaint its cards.
-    using ObserverId = uint32_t;
-    ObserverId observe(std::function<void(const std::string &fileId)> fn);
-    void       unobserve(ObserverId id);
+    using ObserverId = base::Observers::Id;
+    ObserverId observe(std::function<void(const std::string &fileId)> fn) {
+        return _observers.add(std::move(fn));
+    }
+    void unobserve(ObserverId id) { _observers.remove(id); }
 
 private:
-    void changed(const std::string &fileId);
-
-    struct Slot {
-        ObserverId                                     id;
-        std::function<void(const std::string &fileId)> fn;
-    };
     Service                                           &_service;
     std::unordered_map<std::string, std::string>       _done;
     std::unordered_map<std::string, std::vector<Done>> _pending; // keys = in flight
-    std::vector<Slot>                                  _observers;
-    ObserverId                                         _nextObserver = 1;
-    int                                                _dispatching  = 0;
+    base::Observers                                    _observers;
 };
 
 } // namespace llm

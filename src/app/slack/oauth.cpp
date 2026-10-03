@@ -109,57 +109,51 @@ bool OAuthFlow::handleCallback(std::string_view url) {
 }
 
 void OAuthFlow::exchange(const std::string &code) {
-    net::Request req;
-    req.method = "POST";
-    req.url    = str::concat({kApiBase, "oauth.v2.access"});
-    req.headers.push_back({"Content-Type", "application/x-www-form-urlencoded"});
-    req.body = net::formEncode({
+    // No token yet: the client's own keys in the form.
+    std::string form = net::formEncode({
         {"client_id", _config.clientId},
         {"client_secret", _config.clientSecret},
         {"code", code},
         {"redirect_uri", kOAuthRedirectUri},
         {"code_verifier", _verifier},
     });
-    _pending = _client.send(std::move(req), [this](net::Response r) {
-        _pending = 0;
-        if (!r.error.empty()) {
-            fail(r.error);
-            return;
-        }
-        json::Document doc;
-        if (!doc.parse(std::move(r.body), nullptr)) {
-            fail("bad_json");
-            return;
-        }
-        const json::Value o = doc.root();
-        if (!o["ok"].boolean()) {
-            fail(std::string(o["error"].str("unknown")));
-            return;
-        }
-        const json::Value user = o["authed_user"];
-        Credentials       c;
-        c.token                 = std::string(user["access_token"].str());
-        c.refreshToken          = std::string(user["refresh_token"].str());
-        const int64_t expiresIn = user["expires_in"].integer();
-        c.expiresAt             = expiresIn > 0 ? base::nowSecs() + expiresIn : 0;
-        c.teamId                = std::string(o["team"]["id"].str());
-        c.teamName              = std::string(o["team"]["name"].str());
-        // The icon is best effort.
-        _pending                = apiCall(
-            _client,
-            {c.token, {}},
-            "team.info",
-            {},
-            [this, c](const json::Document &d, const std::string &err) mutable {
-                _pending = 0;
-                if (err.empty())
-                    c.iconUrl = std::string(d.root()["team"]["icon"]["image_88"].str());
-                Done done = std::move(_done);
-                if (done)
-                    done(std::move(c), {});
+    _pending         = apiCall(
+        _client,
+        {},
+        "oauth.v2.access",
+        std::move(form),
+        [this](const json::Document &doc, const std::string &err) {
+            _pending = 0;
+            if (!err.empty()) {
+                fail(err);
+                return;
             }
-        );
-    });
+            const json::Value o    = doc.root();
+            const json::Value user = o["authed_user"];
+            Credentials       c;
+            c.token                 = std::string(user["access_token"].str());
+            c.refreshToken          = std::string(user["refresh_token"].str());
+            const int64_t expiresIn = user["expires_in"].integer();
+            c.expiresAt             = expiresIn > 0 ? base::nowSecs() + expiresIn : 0;
+            c.teamId                = std::string(o["team"]["id"].str());
+            c.teamName              = std::string(o["team"]["name"].str());
+            // The icon is best effort.
+            _pending                = apiCall(
+                _client,
+                {c.token, {}},
+                "team.info",
+                {},
+                [this, c](const json::Document &d, const std::string &err) mutable {
+                    _pending = 0;
+                    if (err.empty())
+                        c.iconUrl = std::string(d.root()["team"]["icon"]["image_88"].str());
+                    Done done = std::move(_done);
+                    if (done)
+                        done(std::move(c), {});
+                }
+            );
+        }
+    );
 }
 
 } // namespace slack

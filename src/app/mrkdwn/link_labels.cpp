@@ -1,5 +1,7 @@
 #include "app/mrkdwn/link_labels.h"
 
+#include "base/str.h"
+
 #include <vector>
 
 namespace mrkdwn {
@@ -22,14 +24,6 @@ std::string_view schemeless(std::string_view url) {
             return url;
     }
     return url.substr(at + 3);
-}
-
-std::string_view trimmed(std::string_view s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\n'))
-        s.remove_prefix(1);
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\n'))
-        s.remove_suffix(1);
-    return s;
 }
 
 bool endsWithNoCase(std::string_view s, std::string_view suffix) {
@@ -64,7 +58,7 @@ bool isGiphyMediaUrl(std::string_view url) {
 }
 
 bool isUrlLabel(std::string_view label, std::string_view url) {
-    const std::string_view l = trimmed(label);
+    const std::string_view l = str::trim(label);
     if (l.empty() || l == url)
         return true;
     std::string_view bare = schemeless(url);

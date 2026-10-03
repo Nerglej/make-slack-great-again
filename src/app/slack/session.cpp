@@ -1,8 +1,13 @@
 #include "app/slack/session.h"
 
+#include "app/model/jobs.h"
+#include "app/slack/local_import.h"
+
 #include "app/slack/web_api.h"
 #include "base/json.h"
 #include "base/str.h"
+
+#include <memory>
 
 namespace slack {
 
@@ -279,6 +284,18 @@ void TokenDeriver::fetchIcon(Credentials c) {
             _valid.push_back(std::move(c));
             ++_index;
             next();
+        }
+    );
+}
+
+void importLocalSessionAsync(plat::App &app, std::function<void(LocalImport)> done) {
+    auto r = std::make_shared<LocalImport>();
+    model::runInBackground(
+        app,
+        [r] { *r = importLocalSession(); },
+        [r, done = std::move(done)] {
+            if (done)
+                done(std::move(*r));
         }
     );
 }

@@ -105,7 +105,6 @@ private:
     void onText(const std::string &text);
     void noteBareClose();
     void maybeNotifyContention();
-    void retire(std::unique_ptr<net::WebSocket> &sock);
 
     plat::App   &_app;
     net::Client &_client;

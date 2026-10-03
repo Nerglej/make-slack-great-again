@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "base/str.h"
+#include "plat/plat.h"
 
 #include <cstdlib>
 
@@ -22,6 +23,21 @@ void addAuthHeaders(std::vector<net::Header> &headers, const Auth &auth) {
         headers.push_back({"Authorization", "Bearer " + auth.token});
     if (!auth.cookie.empty())
         headers.push_back({"Cookie", "d=" + auth.cookie});
+}
+
+void retireSocket(plat::App &app, std::unique_ptr<net::WebSocket> &sock) {
+    if (!sock)
+        return;
+    sock->onOpen   = nullptr;
+    sock->onText   = nullptr;
+    sock->onClosed = nullptr;
+    std::shared_ptr<net::WebSocket> dead(sock.release());
+    app.post([dead] {});
+}
+
+int64_t testSpeedup() {
+    const char *v = std::getenv("MSGA_SLACK_TEST_SPEEDUP");
+    return v && std::atoi(v) > 1 ? std::atoi(v) : 1;
 }
 
 std::string fileTeamId(std::string_view url) {
@@ -67,38 +83,36 @@ net::RequestId apiCall(
     req.headers.push_back({"Content-Type", "application/x-www-form-urlencoded; charset=utf-8"});
     addAuthHeaders(req.headers, auth);
     return client.send(std::move(req), [done = std::move(done)](net::Response r) {
-        json::Document doc;
-        if (!r.error.empty()) {
-            done(doc, r.error);
-            return;
-        }
-        // Throttled: callers wait out Retry-After (Slack throttles per method),
-        // which only the header carries — fold it into the answer.
-        if (r.status == 429) {
-            const int64_t secs = std::atoll(std::string(r.header("Retry-After")).c_str());
-            doc.parse(
-                str::concat(
-                    {R"({"ok":false,"error":"ratelimited","retry_after":)",
-                     str::number(secs > 0 ? secs : 1),
-                     "}"}
-                )
-            );
-            done(doc, "ratelimited");
-            return;
-        }
-        // Slack answers errors with JSON too (and 429 with "ratelimited").
-        if (!doc.parse(std::move(r.body), nullptr)) {
-            done(doc, r.status == 429 ? "ratelimited" : "bad_json");
-            return;
-        }
-        const json::Value root = doc.root();
-        if (root["ok"].boolean()) {
-            done(doc, std::string());
-            return;
-        }
-        std::string err(root["error"].str());
-        done(doc, err.empty() ? "unknown_error" : err);
+        json::Document    doc;
+        const std::string err = parseApiResponse(std::move(r), &doc);
+        done(doc, err);
     });
+}
+
+std::string parseApiResponse(net::Response r, json::Document *doc) {
+    if (!r.error.empty())
+        return r.error;
+    // Throttled: callers wait out Retry-After (Slack throttles per method),
+    // which only the header carries — fold it into the answer.
+    if (r.status == 429) {
+        const int64_t secs = std::atoll(std::string(r.header("Retry-After")).c_str());
+        doc->parse(
+            str::concat(
+                {R"({"ok":false,"error":"ratelimited","retry_after":)",
+                 str::number(secs > 0 ? secs : 1),
+                 "}"}
+            )
+        );
+        return "ratelimited";
+    }
+    // Slack answers errors with JSON too.
+    if (!doc->parse(std::move(r.body), nullptr))
+        return "bad_json";
+    const json::Value root = doc->root();
+    if (root["ok"].boolean())
+        return {};
+    std::string err(root["error"].str());
+    return err.empty() ? "unknown_error" : err;
 }
 
 bool isTransportError(const std::string &e) {
@@ -120,6 +134,31 @@ bool isTransportError(const std::string &e) {
 
 bool isTransientSlackError(const std::string &e) {
     return e == "internal_error" || e == "service_unavailable" || e == "fatal_error";
+}
+
+bool isMethodUnavailable(const std::string &e) {
+    static const char *const kCodes[] = {
+        "unknown_method",
+        "method_deprecated",
+        "method_not_supported_for_channel_type",
+        "not_allowed_token_type",
+        "missing_scope",
+        "no_permission",
+        "invalid_arguments",
+        "org_login_required",
+        "enterprise_is_restricted",
+        "user_is_restricted",
+        "ekm_access_denied",
+    };
+    for (const char *c : kCodes)
+        if (e == c)
+            return true;
+    return false;
+}
+
+bool isAuthError(const std::string &e) {
+    return e == "invalid_auth" || e == "not_authed" || e == "token_revoked" ||
+           e == "token_expired" || e == "account_inactive";
 }
 
 int retryBackoffMs(int attempt) {

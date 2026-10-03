@@ -23,7 +23,7 @@ void AudioTranscriber::transcribe(const std::string &fileId, TranscriptionInput 
     _pending[fileId].push_back(std::move(done));
     if (running)
         return;
-    changed(fileId);
+    _observers.notify(fileId);
     // Settles every listener registered while the request ran, then forgets
     // the key.
     _service.transcribe(std::move(in), [this, fileId](TranscriptionResult r) {
@@ -34,37 +34,11 @@ void AudioTranscriber::transcribe(const std::string &fileId, TranscriptionInput 
         _pending.erase(it);
         if (r.ok)
             _done[fileId] = r.text;
-        changed(fileId);
+        _observers.notify(fileId);
         for (const Done &l : listeners)
             if (l)
                 l(r);
     });
-}
-
-AudioTranscriber::ObserverId
-AudioTranscriber::observe(std::function<void(const std::string &fileId)> fn) {
-    _observers.push_back({_nextObserver, std::move(fn)});
-    return _nextObserver++;
-}
-
-void AudioTranscriber::unobserve(ObserverId id) {
-    for (auto it = _observers.begin(); it != _observers.end(); ++it)
-        if (it->id == id) {
-            it->fn = nullptr; // dispatching may be iterating: blank, erase later
-            break;
-        }
-}
-
-void AudioTranscriber::changed(const std::string &fileId) {
-    ++_dispatching;
-    for (size_t i = 0; i < _observers.size(); ++i)
-        if (_observers[i].fn) {
-            auto fn = _observers[i].fn; // the callback may unobserve itself
-            fn(fileId);
-        }
-    if (--_dispatching == 0)
-        for (auto it = _observers.begin(); it != _observers.end();)
-            it = it->fn ? it + 1 : _observers.erase(it);
 }
 
 } // namespace llm

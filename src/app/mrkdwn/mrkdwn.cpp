@@ -19,20 +19,6 @@ namespace {
 using str::endsWith;
 using str::startsWith;
 
-// Splits at every '|', keeping empty parts, which the grammar relies on (only
-// parts[0] and parts[1] — or the last part — are ever used).
-std::vector<std::string_view> splitBar(std::string_view s) {
-    std::vector<std::string_view> parts;
-    size_t                        start = 0;
-    while (true) {
-        const size_t bar = s.find('|', start);
-        parts.push_back(s.substr(start, bar == std::string_view::npos ? bar : bar - start));
-        if (bar == std::string_view::npos)
-            return parts;
-        start = bar + 1;
-    }
-}
-
 struct Builder {
     std::string         text;
     std::vector<Entity> entities;
@@ -102,21 +88,6 @@ size_t findUnderscoreClose(std::string_view src, size_t start, size_t width) {
             return after;
     }
     return std::string_view::npos;
-}
-
-// "js", "c++", "objective-c": one identifier-ish word, as the fence info
-// string. ^[A-Za-z][A-Za-z0-9_+#.-]{0,29}$
-bool isLanguageHint(std::string_view info) {
-    if (info.empty() || info.size() > 30)
-        return false;
-    auto alpha = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
-    if (!alpha(info[0]))
-        return false;
-    for (char c : info.substr(1))
-        if (!alpha(c) && !(c >= '0' && c <= '9') && c != '_' && c != '+' && c != '#' && c != '.' &&
-            c != '-')
-            return false;
-    return true;
 }
 
 size_t findCodeFenceClose(std::string_view src, size_t pos) {
@@ -202,13 +173,6 @@ std::string formatDateToken(int64_t secs, std::string_view fmt) {
     return out;
 }
 
-// A URL with a scheme we linkify. Tells a real <url|label> token from a
-// literal "<word>" in a rich_text run, where '<' is not escaped.
-bool looksLikeUrl(std::string_view s) {
-    return s.find("://") != std::string_view::npos || startsWith(s, "mailto:") ||
-           startsWith(s, "tel:");
-}
-
 bool isAsciiDigit(char c) {
     return c >= '0' && c <= '9';
 }
@@ -288,7 +252,7 @@ void appendPlainWithEmoji(Builder &b, std::string_view s) {
 // stays literal; parse() passes false because Slack escapes real '<' to &lt;.
 void appendAngleConstruct(Builder &b, std::string_view inner, bool requireScheme) {
     if (startsWith(inner, "@")) { // <@U…> or <@U…|name>
-        const auto        parts = splitBar(inner.substr(1));
+        const auto        parts = str::split(inner.substr(1), '|');
         const std::string uid(parts[0]);
         const std::string label =
             parts.size() > 1 ? decodeEntities(parts[1]) : str::concat({"@", uid});
@@ -298,7 +262,7 @@ void appendAngleConstruct(Builder &b, std::string_view inner, bool requireScheme
         return;
     }
     if (startsWith(inner, "#")) { // <#C…|name>
-        const auto        parts = splitBar(inner.substr(1));
+        const auto        parts = str::split(inner.substr(1), '|');
         const std::string cid(parts[0]);
         const std::string name  = parts.size() > 1 ? decodeEntities(parts[1]) : cid;
         const uint32_t    start = uint32_t(b.text.size());
@@ -323,16 +287,9 @@ void appendAngleConstruct(Builder &b, std::string_view inner, bool requireScheme
                                              ? decodeEntities(cmd.substr(pipe + 1))
                                              : std::string();
             std::string_view  head     = pipe != std::string_view::npos ? cmd.substr(0, pipe) : cmd;
-            std::vector<std::string_view> parts;
-            for (size_t s = 0;;) {
-                const size_t c = head.find('^', s);
-                parts.push_back(head.substr(s, c == std::string_view::npos ? c : c - s));
-                if (c == std::string_view::npos)
-                    break;
-                s = c + 1;
-            }
-            int64_t secs = 0;
-            bool    tsOk = false;
+            const std::vector<std::string_view> parts = str::split(head, '^');
+            int64_t                             secs  = 0;
+            bool                                tsOk  = false;
             if (parts.size() > 1 && !parts[1].empty()) {
                 const auto r =
                     std::from_chars(parts[1].data(), parts[1].data() + parts[1].size(), secs);
@@ -364,7 +321,7 @@ void appendAngleConstruct(Builder &b, std::string_view inner, bool requireScheme
             b.addSpan(Kind::Usergroup, start, id);
         } else {
             // <!everyone> and unknown commands: show as @name.
-            const auto        parts = splitBar(cmd);
+            const auto        parts = str::split(cmd, '|');
             const std::string label =
                 parts.size() > 1 ? decodeEntities(parts.back()) : std::string(cmd);
             b.text += '@';
@@ -375,7 +332,7 @@ void appendAngleConstruct(Builder &b, std::string_view inner, bool requireScheme
     }
 
     // <url|label> or <url>
-    const auto parts = splitBar(inner);
+    const auto parts = str::split(inner, '|');
     if (requireScheme && !looksLikeUrl(parts[0])) {
         b.text += '<';
         b.text += inner;
@@ -429,6 +386,43 @@ size_t asciiRef(std::string_view s, size_t pos, char *out) {
         return 0;
     *out = char(v);
     return i + 1 - pos;
+}
+
+// The entity at `pos` — Slack's &lt; &gt; &amp;, or an asciiRef — as its
+// character in *out; its length, or 0 for none.
+size_t entityAt(std::string_view s, size_t pos, char *out) {
+    if (s[pos] != '&')
+        return 0;
+    if (s.substr(pos, 4) == "&lt;") {
+        *out = '<';
+        return 4;
+    }
+    if (s.substr(pos, 4) == "&gt;") {
+        *out = '>';
+        return 4;
+    }
+    if (s.substr(pos, 5) == "&amp;") {
+        *out = '&';
+        return 5;
+    }
+    return asciiRef(s, pos, out);
+}
+
+// ":name:" at `pos` (not part of a time like 10:30:00) appended as an Emoji
+// span; the index after it, or 0 when there is none.
+size_t emojiAt(Builder &b, std::string_view src, size_t pos) {
+    const size_t close = src.find(':', pos + 1);
+    if (close == std::string_view::npos || close <= pos + 1)
+        return 0;
+    const std::string_view name = src.substr(pos + 1, close - pos - 1);
+    if (!validEmojiName(name) || numericColonRun(src, pos, close))
+        return 0;
+    const uint32_t start = uint32_t(b.text.size());
+    b.text += ':';
+    b.text += name;
+    b.text += ':';
+    b.addSpan(Kind::Emoji, start, std::string(name));
+    return close + 1;
 }
 
 // A leading "&gt;" is what the API sends for a typed '>'.
@@ -549,18 +543,9 @@ Rich parseImpl(std::string_view src, int depth, bool inQuote) {
 
         // ── Emoji :name: ──
         if (c == ':') {
-            const size_t close = src.find(':', i + 1);
-            if (close != npos && close > i + 1) {
-                const std::string_view name = src.substr(i + 1, close - i - 1);
-                if (validEmojiName(name) && !numericColonRun(src, i, close)) {
-                    const uint32_t start = uint32_t(b.text.size());
-                    b.text += ':';
-                    b.text += name;
-                    b.text += ':';
-                    b.addSpan(Kind::Emoji, start, std::string(name));
-                    i = close + 1;
-                    continue;
-                }
+            if (const size_t next = emojiAt(b, src, i)) {
+                i = next;
+                continue;
             }
         }
 
@@ -599,28 +584,11 @@ Rich parseImpl(std::string_view src, int depth, bool inQuote) {
         }
 
         // ── HTML entities (&lt; &gt; &amp;) — Slack escapes these in all text ──
-        if (c == '&') {
-            if (src.substr(i, 4) == "&lt;") {
-                b.text += '<';
-                i += 4;
-                continue;
-            }
-            if (src.substr(i, 4) == "&gt;") {
-                b.text += '>';
-                i += 4;
-                continue;
-            }
-            if (src.substr(i, 5) == "&amp;") {
-                b.text += '&';
-                i += 5;
-                continue;
-            }
-            char lit = 0;
-            if (const size_t len = asciiRef(src, i, &lit)) {
-                b.text += lit;
-                i += len;
-                continue;
-            }
+        char lit = 0;
+        if (const size_t len = entityAt(src, i, &lit)) {
+            b.text += lit;
+            i += len;
+            continue;
         }
 
         b.text += c;
@@ -701,28 +669,29 @@ void linkifyBareUrls(Rich &r) {
     }
 }
 
-std::string percentDecode(std::string_view s) {
-    std::string out;
-    for (size_t i = 0; i < s.size(); ++i) {
-        auto hex = [](char c) -> int {
-            if (c >= '0' && c <= '9')
-                return c - '0';
-            c |= 0x20;
-            return (c >= 'a' && c <= 'f') ? c - 'a' + 10 : -1;
-        };
-        if (s[i] == '%' && i + 2 < s.size() && hex(s[i + 1]) >= 0 && hex(s[i + 2]) >= 0) {
-            out += char(hex(s[i + 1]) * 16 + hex(s[i + 2]));
-            i += 2;
-        } else if (s[i] == '+') {
-            out += ' ';
-        } else {
-            out += s[i];
-        }
-    }
-    return out;
+} // namespace
+
+// A URL with a scheme we linkify. Tells a real <url|label> token from a
+// literal "<word>" in a rich_text run, where '<' is not escaped.
+bool looksLikeUrl(std::string_view s) {
+    return s.find("://") != std::string_view::npos || startsWith(s, "mailto:") ||
+           startsWith(s, "tel:");
 }
 
-} // namespace
+// "js", "c++", "objective-c": one identifier-ish word, as the fence info
+// string. ^[A-Za-z][A-Za-z0-9_+#.-]{0,29}$
+bool isLanguageHint(std::string_view info) {
+    if (info.empty() || info.size() > 30)
+        return false;
+    auto alpha = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+    if (!alpha(info[0]))
+        return false;
+    for (char c : info.substr(1))
+        if (!alpha(c) && !(c >= '0' && c <= '9') && c != '_' && c != '+' && c != '#' && c != '.' &&
+            c != '-')
+            return false;
+    return true;
+}
 
 std::string escapeEntities(std::string_view s) {
     return str::escapeHtml(s);
@@ -735,31 +704,14 @@ std::string decodeEntities(std::string_view s) {
     // re-scanned. Plus msga's "&#42;" for a mark meant literally (asciiRef).
     std::string out;
     out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '&') {
-            if (s.substr(i, 4) == "&lt;") {
-                out += '<';
-                i += 3;
-                continue;
-            }
-            if (s.substr(i, 4) == "&gt;") {
-                out += '>';
-                i += 3;
-                continue;
-            }
-            if (s.substr(i, 5) == "&amp;") {
-                out += '&';
-                i += 4;
-                continue;
-            }
-            char lit = 0;
-            if (const size_t len = asciiRef(s, i, &lit)) {
-                out += lit;
-                i += len - 1;
-                continue;
-            }
+    for (size_t i = 0; i < s.size();) {
+        char lit = 0;
+        if (const size_t len = entityAt(s, i, &lit)) {
+            out += lit;
+            i += len;
+        } else {
+            out += s[i++];
         }
-        out += s[i];
     }
     return out;
 }
@@ -793,18 +745,9 @@ Rich resolveTokens(std::string_view src) {
         // Same URL guard as the link-label scanner: an unbracketed URL can
         // carry a ":b:" path segment.
         if (c == ':' && !inUrl[i]) {
-            const size_t close = src.find(':', i + 1);
-            if (close != std::string_view::npos && close > i + 1) {
-                const std::string_view name = src.substr(i + 1, close - i - 1);
-                if (validEmojiName(name) && !numericColonRun(src, i, close)) {
-                    const uint32_t start = uint32_t(b.text.size());
-                    b.text += ':';
-                    b.text += name;
-                    b.text += ':';
-                    b.addSpan(Kind::Emoji, start, std::string(name));
-                    i = close + 1;
-                    continue;
-                }
+            if (const size_t next = emojiAt(b, src, i)) {
+                i = next;
+                continue;
             }
         }
         b.text += c;
@@ -885,7 +828,7 @@ MessageRef parseMessageLink(std::string_view url) {
         const size_t     amp  = query.find('&', s);
         std::string_view pair = query.substr(s, amp == std::string_view::npos ? amp : amp - s);
         if (startsWith(pair, "thread_ts=")) {
-            const std::string thread = percentDecode(pair.substr(10));
+            const std::string thread = str::percentDecode(pair.substr(10));
             if (!thread.empty() && thread != ref.ts)
                 ref.threadTs = thread;
             break;
@@ -1140,29 +1083,40 @@ std::vector<Block> blocks(const Rich &r) {
 void runs(const Rich &r, uint32_t start, uint32_t end, std::vector<Run> &out) {
     if (start >= end)
         return;
-    // Segment boundaries: the range ends plus every entity edge inside it.
-    std::vector<uint32_t> cuts{start, end};
-    for (const auto &e : r.entities) {
-        if (e.start > start && e.start < end)
-            cuts.push_back(e.start);
-        if (e.end() > start && e.end() < end)
-            cuts.push_back(e.end());
+    // One sweep over the entities' edges inside the range, sorted (position,
+    // entity, open): the segments between edges, each styled by the entities
+    // open across it — a handful at once (nesting), not all of them.
+    std::vector<uint64_t> edges;
+    for (size_t k = 0; k < r.entities.size(); ++k) {
+        const Entity &e = r.entities[k];
+        if (e.length == 0 || e.end() <= start || e.start >= end)
+            continue;
+        edges.push_back(uint64_t(std::max(e.start, start)) << 32 | uint64_t(k) << 1 | 1);
+        if (e.end() < end)
+            edges.push_back(uint64_t(e.end()) << 32 | uint64_t(k) << 1);
     }
-    std::sort(cuts.begin(), cuts.end());
-    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
-
-    const size_t first = out.size();
-    for (size_t c = 0; c + 1 < cuts.size(); ++c) {
+    std::sort(edges.begin(), edges.end());
+    std::vector<uint32_t> open; // entity indices
+    const size_t          first = out.size();
+    size_t                next  = 0;
+    for (uint32_t pos = start; pos < end;) {
+        for (; next < edges.size() && uint32_t(edges[next] >> 32) == pos; ++next) {
+            const auto k = uint32_t(edges[next] >> 1) & 0x7FFFFFFF;
+            if (edges[next] & 1)
+                open.push_back(k);
+            else
+                std::erase(open, k);
+        }
         Run run;
-        run.start = cuts[c];
-        run.end   = cuts[c + 1];
-        for (size_t k = 0; k < r.entities.size(); ++k) {
+        run.start = pos;
+        run.end   = next < edges.size() ? uint32_t(edges[next] >> 32) : end;
+        pos       = run.end;
+        for (const uint32_t k : open) {
             const Entity &e = r.entities[k];
-            if (e.start <= run.start && e.end() >= run.end && e.length > 0) {
-                run.style |= styleOf(e.kind);
-                if (isTarget(e.kind))
-                    run.entity = int32_t(k); // later = deeper (parents come first)
-            }
+            run.style |= styleOf(e.kind);
+            // The deepest target: the latest one (parents come first).
+            if (isTarget(e.kind) && int32_t(k) > run.entity)
+                run.entity = int32_t(k);
         }
         // Merge with the previous run when nothing differs (entity edges of
         // purely structural spans such as Quote produce no visible change).

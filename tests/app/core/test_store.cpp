@@ -169,7 +169,9 @@ TEST("store: pages prepend, append and insert with the right change kinds") {
     CHECK((msgs[0].ts == 100 && msgs[1].ts == 200 && msgs[2].ts == 300));
 
     r.log.clear();
-    f.s.addPage(f.c, page({50, 10, 250, 200, 400}, f.mira));
+    std::vector<Message> next = page({50, 10, 250, 200, 400}, f.mira);
+    next[3].text              = "edited"; // 200 changed
+    f.s.addPage(f.c, std::move(next));
     // 200 existed (Update), 10/50 older (Prepend 2), 250 middle (Insert), 400 newer (Append 1)
     REQUIRE(r.log.size() == 4);
     CHECK((r.log[0].kind == ChangeKind::Update && r.log[0].ts == 200));
@@ -182,6 +184,168 @@ TEST("store: pages prepend, append and insert with the right change kinds") {
     CHECK(f.s.conversation(f.c).latest == 400);
     for (size_t i = 1; i < msgs.size(); ++i)
         CHECK(msgs[i - 1].ts < msgs[i].ts);
+}
+
+TEST("store: a refetched page emits Update only for messages that changed") {
+    Fixture f;
+    auto    full = [&] {
+        std::vector<Message> v = page({100, 200, 300}, f.mira);
+        v[1].reactions.push_back(Reaction{"tada", 1, {f.me}});
+        v[2].extras().files.push_back(File{});
+        v[2].extras().files.back().id = "F1";
+        return v;
+    };
+    f.s.addPage(f.c, full());
+    Recorder r;
+    f.s.observe(f.c, r.fn());
+    // The 5 s poll's head page, unchanged: nothing at all.
+    f.s.addPage(f.c, full());
+    CHECK(r.log.empty());
+    // No extras and empty extras are the same message.
+    std::vector<Message> same = page({100}, f.mira);
+    same[0].extras();
+    f.s.addPage(f.c, std::move(same));
+    CHECK(r.log.empty());
+    // A reaction and a file name moved: exactly those two.
+    std::vector<Message> moved      = full();
+    moved[1].reactions[0].count     = 2;
+    moved[2].extras().files[0].name = "a.png";
+    f.s.addPage(f.c, std::move(moved));
+    REQUIRE(r.log.size() == 2);
+    CHECK((r.log[0].kind == ChangeKind::Update && r.log[0].ts == 200));
+    CHECK((r.log[1].kind == ChangeKind::Update && r.log[1].ts == 300));
+    CHECK(f.s.findMessage(f.c, 300)->files()[0].name == "a.png");
+    // A reminder still fires its own Update (and moves the local revision the
+    // workspace cache saves meta.json on).
+    r.log.clear();
+    const uint64_t local = f.s.localRevision();
+    f.s.setReminderAt(f.c, 200, 1234);
+    REQUIRE(r.log.size() == 1);
+    CHECK((r.log[0].kind == ChangeKind::Update && r.log[0].ts == 200));
+    CHECK(f.s.localRevision() != local);
+    CHECK(f.s.reminderAt(f.c, 200) == 1234);
+}
+
+TEST("store: addConversations merges a whole roster with one Roster emit") {
+    Store s;
+    int   roster = 0, meta = 0;
+    s.observe(Store::kAnyConv, [&](const Change &ch) {
+        roster += ch.kind == ChangeKind::Roster;
+        meta += ch.kind == ChangeKind::Meta;
+    });
+    std::vector<Conversation> all;
+    for (const char *id : {"C1", "C2", "C3", "D1"}) {
+        Conversation c;
+        c.id   = id;
+        c.name = id;
+        all.push_back(std::move(c));
+    }
+    s.addConversations(std::move(all));
+    CHECK(roster == 1);
+    CHECK(meta == 0);
+    CHECK(s.conversationCount() == 4);
+    CHECK(s.findConversation("D1") == 3);
+    // A reload with one renamed and one new: one Roster, one Meta.
+    std::vector<Conversation> again;
+    for (const char *id : {"C1", "C2", "C3", "D1", "C4"}) {
+        Conversation c;
+        c.id   = id;
+        c.name = std::string(id) == "C2" ? "renamed" : id;
+        again.push_back(std::move(c));
+    }
+    s.addConversations(std::move(again));
+    CHECK(roster == 2);
+    CHECK(meta == 1);
+    CHECK(s.conversation(s.findConversation("C2")).name == "renamed");
+    // Nothing new, nothing changed: silence.
+    std::vector<Conversation> none;
+    Conversation              c;
+    c.id   = "C1";
+    c.name = "C1";
+    none.push_back(std::move(c));
+    s.addConversations(std::move(none));
+    CHECK(roster == 2 && meta == 1);
+}
+
+TEST("store: usersChanged(u) re-hashes only that user") {
+    Store s;
+    User  a, b;
+    a.id             = "UA";
+    b.id             = "UB";
+    const UserRef ra = s.addUser(a);
+    const UserRef rb = s.addUser(b);
+    s.usersChanged();
+    const uint64_t p0     = s.profileRevision();
+    // Changed in place and named: that user's revision moves.
+    s.user(ra).statusText = "lunch";
+    s.usersChanged(ra);
+    CHECK(s.profileRevision() > p0);
+    CHECK(s.userRevision(ra) == s.profileRevision());
+    CHECK(s.userRevision(rb) == p0);
+    // Only the named user is looked at: another's in-place change waits for
+    // a full usersChanged().
+    const uint64_t p1     = s.profileRevision();
+    s.user(rb).statusText = "away";
+    s.usersChanged(ra);
+    CHECK(s.profileRevision() == p1);
+    s.usersChanged();
+    CHECK(s.userRevision(rb) == s.profileRevision());
+    // addUser counts as touched (the merge of a fetched profile).
+    User b2       = s.user(rb);
+    b2.title      = "CTO";
+    const auto p2 = s.profileRevision();
+    s.usersChanged(s.addUser(b2));
+    CHECK(s.profileRevision() > p2);
+    CHECK(s.userRevision(rb) == s.profileRevision());
+    CHECK(s.userRevision(ra) == p1);
+}
+
+TEST("store: textChangesSince lists changed channels, emoji and groups") {
+    Store                          s;
+    const uint64_t                 t0 = s.textRevision();
+    std::vector<Store::TextChange> out;
+    CHECK(s.textChangesSince(t0, &out));
+    CHECK(out.empty());
+    s.setChannelName("C9", "nine");
+    s.setCustomEmoji("party", "https://e/p.png");
+    REQUIRE(s.textChangesSince(t0, &out));
+    REQUIRE(out.size() == 2);
+    CHECK((out[0].kind == Store::TextChange::Kind::Channel && out[0].id == "C9"));
+    CHECK((out[1].kind == Store::TextChange::Kind::Emoji && out[1].id == "party"));
+    // Since the channel only: the emoji.
+    const uint64_t t1 = s.textRevision();
+    s.replaceCustomEmoji({{"party", "https://e/p2.png"}, {"yay", "alias:party"}});
+    out.clear();
+    REQUIRE(s.textChangesSince(t1, &out));
+    REQUIRE(out.size() == 2); // party changed, yay new (any order)
+    // Groups: added, then one edited.
+    const uint64_t t2 = s.textRevision();
+    s.setUsergroups({{"S1", "devs", "Devs", {"UA"}}, {"S2", "ops", "Ops", {}}});
+    s.setUsergroups({{"S1", "devs", "Devs", {"UA"}}, {"S2", "ops", "Ops!", {}}});
+    out.clear();
+    REQUIRE(s.textChangesSince(t2, &out));
+    REQUIRE(out.size() == 3);
+    CHECK(out[2].id == "S2");
+    // clear() has no ids: unlisted.
+    const uint64_t t3 = s.textRevision();
+    s.clear();
+    out.clear();
+    CHECK_FALSE(s.textChangesSince(t3, &out));
+    CHECK(s.textChangesSince(s.textRevision(), &out));
+}
+
+TEST("store: saved items stay in their order as they change") {
+    Store s;
+    s.setSavedItem(0, 10, true, 0, 100);   // bookmark, older
+    s.setSavedItem(0, 20, true, 0, 200);   // bookmark, newer
+    s.setSavedItem(0, 30, true, 5000, 50); // reminder
+    s.setSavedItem(0, 40, true, 4000, 60); // sooner reminder
+    std::vector<Store::SavedItem> v = s.savedItems();
+    REQUIRE(v.size() == 4);
+    CHECK((v[0].ts == 40 && v[1].ts == 30 && v[2].ts == 20 && v[3].ts == 10));
+    s.setSavedItem(0, 10, true, 1000); // becomes the soonest reminder
+    CHECK(s.savedList()[0].ts == 10);
+    CHECK(s.savedList()[3].ts == 20);
 }
 
 TEST("store: live messages count unread and mentions, markRead recounts") {

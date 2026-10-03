@@ -39,6 +39,19 @@ std::string normalized(std::string_view word) {
     return w;
 }
 
+// `work` then `then`, where the backend allows: on a worker (offThread), else
+// both on the UI thread in a later turn — never inside the caller.
+void workerOrPost(
+    plat::App &app, bool offThread, std::function<void()> work, std::function<void()> then
+) {
+    if (offThread)
+        return model::runInBackground(app, std::move(work), std::move(then));
+    app.post([work = std::move(work), then = std::move(then)] {
+        work();
+        then();
+    });
+}
+
 } // namespace
 
 // The backend with what it learnt. Workers and the UI thread share it, so
@@ -122,14 +135,7 @@ void Checker::apply() {
         _backend = state->backend.get();
         changed();
     };
-    if (state->backend->loadsOffThread()) {
-        model::runInBackground(*_app, std::move(load), std::move(then));
-    } else {
-        _app->post([load = std::move(load), then = std::move(then)]() mutable {
-            load();
-            then();
-        });
-    }
+    workerOrPost(*_app, state->backend->loadsOffThread(), std::move(load), std::move(then));
 }
 
 void Checker::check(
@@ -207,12 +213,7 @@ void Checker::suggest(
         *out = st->backend->suggest(w, max);
     };
     auto then = [out, done = std::move(done)] { done(std::move(*out)); };
-    if (_backend->threadSafe())
-        return model::runInBackground(*_app, std::move(run), std::move(then));
-    _app->post([run = std::move(run), then = std::move(then)]() mutable {
-        run();
-        then();
-    });
+    workerOrPost(*_app, _backend->threadSafe(), std::move(run), std::move(then));
 }
 
 void Checker::addToDictionary(const std::string &word) {
@@ -229,10 +230,8 @@ void Checker::addToDictionary(const std::string &word) {
         if (gen == _generation)
             changed();
     };
-    if (_backend->threadSafe())
-        return model::runInBackground(*_app, std::move(run), std::move(then));
-    run();
-    then();
+    // A main-thread checker adds it in a later turn too, like the others.
+    workerOrPost(*_app, _backend->threadSafe(), std::move(run), std::move(then));
 }
 
 void Checker::ignore(const std::string &word) {
@@ -244,19 +243,7 @@ void Checker::ignore(const std::string &word) {
 }
 
 Checker::ObserverId Checker::observe(std::function<void()> fn) {
-    _observers.push_back({_nextObserver, std::move(fn)});
-    return _nextObserver++;
-}
-
-void Checker::unobserve(ObserverId id) {
-    std::erase_if(_observers, [id](const Slot &s) { return s.id == id; });
-}
-
-void Checker::changed() {
-    const std::vector<Slot> copy = _observers; // an observer may unobserve
-    for (const Slot &s : copy)
-        if (s.fn)
-            s.fn();
+    return _observers.add([fn = std::move(fn)](const std::string &) { fn(); });
 }
 
 std::vector<std::string> Checker::defaultLanguages(
@@ -302,12 +289,7 @@ void listLanguages(plat::App &app, std::function<void(Available)> done) {
             out->packageHint = detail::dictionaryPackageHint(preferred);
     };
     auto then = [out, done = std::move(done)] { done(std::move(*out)); };
-    if (detail::listsOffThread())
-        return model::runInBackground(app, std::move(run), std::move(then));
-    app.post([run = std::move(run), then = std::move(then)]() mutable {
-        run();
-        then();
-    });
+    workerOrPost(app, detail::listsOffThread(), std::move(run), std::move(then));
 }
 
 } // namespace spell

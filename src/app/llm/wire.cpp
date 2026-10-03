@@ -3,6 +3,7 @@
 #include "base/crypto.h"
 #include "base/i18n.h"
 #include "base/json.h"
+#include "base/mime.h"
 #include "base/str.h"
 #include "base/utf8.h"
 
@@ -300,15 +301,12 @@ TranscriptionResult parseTranscription(const net::Response &r) {
 }
 
 std::string audioMimeForExtension(std::string_view extIn) {
+    // What the shared table (mime::fromName) lacks or names as video: an
+    // upload for transcription is audio either way.
     static const char *const kMime[][2] = {
-        {"mp3", "audio/mpeg"},
         {"mpga", "audio/mpeg"},
         {"mpeg", "audio/mpeg"},
         {"mp4", "audio/mp4"},
-        {"m4a", "audio/mp4"},
-        {"wav", "audio/wav"},
-        {"flac", "audio/flac"},
-        {"ogg", "audio/ogg"},
         {"oga", "audio/ogg"},
         {"opus", "audio/opus"},
         {"webm", "audio/webm"},
@@ -318,7 +316,8 @@ std::string audioMimeForExtension(std::string_view extIn) {
     for (const auto &m : kMime)
         if (ext == m[0])
             return m[1];
-    return {};
+    const std::string_view known = mime::fromName(str::concat({"a.", ext}));
+    return str::startsWith(known, "audio/") ? std::string(known) : std::string();
 }
 
 // ── Custom servers ──────────────────────────────────────────────────────────
@@ -391,7 +390,7 @@ bool parseIpv6(std::string_view h, uint16_t out[8]) {
             return false;
         uint16_t v = 0;
         for (char c : g) {
-            const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+            const int d = str::hexDigit(c);
             if (d < 0)
                 return false;
             v = uint16_t(v << 4 | d);

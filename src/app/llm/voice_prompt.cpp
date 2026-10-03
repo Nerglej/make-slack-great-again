@@ -2,6 +2,7 @@
 
 #include "app/llm/discussion_summary.h"
 #include "app/llm/wire.h"
+#include "app/mrkdwn/mrkdwn.h"
 #include "base/str.h"
 #include "base/utf8.h"
 
@@ -322,10 +323,7 @@ std::string stripSlackMarkup(std::string_view text) {
     for (char c : noEmoji)
         if (c != '`' && c != '*' && c != '~')
             clean += c;
-    replaceAll(clean, "&lt;", "<");
-    replaceAll(clean, "&gt;", ">");
-    replaceAll(clean, "&amp;", "&");
-    return clean;
+    return mrkdwn::decodeEntities(clean);
 }
 
 std::vector<std::string>

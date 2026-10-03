@@ -64,4 +64,23 @@ std::vector<Counts> toCounts(const json::Value &resp);
 // stars.list items that are conversations (not starred messages or files).
 void starredConversationIds(const json::Value &items, std::vector<std::string> &out);
 
+// An app's or bot's picture from an "icons" object: image_72, else 48, else
+// 36 ("" for none).
+std::string firstIcon(const json::Value &icons);
+// Epoch seconds Slack sends as a number or as a string ("1767225600").
+int64_t     epochSecs(const json::Value &v);
+
+// One thread of subscriptions.thread.getView (the Threads feed): where it
+// is, how far I read it, and its replies (latest_replies and
+// unread_replies, deduplicated, oldest first, threadTs set) with each
+// reply's parent_user_id == me. False for one to skip: unsubscribed, or in a
+// conversation the Store doesn't have.
+struct FeedThread {
+    model::ConvRef              conv = model::kNoConv;
+    model::Ts                   root = 0, lastRead = 0;
+    std::vector<model::Message> replies;
+    std::vector<char>           parentIsMe; // per reply
+};
+bool toFeedThread(const json::Value &t, model::Store &store, FeedThread &out);
+
 } // namespace slack::mapjson

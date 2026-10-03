@@ -42,8 +42,7 @@ net::Client &SlackBackend::transfers() {
 }
 
 bool SlackBackend::authError(const std::string &e) {
-    return e == "invalid_auth" || e == "not_authed" || e == "token_revoked" ||
-           e == "token_expired" || e == "account_inactive";
+    return isAuthError(e);
 }
 
 void SlackBackend::api(std::string_view method, std::string form, ApiDone done) {

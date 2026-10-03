@@ -220,6 +220,21 @@ TEST("spell checker: ignore and add to dictionary stop the underline, and say so
     CHECK(checkNow("worlld msgaa").empty());
     c.unobserve(id);
     c.setBackendForTesting(app(), nullptr);
+
+    // A main-thread checker (the system ones) adds in a later turn too,
+    // never inside the call that asked.
+    auto  m     = std::make_unique<FakeBackend>(&checks, false);
+    auto *mfake = m.get();
+    c.setBackendForTesting(app(), std::move(m));
+    int        later = 0;
+    const auto id2   = c.observe([&] { ++later; });
+    c.addToDictionary("msgab");
+    CHECK(mfake->added.empty());
+    CHECK(later == 0);
+    REQUIRE(until([&] { return later == 1; }));
+    CHECK(mfake->added.size() == 1);
+    c.unobserve(id2);
+    c.setBackendForTesting(app(), nullptr);
 }
 
 TEST("spell checker: suggestions arrive later, at most max") {

@@ -7,8 +7,13 @@
 
 #include "app/slack/session.h"
 
+#include <functional>
 #include <string>
 #include <vector>
+
+namespace plat {
+class App;
+}
 
 namespace slack {
 
@@ -23,5 +28,8 @@ struct LocalImport {
 
 bool        localImportSupported();
 LocalImport importLocalSession();
+// importLocalSession on a worker (up to three D-Bus calls of 1.5 s, SQLite,
+// a LevelDB scan, PBKDF2): `done` runs on the UI thread (session.cpp).
+void        importLocalSessionAsync(plat::App &app, std::function<void(LocalImport)> done);
 
 } // namespace slack

@@ -68,6 +68,12 @@ std::string decodeEntities(std::string_view s);
 // The other way: & < > → &amp; &lt; &gt;, the three Slack escapes (text sent
 // as mrkdwn, a plain_text object's text). decodeEntities undoes it.
 std::string escapeEntities(std::string_view s);
+// A URL with a scheme that is linked ("://", mailto:, tel:): what tells a
+// <url|label> token from a literal "<word>" (here and in markdown.cpp).
+bool        looksLikeUrl(std::string_view s);
+// A code fence's info string that is a language name ("js", "c++",
+// "objective-c"): ^[A-Za-z][A-Za-z0-9_+#.-]{0,29}$.
+bool        isLanguageHint(std::string_view info);
 
 // Slack renders a single quote level; deeper '>' stays literal text. It also
 // keeps pathological input ("> > > > …") from building deep layouts.

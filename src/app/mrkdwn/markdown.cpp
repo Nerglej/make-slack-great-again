@@ -16,11 +16,6 @@ bool space(char c) {
     return c == ' ' || c == '\t' || c == '\n';
 }
 
-bool looksLikeUrl(std::string_view s) {
-    return s.find("://") != std::string_view::npos || str::startsWith(s, "mailto:") ||
-           str::startsWith(s, "tel:");
-}
-
 // <…> the way Slack reads it: a mention, a command or a link.
 bool isSlackToken(std::string_view inner) {
     return !inner.empty() &&
@@ -147,20 +142,6 @@ bool fenceOpen(std::string_view line, std::string *rest) {
     if (!str::startsWith(t, "```"))
         return false;
     *rest = std::string(t.substr(3));
-    return true;
-}
-
-// "```js": one word of identifier characters.
-bool isLanguageHint(std::string_view info) {
-    if (info.empty() || info.size() > 30)
-        return false;
-    const auto alpha = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
-    if (!alpha(info[0]))
-        return false;
-    for (char c : info)
-        if (!alpha(c) && !(c >= '0' && c <= '9') && c != '_' && c != '+' && c != '#' && c != '.' &&
-            c != '-')
-            return false;
     return true;
 }
 

@@ -156,22 +156,30 @@ bool ownProfile(std::string_view path) {
                kProfilePrefix;
 }
 
-// Removes a tree, making everything writable on the way (Chromium leaves
-// read-only bits behind).
-void removeTree(const std::string &path) {
-    std::vector<file::DirEntry> entries;
-    if (file::listDir(path, &entries))
-        for (const auto &e : entries) {
-            const std::string p = file::join(path, e.name);
 #ifndef _WIN32
-            ::chmod(p.c_str(), e.isDir ? 0700 : 0600);
-#endif
+// Chromium leaves read-only directories behind, inside which nothing can be
+// unlinked: owner rwx on the profile's own directories first. lstat: a link
+// is never followed out of the profile.
+void makeWritable(const std::string &dir) {
+    struct stat st;
+    if (::lstat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+        return;
+    ::chmod(dir.c_str(), 0700);
+    std::vector<file::DirEntry> entries;
+    if (file::listDir(dir, &entries))
+        for (const auto &e : entries)
             if (e.isDir)
-                removeTree(p);
-            else
-                file::remove(p);
-        }
-    file::remove(path);
+                makeWritable(file::join(dir, e.name));
+}
+#endif
+
+// Removes a tree (file::removeTree clears Windows' read-only attribute
+// itself).
+void removeTree(const std::string &path) {
+#ifndef _WIN32
+    makeWritable(path);
+#endif
+    file::removeTree(path);
 }
 
 void wipeNow(const std::string &path) {

@@ -14,6 +14,7 @@
 #include "base/file.h"
 #include "base/process.h"
 #include "base/str.h"
+#include "support/fake_slack_server.h"
 #include "support/test.h"
 
 #include <cstdlib>
@@ -125,6 +126,18 @@ TEST("local import: not installed in an empty HOME") {
     const slack::LocalImport r = slack::importLocalSession();
     CHECK(r.error == "not_installed");
     CHECK(r.cookie.empty());
+}
+
+TEST("local import: the async form answers on the UI thread, later") {
+    bool               called = false;
+    slack::LocalImport r;
+    slack::importLocalSessionAsync(fakeslack::app(), [&](slack::LocalImport x) {
+        r      = std::move(x);
+        called = true;
+    });
+    CHECK_FALSE(called); // never inside the call
+    REQUIRE(fakeslack::pumpUntil([&] { return called; }, 5000));
+    CHECK(r.error == "not_installed");
 }
 
 TEST("local import: decrypt a v10 cookie and list workspaces") {

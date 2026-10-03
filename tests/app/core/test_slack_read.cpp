@@ -516,7 +516,9 @@ TEST("slack read: a background call already queued is not queued twice") {
 TEST("slack read: a roster reload that changed nothing emits no Meta") {
     if (!haveServer())
         return;
-    Env e;
+    // App keys: no client.counts, so the roster reloads every minute (it is
+    // the activity source there).
+    Env e(kWorkspace, /*session=*/false);
     REQUIRE(e.connect());
     fakeslack::pumpFor(300); // the connect's own follow-ups settle
     int        meta = 0, roster = 0;
@@ -531,6 +533,126 @@ TEST("slack read: a roster reload that changed nothing emits no Meta") {
     e.store.unobserve(id);
     CHECK(meta == 0);
     CHECK(roster == 0);
+}
+
+TEST("slack read: with client.counts the roster reloads when counts names a new id") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    fakeslack::pumpFor(300);
+    // counts every 10 s (0.1 s here): nothing new, so no reload in ~15
+    // snapshots (the fallback is 15 min, 9 s here).
+    const int lists = Log().count("conversations.list");
+    fakeslack::pumpFor(1500);
+    CHECK(Log().count("client.counts") >= 5);
+    CHECK(Log().count("conversations.list") == lists);
+    // A new DM shows up in counts first: one reload brings it.
+    set(R"({"client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000100.000000",
+                            "last_read": "1700000000.000000", "mention_count": 1}],
+              "ims": [{"id": "D1", "latest": "1700000050.000000", "last_read": "1700000000.000000"},
+                      {"id": "D9", "latest": "1700000900.000000", "last_read": "0"}],
+              "mpims": []},
+            "conversations.list?cursor=c2": {"ok": true, "channels": [
+              {"id": "D2", "is_im": true, "user": "UEXT"},
+              {"id": "G1", "is_mpim": true, "name": "mpdm-me--mira--jonas-1"},
+              {"id": "C2", "name": "random", "is_channel": true, "is_member": true},
+              {"id": "D9", "is_im": true, "user": "UJONAS"}],
+              "response_metadata": {"next_cursor": ""}}})");
+    REQUIRE(pumpUntil([&] { return e.conv("D9") != kNoConv; }, 3000));
+    fakeslack::pumpFor(300);
+    const int after = Log().count("conversations.list", "cursor", "c2");
+    CHECK(after >= 1);
+    // An id the reload doesn't bring (not ours to list) asks only once.
+    set(R"({"client.counts": {"ok": true, "channels": [{"id": "C1"}, {"id": "CZ"}],
+              "ims": [{"id": "D1"}, {"id": "D9"}], "mpims": []}})");
+    fakeslack::pumpFor(1500);
+    const int lists2 = Log().count("conversations.list", "cursor", "c2");
+    CHECK(lists2 <= after + 1);
+    fakeslack::pumpFor(1000);
+    CHECK(Log().count("conversations.list", "cursor", "c2") == lists2);
+}
+
+TEST("slack read: an open thread whose root left the head page asks for its root alone") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    const ConvRef c    = e.conv("C1");
+    const Ts      root = model::parseTs("1700000200.000200");
+    // A long thread, its root long gone from the channel's head page.
+    set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": true, "messages": [
+              {"type": "message", "ts": "1700009000.000000", "user": "UJONAS", "text": "later"}]},
+            "conversations.replies?limit=1": {"ok": true, "has_more": true, "messages": [
+              {"type": "message", "ts": "1700000200.000200", "thread_ts": "1700000200.000200",
+               "user": "UMIRA", "text": "root", "reply_count": 1,
+               "latest_reply": "1700000300.000000"}]},
+            "conversations.replies": {"ok": true, "messages": [
+              {"type": "message", "ts": "1700000200.000200", "thread_ts": "1700000200.000200",
+               "user": "UMIRA", "text": "root", "reply_count": 1,
+               "latest_reply": "1700000300.000000"},
+              {"type": "message", "ts": "1700000300.000000", "thread_ts": "1700000200.000200",
+               "user": "UJONAS", "text": "one"}]}})");
+    bool loaded = false;
+    e.be->loadThread(c, root, [&](bool, const std::string &) { loaded = true; });
+    REQUIRE(pumpUntil([&] { return loaded; }));
+    REQUIRE(e.store.replies(c, root) && e.store.replies(c, root)->size() == 1);
+    e.be->setActiveConversation(c, root);
+    // ~20 polls of the open chat: each asks for the root alone, none
+    // re-reads the thread while latest_reply stays where we are.
+    const int full0 = Log().count("conversations.replies", "limit", "50");
+    fakeslack::pumpFor(1000);
+    Log l;
+    CHECK(l.count("conversations.replies", "limit", "1") >= 5);
+    CHECK(l.count("conversations.replies", "limit", "50") == full0);
+    // A reply lands: latest_reply moves, one full read delivers it.
+    set(R"({"conversations.replies?limit=1": {"ok": true, "has_more": true, "messages": [
+              {"type": "message", "ts": "1700000200.000200", "thread_ts": "1700000200.000200",
+               "user": "UMIRA", "text": "root", "reply_count": 2,
+               "latest_reply": "1700000400.000000"}]},
+            "conversations.replies": {"ok": true, "messages": [
+              {"type": "message", "ts": "1700000200.000200", "thread_ts": "1700000200.000200",
+               "user": "UMIRA", "text": "root", "reply_count": 2,
+               "latest_reply": "1700000400.000000"},
+              {"type": "message", "ts": "1700000300.000000", "thread_ts": "1700000200.000200",
+               "user": "UJONAS", "text": "one"},
+              {"type": "message", "ts": "1700000400.000000", "thread_ts": "1700000200.000200",
+               "user": "UMIRA", "text": "two"}]}})");
+    REQUIRE(pumpUntil([&] { return e.store.replies(c, root)->size() == 2; }, 3000));
+    CHECK_STR(e.store.replies(c, root)->back().text, "two");
+    fakeslack::pumpFor(500);
+    CHECK(Log().count("conversations.replies", "limit", "50") <= full0 + 2);
+}
+
+TEST("slack read: opening a chat fetches its head page once") {
+    if (!haveServer())
+        return;
+    Env e;
+    // Delays compressed 10× only: the open chat's poll every 500 ms, so a
+    // loaded machine can't make the next regular poll look like a second
+    // fetch.
+    base::test::setEnv("MSGA_SLACK_TEST_SPEEDUP", "10");
+    slack::Credentials cr;
+    cr.token  = "xoxc-test";
+    cr.cookie = "xoxd-test";
+    cr.teamId = "T1";
+    e.be.reset();
+    e.be = std::make_unique<slack::SlackBackend>(e.store, app(), e.client, cr);
+    REQUIRE(e.connect());
+    const ConvRef c  = e.conv("C1");
+    const int     h0 = Log().count("conversations.history", "channel", "C1");
+    // What the shell does: the backend learns the chat is open, then the
+    // list loads its head page; that load is the open's fetch, and the poll
+    // waits its full gap after it.
+    e.be->setActiveConversation(c, 0);
+    REQUIRE(e.history(c, 0));
+    fakeslack::pumpFor(150);
+    CHECK(Log().count("conversations.history", "channel", "C1") == h0 + 1);
+    // Then it polls as before.
+    REQUIRE(pumpUntil(
+        [&] { return Log().count("conversations.history", "channel", "C1") >= h0 + 2; }, 3000
+    ));
 }
 
 TEST("slack read: a rate-limited call waits out Retry-After and retries") {

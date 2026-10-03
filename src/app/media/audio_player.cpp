@@ -207,37 +207,15 @@ void AudioPlayer::changed() {
 }
 
 void AudioPlayer::notify(const std::string &key) {
-    ++_dispatching;
-    for (size_t i = 0; i < _observers.size(); ++i)
-        if (_observers[i].second) {
-            auto fn = _observers[i].second; // it may unobserve itself
-            fn(key);
-        }
-    if (--_dispatching == 0)
-        _observers.erase(
-            std::remove_if(
-                _observers.begin(), _observers.end(), [](const auto &o) { return !o.second; }
-            ),
-            _observers.end()
-        );
+    _observers.notify(key);
 }
 
 AudioPlayer::ObserverId AudioPlayer::observe(std::function<void(const std::string &key)> fn) {
-    _observers.emplace_back(_nextObserver, std::move(fn));
-    return _nextObserver++;
+    return _observers.add(std::move(fn));
 }
 
 void AudioPlayer::unobserve(ObserverId id) {
-    for (auto &o : _observers)
-        if (o.first == id)
-            o.second = nullptr; // erased once no dispatch runs
-    if (_dispatching == 0)
-        _observers.erase(
-            std::remove_if(
-                _observers.begin(), _observers.end(), [](const auto &o) { return !o.second; }
-            ),
-            _observers.end()
-        );
+    _observers.remove(id);
 }
 
 bool AudioPlayer::canPlay(const std::string &ext) {

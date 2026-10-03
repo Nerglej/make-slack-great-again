@@ -63,7 +63,6 @@ public:
     };
     void setTimingForTest(const Timing &t) { _t = t; }
     bool connected() const;
-    int  ticklesSentForTest() const { return _tickles; }
 
 private:
     bool holding() const { return _mode != Mode::Native; }
@@ -95,7 +94,7 @@ private:
     int                             _generation     = 0; // bumps per teardown
     int                             _reconnectMs    = 0;
     int64_t                         _connectedSince = 0; // monotonic ms; 0 = down
-    int                             _pingId = 0, _awaitingPongs = 0, _tickles = 0;
+    int                             _pingId = 0, _awaitingPongs = 0;
     int64_t                         _lastTickle = 0;
     uint64_t                        _pingTimer = 0, _tickleTimer = 0, _idleTimer = 0;
     uint64_t                        _reconnectTimer = 0;

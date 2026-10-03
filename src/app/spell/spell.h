@@ -16,6 +16,8 @@
 // request only — a right-click — on the same terms.
 #pragma once
 
+#include "base/observers.h"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -125,9 +127,9 @@ public:
 
     // Whether and against what words are checked changed (on/off, loaded,
     // a word added or ignored): re-check what is on screen.
-    using ObserverId = uint32_t;
+    using ObserverId = base::Observers::Id;
     ObserverId observe(std::function<void()> fn);
-    void       unobserve(ObserverId id);
+    void       unobserve(ObserverId id) { _observers.remove(id); }
 
     // What to check when no language was chosen: the first preferred UI
     // language's own dictionary ("en_US" for "en-US"), else another of its
@@ -146,7 +148,7 @@ private:
     Checker();
     void apply();
     void reset();
-    void changed();
+    void changed() { _observers.notify(); }
 
     plat::App               *_app     = nullptr;
     bool                     _enabled = false;
@@ -154,12 +156,7 @@ private:
     std::shared_ptr<State>   _state;                // the backend, its cache and the ignore list
     Backend                 *_backend    = nullptr; // _state's, while active
     uint32_t                 _generation = 0;       // drops a load that apply() superseded
-    struct Slot {
-        ObserverId            id;
-        std::function<void()> fn;
-    };
-    std::vector<Slot> _observers;
-    ObserverId        _nextObserver = 1;
+    base::Observers          _observers;
 };
 
 } // namespace spell

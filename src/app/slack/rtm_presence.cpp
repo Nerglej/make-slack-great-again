@@ -1,6 +1,8 @@
 // RtmPresence (see rtm_presence.h), over net::WebSocket.
 #include "app/slack/rtm_presence.h"
 
+#include "app/slack/web_api.h"
+
 #include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
@@ -16,24 +18,11 @@ namespace {
 // default cadence; also what a sleep gap looks like).
 constexpr int kMaxMissedPongs = 2;
 
-// rtm.connect answers meaning "this token never gets a socket": retrying
-// would only churn the rate limit. Anything else backs off and retries.
+// rtm.connect answers meaning "this token never gets a socket" (dead
+// credentials, or the method refused for it): retrying would only churn the
+// rate limit. Anything else backs off and retries.
 bool fatalConnectError(const std::string &e) {
-    static const char *const kFatal[] = {
-        "not_allowed_token_type",
-        "invalid_auth",
-        "not_authed",
-        "account_inactive",
-        "token_revoked",
-        "token_expired",
-        "missing_scope",
-        "user_is_restricted",
-        "enterprise_is_restricted",
-    };
-    for (const char *f : kFatal)
-        if (e == f)
-            return true;
-    return false;
+    return isAuthError(e) || isMethodUnavailable(e);
 }
 
 } // namespace
@@ -159,11 +148,7 @@ void RtmPresence::openAndConnect() {
 
 void RtmPresence::connectWs(const std::string &url) {
     // Never two sockets: each one counts as a client.
-    if (_ws) {
-        _ws->onOpen = nullptr, _ws->onText = nullptr, _ws->onClosed = nullptr;
-        std::shared_ptr<net::WebSocket> dead(_ws.release());
-        _app.post([dead] {});
-    }
+    retireSocket(_app, _ws);
     _ws           = std::make_unique<net::WebSocket>(_app);
     _ws->onOpen   = [this] { onOpen(); };
     _ws->onText   = [this](std::string text) { onText(text); };
@@ -180,11 +165,7 @@ void RtmPresence::teardown() {
     stopTimer(_reconnectTimer);
     stopTimer(_pingTimer);
     stopTimer(_tickleTimer);
-    if (_ws) {
-        _ws->onOpen = nullptr, _ws->onText = nullptr, _ws->onClosed = nullptr;
-        std::shared_ptr<net::WebSocket> dead(_ws.release());
-        _app.post([dead] {}); // not inside its own callback
-    }
+    retireSocket(_app, _ws); // not inside its own callback
 }
 
 void RtmPresence::scheduleReconnect() {
@@ -220,11 +201,7 @@ void RtmPresence::onClosed(int code, const std::string &reason) {
     _connecting = false;
     stopTimer(_pingTimer);
     stopTimer(_tickleTimer);
-    if (_ws) {
-        _ws->onOpen = nullptr, _ws->onText = nullptr, _ws->onClosed = nullptr;
-        std::shared_ptr<net::WebSocket> dead(_ws.release());
-        _app.post([dead] {});
-    }
+    retireSocket(_app, _ws);
     // Only a durable connection resets the backoff (rtm.connect is Tier 1).
     if (_connectedSince && now - _connectedSince >= _t.stableMs)
         _reconnectMs = _t.reconnectMinMs;
@@ -288,7 +265,6 @@ void RtmPresence::sendTickle(bool force) {
     if (!force && _lastTickle && now - _lastTickle < _t.tickleGapMs)
         return;
     _lastTickle = now;
-    ++_tickles;
     _ws->sendText("{\"type\":\"tickle\"}");
 }
 

@@ -12,6 +12,7 @@
 #pragma once
 
 #include "app/model/types.h"
+#include "base/observers.h"
 
 #include <cstdint>
 #include <functional>
@@ -80,7 +81,7 @@ public:
 
     // Anything about `key` changed (state, position, duration); also called
     // for the previous key when another file takes over, so both repaint.
-    using ObserverId = uint32_t;
+    using ObserverId = base::Observers::Id;
     ObserverId observe(std::function<void(const std::string &key)> fn);
     void       unobserve(ObserverId id);
 
@@ -101,9 +102,7 @@ private:
     int64_t                                   _knownDurationMs = 0;
     uint64_t                                  _tick            = 0;
     std::vector<std::pair<std::string, bool>> _playable; // extension → canPlay
-    std::vector<std::pair<ObserverId, std::function<void(const std::string &)>>> _observers;
-    ObserverId                                                                   _nextObserver = 1;
-    int                                                                          _dispatching  = 0;
+    base::Observers                           _observers;
 };
 
 } // namespace media

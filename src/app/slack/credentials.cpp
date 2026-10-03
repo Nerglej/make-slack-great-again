@@ -1,5 +1,7 @@
 #include "app/slack/credentials.h"
 
+#include "app/slack/slack_json.h"
+
 #include "base/json.h"
 #include "base/str.h"
 
@@ -51,10 +53,9 @@ Credentials fromRecord(const auth::WorkspaceRecord &r) {
     c.iconUrl           = r.iconUrl;
     c.refreshToken      = std::string(o["refreshToken"].str());
     const json::Value e = o["expiresAt"];
-    c.expiresAt =
-        e.isString() ? std::strtoll(std::string(e.str()).c_str(), nullptr, 10) : e.integer();
-    c.cookie       = std::string(o["cookie"].str());
-    c.workspaceUrl = std::string(o["workspaceUrl"].str());
+    c.expiresAt         = mapjson::epochSecs(e);
+    c.cookie            = std::string(o["cookie"].str());
+    c.workspaceUrl      = std::string(o["workspaceUrl"].str());
     return c;
 }
 

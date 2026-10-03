@@ -89,6 +89,9 @@ public:
     size_t      userCount() const { return _users.size(); }
     // After changing users in place (presence, status): fires Users.
     void        usersChanged();
+    // The same after changing only user u in place: only u is re-hashed
+    // (see userRevision).
+    void        usersChanged(UserRef u);
     // What a Users change changed, for observers that only care about part
     // of it. Each counter only grows; every Users emit refreshes them first.
     //   profileRevision: any user's profile (all but presence/DND) changed
@@ -102,12 +105,34 @@ public:
     }
     uint64_t presenceRevision() const { return _presenceRev; }
     uint64_t textRevision() const { return _textRev; }
+    // One thing a textRevision() step changed, so an observer can re-bind
+    // only what draws it: a channel name (setChannelName), a custom emoji
+    // (added, changed or removed) or a user group.
+    struct TextChange {
+        enum class Kind : uint8_t { Channel, Emoji, Usergroup };
+        Kind        kind = Kind::Channel;
+        std::string id; // "C0123"; an emoji name without colons ("party"); "S0123"
+    };
+    // Appends to *out every change after revision `since` (a textRevision()
+    // seen earlier) and returns true; false when they can't be listed (too
+    // many, or a change without ids such as clear()): treat all text as
+    // changed. Nothing changed since: true with nothing appended.
+    bool     textChangesSince(uint64_t since, std::vector<TextChange> *out) const;
     // Grows with every Meta, Roster or Users change: a conversation's
     // displayName() can change with nothing else.
     uint64_t metaRevision() const { return _metaRev; }
+    // Grows with every change of the app-local marks the workspace cache
+    // keeps in meta.json (muted threads, reminders, AI transcripts): their
+    // Update/Meta emits look like any other.
+    uint64_t localRevision() const { return _localRev; }
+    // Grows with every setUsergroups.
+    uint64_t usergroupRevision() const { return _groupRev; }
 
     // ── Conversations ───────────────────────────────────────────────────────
     ConvRef             addConversation(Conversation c); // merges by id like addUser
+    // Many at once (a roster load): the same merges, but one Roster emit for
+    // all the new ones (a changed existing one still fires its own Meta).
+    void                addConversations(std::vector<Conversation> convs);
     ConvRef             findConversation(std::string_view id) const;
     const Conversation &conversation(ConvRef c) const; // an empty one for a ref it lacks
     Conversation       &conversation(ConvRef c);
@@ -219,9 +244,11 @@ public:
         bool        fired     = false;
     };
     // Reminders soonest due first, then the bookmarks newest saved first.
-    std::vector<SavedItem> savedItems() const;
-    const SavedItem       *findSaved(ConvRef c, Ts ts) const;
-    bool                   hasSaved() const { return !_saved.empty(); }
+    std::vector<SavedItem>        savedItems() const;
+    // The same list, without the copy.
+    const std::vector<SavedItem> &savedList() const { return _saved; }
+    const SavedItem              *findSaved(ConvRef c, Ts ts) const;
+    bool                          hasSaved() const { return !_saved.empty(); }
     // Adds or updates an item (keeping its savedAt and preview unless given)
     // or removes it (on = false); the preview comes from the message when it
     // is loaded. savedAt 0 = now for a new item. Fires Update for ts.
@@ -315,6 +342,10 @@ private:
     void                  recountUnread(Conversation &c);
     void                  emit(const Change &ch);
     void                  noteUserRevisions(); // before a Users emit
+    ConvRef               mergeConversation(Conversation c, bool *added);
+    void                  sortSaved();
+    void                  logText(TextChange::Kind kind, std::string id);
+    void                  textUnlisted(); // a step whose changes have no ids
 
     std::vector<User>                            _users;
     std::unordered_map<std::string, UserRef>     _userIndex;
@@ -344,6 +375,19 @@ private:
     // profile revision of its last change.
     std::vector<uint64_t> _profileHash, _presenceHash, _userRev;
     uint64_t              _profileRev = 0, _presenceRev = 0, _textRev = 0, _metaRev = 0;
+    uint64_t              _localRev = 0, _groupRev = 0;
+    // Users touched since the last Users emit (addUser, usersChanged(u));
+    // _allUsersDirty: changed in place without saying who (re-hash all).
+    std::vector<UserRef>  _touchedUsers;
+    bool                  _allUsersDirty = true;
+    // textChangesSince's memory: the newest changes with their revisions;
+    // anything at or below _textLogFloor is no longer listed.
+    struct LoggedText {
+        uint64_t   rev;
+        TextChange change;
+    };
+    std::vector<LoggedText> _textLog;
+    uint64_t                _textLogFloor = 0;
 
     struct Slot {
         ObserverId id;

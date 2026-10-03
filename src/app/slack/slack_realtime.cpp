@@ -41,8 +41,7 @@ constexpr int     kUnreadPatchMs        = 300;
 
 // oauth.v2.access answers worth trying again later.
 bool transientRefreshError(const json::Document &doc, const std::string &e) {
-    if (e == "internal_error" || e == "service_unavailable" || e == "fatal_error" ||
-        e == "ratelimited")
+    if (isTransientSlackError(e) || e == "ratelimited")
         return true;
     // No Slack answer at all (offline, a 5xx page): never proof of dead keys.
     return !doc.root().has("ok");
@@ -88,6 +87,12 @@ struct SlackBackend::Live {
     void onMessage(const json::Value &ev, bool ours);
     void fetchUnknown(const std::string &id, model::Message m, bool parentIsMe);
     void fetchJoined(const std::string &id);
+    // conversations.info (with the member count the header shows), mapped:
+    // `then` gets the conversation, or one with an empty id and the error.
+    void fetchInfo(
+        const std::string                                                    &id,
+        std::function<void(model::Conversation info, const std::string &err)> then
+    );
     void onReconnected();
     void onContended();
 
@@ -114,8 +119,7 @@ struct SlackBackend::Live {
 };
 
 SlackBackend::Live::Live(SlackBackend &b) : b(b), s(b.store()) {
-    if (const char *v = std::getenv("MSGA_SLACK_TEST_SPEEDUP"); v && std::atoi(v) > 1)
-        speed = std::atoi(v);
+    speed = testSpeedup();
     // The presence link exists only for a session token (rtm.connect refuses
     // granular OAuth ones); idle until a mode is set.
     if (b._creds.sessionAuth()) {
@@ -127,8 +131,8 @@ SlackBackend::Live::Live(SlackBackend &b) : b(b), s(b.store()) {
             b._creds.cookie
         );
         rtm->onStateChanged = [this](RtmPresence::Link) {
-            // The footer's tooltip names the link's state.
-            s.usersChanged();
+            // The footer's tooltip names the link's state (no user changed).
+            s.usersChanged(kNoUser);
             // Slack flips `online` as the socket comes and goes, but the
             // self snapshot is polled once a minute: look again shortly.
             if (selfTimer)
@@ -265,19 +269,25 @@ void SlackBackend::Live::apply(const json::Value &ev, bool ours) {
         const bool presence = type == "presence_change";
         const bool on =
             presence ? ev["presence"].str() == "active" : ev["dnd_status"]["dnd_enabled"].boolean();
-        bool changed = false;
-        auto patch   = [&](std::string_view id) {
+        int     changed = 0;
+        UserRef last    = kNoUser;
+        auto    patch   = [&](std::string_view id) {
             const UserRef u = s.findUser(id);
             if (u == kNoUser)
                 return;
             bool &field = presence ? s.user(u).active : s.user(u).dnd;
-            changed     = changed || field != on;
-            field       = on;
+            if (field != on) {
+                ++changed;
+                last = u;
+            }
+            field = on;
         };
         patch(ev["user"].str());
         for (const json::Value u : ev["users"]) // batched presence
             patch(u.str());
-        if (changed)
+        if (changed == 1)
+            s.usersChanged(last);
+        else if (changed)
             s.usersChanged();
         return;
     }
@@ -319,8 +329,7 @@ void SlackBackend::Live::apply(const json::Value &ev, bool ours) {
             u.active = s.user(r).active;
             u.dnd    = s.user(r).dnd;
         }
-        s.addUser(std::move(u));
-        s.usersChanged();
+        s.usersChanged(s.addUser(std::move(u)));
         return;
     }
     if (type == "subteam_created" || type == "subteam_updated" ||
@@ -410,50 +419,51 @@ void SlackBackend::Live::fetchUnknown(const std::string &id, model::Message m, b
     queue.push_back({std::move(m), parentIsMe});
     if (asked)
         return; // the burst rides the fetch already in flight
-    b.readCall(
-        "conversations.info",
-        net::formEncode({{"channel", id}, {"include_num_members", "true"}}),
-        [this, id](const json::Document &doc, const std::string &err) {
-            std::vector<Pending> backlog = std::move(unknown[id]);
-            unknown.erase(id);
-            if (err == "channel_not_found") {
-                b.markDead(id);
-                return;
-            }
-            if (!err.empty())
-                return; // a later message tries again
-            model::Conversation info = mapjson::toConversation(doc.root()["channel"], s);
-            if (info.id.empty())
-                return;
-            // The replay below counts them (as every other message is); the
-            // server's numbers already include them.
-            info.unread = info.mentions = 0;
-            info.member                 = true;
-            const ConvRef c             = b.mergeConversation(std::move(info));
-            for (Pending &p : backlog)
-                b.deliver(c, std::move(p.m), p.parentIsMe);
-        },
-        false
-    );
+    fetchInfo(id, [this, id](model::Conversation info, const std::string &err) {
+        std::vector<Pending> backlog = std::move(unknown[id]);
+        unknown.erase(id);
+        if (err == "channel_not_found") {
+            b.markDead(id);
+            return;
+        }
+        if (info.id.empty())
+            return; // a later message tries again
+        // The replay below counts them (as every other message is); the
+        // server's numbers already include them.
+        info.unread = info.mentions = 0;
+        info.member                 = true;
+        const ConvRef c             = b.mergeConversation(std::move(info));
+        for (Pending &p : backlog)
+            b.deliver(c, std::move(p.m), p.parentIsMe);
+    });
 }
 
 void SlackBackend::Live::fetchJoined(const std::string &id) {
     b.markAlive(id);
-    // The count is opt-in on conversations.info (the header shows it).
+    fetchInfo(id, [this](model::Conversation info, const std::string &) {
+        if (info.id.empty())
+            return;
+        const ConvRef c = s.findConversation(info.id);
+        if (c != kNoConv && s.conversation(c).member)
+            return; // a concurrent fetch added it already
+        info.member = true;
+        b.mergeConversation(std::move(info));
+    });
+}
+
+void SlackBackend::Live::fetchInfo(
+    const std::string                                                    &id,
+    std::function<void(model::Conversation info, const std::string &err)> then
+) {
+    // The count is opt-in on conversations.info.
     b.readCall(
         "conversations.info",
         net::formEncode({{"channel", id}, {"include_num_members", "true"}}),
-        [this](const json::Document &doc, const std::string &err) {
-            if (!err.empty())
-                return;
-            model::Conversation info = mapjson::toConversation(doc.root()["channel"], s);
-            if (info.id.empty())
-                return;
-            const ConvRef c = s.findConversation(info.id);
-            if (c != kNoConv && s.conversation(c).member)
-                return; // a concurrent fetch added it already
-            info.member = true;
-            b.mergeConversation(std::move(info));
+        [this, then = std::move(then)](const json::Document &doc, const std::string &err) {
+            model::Conversation info;
+            if (err.empty())
+                info = mapjson::toConversation(doc.root()["channel"], s);
+            then(std::move(info), err);
         },
         false
     );
@@ -495,45 +505,26 @@ void SlackBackend::Live::onContended() {
 void SlackBackend::Live::resyncUnreads() {
     if (resyncInFlight > 0 || (lastResync >= 0 && now() - lastResync < kUnreadResyncGapMs))
         return;
-    std::vector<std::string> ids;
-    for (int pass = 0; pass < 2; ++pass)
-        for (ConvRef r = 0; r < s.conversationCount(); ++r) {
-            const model::Conversation &c = s.conversation(r);
-            if (c.kind != (pass ? model::ConvKind::Group : model::ConvKind::Dm) || b.isDead(c.id))
-                continue;
-            // A dead DM: a deactivated peer's DM answers channel_not_found.
-            if (c.kind == model::ConvKind::Dm && s.user(c.dmUser).deleted)
-                continue;
-            ids.push_back(c.id);
-        }
+    const std::vector<std::string> ids = b.directConversationIds();
     if (ids.empty())
         return;
     lastResync     = now();
     resyncInFlight = int(ids.size());
     LOG_INFO("slack", "resyncUnreads: recovering unread for %zu DMs/MPDMs", ids.size());
     for (const std::string &id : ids)
-        b.readCall(
-            "conversations.info",
-            net::formEncode({{"channel", id}}),
-            [this, id](const json::Document &doc, const std::string &err) {
-                if (resyncInFlight > 0)
-                    --resyncInFlight;
-                if (err == "channel_not_found") {
-                    b.markDead(id);
-                    return;
-                }
-                if (!err.empty())
-                    return;
-                // Batched: one Store update per burst of answers.
-                patches.emplace_back(id, mapjson::toConversation(doc.root()["channel"], s));
-                if (!patchTimer)
-                    patchTimer = b._app.addTimer(kUnreadPatchMs, false, [this] {
-                        patchTimer = 0;
-                        applyPatches();
-                    });
-            },
-            true
-        );
+        b.sweepInfo(id, [this, id](model::Conversation *info) {
+            if (resyncInFlight > 0)
+                --resyncInFlight;
+            if (!info)
+                return;
+            // Batched: one Store update per burst of answers.
+            patches.emplace_back(id, std::move(*info));
+            if (!patchTimer)
+                patchTimer = b._app.addTimer(kUnreadPatchMs, false, [this] {
+                    patchTimer = 0;
+                    applyPatches();
+                });
+        });
 }
 
 void SlackBackend::Live::applyPatches() {

@@ -12,11 +12,13 @@
 #include "app/model/timers.h"
 #include "app/slack/slack_backend.h"
 #include "app/mrkdwn/markdown.h"
+#include "app/mrkdwn/mrkdwn.h"
 #include "app/slack/slack_json.h"
 #include "base/crypto.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/log.h"
+#include "base/mime.h"
 #include "base/str.h"
 #include "base/time.h"
 #include "plat/plat.h"
@@ -55,37 +57,10 @@ std::string clientMsgId() {
     return s;
 }
 
-// The send/delete/upload retry backoff.
-int backoff(int attempt) {
-    return retryBackoffMs(attempt);
-}
-
 // The request may have reached Slack or not: a transport failure or a rate
 // limit. Anything else is Slack's own verdict.
 bool transient(const std::string &e) {
     return isTransportError(e) || e == "ratelimited";
-}
-
-// The endpoint itself is refused for this token
-// (an internal method on OAuth, a missing scope), not a passing failure.
-bool methodUnavailable(const std::string &e) {
-    static const char *const kCodes[] = {
-        "unknown_method",
-        "method_deprecated",
-        "method_not_supported_for_channel_type",
-        "not_allowed_token_type",
-        "missing_scope",
-        "no_permission",
-        "invalid_arguments",
-        "org_login_required",
-        "enterprise_is_restricted",
-        "user_is_restricted",
-        "ekm_access_denied",
-    };
-    for (const char *c : kCodes)
-        if (e == c)
-            return true;
-    return false;
 }
 
 void addParam(std::string &form, std::string_view k, std::string_view v) {
@@ -99,24 +74,7 @@ void addParam(std::string &form, std::string_view k, std::string_view v) {
 // Slack entity-escapes bare & < > in stored text; unescape both sides so a
 // sent text compares equal to its stored form.
 std::string unescaped(std::string_view t) {
-    static const struct {
-        std::string_view from;
-        char             to;
-    } kEntities[] = {{"&lt;", '<'}, {"&gt;", '>'}, {"&amp;", '&'}};
-    std::string out;
-    out.reserve(t.size());
-    for (size_t i = 0; i < t.size(); ++i) {
-        bool hit = false;
-        for (const auto &e : kEntities)
-            if (t.compare(i, e.from.size(), e.from) == 0) {
-                out += e.to;
-                i += e.from.size() - 1;
-                hit = true;
-                break;
-            }
-        if (!hit)
-            out += t[i];
-    }
+    const std::string out = mrkdwn::decodeEntities(t);
     return std::string(str::trim(out));
 }
 
@@ -130,8 +88,11 @@ model::File localFile(const std::string &path) {
     f.size                = std::max<int64_t>(0, file::size(path));
     const std::string ext = str::asciiLower(file::extension(f.name));
     f.prettyType          = str::asciiUpper(ext);
-    if (model::imageSize(path, &f.width, &f.height))
-        f.mime = str::concat({"image/", ext == "jpg" ? "jpeg" : ext});
+    if (model::imageSize(path, &f.width, &f.height)) {
+        f.mime = mime::fromName(f.name);
+        if (!str::startsWith(f.mime, "image/")) // one the table doesn't name (HEIC…)
+            f.mime = str::concat({"image/", ext});
+    }
     return f;
 }
 
@@ -219,6 +180,31 @@ int parseDndMinutes(std::string_view args) {
 
 } // namespace
 
+// The answer-or-error call most writes are: a cancel is silent (the backend
+// is going), a failure is logged and `done` hears it; on ok, onOk(doc) runs
+// first, then done(true).
+void SlackBackend::api(
+    std::string_view                            method,
+    std::string                                 form,
+    std::function<void(const json::Document &)> onOk,
+    Done                                        done
+) {
+    api(method,
+        std::move(form),
+        [m    = std::string(method),
+         onOk = std::move(onOk),
+         done = std::move(done)](const json::Document &doc, const std::string &err) {
+            if (err == "cancelled")
+                return;
+            if (!err.empty())
+                LOG_WARN("slack", "%s: %s", m.c_str(), err.c_str());
+            else if (onOk)
+                onOk(doc);
+            if (done)
+                done(err.empty(), err);
+        });
+}
+
 struct SlackBackend::Write {
     explicit Write(SlackBackend &b) : b(b) {}
 
@@ -263,6 +249,11 @@ struct SlackBackend::Write {
     void later(int ms, std::function<void()> fn) { timers.after(ms, std::move(fn)); }
     // `done` later, never from inside the call (the Backend contract).
     void post(std::function<void()> fn) { model::postWhileAlive(b._app, b._alive, std::move(fn)); }
+    // A Done answered later, without a call (nothing to do, or refused here).
+    void answer(Done done, bool ok, std::string err = {}) {
+        if (done)
+            post([done = std::move(done), ok, err = std::move(err)] { done(ok, err); });
+    }
 
     // A request outside the form-encoded Web API (an upload's bytes, a
     // multipart photo, a file's bytes), on the transfer pool: the backend's
@@ -465,7 +456,7 @@ struct SlackBackend::Write {
     void retryOrFail(SendPtr st, const std::string &err) {
         if (!transient(err))
             return fail(st, err);
-        const int delay = backoff(st->attempts++);
+        const int delay = retryBackoffMs(st->attempts++);
         LOG_INFO("slack", "send: %s, reconciling in %d ms", err.c_str(), delay);
         later(delay, [this, st] { reconcile(st); });
     }
@@ -696,7 +687,7 @@ struct SlackBackend::Write {
                                 return confirm(st, mapjson::toMessage(o, store()));
                     }
                 if (st->attempts < kUploadScans) {
-                    later(backoff(st->attempts++), [this, st] { scanUpload(st); });
+                    later(retryBackoffMs(st->attempts++), [this, st] { scanUpload(st); });
                     return;
                 }
                 // Never seen: drop the ghost; history brings the real one.
@@ -720,7 +711,7 @@ struct SlackBackend::Write {
                 if (err.empty() || err == "cancelled" || err == "message_not_found")
                     return;
                 if (transient(err) && attempt < kDeleteRetries) {
-                    later(backoff(attempt), [this, conv, ts, attempt, restore] {
+                    later(retryBackoffMs(attempt), [this, conv, ts, attempt, restore] {
                         deleteAttempt(conv, ts, attempt + 1, restore);
                     });
                     return;
@@ -770,7 +761,7 @@ struct SlackBackend::Write {
                 if (err.empty() || err == "cancelled" || transient(err))
                     return; // an ambiguous write may have landed: no rollback
                 LOG_WARN("slack", "saved.%s: %s", on ? "add" : "delete", err.c_str());
-                if (methodUnavailable(err))
+                if (isMethodUnavailable(err))
                     savedUnavailable = true;
                 // The banner says why the tint (or the Saved row) just changed back.
                 if (b.onError) {
@@ -798,22 +789,25 @@ struct SlackBackend::Write {
         );
     }
 
-    // ── Members (conversations.members, paged) ──────────────────────────────
+    // ── Members (conversations.members, paged on the read lane) ─────────────
     struct Members {
         ConvRef                     conv;
         std::vector<model::UserRef> users;
         model::Backend::MembersDone done;
     };
-    void membersPage(std::shared_ptr<Members> ms, std::string cursor) {
+    void members(std::shared_ptr<Members> ms) {
         std::string form;
         addParam(form, "channel", b.convId(ms->conv));
         addParam(form, "limit", "1000");
-        if (!cursor.empty())
-            addParam(form, "cursor", cursor);
-        b.api(
+        b.readPages(
             "conversations.members",
             std::move(form),
-            [this, ms](const json::Document &doc, const std::string &err) {
+            "members",
+            [this, ms](const json::Value &arr) {
+                for (json::Value u : arr)
+                    ms->users.push_back(store().internUser(u.str()));
+            },
+            [this, ms](const std::string &err) {
                 if (err == "cancelled")
                     return;
                 if (!err.empty()) {
@@ -822,12 +816,6 @@ struct SlackBackend::Write {
                         ms->done({}, err);
                     return;
                 }
-                const json::Value r = doc.root();
-                for (json::Value u : r["members"])
-                    ms->users.push_back(store().internUser(u.str()));
-                const std::string next(r["response_metadata"]["next_cursor"].str());
-                if (!next.empty())
-                    return membersPage(ms, next);
                 // The full list is a channel's count too (msga sized the next
                 // popup by it): where the roster had no num_members (Grid's
                 // client.userBoot, an old cache) the header's count was blank.
@@ -857,12 +845,8 @@ struct SlackBackend::Write {
         req.headers.push_back({"Content-Type", std::move(contentType)});
         addAuthHeaders(req.headers, b._auth);
         raw(std::move(req), [this, done = std::move(done)](net::Response r) {
-            json::Document doc;
-            std::string    err = r.error;
-            if (err.empty() && !doc.parse(std::move(r.body), nullptr))
-                err = "bad_json";
-            if (err.empty() && !doc.root()["ok"].boolean())
-                err = std::string(doc.root()["error"].str("unknown_error"));
+            json::Document    doc;
+            const std::string err = parseApiResponse(std::move(r), &doc);
             if (err == "cancelled")
                 return;
             if (err.empty()) {
@@ -870,7 +854,7 @@ struct SlackBackend::Write {
                 std::string       url(p["image_512"].str(p["image_192"].str()));
                 if (!url.empty() && store().me != model::kNoUser) {
                     store().user(store().me).avatar = std::move(url);
-                    store().usersChanged();
+                    store().usersChanged(store().me);
                 }
             } else {
                 LOG_WARN("slack", "users.setPhoto: %s", err.c_str());
@@ -886,20 +870,13 @@ struct SlackBackend::Write {
         b.api(
             "users.profile.set",
             net::formEncode({{"profile", profile.str()}}),
-            [this,
-             apply = std::move(apply),
-             done  = std::move(done)](const json::Document &, const std::string &err) {
-                if (err == "cancelled")
-                    return;
-                if (err.empty() && store().me != model::kNoUser) {
+            [this, apply = std::move(apply)](const json::Document &) {
+                if (store().me != model::kNoUser) {
                     apply(store().user(store().me));
-                    store().usersChanged();
+                    store().usersChanged(store().me);
                 }
-                if (!err.empty())
-                    LOG_WARN("slack", "users.profile.set: %s", err.c_str());
-                if (done)
-                    done(err.empty(), err);
-            }
+            },
+            std::move(done)
         );
     }
 };
@@ -1106,27 +1083,17 @@ void SlackBackend::deleteAttachment(ConvRef conv, Ts ts, int attachmentId, Done 
     // the rest). Own messages only, a session token only. No retry: a lost
     // answer is ambiguous and a re-send could hit a renumbered id.
     if (conv >= _store.conversationCount() || attachmentId <= 0) {
-        if (done)
-            _app.post([done] { done(false, "invalid_attachment"); });
+        _write->answer(std::move(done), false, "invalid_attachment");
         return;
     }
-    api("chat.deleteAttachment",
+    api(
+        "chat.deleteAttachment",
         net::formEncode(
             {{"channel", convId(conv)},
              {"ts", model::formatTs(ts)},
              {"attachment", std::to_string(attachmentId)}}
         ),
-        [this, conv, ts, attachmentId, done = std::move(done)](
-            const json::Document &, const std::string &err
-        ) {
-            if (err == "cancelled")
-                return;
-            if (!err.empty()) {
-                LOG_WARN("slack", "chat.deleteAttachment: %s", err.c_str());
-                if (done)
-                    done(false, err);
-                return;
-            }
+        [this, conv, ts, attachmentId](const json::Document &) {
             // Gone for good: the rest keep their order and are renumbered.
             _store.updateMessage(conv, ts, [attachmentId](model::Message &m) {
                 if (!m.extra)
@@ -1141,9 +1108,9 @@ void SlackBackend::deleteAttachment(ConvRef conv, Ts ts, int attachmentId, Done 
                     if (as[i].id)
                         as[i].id = int32_t(i) + 1;
             });
-            if (done)
-                done(true, {});
-        });
+        },
+        std::move(done)
+    );
 }
 
 void SlackBackend::setPinned(ConvRef conv, Ts ts, bool pinned) {
@@ -1366,7 +1333,7 @@ void SlackBackend::markThreadRead(ConvRef conv, Ts root, Ts ts) {
         [this](const json::Document &, const std::string &err) {
             if (!err.empty() && err != "cancelled") {
                 LOG_WARN("slack", "subscriptions.thread.mark: %s", err.c_str());
-                if (methodUnavailable(err))
+                if (isMethodUnavailable(err))
                     _write->threadMarkUnavailable = true;
             }
         });
@@ -1553,7 +1520,7 @@ void SlackBackend::loadMembers(ConvRef conv, MembersDone done) {
     auto ms  = std::make_shared<Write::Members>();
     ms->conv = conv;
     ms->done = std::move(done);
-    _write->membersPage(std::move(ms), {});
+    _write->members(std::move(ms));
 }
 
 // ── Me: presence, status, profile ──────────────────────────────────────────
@@ -1575,7 +1542,7 @@ void SlackBackend::setPresence(bool away, Done done) {
             }
             if (_store.me != model::kNoUser) {
                 _store.user(_store.me).active = !away;
-                _store.usersChanged();
+                _store.usersChanged(_store.me);
             }
             // The rich snapshot (manual_away…)
             // only comes from the server — re-poll instead of guessing, and
@@ -1657,10 +1624,7 @@ void SlackBackend::updateProfile(
         }
     p.endObject();
     if (!any) {
-        _write->post([done] {
-            if (done)
-                done(true, {});
-        });
+        _write->answer(std::move(done), true);
         return;
     }
     _write->setProfile(
@@ -1916,10 +1880,7 @@ void SlackBackend::editCanvas(
     // canvases.edit takes one change per call ("no more than 1 items
     // allowed", verified by msga): sent one by one, in order.
     if (changes.empty()) {
-        _write->post([done] {
-            if (done)
-                done(true, {});
-        });
+        _write->answer(std::move(done), true);
         return;
     }
     const CanvasChange c = std::move(changes.front());
@@ -1964,18 +1925,14 @@ void SlackBackend::editCanvas(
 }
 
 void SlackBackend::deleteCanvas(const std::string &fileId, Done done) {
-    api("canvases.delete",
+    api(
+        "canvases.delete",
         net::formEncode({{"canvas_id", fileId}}),
-        [this, fileId, done = std::move(done)](const json::Document &, const std::string &err) {
-            if (err == "cancelled")
-                return;
-            if (err.empty())
-                setCanvas(_store, canvasConv(_store, fileId), {}, {});
-            else
-                LOG_WARN("slack", "canvases.delete: %s", err.c_str());
-            if (done)
-                done(err.empty(), err);
-        });
+        [this, fileId](const json::Document &) {
+            setCanvas(_store, canvasConv(_store, fileId), {}, {});
+        },
+        std::move(done)
+    );
 }
 
 // ── Slash commands ──────────────────────────────────────────────────────────
@@ -2138,21 +2095,18 @@ model::Backend::LocalResult SlackBackend::runLocalCommand(
 // dnd.setSnooze for a number of minutes, dnd.endSnooze
 // for 0; my User shows it at once (the dnd_updated_user echo agrees).
 void SlackBackend::setDndSnooze(int minutes, Done done) {
-    api(minutes > 0 ? "dnd.setSnooze" : "dnd.endSnooze",
+    api(
+        minutes > 0 ? "dnd.setSnooze" : "dnd.endSnooze",
         minutes > 0 ? net::formEncode({{"num_minutes", str::number(int64_t(minutes))}})
                     : std::string(),
-        [this, minutes, done = std::move(done)](const json::Document &, const std::string &err) {
-            if (err == "cancelled")
-                return;
-            if (err.empty() && _store.me != model::kNoUser) {
+        [this, minutes](const json::Document &) {
+            if (_store.me != model::kNoUser) {
                 _store.user(_store.me).dnd = minutes > 0;
-                _store.usersChanged();
+                _store.usersChanged(_store.me);
             }
-            if (!err.empty())
-                LOG_WARN("slack", "dnd: %s", err.c_str());
-            if (done)
-                done(err.empty(), err);
-        });
+        },
+        std::move(done)
+    );
 }
 
 // ── Bot buttons (slack-bot-button-press.md) ─────────────────────────────────
@@ -2167,10 +2121,7 @@ void SlackBackend::pressButton(ConvRef conv, Ts ts, const std::string &buttonId,
             if (!buttonId.empty() && x.id == buttonId && !bt)
                 bt = &x;
     if (!bt || !_creds.sessionAuth() || m->extra->botId.empty()) {
-        _write->post([done] {
-            if (done)
-                done(false, kUnpressableButton);
-        });
+        _write->answer(std::move(done), false, kUnpressableButton);
         return;
     }
     const int64_t ms = base::nowMicros() / 1000;
@@ -2200,16 +2151,7 @@ void SlackBackend::pressButton(ConvRef conv, Ts ts, const std::string &buttonId,
     addParam(form, "client_token", "msga-" + str::number(ms));
     addParam(form, "actions", a.str());
     addParam(form, "container", c.str());
-    api("blocks.actions",
-        std::move(form),
-        [done = std::move(done)](const json::Document &, const std::string &err) {
-            if (err == "cancelled")
-                return;
-            if (!err.empty())
-                LOG_WARN("slack", "blocks.actions: %s", err.c_str());
-            if (done)
-                done(err.empty(), err);
-        });
+    api("blocks.actions", std::move(form), nullptr, std::move(done));
 }
 
 // ── The account's Slack theme ───────────────────────────────────────────────

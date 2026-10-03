@@ -1,6 +1,7 @@
 #include "app/cache/workspace_cache.h"
 
 #include "app/identity.h"
+#include "app/model/jobs.h"
 #include "base/file.h"
 #include "base/crypto.h"
 #include "base/log.h"
@@ -8,6 +9,7 @@
 #include "plat/plat.h"
 
 #include <initializer_list>
+#include <memory>
 
 namespace cache {
 
@@ -365,27 +367,28 @@ std::string safeName(std::string_view s) {
     return out == "." || out == ".." ? std::string("_") : out;
 }
 
-// Our directories hold only files we wrote, no links.
-int64_t treeBytes(const std::string &dir) {
-    std::vector<file::DirEntry> all;
-    int64_t                     n = 0;
-    if (file::listDir(dir, &all))
-        for (const file::DirEntry &e : all)
-            n += e.isDir ? treeBytes(file::join(dir, e.name)) : e.size;
-    return n;
+// One conversation's roster record, as roster.json holds it.
+std::string conversationRecord(const model::Store &s, ConvRef c) {
+    json::Writer w;
+    IO           io(w, s);
+    io.open(0);
+    fields(io, const_cast<model::Conversation &>(s.conversation(c)));
+    io.close();
+    return w.take();
 }
 
-void removeTree(const std::string &dir) {
-    std::vector<file::DirEntry> all;
-    if (file::listDir(dir, &all))
-        for (const file::DirEntry &e : all) {
-            const std::string p = file::join(dir, e.name);
-            if (e.isDir)
-                removeTree(p);
-            else
-                file::remove(p);
-        }
-    file::remove(dir);
+// usergroups.json's records ([id, handle, name, [user ids]]); meta.json's
+// "x"."ug" held the same before the groups had a file of their own.
+void readUsergroups(const json::Value &arr, std::vector<model::Store::Usergroup> *out) {
+    for (const json::Value v : arr) {
+        model::Store::Usergroup g{
+            std::string(v[0].str()), std::string(v[1].str()), std::string(v[2].str()), {}
+        };
+        for (const json::Value u : v[3])
+            g.users.emplace_back(u.str());
+        if (!g.id.empty())
+            out->push_back(std::move(g));
+    }
 }
 
 } // namespace
@@ -412,18 +415,42 @@ std::string WorkspaceCache::dirFor(plat::App &app, std::string_view key) {
 
 int64_t WorkspaceCache::diskBytes(plat::App &app) {
     const std::string r = root(app);
-    return r.empty() ? 0 : treeBytes(r);
+    return r.empty() ? 0 : file::treeBytes(r);
 }
 
 void WorkspaceCache::clearAll(plat::App &app) {
     ++g_clearGen;
     if (const std::string r = root(app); !r.empty())
-        removeTree(r);
+        file::removeTree(r);
+}
+
+void WorkspaceCache::diskBytesAsync(plat::App &app, std::function<void(int64_t)> done) {
+    auto bytes = std::make_shared<int64_t>(0);
+    model::runInBackground(
+        app,
+        [r = root(app), bytes] { *bytes = r.empty() ? 0 : file::treeBytes(r); },
+        [bytes, done = std::move(done)] {
+            if (done)
+                done(*bytes);
+        }
+    );
+}
+
+void WorkspaceCache::clearAllAsync(plat::App &app, std::function<void()> done) {
+    ++g_clearGen; // at once: caches still open write nothing more
+    model::runInBackground(
+        app,
+        [r = root(app)] {
+            if (!r.empty())
+                file::removeTree(r);
+        },
+        std::move(done)
+    );
 }
 
 void WorkspaceCache::remove(plat::App &app, std::string_view key) {
     if (const std::string d = dirFor(app, key); !d.empty())
-        removeTree(d);
+        file::removeTree(d);
 }
 
 bool WorkspaceCache::writable() const {
@@ -440,8 +467,8 @@ bool WorkspaceCache::load(json::Document *meta) {
             onChange(ch);
         });
     };
-    json::Document roster, users, emoji;
-    uint64_t       hRoster = 0, hUsers = 0, hEmoji = 0, hMeta = 0;
+    json::Document roster, users, emoji, groups;
+    uint64_t       hRoster = 0, hUsers = 0, hEmoji = 0, hMeta = 0, hGroups = 0;
     if (!readDoc(file::join(_dir, "roster.json"), &roster, &hRoster) ||
         roster.root()["c"].size() == 0) {
         observe();
@@ -459,6 +486,8 @@ bool WorkspaceCache::load(json::Document *meta) {
                 _store.addUser(std::move(u));
         }
     }
+    std::vector<model::Conversation> convs;
+    convs.reserve(roster.root()["c"].size());
     for (const json::Value rec : roster.root()["c"]) {
         model::Conversation c;
         IO                  io(_store, rec);
@@ -473,8 +502,9 @@ bool WorkspaceCache::load(json::Document *meta) {
         // would never clear (opening the chat has nothing left to mark).
         if (c.latest && c.lastRead >= c.latest)
             c.unread = c.mentions = 0;
-        _store.addConversation(std::move(c));
+        convs.push_back(std::move(c));
     }
+    _store.addConversations(std::move(convs)); // one Roster emit
     if (readDoc(file::join(_dir, "emoji.json"), &emoji, &hEmoji)) {
         _written["emoji.json"] = hEmoji;
         for (const json::Value e : emoji.root()["e"])
@@ -482,7 +512,8 @@ bool WorkspaceCache::load(json::Document *meta) {
                 _store.setCustomEmoji(std::string(e.key()), std::string(e.str()));
     }
     json::Document m;
-    if (readDoc(file::join(_dir, "meta.json"), &m, &hMeta)) {
+    const bool     haveMeta = readDoc(file::join(_dir, "meta.json"), &m, &hMeta);
+    if (haveMeta) {
         _written["meta.json"] = hMeta;
         const json::Value r   = m.root();
         if (const std::string_view me = r["me"].str(); !me.empty())
@@ -501,13 +532,29 @@ bool WorkspaceCache::load(json::Document *meta) {
             _store.setAiTranscript(
                 std::string(t.key()), std::string(t[0].str()), std::string(t[1].str())
             );
-        if (meta)
-            *meta = std::move(m);
     }
+    // The user groups: their own file, or where meta.json kept them before.
+    std::vector<model::Store::Usergroup> ug;
+    bool                                 migrate = false;
+    if (readDoc(file::join(_dir, "usergroups.json"), &groups, &hGroups)) {
+        _written["usergroups.json"] = hGroups;
+        readUsergroups(groups.root()["g"], &ug);
+    } else if (haveMeta) {
+        readUsergroups(m.root()["x"]["ug"], &ug);
+        migrate = !ug.empty();
+    }
+    if (!ug.empty())
+        _store.setUsergroups(std::move(ug));
+    if (meta && haveMeta)
+        *meta = std::move(m);
     _store.usersChanged();                        // one repaint for the whole roster
     _usersProfileRev  = _store.profileRevision(); // what users.json holds
     _usersPresenceRev = _store.presenceRevision();
+    _localRev         = _store.localRevision(); // what meta.json holds
+    _groupsRev        = _store.usergroupRevision();
     observe();
+    if (migrate) // the new file now; meta.json drops them with its next write
+        mark(kGroups | kMeta);
     LOG_INFO(
         "cache",
         "%s: %zu conversations, %zu users from the cache",
@@ -584,29 +631,50 @@ void WorkspaceCache::emojiChanged() {
     mark(kEmoji);
 }
 
+// Whether conversation c's roster record differs from the one last written.
+bool WorkspaceCache::conversationChanged(ConvRef c) {
+    if (c >= _store.conversationCount())
+        return false;
+    if (_convHash.size() <= c)
+        _convHash.resize(c + 1, 0);
+    return crypto::fnv1a(conversationRecord(_store, c)) != _convHash[c];
+}
+
 void WorkspaceCache::onChange(const model::Change &ch) {
     using K = model::ChangeKind;
+    // The app-local marks (muted threads, reminders, AI transcripts) ride
+    // Meta and Update emits; meta.json only when one of them moved.
+    if (_store.localRevision() != _localRev && ch.kind != K::Typing) {
+        _localRev = _store.localRevision();
+        mark(kMeta);
+    }
     switch (ch.kind) {
     case K::Roster:
         mark(kConvs);
         return;
     case K::Meta:
-        mark(kConvs | kMeta);
-        return; // kMeta: muted threads
+        // Most Meta emits (a new message's `latest`, a huddle, paging) leave
+        // what roster.json holds alone: re-serialising every conversation for
+        // them would cost the UI thread a full pass each time.
+        if (ch.conv != model::kNoConv && !(_dirty & kConvs) && conversationChanged(ch.conv))
+            mark(kConvs);
+        return;
     case K::Users:
-        // Only a profile change: presence/DND flips, emoji, user groups and
-        // channel names don't change what the next start needs at once.
+        // Only a profile change: presence/DND flips, emoji and channel names
+        // don't change what the next start needs at once.
         if (_store.profileRevision() != _usersProfileRev)
             mark(kUsers);
+        if (_store.usergroupRevision() != _groupsRev) {
+            _groupsRev = _store.usergroupRevision();
+            mark(kGroups | kMeta); // meta.json: my groups
+        }
         return;
     case K::Typing:
         return;
     default:
         break;
     }
-    // A message list changed. Update also carries reminders (setReminderAt).
-    if (ch.kind == K::Update)
-        mark(kMeta);
+    // A message list changed.
     if (ch.thread == 0 && tracked(ch.conv)) {
         if (_msgDirty.size() <= ch.conv)
             _msgDirty.resize(ch.conv + 1, 0);
@@ -655,16 +723,31 @@ void WorkspaceCache::flush() {
         return;
     const model::Store &s = _store;
     if (dirty & kConvs) {
-        json::Writer w;
-        IO           io(w, s);
-        begin(w, "c");
+        // {"v":1,"c":[record,…]}, each record hashed as it goes: a later
+        // Meta that leaves a record as it is writes nothing.
+        std::string out = str::concat({R"({"v":)", str::number(kVersion), R"(,"c":[)"});
+        _convHash.assign(s.conversationCount(), 0);
         for (ConvRef c = 0; c < s.conversationCount(); ++c) {
-            io.open(0);
-            fields(io, const_cast<model::Conversation &>(s.conversation(c)));
-            io.close();
+            const std::string rec = conversationRecord(s, c);
+            _convHash[c]          = crypto::fnv1a(rec);
+            if (c)
+                out += ',';
+            out += rec;
+        }
+        out += "]}";
+        write("roster.json", std::move(out));
+    }
+    if (dirty & kGroups) {
+        json::Writer w;
+        begin(w, "g");
+        for (const model::Store::Usergroup &g : s.usergroups()) {
+            w.beginArray().value(g.id).value(g.handle).value(g.name).beginArray();
+            for (const std::string &u : g.users)
+                w.value(u);
+            w.endArray().endArray();
         }
         w.endArray().endObject();
-        write("roster.json", w.take());
+        write("usergroups.json", w.take());
     }
     if (dirty & kUsers) {
         _usersProfileRev  = s.profileRevision();

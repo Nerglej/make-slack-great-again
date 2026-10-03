@@ -179,10 +179,14 @@ TEST("slack features: huddle rooms — mappers, the first history page, roster r
 
     if (!haveServer())
         return;
-    Env e(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
+    // App keys without a socket: the roster reloads every minute there.
+    Env e(
+        R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
         {"type": "message", "subtype": "huddle_thread", "ts": "1800000000.000100", "text": "",
          "room": {"call_family": "huddle", "huddle_link": "https://app.slack.com/huddle/T1/C1",
-                  "participants": ["UMIRA"], "date_start": 1800000000, "date_end": 0}}]}})");
+                  "participants": ["UMIRA"], "date_start": 1800000000, "date_end": 0}}]}})",
+        /*session=*/false
+    );
     REQUIRE(e.connect());
     const ConvRef c = e.conv("C1");
     REQUIRE(e.history(c));
@@ -192,7 +196,6 @@ TEST("slack features: huddle rooms — mappers, the first history page, roster r
     REQUIRE(x.huddleParticipants.size() == 1);
     CHECK_STR(e.store.user(x.huddleParticipants[0]).id, "UMIRA");
     // conversations.list carries no room: a reload keeps the live huddle.
-    // (the poll-only workspace reloads its roster every minute)
     REQUIRE(pumpUntil([&] { return count("conversations.list") >= 2; }, 5000));
     pumpFor(50);
     CHECK(e.store.conversation(c).huddleActive);
