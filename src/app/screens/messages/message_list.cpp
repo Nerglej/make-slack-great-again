@@ -66,7 +66,7 @@ uint64_t keyOf(const MessageList::Item &it) {
 }
 
 // The hover toolbar card.
-// A floating action card: four stacked shadow
+// A floating action card: four stacked faint shadow
 // halos biased a pixel down, surface.raised, a divider.def hairline, radius 8;
 // 28-px buttons, 8/6 padding, 4 apart. The message toolbar and the file bar.
 class ToolbarCard final : public ui::View {
@@ -82,7 +82,7 @@ public:
             p.fillRoundRect(
                 {b.x - k, b.y - k, b.w + 2 * k, b.h + 2 * k + 1},
                 8 + k,
-                gfx::Color(uint32_t(5 + (4 - i) * 3) << 24)
+                gfx::Color(uint32_t(2 + (4 - i) * 2) << 24)
             );
         }
         p.fillRoundRect(b, 8, ui::color(C::FormBg));
