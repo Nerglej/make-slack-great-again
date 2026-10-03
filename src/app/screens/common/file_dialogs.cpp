@@ -2,7 +2,6 @@
 
 #include "base/file.h"
 #include "base/i18n.h"
-#include "base/log.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -102,30 +101,6 @@ void pickFolder(Context &ctx, PathDone done, std::string startDir) {
     d.title      = i18n::tr("Choose folder");
     d.initialDir = startIn(ctx, std::move(startDir));
     fileDialog(ctx, std::move(d), firstOnly(std::move(done)));
-}
-
-void saveAttachmentAs(
-    Context &ctx, const model::File &f, std::function<void(bool, std::string)> done
-) {
-    if (f.path.empty() || f.path.find("://") != std::string::npos) {
-        // Remote content needs the (not yet written) download path.
-        if (done)
-            ctx.app.platform().post([done] { done(false, {}); });
-        return;
-    }
-    std::string name = f.name.empty() ? std::string(file::baseName(f.path)) : f.name;
-    saveFile(ctx, std::move(name), [src = f.path, done](std::string to) {
-        if (to.empty()) {
-            if (done)
-                done(false, {});
-            return;
-        }
-        const bool ok = to == src || file::copy(src, to);
-        if (!ok)
-            LOG_WARN("files", "save as: copying %s to %s failed", src.c_str(), to.c_str());
-        if (done)
-            done(ok, std::move(to));
-    });
 }
 
 std::vector<std::string> droppedFiles(const plat::Event *raw) {

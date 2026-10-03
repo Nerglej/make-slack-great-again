@@ -30,9 +30,10 @@ namespace model {
 
 // work() on a worker thread, then then() on the UI thread (never inside this
 // call). Workers are reused: up to 4 finished ones wait for the next call,
-// each for 30 s. Every call starts at once, never behind another. Nothing is
-// cancelled: a caller that may be gone by then guards its callback (a weak
-// alive flag).
+// each for 30 s. At most 4-8 workers run (by the hardware); more calls wait
+// for one, oldest first, so work must never wait on other background work.
+// Nothing is cancelled: a caller that may be gone by then guards its
+// callback (a weak alive flag).
 void runInBackground(plat::App &app, std::function<void()> work, std::function<void()> then);
 // The app is shutting down: results still to come are dropped, never posted
 // to a loop that may be gone. Call before the plat::App is destroyed.
@@ -43,9 +44,10 @@ void stopBackground();
 // case): a worker posting to a destroyed App is a use-after-free.
 void waitBackground();
 
-// The pool, for tests: threads alive, of them parked, and ever started.
+// The pool, for tests: threads alive, of them parked, the most that run,
+// and threads ever started.
 struct BackgroundStats {
-    int      workers = 0, parked = 0;
+    int      workers = 0, parked = 0, cap = 0;
     uint64_t started = 0;
 };
 BackgroundStats backgroundStats();

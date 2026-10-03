@@ -23,6 +23,29 @@ constexpr Type kTypes[] = {
     {"webm", "video/webm"},   {"mov", "video/quicktime"},
 };
 
+// Text by extension; most are not in kTypes (their types would change how
+// file cards look).
+constexpr const char *kText[] = {
+    "txt",
+    "md",
+    "log",
+    "csv",
+    "json",
+    "xml",
+    "yml",
+    "yaml",
+    "ini",
+    "c",
+    "cpp",
+    "h",
+    "py",
+    "js",
+    "ts",
+    "sh",
+    "html",
+    "css",
+};
+
 struct Label {
     const char *mime, *label;
 };
@@ -44,6 +67,21 @@ std::string_view fromName(std::string_view name) {
         if (ext == t.ext)
             return t.mime;
     return {};
+}
+
+std::string_view extension(std::string_view mime) {
+    for (const Type &t : kTypes)
+        if (mime == t.mime)
+            return t.ext;
+    return {};
+}
+
+bool isTextName(std::string_view name) {
+    const std::string ext = str::asciiLower(file::extension(file::baseName(name)));
+    for (const char *e : kText)
+        if (ext == e)
+            return true;
+    return false;
 }
 
 std::string_view fromNameOr(std::string_view name) {

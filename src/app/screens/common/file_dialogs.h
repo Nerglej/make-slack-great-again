@@ -34,14 +34,6 @@ void saveFile(Context &ctx, std::string suggestedName, PathDone done, std::strin
 // A folder (the Settings downloads folder); starts in startDir, else Downloads.
 void pickFolder(Context &ctx, PathDone done, std::string startDir = {});
 
-// "Save as…" for a message's file: asks where (the file's name, Downloads)
-// and copies the content there. done(true, path) when saved, (false, "") on
-// cancel, (false, path) when the copy failed. Only local content (the demo
-// fixture's assets) can be copied yet; remote files answer (false, "").
-void saveAttachmentAs(
-    Context &ctx, const model::File &f, std::function<void(bool ok, std::string path)> done = {}
-);
-
 // Drag and drop of files: whether a DropEnter/DropMove offers any (a URI
 // list), and a Drop's local paths (file:// URIs decoded; others skipped).
 bool                     dragOffersFiles(const plat::Event *raw);

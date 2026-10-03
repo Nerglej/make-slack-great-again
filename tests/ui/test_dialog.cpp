@@ -16,6 +16,20 @@ void setHeadlessScale(Window &w, double s);
 
 namespace {
 
+// A popup that closes another one as it is destroyed (a menu taking its
+// submenu down with it).
+struct Chained : ui::Popup {
+    ui::Window *win   = nullptr;
+    ui::Popup  *other = nullptr;
+    bool       *gone  = nullptr;
+    ~Chained() override {
+        if (gone)
+            *gone = true;
+        if (win && other)
+            win->closePopup(other);
+    }
+};
+
 struct Tipped : ui::Clickable {
     bool now = false;
     Tipped() {
@@ -402,4 +416,22 @@ TEST("controls: a length limit cuts typing and pastes, and undo still works") {
     // Code points, not bytes; setText is cut too.
     f->setText("\xC3\xA5\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA9x");
     CHECK_STR(f->text(), "\xC3\xA5\xC3\xA4\xC3\xB6\xC3\xBC\xC3\xA9");
+}
+
+TEST("popup: a popup's destructor closing another one frees both") {
+    Win   w(400, 300);
+    bool  aGone = false, bGone = false;
+    auto *b        = static_cast<Chained *>(w.w->showPopup(std::make_unique<Chained>()));
+    b->gone        = &bGone;
+    auto a         = std::make_unique<Chained>();
+    a->win         = w.w.get();
+    a->other       = b;
+    a->gone        = &aGone;
+    ui::Popup *raw = w.w->showPopup(std::move(a));
+    w.frame();
+    w.w->closePopup(raw);
+    w.frame(); // the next frame frees the closed one, and what it closed
+    CHECK(aGone);
+    CHECK(bGone);
+    CHECK(w.w->topPopup() == nullptr);
 }

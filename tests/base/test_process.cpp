@@ -39,6 +39,19 @@ TEST("process: a program that is not there did not start") {
 }
 
 #ifdef _WIN32
+TEST("process (Windows): command-line quoting and the environment block") {
+    std::wstring c;
+    base::appendQuoted(c, L"C:\\Program Files\\x.exe");
+    base::appendQuoted(c, L"plain");
+    base::appendQuoted(c, L"");
+    base::appendQuoted(c, L"a\nb");
+    base::appendQuoted(c, L"say \"hi\"\\");
+    CHECK(c == L"\"C:\\Program Files\\x.exe\" plain \"\" \"a\nb\" \"say \\\"hi\\\"\\\\\"");
+    const std::wstring b = base::envBlock({"MSGA_ENV_TEST=1"});
+    CHECK(b.size() >= 2 && b[b.size() - 1] == L'\0' && b[b.size() - 2] == L'\0');
+    CHECK(b.find(L"MSGA_ENV_TEST=1") != std::wstring::npos);
+}
+
 TEST("process (Windows): output, exit code and environment through cmd.exe") {
     const auto r = cmd("echo one& exit /b 3");
     CHECK(r.started);
@@ -83,6 +96,23 @@ TEST("process: stdin is the input, then closed, or the null device") {
     const auto r = sh("exit 0", o);
     CHECK(r.started);
     CHECK(r.code == 0);
+}
+
+TEST("process: the merged environment") {
+    base::test::setEnv("MSGA_MERGE_TEST_GONE", "x");
+    base::test::setEnv("MSGA_MERGE_TEST_SET", "old");
+    const std::vector<std::string> e =
+        base::mergedEnv({"MSGA_MERGE_TEST_SET=new", "MSGA_MERGE_TEST_GONE="});
+    int set = 0, gone = 0, path = 0;
+    for (const std::string &kv : e) {
+        set += kv.rfind("MSGA_MERGE_TEST_SET=", 0) == 0;
+        gone += kv.rfind("MSGA_MERGE_TEST_GONE=", 0) == 0;
+        path += kv.rfind("PATH=", 0) == 0;
+    }
+    CHECK(set == 1 && gone == 0 && path == 1);
+    CHECK_STR(e.back(), "MSGA_MERGE_TEST_SET=new");
+    base::test::unsetEnv("MSGA_MERGE_TEST_GONE");
+    base::test::unsetEnv("MSGA_MERGE_TEST_SET");
 }
 
 TEST("process: cwd and environment overrides") {

@@ -858,10 +858,6 @@ void takePreview(Store::SavedItem &s, const Message &m) {
 }
 } // namespace
 
-std::vector<Store::SavedItem> Store::savedItems() const {
-    return _saved; // kept in order by sortSaved
-}
-
 // Reminders (soonest first) ahead of plain bookmarks (newest first). After
 // one item moved the list is nearly sorted: an insertion pass.
 void Store::sortSaved() {

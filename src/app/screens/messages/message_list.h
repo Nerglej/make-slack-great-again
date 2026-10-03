@@ -245,8 +245,6 @@ private:
     void subscribe();
     void onChange(const model::Change &ch);
     void usersChanged(); // a coalesced Users burst: re-bind what it touched
-    bool
-    textChanges(const model::Store &st, std::vector<std::string> *names, size_t *emoji, bool diff);
     // Item i (a message) is grouped as its message, its neighbours' and the
     // grouping rules now say (an Update need not rebuild the items).
     bool groupingHolds(size_t i) const;
@@ -295,37 +293,29 @@ private:
         int         state = 0; // 0 loading, 1 loaded, -1 failed
     };
 
-    Context                 &_ctx;
-    std::unique_ptr<Adapter> _adapter;
-    ui::VirtualList         *_list    = nullptr;
-    ui::Label               *_typing  = nullptr;
-    ListState               *_state   = nullptr;
-    float                    _typingH = 22; // 0: no typing row (setTypingRow)
-    ui::View                *_toolbar = nullptr;
-    ui::Clickable           *_tbEmoji = nullptr, *_tbForward = nullptr, *_tbMore = nullptr;
-    class ActionButton      *_tbSave  = nullptr;
-    ui::View                *_fileBar = nullptr, *_fileView = nullptr; // the hovered file
-    Ts                       _fileTs = 0;
-    std::string              _filePath;
-    MessageRow              *_toolbarRow = nullptr;
-    std::vector<Item>        _items;
-    std::shared_ptr<char>    _alive; // guards timers and backend callbacks
-    ConvRef                  _conv = model::kNoConv;
-    Ts                       _root = 0, _markedTs = 0, _flashTs = 0, _jumpTs = 0;
-    uint32_t                 _observer  = 0;
-    plat::TimerId            _edgeTimer = 0, _flashTimer = 0, _usersTimer = 0;
+    Context                   &_ctx;
+    std::unique_ptr<Adapter>   _adapter;
+    ui::VirtualList           *_list    = nullptr;
+    ui::Label                 *_typing  = nullptr;
+    ListState                 *_state   = nullptr;
+    float                      _typingH = 22; // 0: no typing row (setTypingRow)
+    ui::View                  *_toolbar = nullptr;
+    ui::Clickable             *_tbEmoji = nullptr, *_tbForward = nullptr, *_tbMore = nullptr;
+    class ActionButton        *_tbSave  = nullptr;
+    ui::View                  *_fileBar = nullptr, *_fileView = nullptr; // the hovered file
+    Ts                         _fileTs = 0;
+    std::string                _filePath;
+    MessageRow                *_toolbarRow = nullptr;
+    std::vector<Item>          _items;
+    std::shared_ptr<char>      _alive; // guards timers and backend callbacks
+    ConvRef                    _conv = model::kNoConv;
+    Ts                         _root = 0, _markedTs = 0, _flashTs = 0, _jumpTs = 0;
+    uint32_t                   _observer  = 0;
+    plat::TimerId              _edgeTimer = 0, _flashTimer = 0, _usersTimer = 0;
     // The Store revisions the rows were last bound against (usersChanged).
-    const model::Store      *_seenStore   = nullptr;
-    uint64_t                 _seenProfile = 0, _seenText = 0, _seenEmoji = 0;
-    // …and what a text change is diffed against: the custom emoji names in
-    // order ('\n' after each) and their values' hashes, the user groups as
-    // "\n<id> <handle> <name>\n" lines.
-    std::string              _emojiNames, _groupsSeen;
-    std::vector<uint64_t>    _emojiValues;
-    // The names of channels the roster doesn't list, as rows were last
-    // bound with them ("\x01": none yet).
-    std::vector<std::pair<std::string, std::string>> _channelsSeen;
-    int                                              _rowBinds = 0;
+    const model::Store        *_seenStore   = nullptr;
+    uint64_t                   _seenProfile = 0, _seenText = 0;
+    int                        _rowBinds     = 0;
     bool                       _loadingOlder = false, _loadingThread = false, _waiting = false;
     // Selection.
     TextPos                    _selAnchor, _selFocus;

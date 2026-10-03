@@ -5,7 +5,7 @@
 #include "base/utf8.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
-#include "screens/messages/rich.h"
+#include "screens/common/message_text.h"
 #include "screens/shell/nav_chrome.h"
 
 #include <algorithm>
@@ -239,7 +239,7 @@ buildVoiceContext(screens::Context &ctx, model::ConvRef conv, model::Ts thread, 
             const model::Message &m = *it;
             if (m.pending || !isConversational(m))
                 continue;
-            std::string text(str::trim(screens::plainText(ctx, m.text)));
+            std::string text(str::trim(screens::plainText(ctx.store(), m.text)));
             if (text.empty())
                 continue;
             if (utf8::countCodePoints(text) > kMaxMessageChars)

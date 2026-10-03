@@ -907,7 +907,7 @@ public:
             *this,
             r,
             24,
-            hsl(float((h * 37) % 360), 0.65f, 0.42f),
+            screens::hsl(float((h * 37) % 360), 0.65f, 0.42f),
             letter,
             _letter,
             std::round(96.f * 17 / 40)
@@ -915,26 +915,6 @@ public:
     }
 
 private:
-    static gfx::Color hsl(float h, float s, float l) {
-        const float c = (1 - std::fabs(2 * l - 1)) * s,
-                    x = c * (1 - std::fabs(std::fmod(h / 60, 2.f) - 1));
-        const float m = l - c / 2;
-        float       r = 0, g = 0, b = 0;
-        if (h < 60)
-            r = c, g = x;
-        else if (h < 120)
-            r = x, g = c;
-        else if (h < 180)
-            g = c, b = x;
-        else if (h < 240)
-            g = x, b = c;
-        else if (h < 300)
-            r = x, b = c;
-        else
-            r = c, b = x;
-        auto ch = [m](float v) { return uint32_t(std::lround((v + m) * 255)); };
-        return 0xff000000U | ch(r) << 16 | ch(g) << 8 | ch(b);
-    }
     screens::Context                  &_ctx;
     std::shared_ptr<const gfx::Bitmap> _bmp;
     std::string                        _shown;

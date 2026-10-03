@@ -972,42 +972,13 @@ namespace {
 // What a Users burst changed that rows draw: profiles, and in the text
 // change (custom emoji, user groups, the names of channels the roster
 // doesn't list) what each looks like in message text.
-using ChannelNames = std::vector<std::pair<std::string, std::string>>;
-
 struct Changed {
     std::vector<model::UserRef>   users;
-    // Found in message text: user ids, ":emoji:" codes, user group ids.
+    // Found in message text: user ids, ":emoji:" codes, user group ids,
+    // "<#C…" channel mentions.
     std::vector<std::string_view> needles;
     std::vector<std::string_view> emoji; // custom emoji names (reactions)
-    // Set when channel names may have changed: the Store, the names the rows
-    // were bound with, and where the new ones go once every row is checked.
-    const model::Store           *store = nullptr;
-    const ChannelNames           *seen  = nullptr;
-    ChannelNames                 *now   = nullptr;
 };
-
-// A mention of a channel the roster doesn't list ("<#C0…>", its name from
-// Backend::resolveChannel) whose name is not the one last seen ("\x01":
-// none; an id not seen yet was shown without one).
-bool renamedChannel(const Changed &c, std::string_view text) {
-    for (size_t at = text.find("<#"); at != std::string_view::npos; at = text.find("<#", at + 2)) {
-        const size_t           end = text.find_first_of("|>", at + 2);
-        const std::string_view id =
-            end == std::string_view::npos ? std::string_view() : text.substr(at + 2, end - at - 2);
-        if (id.empty() || c.store->findConversation(id) != model::kNoConv)
-            continue;
-        const std::string *name = c.store->channelName(id);
-        const std::string  is   = name ? *name : std::string("\x01");
-        const auto         was  = std::find_if(c.seen->begin(), c.seen->end(), [&](const auto &s) {
-            return s.first == id;
-        });
-        if (is == (was == c.seen->end() ? std::string("\x01") : was->second))
-            continue;
-        c.now->emplace_back(id, is);
-        return true;
-    }
-    return false;
-}
 
 // Whether message `m` draws any of it: as its author, pinner, thread
 // participant, reactor or huddle attendee, or in its text, attachments or
@@ -1024,7 +995,7 @@ bool touches(const model::Message &m, const Changed &c) {
         for (std::string_view n : c.needles)
             if (text.find(n) != std::string_view::npos)
                 return true;
-        return c.store && renamedChannel(c, text);
+        return false;
     };
     const auto blocks = [&](const std::vector<model::Block> &bs) {
         for (const model::Block &b : bs) {
@@ -1066,97 +1037,65 @@ bool touches(const model::Message &m, const Changed &c) {
     return false;
 }
 
-uint64_t hashOf(std::string_view s) {
-    return std::hash<std::string_view>{}(s);
+void addOnce(std::vector<std::string> *v, std::string s) {
+    if (std::find(v->begin(), v->end(), s) == v->end())
+        v->push_back(std::move(s));
+}
+
+// What the Store's text changes after revision `since` look like in message
+// text: the custom emoji names that changed (with the aliases of them) first
+// in *names, *emoji of them, then the user group ids and "<#C…" mentions of
+// renamed channels. False when that can't be listed or is too much to look
+// for: re-bind everything.
+bool textNeedles(
+    const model::Store &st, uint64_t since, std::vector<std::string> *names, size_t *emoji
+) {
+    constexpr size_t                      kMax = 64;
+    std::vector<model::Store::TextChange> changes;
+    if (!st.textChangesSince(since, &changes))
+        return false;
+    using Kind = model::Store::TextChange::Kind;
+    for (const model::Store::TextChange &t : changes)
+        if (t.kind == Kind::Emoji)
+            addOnce(names, t.id);
+    if (names->size() > kMax)
+        return false;
+    if (!names->empty())
+        for (const auto &[name, value] : st.customEmoji()) // the aliases of them
+            if (str::startsWith(value, "alias:") &&
+                std::find(names->begin(), names->end(), std::string_view(value).substr(6)) !=
+                    names->end())
+                addOnce(names, name);
+    *emoji = names->size();
+    for (const model::Store::TextChange &t : changes)
+        if (t.kind == Kind::Usergroup)
+            addOnce(names, t.id);
+        else if (t.kind == Kind::Channel)
+            addOnce(names, "<#" + t.id);
+    return names->size() <= kMax;
 }
 
 } // namespace
-
-// The custom emoji and user groups against what was seen last (`diff`; else
-// only noted): the custom emoji names that changed (with the aliases of them)
-// first in *names, *emoji of them, then the user group ids. False when that
-// is too much to look for, or an emoji went away: re-bind everything.
-bool MessageList::textChanges(
-    const model::Store &st, std::vector<std::string> *names, size_t *emoji, bool diff
-) {
-    constexpr size_t kMax = 64;
-    bool             ok   = true;
-    if (st.customEmojiRevision() != _seenEmoji || !diff) {
-        // Both lists in name order: a merge finds what is new, changed or gone.
-        _seenEmoji                        = st.customEmojiRevision();
-        const auto                   &all = st.customEmoji();
-        std::string                   seen;
-        std::vector<uint64_t>         values;
-        std::vector<std::string_view> changed;       // names (the Store's keys)
-        size_t                        at = 0, k = 0; // the old list's next name, its value
-        const auto                    oldName = [&] {
-            return std::string_view(_emojiNames).substr(at, _emojiNames.find('\n', at) - at);
-        };
-        for (const std::string_view name : st.customEmojiNames()) {
-            const uint64_t v = hashOf(all.find(std::string(name))->second);
-            seen.append(name).push_back('\n');
-            values.push_back(v);
-            if (!diff)
-                continue;
-            for (; at < _emojiNames.size() && oldName() < name; at += oldName().size() + 1, ++k)
-                ok = false; // gone: its rows go back to ":name:"
-            if (at < _emojiNames.size() && oldName() == name) {
-                if (_emojiValues[k] != v)
-                    changed.push_back(name);
-                at += name.size() + 1, ++k;
-            } else {
-                changed.push_back(name);
-            }
-        }
-        ok           = ok && at >= _emojiNames.size();
-        _emojiNames  = std::move(seen);
-        _emojiValues = std::move(values);
-        if (changed.size() > kMax)
-            ok = false;
-        else if (ok && !changed.empty())
-            for (const auto &[name, value] : all) // the changed ones and their aliases
-                if (std::find(changed.begin(), changed.end(), name) != changed.end() ||
-                    (str::startsWith(value, "alias:") &&
-                     std::find(changed.begin(), changed.end(), std::string_view(value).substr(6)) !=
-                         changed.end()))
-                    names->push_back(name);
-    }
-    *emoji             = names->size();
-    // User groups as lines "\n<id> <handle> <name>\n": an id whose line is
-    // new or gone is one whose mentions read differently.
-    std::string groups = "\n";
-    for (const model::Store::Usergroup &g : st.usergroups())
-        groups += str::concat({g.id, " ", g.handle, " ", g.name, "\n"});
-    for (const std::string *a : {&groups, &_groupsSeen})
-        for (size_t at = 1; diff && at < a->size();) {
-            const size_t           nl   = a->find('\n', at);
-            const std::string_view line = std::string_view(*a).substr(at - 1, nl - at + 2);
-            if ((a == &groups ? _groupsSeen : groups).find(line) == std::string::npos)
-                names->emplace_back(line.substr(1, line.find(' ') - 1));
-            at = nl + 1;
-        }
-    _groupsSeen = std::move(groups);
-    return ok && names->size() <= kMax;
-}
 
 // Users changed: presence and DND aren't drawn in message rows, so only a
 // profile change (a name, an avatar, a bot flag) re-binds the rows that show
 // that user; a text change (emoji, user groups, channel names) the rows that
 // draw what changed.
 void MessageList::usersChanged() {
-    const model::Store &st    = _ctx.store();
-    const bool          other = &st != _seenStore;
-    const bool          text  = other || st.textRevision() != _seenText;
-    const uint64_t      since = _seenProfile;
-    _seenStore                = &st;
-    _seenText                 = st.textRevision();
-    _seenProfile              = st.profileRevision();
+    const model::Store &st        = _ctx.store();
+    const bool          other     = &st != _seenStore;
+    const uint64_t      sinceText = _seenText;
+    const bool          text      = other || st.textRevision() != sinceText;
+    const uint64_t      since     = _seenProfile;
+    _seenStore                    = &st;
+    _seenText                     = st.textRevision();
+    _seenProfile                  = st.profileRevision();
     if (!text && _seenProfile == since)
         return;
     std::vector<std::string> names; // what c's needles point into
     size_t                   emoji = 0;
-    // Another Store: everything, and what it has becomes what was seen.
-    const bool               full  = (text && !textChanges(st, &names, &emoji, !other)) || other;
+    // Another Store: everything.
+    const bool               full  = other || (text && !textNeedles(st, sinceText, &names, &emoji));
     Changed                  c;
     for (size_t i = 0; i < names.size(); ++i) {
         if (i < emoji) { // found in text as ":name:"
@@ -1164,14 +1103,6 @@ void MessageList::usersChanged() {
             c.emoji.push_back(std::string_view(names[i]).substr(1, names[i].size() - 2));
         }
         c.needles.push_back(names[i]);
-    }
-    ChannelNames renamed;
-    if (other)
-        _channelsSeen.clear();
-    if (text) {
-        c.store = &st;
-        c.seen  = &_channelsSeen;
-        c.now   = &renamed;
     }
     rebuild(true); // a bot flag regroups rows
     if (_items.empty())
@@ -1205,16 +1136,6 @@ void MessageList::usersChanged() {
                         break;
         if (hit)
             _list->itemsChanged(int(i), 1);
-    }
-    // Every row checked against the old names: the new ones are what is seen.
-    for (auto &[id, name] : renamed) {
-        auto was = std::find_if(_channelsSeen.begin(), _channelsSeen.end(), [&](const auto &s) {
-            return s.first == id;
-        });
-        if (was == _channelsSeen.end())
-            _channelsSeen.emplace_back(std::move(id), std::move(name));
-        else
-            was->second = std::move(name);
     }
 }
 

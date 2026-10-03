@@ -96,14 +96,11 @@ Process::~Process() {
 
 #ifdef _WIN32
 
-namespace {
-using base::wide;
-
 // CommandLineToArgvW's quoting rules, in reverse.
 void appendQuoted(std::wstring &cmd, const std::wstring &arg) {
     if (!cmd.empty())
         cmd += L' ';
-    if (!arg.empty() && arg.find_first_of(L" \t\"") == std::wstring::npos) {
+    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
         cmd += arg;
         return;
     }
@@ -124,6 +121,8 @@ void appendQuoted(std::wstring &cmd, const std::wstring &arg) {
     cmd.append(slashes * 2, L'\\');
     cmd += L'"';
 }
+
+namespace {
 
 // exe and its arguments as one command line.
 std::wstring commandLine(const std::string &exe, const std::vector<std::string> &args) {
@@ -225,6 +224,26 @@ bool sameEnvName(const std::wstring &a, const std::wstring &b) {
            CompareStringOrdinal(a.c_str(), int(alen), b.c_str(), int(blen), TRUE) == CSTR_EQUAL;
 }
 
+void closeHandle(HANDLE &h) {
+    if (h && h != INVALID_HANDLE_VALUE)
+        CloseHandle(h);
+    h = nullptr;
+}
+
+// Waits for a pipe thread; one still blocked in ReadFile/WriteFile (a pipe a
+// grandchild holds open, a child that never reads) is cancelled first.
+void joinPipeThread(HANDLE &thread, DWORD graceMs) {
+    if (!thread)
+        return;
+    if (WaitForSingleObject(thread, graceMs) == WAIT_TIMEOUT) {
+        CancelSynchronousIo(thread);
+        WaitForSingleObject(thread, INFINITE);
+    }
+    closeHandle(thread);
+}
+
+} // namespace
+
 // Our environment with `overrides` applied ("NAME=value" sets, "NAME=" unsets;
 // names compare case-insensitively, as Windows does): a block of "K=V\0"
 // strings ending in an empty one.
@@ -257,26 +276,6 @@ std::wstring envBlock(const std::vector<std::string> &overrides) {
     block.push_back(L'\0');
     return block;
 }
-
-void closeHandle(HANDLE &h) {
-    if (h && h != INVALID_HANDLE_VALUE)
-        CloseHandle(h);
-    h = nullptr;
-}
-
-// Waits for a pipe thread; one still blocked in ReadFile/WriteFile (a pipe a
-// grandchild holds open, a child that never reads) is cancelled first.
-void joinPipeThread(HANDLE &thread, DWORD graceMs) {
-    if (!thread)
-        return;
-    if (WaitForSingleObject(thread, graceMs) == WAIT_TIMEOUT) {
-        CancelSynchronousIo(thread);
-        WaitForSingleObject(thread, INFINITE);
-    }
-    closeHandle(thread);
-}
-
-} // namespace
 
 RunResult run(const std::string &exe, const std::vector<std::string> &args, const RunOptions &o) {
     RunResult           r;
@@ -526,31 +525,6 @@ std::string_view envName(std::string_view kv) {
     return kv.substr(0, kv.find('='));
 }
 
-// Our environment with `overrides` applied: "NAME=value" sets, "NAME=" unsets.
-std::vector<std::string> mergedEnv(const std::vector<std::string> &overrides) {
-    std::vector<std::string> out;
-    for (char **e = environ; *e; ++e) {
-        const std::string_view kv(*e);
-        bool                   overridden = false;
-        for (const auto &o : overrides)
-            overridden = overridden || envName(o) == envName(kv);
-        if (!overridden)
-            out.emplace_back(kv);
-    }
-    for (size_t i = 0; i < overrides.size(); ++i) {
-        const std::string     &o    = overrides[i];
-        const std::string_view name = envName(o);
-        if (name.empty() || name.size() + 1 >= o.size())
-            continue;       // no name, or "NAME=": unset
-        bool later = false; // the last word on a name wins
-        for (size_t j = i + 1; j < overrides.size(); ++j)
-            later = later || envName(overrides[j]) == name;
-        if (!later)
-            out.push_back(o);
-    }
-    return out;
-}
-
 int statusCode(int status) {
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
@@ -592,6 +566,31 @@ bool feedInput(int fd, const std::string &in, size_t &written, bool *epipe) {
 }
 
 } // namespace
+
+// Our environment with `overrides` applied: "NAME=value" sets, "NAME=" unsets.
+std::vector<std::string> mergedEnv(const std::vector<std::string> &overrides) {
+    std::vector<std::string> out;
+    for (char **e = environ; *e; ++e) {
+        const std::string_view kv(*e);
+        bool                   overridden = false;
+        for (const auto &o : overrides)
+            overridden = overridden || envName(o) == envName(kv);
+        if (!overridden)
+            out.emplace_back(kv);
+    }
+    for (size_t i = 0; i < overrides.size(); ++i) {
+        const std::string     &o    = overrides[i];
+        const std::string_view name = envName(o);
+        if (name.empty() || name.size() + 1 >= o.size())
+            continue;       // no name, or "NAME=": unset
+        bool later = false; // the last word on a name wins
+        for (size_t j = i + 1; j < overrides.size(); ++j)
+            later = later || envName(overrides[j]) == name;
+        if (!later)
+            out.push_back(o);
+    }
+    return out;
+}
 
 RunResult run(const std::string &exe, const std::vector<std::string> &args, const RunOptions &o) {
     RunResult  r;

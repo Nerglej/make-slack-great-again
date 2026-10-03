@@ -340,7 +340,7 @@ TEST("store: saved items stay in their order as they change") {
     s.setSavedItem(0, 20, true, 0, 200);   // bookmark, newer
     s.setSavedItem(0, 30, true, 5000, 50); // reminder
     s.setSavedItem(0, 40, true, 4000, 60); // sooner reminder
-    std::vector<Store::SavedItem> v = s.savedItems();
+    const std::vector<Store::SavedItem> &v = s.savedList();
     REQUIRE(v.size() == 4);
     CHECK((v[0].ts == 40 && v[1].ts == 30 && v[2].ts == 20 && v[3].ts == 10));
     s.setSavedItem(0, 10, true, 1000); // becomes the soonest reminder

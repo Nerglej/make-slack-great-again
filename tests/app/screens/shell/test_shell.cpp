@@ -871,44 +871,28 @@ TEST("files: no OS dialog shows the in-app browser, which answers the same way")
 }
 #endif
 
-TEST("files: save as suggests the name in Downloads and copies the content") {
-    Harness            h;
-    Files              f;
-    // A fixture message with a local file attached.
-    const model::File *src = nullptr;
-    for (ConvRef c = 0; c < h.store.conversationCount() && !src; ++c)
-        for (const Message &m : h.store.conversation(c).messages)
-            if (!m.files().empty() && file::exists(m.files()[0].path)) {
-                src = &m.files()[0];
-                break;
-            }
-    REQUIRE(src);
+TEST("files: save as suggests the name in Downloads and answers the path") {
+    Harness           h;
+    Files             f;
     const std::string dest = f.at("copy.txt");
     REQUIRE(hooks().fileDialogRespond({dest}));
-    std::optional<std::pair<bool, std::string>> got;
-    screens::saveAttachmentAs(h.ctx, *src, [&](bool ok, std::string p) { got = {ok, p}; });
+    std::optional<std::string> got;
+    screens::saveFile(h.ctx, "report.txt", [&](std::string p) { got = std::move(p); });
     pump();
     plat::FileDialogDesc d;
     REQUIRE(hooks().lastFileDialog(&d));
     CHECK(d.mode == plat::FileDialogDesc::Mode::Save);
-    CHECK_STR(d.suggestedName, src->name);
+    CHECK_STR(d.suggestedName, "report.txt");
     CHECK_STR(d.initialDir, app().platform().standardDir(plat::StandardDir::Downloads));
     REQUIRE(got.has_value());
-    CHECK(got->first);
-    CHECK_STR(got->second, dest);
-    std::string a, b;
-    CHECK(file::readAll(src->path, &a));
-    CHECK(file::readAll(dest, &b));
-    CHECK(!a.empty() && a == b);
-    // Cancel: nothing written, (false, "").
-    file::remove(dest);
+    CHECK_STR(*got, dest);
+    // Cancel: "".
     REQUIRE(hooks().fileDialogRespond({}));
     got.reset();
-    screens::saveAttachmentAs(h.ctx, *src, [&](bool ok, std::string p) { got = {ok, p}; });
+    screens::saveFile(h.ctx, "report.txt", [&](std::string p) { got = std::move(p); });
     pump();
     REQUIRE(got.has_value());
-    CHECK((!got->first && got->second.empty()));
-    CHECK_FALSE(file::exists(dest));
+    CHECK(got->empty());
 }
 
 TEST("files: pick folder answers one folder") {

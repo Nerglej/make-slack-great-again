@@ -446,31 +446,7 @@ bool looksLikeImage(std::string_view path) {
 }
 
 bool looksLikeText(std::string_view path) {
-    static const char *kExt[] = {
-        "txt",
-        "md",
-        "log",
-        "csv",
-        "json",
-        "xml",
-        "yml",
-        "yaml",
-        "ini",
-        "c",
-        "cpp",
-        "h",
-        "py",
-        "js",
-        "ts",
-        "sh",
-        "html",
-        "css"
-    };
-    const std::string ext = str::asciiLower(file::extension(path));
-    for (const char *e : kExt)
-        if (ext == e)
-            return true;
-    return false;
+    return mime::isTextName(path);
 }
 
 // A name longer than 18 characters: its first 15, "…", its extension.
@@ -1535,20 +1511,16 @@ bool Composer::pasteMedia(const std::vector<std::string> &mimes, plat::Selection
     const auto has = [&](std::string_view m) {
         return std::find(mimes.begin(), mimes.end(), m) != mimes.end();
     };
-    static constexpr struct {
-        const char *mime, *ext;
-    } kImages[] = {
-        {"image/png", "png"},
-        {"image/jpeg", "jpg"},
-        {"image/gif", "gif"},
-        {"image/webp", "webp"},
-        {"image/bmp", "bmp"},
+    // The picture types taken, in order of preference.
+    static constexpr const char *kImages[] = {
+        "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"
     };
-    const char *imgMime = nullptr, *imgExt = nullptr;
-    for (const auto &k : kImages)
-        if (has(k.mime)) {
-            imgMime = k.mime;
-            imgExt  = k.ext;
+    const char      *imgMime = nullptr;
+    std::string_view imgExt;
+    for (const char *k : kImages)
+        if (has(k)) {
+            imgMime = k;
+            imgExt  = mime::extension(k);
             break;
         }
     const bool uris = has("text/uri-list");

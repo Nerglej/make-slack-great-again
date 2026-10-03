@@ -244,8 +244,6 @@ public:
         bool        fired     = false;
     };
     // Reminders soonest due first, then the bookmarks newest saved first.
-    std::vector<SavedItem>        savedItems() const;
-    // The same list, without the copy.
     const std::vector<SavedItem> &savedList() const { return _saved; }
     const SavedItem              *findSaved(ConvRef c, Ts ts) const;
     bool                          hasSaved() const { return !_saved.empty(); }

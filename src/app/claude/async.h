@@ -28,8 +28,4 @@ void runAsync(
     RunDone                  done
 );
 
-// The app is shutting down: model::stopBackground (other work off the UI
-// thread goes through model::runInBackground directly).
-void stopAsync();
-
 } // namespace claude

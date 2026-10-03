@@ -11,6 +11,12 @@ namespace mime {
 std::string_view fromName(std::string_view name);
 // fromName, else application/octet-stream.
 std::string_view fromNameOr(std::string_view name);
+// The extension for a MIME type, without the dot ("image/jpeg" -> "jpg");
+// "" when it is not one of the known types.
+std::string_view extension(std::string_view mime);
+// Whether a file name's extension is one of plain text (prose, data, config,
+// source code, logs), any case: a preview can show its first lines.
+bool             isTextName(std::string_view name);
 // What the leading bytes say (PNG, JPEG, GIF, WebP, PDF, an ID3 tag); "" for
 // anything else.
 std::string_view sniff(std::string_view head);

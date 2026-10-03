@@ -1,5 +1,6 @@
 #include "app/claude/pty.h"
 
+#include "base/process.h"
 #include "plat/plat.h"
 
 #include <algorithm>
@@ -19,7 +20,6 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
-extern char **environ;
 #endif
 
 namespace claude {
@@ -34,32 +34,6 @@ using HPCON_                = void *;
 using CreatePseudoConsoleFn = HRESULT(WINAPI *)(COORD, HANDLE, HANDLE, DWORD, HPCON_ *);
 using ClosePseudoConsoleFn  = void(WINAPI *)(HPCON_);
 constexpr DWORD_PTR kAttributePseudoConsole = 0x00020016; // PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
-
-// CommandLineToArgvW rules: quotes around anything with blanks or quotes,
-// backslashes doubled only before a quote. (base/process.cpp has the same
-// rules for base::run, not exported.)
-std::wstring quoteArg(const std::wstring &a) {
-    const bool plain = a.find_first_of(L" \t\n\v\"") == std::wstring::npos;
-    if (!a.empty() && plain)
-        return a;
-    std::wstring out = L"\"";
-    size_t       bs  = 0;
-    for (const wchar_t c : a) {
-        if (c == L'\\') {
-            ++bs;
-            continue;
-        }
-        if (c == L'"')
-            out.append(bs * 2 + 1, L'\\');
-        else
-            out.append(bs, L'\\');
-        bs = 0;
-        out += c;
-    }
-    out.append(bs * 2, L'\\');
-    out += L'"';
-    return out;
-}
 
 } // namespace
 
@@ -159,21 +133,14 @@ bool Pty::start(
         _error = "UpdateProcThreadAttribute failed";
         return false;
     }
-    std::wstring cmd = quoteArg(base::widePath(program));
+    std::wstring cmd;
+    base::appendQuoted(cmd, base::widePath(program));
     for (const std::string &a : args)
-        cmd += L' ' + quoteArg(base::wide(a));
-    // Our environment, with TERM for the program: a block of "K=V\0" strings.
-    std::wstring envBlock;
-    if (wchar_t *env = GetEnvironmentStringsW()) {
-        for (const wchar_t *e = env; *e; e += wcslen(e) + 1)
-            if (_wcsnicmp(e, L"TERM=", 5) != 0)
-                envBlock.append(e).push_back(L'\0');
-        FreeEnvironmentStringsW(env);
-    }
-    envBlock.append(L"TERM=xterm-256color").push_back(L'\0');
-    envBlock.push_back(L'\0');
-    const std::wstring dir = base::widePath(cwd);
-    const BOOL         ok  = CreateProcessW(
+        base::appendQuoted(cmd, base::wide(a));
+    // Our environment, with TERM for the program.
+    std::wstring       envBlock = base::envBlock({"TERM=xterm-256color"});
+    const std::wstring dir      = base::widePath(cwd);
+    const BOOL         ok       = CreateProcessW(
         nullptr,
         cmd.data(),
         nullptr,
@@ -348,12 +315,8 @@ bool Pty::start(
     for (auto &a : argStore)
         argv.push_back(a.data());
     argv.push_back(nullptr);
-    std::vector<std::string> envStore;
-    for (char **e = environ; *e; ++e)
-        if (std::strncmp(*e, "TERM=", 5) != 0)
-            envStore.emplace_back(*e);
-    envStore.emplace_back("TERM=xterm-256color");
-    std::vector<char *> envp;
+    std::vector<std::string> envStore = base::mergedEnv({"TERM=xterm-256color"});
+    std::vector<char *>      envp;
     for (auto &e : envStore)
         envp.push_back(e.data());
     envp.push_back(nullptr);

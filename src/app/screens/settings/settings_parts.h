@@ -51,6 +51,7 @@ struct SettingsDialog::Parts {
     ui::TextField *glossary  = nullptr;
     // Storage / System
     ui::Label     *cacheSize = nullptr, *ramLabel = nullptr, *updStatus = nullptr;
+    int            cacheSeq    = 0; // refreshCache's newest walk
     ui::Label     *modeRestart = nullptr, *credStatus = nullptr, *giphyStatus = nullptr;
     ui::View      *sessionBox = nullptr, *appKeysBox = nullptr;
     ui::TextField *credId = nullptr, *credSecret = nullptr, *credXapp = nullptr, *giphy = nullptr;

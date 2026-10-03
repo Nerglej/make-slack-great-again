@@ -18,5 +18,8 @@ bool parseThemeColor(const json::Value &v, ui::Color *out);
 // sidebarInverted, gradient and the hex "pins". Whether any colour slot is
 // named at all (else it is likely some other JSON).
 bool readCustomTheme(const json::Value &obj, ui::CustomPalette *t);
+// *t as the object readCustomTheme reads back: the colour slots as hex, the
+// flags, and the pins that are set.
+void writeCustomTheme(json::Writer &w, const ui::CustomPalette &t);
 
 } // namespace screens

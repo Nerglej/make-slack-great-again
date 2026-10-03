@@ -99,8 +99,10 @@ public:
 
         _manualToggle = linkButton(c, tr("Paste a session cookie instead"), [this] {
             // Giving up on the automatic paths: close any browser window we
-            // opened so it can't report back over the manual fields.
+            // opened (or the import running) so it can't report back over the
+            // manual fields.
             _browser.reset();
+            _import.reset();
             revealManual({}, true);
         });
 
@@ -181,7 +183,21 @@ private:
     void tryLocalImport() {
         setBusy(true);
         setStatus(tr("Importing from local Slack\xE2\x80\xA6"), false);
-        slack::LocalImport imp = slack::importLocalSession();
+        // Off the UI thread; the dialog closing (or giving up on it) drops
+        // the result.
+        _import = std::make_shared<char>(0);
+        slack::importLocalSessionAsync(
+            _ctx.app.platform(),
+            [this, alive = std::weak_ptr<char>(_import)](slack::LocalImport imp) {
+                if (alive.expired())
+                    return;
+                _import.reset();
+                localImported(std::move(imp));
+            }
+        );
+    }
+
+    void localImported(slack::LocalImport imp) {
         if (!imp.ok()) {
             setBusy(false);
             revealManual(friendlyImportError(imp.error), true);
@@ -296,6 +312,7 @@ private:
     TextField                           *_cookie = nullptr, *_workspace = nullptr;
     std::unique_ptr<slack::BrowserLogin> _browser;
     std::unique_ptr<slack::TokenDeriver> _deriver;
+    std::shared_ptr<char>                _import; // a local import running
 };
 
 } // namespace

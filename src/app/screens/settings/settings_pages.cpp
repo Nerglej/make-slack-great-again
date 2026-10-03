@@ -680,8 +680,12 @@ void SettingsDialog::buildStorage() {
         // (the next start is a cold one).
         if (_ctx.remote)
             _ctx.remote->clear();
-        cache::WorkspaceCache::clearAll(_ctx.app.platform());
-        refreshCache();
+        cache::WorkspaceCache::clearAllAsync(
+            _ctx.app.platform(), [this, alive = std::weak_ptr<char>(_p->alive)] {
+                if (!alive.expired())
+                    refreshCache();
+            }
+        );
     };
 
     // 12 px more between the Cache and State blocks.
@@ -707,17 +711,24 @@ void SettingsDialog::refreshCache() {
     if (!_p->cacheSize)
         return;
     // The cache directory's size (the downloaded pictures and the
-    // workspaces' cached data).
-    const int64_t data = cache::WorkspaceCache::diskBytes(_ctx.app.platform());
-    if (_ctx.remote) {
-        _p->cacheSize->setText(str::byteSize(int64_t(_ctx.remote->diskBytes() + data)));
-        return;
-    }
+    // workspaces' cached data), walked on a worker. Only the newest walk
+    // started while this page exists shows.
+    const int seq = ++_p->cacheSeq;
+    cache::WorkspaceCache::diskBytesAsync(
+        _ctx.app.platform(), [this, seq, alive = std::weak_ptr<char>(_p->alive)](int64_t data) {
+            if (alive.expired() || seq != _p->cacheSeq)
+                return;
+            if (_ctx.remote) {
+                _p->cacheSize->setText(str::byteSize(int64_t(_ctx.remote->diskBytes() + data)));
+                return;
+            }
 #ifdef MSGA_HAVE_MESSAGES
-    _p->cacheSize->setText(str::byteSize(int64_t(_ctx.images.bytes()) + data));
+            _p->cacheSize->setText(str::byteSize(int64_t(_ctx.images.bytes()) + data));
 #else
-    _p->cacheSize->setText(str::byteSize(data));
+            _p->cacheSize->setText(str::byteSize(data));
 #endif
+        }
+    );
 }
 
 // ── System ──────────────────────────────────────────────────────────────────

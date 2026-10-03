@@ -2,6 +2,7 @@
 
 #include "plat/plat.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -15,14 +16,24 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 // A small pool of parked workers: a call wakes one, else starts a new
-// thread. Nothing ever waits behind another task: a CLI run may block its
-// worker up to its timeout, and work may wait on other work. A finished
-// worker parks while fewer than kMaxParked do, else retires; a parked one
-// retires after the idle time, so a quiet app holds no threads.
+// thread while fewer than workerCap() run; past that the task waits for the
+// next free worker. No task waits on another (that would deadlock a full
+// pool), but a CLI run may hold its worker up to its timeout, so the cap
+// stays above the few such runs at once. A finished worker parks while fewer
+// than kMaxParked do, else retires; a parked one retires after the idle time,
+// so a quiet app holds no threads.
 //
 // Workers outlive nothing they post to: once stopBackground() ran, a worker
 // that finishes drops its result (the app is going away; the loop may be gone).
 constexpr int kMaxParked = 4;
+
+// The hardware threads, clamped to 4..8: enough for blocking CLI runs beside
+// file work, few enough that a burst (every transcript at launch) doesn't
+// start a thread, and a malloc arena, per task.
+int workerCap() {
+    static const int cap = std::clamp(int(std::thread::hardware_concurrency()), 4, 8);
+    return cap;
+}
 
 struct Task {
     plat::App            *app;
@@ -97,8 +108,9 @@ void runInBackground(plat::App &app, std::function<void()> work, std::function<v
     std::lock_guard<std::mutex> lock(p.mutex);
     ++p.running;
     p.queue.push_back({&app, std::move(work), std::move(then)});
-    // More queued than the parked workers can take: another worker.
-    if (int(p.queue.size()) > p.parked) {
+    // More queued than the parked workers can take: another worker, up to
+    // the cap (then it waits for one to finish).
+    if (int(p.queue.size()) > p.parked && p.workers < workerCap()) {
         ++p.workers;
         ++p.started;
         std::thread(workerLoop).detach();
@@ -122,7 +134,7 @@ void waitBackground() {
 BackgroundStats backgroundStats() {
     Pool                       &p = pool();
     std::lock_guard<std::mutex> lock(p.mutex);
-    return {p.workers, p.parked, p.started};
+    return {p.workers, p.parked, workerCap(), p.started};
 }
 
 void setBackgroundIdleRetire(int ms) {

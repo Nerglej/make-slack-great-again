@@ -109,7 +109,7 @@ TEST("jobs: runInBackground works on a worker, answers later on the UI thread") 
     REQUIRE(fakeslack::pumpUntil([&] { return ran; }, 5000));
 }
 
-TEST("jobs: runInBackground reuses parked workers, never queues one behind another") {
+TEST("jobs: runInBackground reuses parked workers; past the cap, calls wait their turn") {
     plat::App &app = fakeslack::app();
     model::setBackgroundIdleRetire(60'000);
     // One after another: the first worker takes them all.
@@ -135,8 +135,10 @@ TEST("jobs: runInBackground reuses parked workers, never queues one behind anoth
     }
     CHECK(model::backgroundStats().started == started);
     CHECK(threads.size() <= size_t(model::backgroundStats().workers));
-    // Twenty that all block: all run at once (one may wait on another); once
-    // done, at most four stay parked.
+    // Twenty that all block: the cap runs at once, the rest wait for a free
+    // worker, oldest first; once done, at most four stay parked.
+    const int cap = model::backgroundStats().cap;
+    REQUIRE((cap >= 4 && cap <= 8));
     std::atomic<int>  under{0}, most{0};
     std::atomic<bool> release{false};
     int               answered = 0;
@@ -153,11 +155,14 @@ TEST("jobs: runInBackground reuses parked workers, never queues one behind anoth
             },
             [&] { ++answered; }
         );
-    REQUIRE(fakeslack::pumpUntil([&] { return under == 20; }, 5000));
-    CHECK(model::backgroundStats().workers >= 20);
+    REQUIRE(fakeslack::pumpUntil([&] { return under == cap; }, 5000));
+    fakeslack::pumpFor(50);
+    CHECK(under == cap); // no thread beyond the cap
+    CHECK(model::backgroundStats().workers == cap);
+    CHECK(answered == 0);
     release = true;
     REQUIRE(fakeslack::pumpUntil([&] { return answered == 20; }, 5000));
-    CHECK(most == 20);
+    CHECK(most == cap);
     model::waitBackground();
     REQUIRE(fakeslack::pumpUntil([] { return model::backgroundStats().workers <= 4; }, 5000));
     CHECK(model::backgroundStats().parked <= 4);

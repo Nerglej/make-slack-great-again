@@ -2,7 +2,7 @@
 
 #include "app/cache/workspace_cache.h"
 #include "app/identity.h"
-#include "app/claude/async.h"
+#include "app/model/jobs.h"
 #include "app/claude/backend.h"
 #include "app/claude/cli.h"
 #include "app/claude/common.h"
@@ -118,7 +118,7 @@ Accounts::~Accounts() {
         if (r->claude)
             r->claude->close();
     }
-    claude::stopAsync(); // the CLI runs still under way report to nobody
+    model::stopBackground(); // the work still under way reports to nobody
     if (_staggerTimer)
         pa.cancelTimer(_staggerTimer);
     if (_migration && _migration->req)

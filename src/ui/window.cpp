@@ -337,8 +337,11 @@ Popup *Window::topPopup(const std::function<bool(const Popup &)> &accept) const 
 }
 
 void Window::flushGraveyard() {
-    if (_depth == 0)
-        _graveyard.clear();
+    // A popup's destructor may close another one, which lands here again.
+    while (_depth == 0 && !_graveyard.empty()) {
+        std::vector<std::unique_ptr<View>> dead;
+        dead.swap(_graveyard);
+    }
 }
 
 // ── Tooltips ────────────────────────────────────────────────────────────────

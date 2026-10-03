@@ -127,11 +127,11 @@ void SavedPage::rebuild() {
     _list->clearChildren();
     _cards.clear();
     _items.clear();
-    for (SavedItem &s : _ctx.store().savedItems()) {
+    for (const SavedItem &s : _ctx.store().savedList()) {
         if (s.conv >= _ctx.store().conversationCount())
             continue;
         _cards.push_back(_list->add<Card>(*this, s));
-        _items.push_back(std::move(s));
+        _items.push_back(s);
     }
     setStatus(
         _cards.empty()

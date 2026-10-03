@@ -1,6 +1,7 @@
 #include "screens/shell/settings.h"
 
 #include "app/identity.h"
+#include "app/screens/common/custom_theme.h"
 #include "app/model/jobs.h"
 #include "base/file.h"
 #include "base/json.h"
@@ -108,25 +109,6 @@ const struct {
     {"key", &AiProvider::key},
     {"model", &AiProvider::model},
     {"sttModel", &AiProvider::sttModel},
-};
-
-const struct {
-    const char *key;
-    ui::Color ui::CustomPalette::*field;
-} kCustomColors[] =
-    {
-        {"primary", &ui::CustomPalette::primary},
-        {"highlight1", &ui::CustomPalette::highlight1},
-        {"highlight2", &ui::CustomPalette::highlight2},
-        {"important", &ui::CustomPalette::important},
-},
-  kCustomPins[] = {
-      // The pinned colours, under their "pins" names; absent = derived.
-      {"itemHover", &ui::CustomPalette::itemHover},
-      {"itemSelText", &ui::CustomPalette::itemSelText},
-      {"itemText", &ui::CustomPalette::itemText},
-      {"titleBarBg", &ui::CustomPalette::titleBarBg},
-      {"titleBarText", &ui::CustomPalette::titleBarText},
 };
 
 // An AI provider's key in the secret store.
@@ -243,14 +225,7 @@ void fromJson(const json::Value r, Settings &s) {
     s.lastUpdateCheck = r["lastUpdateCheck"].integer();
     s.use24hSaved     = r.has("use24h");
 
-    const json::Value c = r["customTheme"];
-    for (const auto &k : kCustomColors)
-        ui::parseHexColor(c[k.key].str(), &(s.custom.*k.field));
-    s.custom.brightness      = int(std::clamp<int64_t>(c["brightness"].integer(6), 0, 10));
-    s.custom.sidebarInverted = c["sidebarInverted"].boolean(true);
-    s.custom.gradient        = c["gradient"].boolean(true);
-    for (const auto &k : kCustomPins)
-        ui::parseHexColor(c["pins"][k.key].str(), &(s.custom.*k.field));
+    screens::readCustomTheme(r["customTheme"], &s.custom);
 
     for (const json::Value e : r["visitedAt"])
         if (!e.key().empty() && e.integer() > 0)
@@ -327,17 +302,8 @@ std::string Settings::toFile() const {
     }
     if (lastUpdateCheck)
         w.key("lastUpdateCheck").value(lastUpdateCheck);
-    w.key("customTheme").beginObject();
-    for (const auto &k : kCustomColors)
-        w.key(k.key).value(ui::hexColor(custom.*k.field));
-    w.key("brightness").value(custom.brightness);
-    w.key("sidebarInverted").value(custom.sidebarInverted);
-    w.key("gradient").value(custom.gradient);
-    w.key("pins").beginObject();
-    for (const auto &k : kCustomPins)
-        if (custom.*k.field)
-            w.key(k.key).value(ui::hexColor(custom.*k.field));
-    w.endObject().endObject();
+    w.key("customTheme");
+    screens::writeCustomTheme(w, custom);
     if (!visitedAt.empty()) {
         w.key("visitedAt").beginObject();
         for (const auto &[id, at] : visitedAt)

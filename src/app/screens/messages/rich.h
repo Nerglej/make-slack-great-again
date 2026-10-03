@@ -162,9 +162,6 @@ uint32_t previewCut(std::string_view mrkdwnText, int *maxChars, int *maxLines);
 // when their rows are gone.
 std::vector<std::string> bodyTexts(Context &ctx, std::string_view mrkdwnText, const RichOptions &o);
 
-// plainText (common/message_text.h) of the Context's Store.
-std::string plainText(const Context &ctx, std::string_view mrkdwnText, bool fullUrls = false);
-
 // A link from a message: mailto: opens the mail app — none registered, the
 // address is copied and a toast says so at `at` — else Context::openUrl.
 void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at);

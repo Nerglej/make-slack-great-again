@@ -858,6 +858,9 @@ TEST("settings: System and Storage controls persist at once") {
     REQUIRE(clear != nullptr);
     h.click(clear);
     CHECK_FALSE(clear->enabled());
+    // The wipe and the walk run on a worker; the size shows when done.
+    for (int i = 0; i < 2000 && !d.find("0 B"); ++i)
+        app().pump(2);
     CHECK(d.find("0 B") != nullptr);
     file::remove(path);
 }

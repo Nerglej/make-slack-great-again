@@ -1420,9 +1420,11 @@ void SlackBackend::Read::armReminders() {
 // first, then announced — unless it is over a week late (a machine that was
 // off), which goes quietly. The item stays listed.
 void SlackBackend::Read::fireDueReminders() {
-    const int64_t                       t = base::nowSecs();
-    std::vector<std::pair<ConvRef, Ts>> due;
-    for (const model::Store::SavedItem &it : s.savedItems()) {
+    const int64_t                              t = base::nowSecs();
+    std::vector<std::pair<ConvRef, Ts>>        due;
+    // A copy: marking one fired reorders the Store's list.
+    const std::vector<model::Store::SavedItem> items = s.savedList();
+    for (const model::Store::SavedItem &it : items) {
         if (it.due <= 0 || it.fired || it.due > t)
             continue;
         s.setReminderFired(it.conv, it.ts, true);

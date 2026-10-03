@@ -81,4 +81,18 @@ bool readCustomTheme(const json::Value &obj, ui::CustomPalette *t) {
     return any;
 }
 
+void writeCustomTheme(json::Writer &w, const ui::CustomPalette &t) {
+    w.beginObject();
+    for (const auto &k : kSlots)
+        w.key(k.key).value(ui::hexColor(t.*k.field));
+    w.key("brightness").value(t.brightness);
+    w.key("sidebarInverted").value(t.sidebarInverted);
+    w.key("gradient").value(t.gradient);
+    w.key("pins").beginObject();
+    for (const auto &k : kPins)
+        if (t.*k.field)
+            w.key(k.key).value(ui::hexColor(t.*k.field));
+    w.endObject().endObject();
+}
+
 } // namespace screens

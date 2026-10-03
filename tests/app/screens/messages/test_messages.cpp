@@ -564,11 +564,19 @@ TEST("users: a presence flip re-binds no row; a name re-binds only the rows show
     e.store.setChannelName("C9", "launch");
     pump(8);
     CHECK(e.list->rowBinds() == binds + 9);
-    // An emoji gone (its rows show ":code:" again): everything.
+    // Emoji gone (their rows show ":code:" again): only those rows.
     e.store.replaceCustomEmoji({{"cake", "https://e/c.png"}});
     e.store.usersChanged();
     pump(8);
-    CHECK(e.list->rowBinds() == binds + 9 + 3);
+    CHECK(e.list->rowBinds() == binds + 11);
+    // More than can be listed (a first load): everything.
+    std::unordered_map<std::string, std::string> many;
+    for (int i = 0; i < 200; ++i)
+        many["e" + std::to_string(i)] = "https://e/x.png";
+    e.store.replaceCustomEmoji(std::move(many));
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 11 + 3);
 }
 
 TEST("actions: Copy message is the text as read, with full URLs, and asks the backend nothing") {

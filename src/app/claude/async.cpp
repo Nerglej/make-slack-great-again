@@ -26,8 +26,4 @@ void runAsync(
     );
 }
 
-void stopAsync() {
-    model::stopBackground();
-}
-
 } // namespace claude

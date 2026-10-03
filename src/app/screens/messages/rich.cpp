@@ -669,10 +669,6 @@ std::vector<std::string> bodyTexts(Context &ctx, std::string_view text, const Ri
     return out;
 }
 
-std::string plainText(const Context &ctx, std::string_view text, bool fullUrls) {
-    return plainText(ctx.store(), text, fullUrls);
-}
-
 // ── Links ───────────────────────────────────────────────────────────────────
 
 namespace {

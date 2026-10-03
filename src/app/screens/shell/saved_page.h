@@ -4,7 +4,7 @@
 // click opens it) on the page's grey, then in a bordered card the message as
 // a chat row (avatar, name, time, its text on one line; a click jumps to
 // it) and a footer with the due time or "Saved for later" and "Remove".
-// Data is the Store's saved list (Store::savedItems), so the page opens at
+// Data is the Store's saved list (Store::savedList), so the page opens at
 // once and follows changes while it is up; a card whose message isn't loaded
 // fetches it for the preview (Backend::loadMessage).
 #pragma once

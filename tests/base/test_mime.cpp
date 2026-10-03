@@ -39,3 +39,14 @@ TEST("mime: file card labels") {
     CHECK(mime::label("application/zip") == "Zip");
     CHECK(mime::label("application/x-unknown").empty());
 }
+
+TEST("mime: the extension of a type, and text by name") {
+    CHECK(mime::extension("image/png") == "png");
+    CHECK(mime::extension("image/jpeg") == "jpg"); // the first of jpg, jpeg
+    CHECK(mime::extension("image/bmp") == "bmp");
+    CHECK(mime::extension("image/x-unknown").empty());
+    for (const char *n : {"a.txt", "b.LOG", "c.yaml", "d.cpp", "e.h", "f.ts", "g.sh", "h.html"})
+        CHECK(mime::isTextName(n));
+    for (const char *n : {"a.png", "b.htm", "c.svg", "d.pdf", "noext", "x.y/README", "e.markdown"})
+        CHECK_FALSE(mime::isTextName(n));
+}

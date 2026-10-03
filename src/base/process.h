@@ -59,6 +59,20 @@ struct RunResult {
 };
 RunResult run(const std::string &exe, const std::vector<std::string> &args, const RunOptions &o);
 
+// Our environment with `overrides` applied ("NAME=value" sets, "NAME="
+// unsets; the last word on a name wins).
+#ifdef _WIN32
+// As CreateProcessW takes it (CREATE_UNICODE_ENVIRONMENT): "K=V\0" strings
+// ending in an empty one; names compare case-insensitively, as Windows does.
+std::wstring envBlock(const std::vector<std::string> &overrides);
+// Appends `arg` to a command line (a space first unless it is empty), quoted
+// so CommandLineToArgvW reads it back as one argument.
+void         appendQuoted(std::wstring &cmd, const std::wstring &arg);
+#else
+// As execve takes it once made into pointers: "K=V" strings.
+std::vector<std::string> mergedEnv(const std::vector<std::string> &overrides);
+#endif
+
 // The full path of `name` found on $PATH (Windows: also tries ".exe"); ""
 // when absent. A name containing a separator is checked as is.
 std::string findExecutable(std::string_view name);
