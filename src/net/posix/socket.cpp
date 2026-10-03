@@ -4,7 +4,9 @@
 #include "net/posix/posix.h"
 #include "net/transport.h"
 
+#include <algorithm>
 #include <arpa/inet.h>
+#include <climits>
 #include <atomic>
 #include <cerrno>
 #include <condition_variable>
@@ -41,13 +43,16 @@ Wait waitFd(int fd, short events, const Waiter &w, bool returnOnWake) {
     for (;;) {
         if (w.cancel && w.cancel->load(std::memory_order_relaxed))
             return Wait::Cancelled;
-        int slice = 250;
+        // A wake fd interrupts at once (whoever sets the cancel flag also
+        // writes it), so such a wait can block until something happens; only
+        // a bare cancel flag needs polling, in 250 ms slices.
+        int slice = w.wakeFd >= 0 ? -1 : 250;
         if (w.deadline) {
             const int64_t left = w.deadline - nowMs();
             if (left <= 0)
                 return Wait::Timeout;
-            if (left < slice)
-                slice = int(left);
+            if (slice < 0 || left < slice)
+                slice = int(std::min<int64_t>(left, INT_MAX));
         }
         pollfd    p[2] = {{fd, events, 0}, {w.wakeFd, POLLIN, 0}};
         const int n    = poll(p, w.wakeFd >= 0 ? 2 : 1, slice);

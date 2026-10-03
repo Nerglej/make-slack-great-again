@@ -3,7 +3,7 @@
 #include "app/model/types.h"
 #include "app/screens/common/avatar_initial.h"
 #include "app/screens/common/remote_images.h"
-#include "base/file.h"
+#include "app/screens/messages/image_cache.h"
 #include "base/str.h"
 
 #include <algorithm>
@@ -13,65 +13,142 @@ namespace shell {
 
 namespace {
 
-// The file at `path` centre-cropped to a square and resized to px×px into
-// *out; false when it can't be read as an image.
-bool decodeSquare(const std::string &path, int px, gfx::Bitmap *out) {
-    std::string bytes;
-    gfx::Bitmap b;
-    // An SVG (the Claude Code teammates' glyph tiles, custom workspace icons)
-    // is rendered so its shorter side is px.
-    if (!file::readAll(path, &bytes) ||
-        !(gfx::decodeImage(bytes, &b) || gfx::renderSvgCover(bytes, px, px, &b)) || b.empty())
-        return false;
-    // Centre-crop to a square, then one high-quality resize: painting then
-    // only copies pixels (drawBitmap would area-average on every frame).
-    *out = b.width() == px && b.height() == px ? std::move(b) : gfx::coverResize(b.view(), px, px);
-    return true;
-}
+// However small the pictures, the slots (failures too) stay this many.
+constexpr size_t kMaxSlots = 4096;
 
 } // namespace
 
-Avatars::Avatars() : _alive(std::make_shared<char>(0)) {}
+Avatars::Avatars(screens::ImageCache &images, size_t budget)
+    : _images(images), _alive(std::make_shared<char>(0)), _budget(budget) {}
 Avatars::~Avatars() = default;
 
-std::shared_ptr<const gfx::Bitmap> Avatars::get(const std::string &path, int px) {
+Avatars::Picture Avatars::get(const std::string &path, int px) {
     if (path.empty() || px <= 0)
         return nullptr;
-    const std::string key = str::concat({path, "@", str::number(px)});
-    if (const auto it = _cache.find(key); it != _cache.end())
-        return it->second;
+    std::string key = str::concat({path, "@", str::number(px)});
+    if (const auto it = _slots.find(key); it != _slots.end()) {
+        Slot &s = it->second;
+        if (s.ready && s.lru != _lru.begin())
+            _lru.splice(_lru.begin(), _lru, s.lru);
+        return s.bmp;
+    }
     std::string file = path;
     if (screens::RemoteImages::isRemote(path)) {
-        file = _remote ? _remote->cachedPath(path) : std::string();
-        if (file.empty() && _remote) {
-            // The placeholder the views hold until landed() fills it.
-            auto blank = std::make_shared<gfx::Bitmap>();
-            _cache.emplace(key, blank);
-            std::weak_ptr<char> alive = _alive;
-            _remote->fetch(path, [this, alive, key, px](const std::string &f) {
-                if (!alive.expired())
-                    landed(key, f, px);
-            });
-            return blank;
+        if (!_remote) { // no picture, and none later
+            Slot &s = _slots[key];
+            markReady(s, key);
+            evict();
+            return nullptr;
         }
+        file = _remote->cachedPath(path);
     }
-    auto out = std::make_shared<gfx::Bitmap>();
-    if (file.empty() || !decodeSquare(file, px, out.get()))
-        out.reset();
-    _cache.emplace(key, out);
+    // The blank the views hold until the picture fills it.
+    Slot &s     = _slots[key];
+    s.bmp       = std::make_shared<gfx::Bitmap>();
+    Picture out = s.bmp;
+    if (file.empty()) {
+        s.downloading             = true;
+        std::weak_ptr<char> alive = _alive;
+        _remote->fetch(path, [this, alive, key, px](const std::string &f) {
+            if (!alive.expired())
+                landed(key, f, px);
+        });
+    } else {
+        decode(key, file, px);
+    }
     return out;
 }
 
-void Avatars::landed(const std::string &key, const std::string &file, int px) {
-    const auto it = _cache.find(key);
-    if (it == _cache.end() || !it->second)
-        return;
-    if (file.empty() || !decodeSquare(file, px, it->second.get())) {
-        // Not remembered as a failure: a later get() asks again (RemoteImages
-        // keeps that from becoming a storm). Views keep the blank.
-        _cache.erase(it);
+void Avatars::whenReady(const std::string &path, int px, std::function<void(Picture)> fn) {
+    const Picture p = get(path, px);
+    if (!p || !p->empty()) {
+        fn(p);
         return;
     }
+    const auto it = _slots.find(str::concat({path, "@", str::number(px)}));
+    if (it == _slots.end() || it->second.downloading) {
+        fn(nullptr);
+        return;
+    }
+    it->second.waiting.push_back(std::move(fn));
+}
+
+void Avatars::decode(const std::string &key, const std::string &file, int px) {
+    ++_decodes;
+    std::weak_ptr<char> alive = _alive;
+    // Small and waited for on screen: ahead of the message images.
+    _images.decodeOnce(
+        {file, px, px, screens::ImageCache::Shape::Square},
+        [this, alive, key](gfx::Bitmap b) {
+            if (!alive.expired())
+                filled(key, std::move(b));
+        },
+        true
+    );
+}
+
+void Avatars::landed(const std::string &key, const std::string &file, int px) {
+    const auto it = _slots.find(key);
+    if (it == _slots.end() || !it->second.downloading)
+        return;
+    if (file.empty()) {
+        // Not remembered as a failure: a later get() asks again (RemoteImages
+        // keeps that from becoming a storm). Views keep the blank.
+        _slots.erase(it);
+        return;
+    }
+    it->second.downloading = false;
+    decode(key, file, px);
+}
+
+void Avatars::filled(const std::string &key, gfx::Bitmap b) {
+    const auto it = _slots.find(key);
+    if (it == _slots.end())
+        return;
+    Slot      &s  = it->second;
+    const bool ok = !b.empty();
+    if (ok) {
+        s.bytes = size_t(b.width()) * size_t(b.height()) * 4;
+        _bytes += s.bytes;
+        *s.bmp = std::move(b); // in place: every view holding it shows it
+    }
+    // A file that can't be decoded: views keep the blank, and later asks
+    // get null (remembered).
+    const Picture pic     = ok ? Picture(s.bmp) : nullptr;
+    auto          waiting = std::move(s.waiting);
+    if (!ok)
+        s.bmp.reset();
+    markReady(s, key);
+    evict(); // may drop `s`
+    for (auto &fn : waiting)
+        fn(pic);
+    if (ok)
+        notifyLoaded();
+}
+
+void Avatars::markReady(Slot &s, const std::string &key) {
+    s.ready = true;
+    s.lru   = _lru.insert(_lru.begin(), key);
+}
+
+void Avatars::setBudget(size_t b) {
+    _budget = b;
+    evict();
+}
+
+void Avatars::evict() {
+    // The least recently asked for first; views holding one keep it.
+    while ((_bytes > _budget || _slots.size() > kMaxSlots) && !_lru.empty()) {
+        const auto it = _slots.find(_lru.back());
+        _lru.pop_back();
+        if (it == _slots.end())
+            continue;
+        _bytes -= it->second.bytes;
+        _slots.erase(it);
+    }
+}
+
+void Avatars::notifyLoaded() {
     if (_notifyQueued || !onLoaded)
         return;
     // One repaint for a burst of avatars landing together.

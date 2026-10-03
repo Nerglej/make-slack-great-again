@@ -99,6 +99,10 @@ public:
         int  huddle = 0; // a live huddle's pill: its participant count (1 when none listed)
     };
     RowState                 rowState(model::ConvRef conv) const;
+    // Tests: how many times the rows were rebuilt, and a row's identity (the
+    // view object; null: no row), to prove a change restyled in place.
+    int                      rebuildCount() const { return _rebuilds; }
+    const ui::View          *rowView(model::ConvRef conv) const;
     // Sum the app badge shows: mentions + unread direct messages.
     int                      attentionCount() const;
     // The "N more channels" row's N (0: no such row).
@@ -165,7 +169,10 @@ private:
     bool               isApp(const model::Conversation &c) const;
     bool               relevant(model::ConvRef c) const;
     void               applyCollapse(SectionHeader *h);
-    void               rebuildSoon();
+    // reveal: scroll the selected row into view afterwards.
+    void               rebuildSoon(bool reveal = true);
+    void               usersSoon();
+    uint64_t           userShape() const;
     void               addChannelsMenu(ui::View *row);
     void               refreshTeammates();
 
@@ -187,11 +194,15 @@ private:
     VisitStamps                            _visited; // opened here (msga's visit stamps)
     std::function<int64_t()>               _now;
     Filters                                _filters;
-    model::ConvRef                         _selected       = model::kNoConv;
-    model::Store::ObserverId               _observer       = 0;
-    std::shared_ptr<int>                   _alive          = std::make_shared<int>(0);
-    plat::TimerId                          _rebuildTimer   = 0;
-    int                                    _hiddenChannels = 0;
+    model::ConvRef                         _selected        = model::kNoConv;
+    model::Store::ObserverId               _observer        = 0;
+    std::shared_ptr<int>                   _alive           = std::make_shared<int>(0);
+    plat::TimerId                          _rebuildTimer    = 0;
+    plat::TimerId                          _usersTimer      = 0;
+    uint64_t                               _userShape       = 0; // userShape() at the last rebuild
+    int                                    _rebuilds        = 0;
+    bool                                   _revealOnRebuild = false;
+    int                                    _hiddenChannels  = 0;
     bool                                   _collapsed[5] = {}; // starred, channels, DMs, apps, team
     bool                                   _showAllChannels = false;
 };

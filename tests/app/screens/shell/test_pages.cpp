@@ -3,6 +3,8 @@
 // stamps and Settings' "Clear state", the tray picture, restarts and the
 // sample notification's outcome.
 #include "app/fake/fake_backend.h"
+#include "app/mrkdwn/emoji.h"
+#include "base/utf8.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "support/test.h"
@@ -14,9 +16,11 @@
 #include "screens/shell/shell.h"
 #include "screens/shell/shell_dialogs.h"
 #include "screens/shell/update_bar.h"
+#include "plat/testing.h"
 #include "ui/controls.h"
 
 #ifdef MSGA_HAVE_MESSAGES
+#include "app/screens/messages/emoji_picker.h"
 #include "app/screens/messages/image_cache.h"
 #include "app/screens/messages/thread_panel.h"
 #endif
@@ -462,4 +466,116 @@ TEST("profile card \"Message\": a teammate's page, anyone else's DM (msga's open
     ctx.messageUser(store.findUser("U0MIRA"));
     REQUIRE(until([&] { return sh.current() == store.findConversation("D0MIRA"); }));
     CHECK_FALSE(sh.teammateOpen());
+}
+
+// ── Composer @ list and emoji search cost (performance review M11) ─────────
+
+TEST("composer: the @ list folds each user once and filters in the open list") {
+    Harness h;
+    auto   &c = h.sh->composer();
+    c.edit().focus();
+    c.edit().insertText("hey @m");
+    pump();
+    shell::PickList *list = c.pickList();
+    REQUIRE(list != nullptr);
+    const size_t folds = c.mentionFolds();
+    CHECK(folds > 0);
+    // One keystroke is one look (onChange and onSelectionChange both ask),
+    // the same popup takes the new rows, and no label is folded again.
+    size_t looks = c.pickRecomputes();
+    for (const char *ch : {"i", "r"}) {
+        c.edit().insertText(ch);
+        pump();
+        CHECK(c.pickRecomputes() == looks + 1);
+        looks = c.pickRecomputes();
+        CHECK(c.pickList() == list);
+    }
+    CHECK(c.mentionFolds() == folds);
+    // The rows are what a fold-per-user filter gives, in roster order.
+    std::vector<std::string> want;
+    for (UserRef u = 0; u < h.store.userCount() && want.size() < 50; ++u) {
+        const User &user = h.store.user(u);
+        if (user.placeholder)
+            continue;
+        const std::string label(user.label());
+        if (utf8::containsFolded(label, "mir") || utf8::containsFolded(user.name, "mir"))
+            want.push_back(u == h.store.me ? "@" + label + " (you)" : "@" + label);
+    }
+    REQUIRE(!want.empty());
+    REQUIRE(list->count() == want.size()); // "mir" matches no @channel alias
+    for (size_t i = 0; i < want.size(); ++i)
+        CHECK_STR(list->item(i).title, want[i]);
+    // Asking again with nothing changed neither looks nor rebuilds the rows.
+    const int builds = list->builds();
+    c.updatePickList();
+    CHECK(c.pickRecomputes() == looks);
+    CHECK(list->builds() == builds);
+    // Escape closes it; the same text then opens a fresh one, as before.
+    ui::Event esc{ui::EventType::KeyDown};
+    esc.key = plat::Key::Escape;
+    CHECK(list->handleKey(esc));
+    pump();
+    CHECK(c.pickList() == nullptr);
+    c.updatePickList();
+    CHECK(c.pickList() != nullptr);
+    // A blank ends the word: the list goes.
+    c.edit().insertText(" ");
+    pump();
+    CHECK(c.pickList() == nullptr);
+}
+
+#ifdef MSGA_HAVE_MESSAGES
+TEST("emoji picker: the search finds what a fold-per-name search finds; recents by name") {
+    Harness h;
+    h.store.setCustomEmoji("zed_caps", "https://emoji.example/z.png");
+    h.store.setCustomEmoji("party_parrot", "https://emoji.example/p.png");
+    auto *ep = screens::EmojiPicker::show(*h.win, {400, 700, 20, 20}, h.ctx, nullptr);
+    REQUIRE(ep != nullptr);
+    for (const char *q : {"par", "SMILE", "Zed", "+1", "flag-", "x"}) {
+        std::vector<std::string> want;
+        for (const auto &[name, image] : h.store.customEmojiImages())
+            if (utf8::containsFolded(name, q))
+                want.push_back(name);
+        emoji::forEach([&](std::string_view n, const std::string &) {
+            if (utf8::containsFolded(n, q))
+                want.emplace_back(n);
+            return true;
+        });
+        ep->filter(q);
+        REQUIRE(ep->cellCount() == want.size());
+        for (size_t i = 0; i < want.size(); ++i)
+            CHECK_STR(ep->cellName(i), want[i]);
+    }
+    // "Frequently used": a custom one found by name, a gone one skipped.
+    screens::EmojiPicker::restoreState({"zed_caps", "tada", "gone_one"}, 0);
+    ep->filter({});
+    REQUIRE(ep->cellCount() > 2);
+    CHECK_STR(ep->cellName(0), "zed_caps");
+    CHECK_STR(ep->cellName(1), "tada");
+    CHECK_STR(ep->sections()[0], "Frequently used");
+    screens::EmojiPicker::restoreState({}, 0);
+    ep->close();
+    pump();
+}
+#endif
+
+// ── Sidebar hover ───────────────────────────────────────────────────────────
+
+// M6: a row's hover recolours its name (Label::setColor), which never
+// reshapes: sweeping the pointer down the sidebar builds no text layout.
+TEST("pages: hovering sidebar rows reshapes no text") {
+    Harness         h;
+    const ui::RectF sb    = h.sh->sidebar().windowRect();
+    auto            sweep = [&] {
+        for (float y = sb.y + 4; y < sb.bottom() - 4; y += 7) {
+            app().platform().testHooks()->injectPointerMove(h.win->native(), {sb.x + 90, y});
+            app().pump(0);
+        }
+        app().platform().testHooks()->injectPointerMove(h.win->native(), {sb.right() + 300, 400});
+        app().pump(0);
+    };
+    sweep(); // anything shaped lazily on a first hover (none expected) is done
+    const size_t n0 = text::layoutBuilds();
+    sweep();
+    CHECK(text::layoutBuilds() == n0);
 }

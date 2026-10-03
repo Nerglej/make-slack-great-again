@@ -39,10 +39,9 @@ void Label::updateInk() {
     }
 }
 
-// The selected range and its look (the text white, built on demand).
+// The selected range (painted white over the highlight: Layout::paintAs).
 struct Label::Selection {
-    uint32_t                      from = 0, to = 0;
-    std::unique_ptr<text::Layout> layout;
+    uint32_t from = 0, to = 0;
 };
 
 Label::~Label() = default;
@@ -57,8 +56,6 @@ uint32_t Label::selectionTo() const {
 
 void Label::dropLayout() {
     _layout.reset();
-    if (_sel)
-        _sel->layout.reset();
     _layoutW = -1;
 }
 
@@ -99,7 +96,10 @@ void Label::setColor(C c) {
     if (c == _color)
         return;
     _color = c;
-    dropLayout(); // the colour is baked into the glyph runs
+    // Colour is paint-time only: recolour the shaped text (a rich label's
+    // spans carry their own colours and ignore it).
+    if (_layout && !_rich)
+        _layout->setColor(color(_color));
     update();
 }
 
@@ -126,9 +126,7 @@ void Label::styleChanged() {
     update();
 }
 
-// selected: the text as a selection shows it, white over the highlight
-// (msga's QPalette::HighlightedText; mention pills lose their fill).
-std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale, bool selected) const {
+std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale) const {
     text::AttributedText t;
     if (_rich) {
         t = *_rich;
@@ -136,14 +134,6 @@ std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale, bool sele
     } else {
         t.append(_text, font(_font, _color));
     }
-    // A background pads its span (inline code, mentions), so the fill is only
-    // made transparent: the white copy must keep the exact same geometry.
-    if (selected)
-        for (text::Span &sp : t.spans) {
-            sp.style.color = 0xffffffff;
-            if (sp.style.background)
-                sp.style.background = 0x00ffffff;
-        }
     text::LayoutOptions o;
     // One physical pixel of slack: snapping flex edges to the pixel grid can
     // hand a label a frame that much narrower than the width it measured,
@@ -170,9 +160,7 @@ const text::Layout *Label::layoutFor(float w) {
             (w <= _layoutW || _layout->lineCount() <= 1))
             return _layout.get();
     }
-    _layout = buildLayout(w, scale, false);
-    if (_sel)
-        _sel->layout.reset();
+    _layout      = buildLayout(w, scale);
     _layoutW     = w;
     _layoutScale = scale;
     return _layout.get();
@@ -203,15 +191,14 @@ void Label::paint(gfx::Painter &p) {
     _layout->paint(p, o);
     if (!_sel)
         return;
-    // msga's message selection: the system highlight, the text on it white.
-    if (!_sel->layout)
-        _sel->layout = buildLayout(_layoutW, _layoutScale, true);
+    // A message selection: the system highlight, the text on it white
+    // (mention pills lose their fill), from the same shaping.
     for (RectF r : _layout->selectionRects(_sel->from, _sel->to)) {
         const RectF rr{r.x + o.x, r.y + o.y, r.w, r.h};
         p.save();
         p.clipRect(rr);
         p.fillRect(rr, systemHighlight());
-        _sel->layout->paint(p, o);
+        _layout->paintAs(p, o, 0xffffffff);
         p.restore();
     }
 }
@@ -468,8 +455,9 @@ void Button::setIconSize(float px) {
 }
 
 void Button::setTextColor(C c) {
-    _text = c;
-    _layout.reset();
+    if (c == _text)
+        return;
+    _text = c; // painted with: no reshaping
     update();
 }
 
@@ -479,22 +467,29 @@ void Button::styleChanged() {
 }
 
 void Button::stateChanged() {
-    _layout.reset();
+    // Only a tab's font follows its state (bold when checked); colours are
+    // applied at paint.
+    if (_kind == Kind::Tab && _layout && _layoutBold != checked())
+        _layout.reset();
 }
 
 const text::Layout *Button::labelLayout() {
     if (_label.empty())
         return nullptr;
+    C c = _text;
+    if (_kind == Kind::Tab)
+        c = checked() ? C::Text : C::TextMuted;
     if (!_layout) {
         Font f = Font::Body;
-        C    c = _text;
         if (_kind == Kind::Tab) {
-            f = checked() ? Font::SmallBold : Font::Small;
-            c = checked() ? C::Text : C::TextMuted;
+            f           = checked() ? Font::SmallBold : Font::Small;
+            _layoutBold = checked();
         } else if (_kind == Kind::Primary) {
             f = Font::BodyBold;
         }
         _layout = layoutPlain(_label, font(f, c), windowScale());
+    } else {
+        _layout->setColor(color(c));
     }
     return _layout.get();
 }
@@ -657,6 +652,8 @@ void Image::setBitmap(std::shared_ptr<const gfx::Bitmap> b) {
     app()->cancelTimer(_timer);
     _timer = 0;
     _frames.reset();
+    if (b != _bitmap)
+        _shrunk.clear();
     _bitmap = std::move(b);
     if (currentStyle().w < 0 || currentStyle().h < 0)
         invalidateLayout();
@@ -665,9 +662,11 @@ void Image::setBitmap(std::shared_ptr<const gfx::Bitmap> b) {
 
 void Image::setFrames(std::shared_ptr<const Frames> f) {
     _bitmap.reset();
+    _shrunk.clear();
     _frames = std::move(f);
     _frame  = 0;
-    scheduleFrame();
+    app()->cancelTimer(_timer); // paint() arms it again
+    _timer = 0;
     if (currentStyle().w < 0)
         invalidateLayout();
     update();
@@ -691,20 +690,23 @@ void Image::setPlaceholder(C c) {
 }
 
 void Image::windowChanged() {
-    scheduleFrame();
+    if (!window()) {
+        app()->cancelTimer(_timer);
+        _timer = 0;
+    }
 }
 
+// Armed by paint(): an animation hidden, scrolled away, clipped or in a
+// window that doesn't paint stops at the frame it shows, and goes on once it
+// is painted again.
 void Image::scheduleFrame() {
-    app()->cancelTimer(_timer);
-    _timer = 0;
-    if (!_frames || _frames->size() < 2 || !window() || app()->reducedMotion())
+    if (_timer || !_frames || _frames->size() < 2 || !window() || app()->reducedMotion())
         return;
     const int delay = std::max(20, (*_frames)[size_t(_frame)].delayMs);
     _timer          = app()->addTimer(delay, false, [this] {
         _timer = 0;
         _frame = int((size_t(_frame) + 1) % _frames->size());
         update();
-        scheduleFrame();
     });
 }
 
@@ -742,12 +744,30 @@ void Image::paint(gfx::Painter &p) {
         const float s = _fit == Fit::Contain ? std::min(sx, sy) : std::max(sx, sy);
         dst           = {(r.w - bw * s) / 2, (r.h - bh * s) / 2, bw * s, bh * s};
     }
+    scheduleFrame();
     p.save();
     if (radius > 0)
         p.clipRoundRect(r, radius);
     else if (_fit == Fit::Cover)
         p.clipRect(r);
-    p.drawBitmap(b->view(), dst, gfx::Sampling::Smooth);
+    // A shrink is made once for the size it lands at, not on every paint.
+    const gfx::Bitmap *src = b;
+    int                dw = 0, dh = 0;
+    p.snappedSize(dst, &dw, &dh);
+    if (dw > 0 && dh > 0 && (b->width() > dw || b->height() > dh)) {
+        const size_t n    = _frames ? _frames->size() : 1;
+        const size_t slot = _frames ? size_t(_frame) % n : 0;
+        if (_shrunk.size() != n)
+            _shrunk.assign(n, Shrunk{});
+        Shrunk &s = _shrunk[slot];
+        if (s.src != b->pixels() || s.sw != b->width() || s.sh != b->height() || s.dw != dw ||
+            s.dh != dh) {
+            s = {b->pixels(), b->width(), b->height(), dw, dh, gfx::resize(b->view(), dw, dh)};
+            ++_shrinks;
+        }
+        src = &s.bmp;
+    }
+    p.drawBitmap(src->view(), dst, gfx::Sampling::Smooth);
     p.restore();
 }
 

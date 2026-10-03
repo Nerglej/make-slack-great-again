@@ -228,6 +228,8 @@ struct Thread {
     std::vector<Message> replies; // oldest first
 };
 
+// A new metadata field also goes into store.cpp's sameMeta (addConversation
+// emits Meta only when one of them changed).
 struct Conversation {
     std::string          id;
     std::string          name; // channel name without '#'; DMs: the peer's handle

@@ -505,7 +505,9 @@ bool WorkspaceCache::load(json::Document *meta) {
         if (meta)
             *meta = std::move(m);
     }
-    _store.usersChanged(); // one repaint for the whole roster
+    _store.usersChanged();                        // one repaint for the whole roster
+    _usersProfileRev  = _store.profileRevision(); // what users.json holds
+    _usersPresenceRev = _store.presenceRevision();
     observe();
     LOG_INFO(
         "cache",
@@ -593,7 +595,10 @@ void WorkspaceCache::onChange(const model::Change &ch) {
         mark(kConvs | kMeta);
         return; // kMeta: muted threads
     case K::Users:
-        mark(kUsers);
+        // Only a profile change: presence/DND flips, emoji, user groups and
+        // channel names don't change what the next start needs at once.
+        if (_store.profileRevision() != _usersProfileRev)
+            mark(kUsers);
         return;
     case K::Typing:
         return;
@@ -663,6 +668,8 @@ void WorkspaceCache::flush() {
         write("roster.json", w.take());
     }
     if (dirty & kUsers) {
+        _usersProfileRev  = s.profileRevision();
+        _usersPresenceRev = s.presenceRevision();
         json::Writer w;
         IO           io(w, s);
         begin(w, "u");
@@ -748,6 +755,10 @@ void WorkspaceCache::flush() {
 void WorkspaceCache::close(bool keep) {
     if (!_observer)
         return;
+    // The presence dots the next start shows until its first poll.
+    if (_store.profileRevision() != _usersProfileRev ||
+        _store.presenceRevision() != _usersPresenceRev)
+        _dirty |= kUsers;
     if (keep)
         flush();
     if (_timer) {

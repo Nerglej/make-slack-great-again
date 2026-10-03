@@ -338,8 +338,10 @@ public:
             static_cast<DayRow &>(row).setText(_l.itemLabel(size_t(i)));
         else if (it.kind == Kind::Divider)
             static_cast<DividerRow &>(row).setText(_l.itemLabel(size_t(i)));
-        else
+        else {
+            ++_l._rowBinds;
             static_cast<MessageRow &>(row).bind(it);
+        }
     }
     float estimateHeight(int i) const override {
         const Item &it = _l._items[size_t(i)];
@@ -658,6 +660,7 @@ MessageList::~MessageList() {
         _ctx.store.unobserve(_observer);
     _ctx.app.cancelTimer(_edgeTimer);
     _ctx.app.cancelTimer(_flashTimer);
+    _ctx.app.cancelTimer(_usersTimer);
     _toolbarRow = nullptr;
     clearChildren(); // rows reach back into this object while being destroyed
 }
@@ -888,9 +891,12 @@ void MessageList::onChange(const model::Change &ch) {
     case CK::Roster:
         return;
     case CK::Users:
-        rebuild(true);
-        if (!_items.empty())
-            _list->itemsChanged(0, int(_items.size())); // names and avatars
+        // A burst (a presence round, a users.list page) → one pass.
+        if (!_usersTimer)
+            _usersTimer = _ctx.app.addTimer(0, false, [this] {
+                _usersTimer = 0;
+                usersChanged();
+            });
         return;
     default:
         break;
@@ -918,6 +924,111 @@ void MessageList::onChange(const model::Change &ch) {
     applyOpenTarget();
     applyJump();
     scheduleEdgeCheck();
+}
+
+namespace {
+
+// Whether message `m` draws any of `ids`' users: as its author, pinner,
+// thread participant, reactor or huddle attendee, or by id in its text,
+// attachments or blocks (mentions). A quoted message's author may come from
+// the Store's linked authors: such unfurls always count.
+bool touchesUsers(
+    const model::Message                &m,
+    const std::vector<model::UserRef>   &refs,
+    const std::vector<std::string_view> &ids
+) {
+    const auto in = [&](model::UserRef u) {
+        return u != model::kNoUser && std::find(refs.begin(), refs.end(), u) != refs.end();
+    };
+    const auto anyIn = [&](const std::vector<model::UserRef> &v) {
+        return std::any_of(v.begin(), v.end(), in);
+    };
+    const auto names = [&](std::string_view text) {
+        for (std::string_view id : ids)
+            if (text.find(id) != std::string_view::npos)
+                return true;
+        return false;
+    };
+    const auto blocks = [&](const std::vector<model::Block> &bs) {
+        for (const model::Block &b : bs) {
+            if (names(b.text))
+                return true;
+            for (const auto &row : b.rows)
+                for (const std::string &cell : row)
+                    if (names(cell))
+                        return true;
+        }
+        return false;
+    };
+    if (in(m.user) || in(m.pinnedBy) || anyIn(m.replyUsers) || names(m.text))
+        return true;
+    for (const model::Reaction &r : m.reactions)
+        if (anyIn(r.users))
+            return true;
+    if (!m.extra)
+        return false;
+    if (anyIn(m.extra->huddle.attendees) || blocks(m.extra->blocks))
+        return true;
+    for (const model::Attachment &a : m.extra->attachments) {
+        if (a.msgUnfurl || names(a.pretext) || names(a.author) || names(a.title) || names(a.text) ||
+            blocks(a.blocks))
+            return true;
+        for (const model::AttachmentField &f : a.fields)
+            if (names(f.title) || names(f.value))
+                return true;
+    }
+    return false;
+}
+
+} // namespace
+
+// Users changed: presence and DND aren't drawn in message rows, so only a
+// profile change (a name, an avatar, a bot flag) re-binds the rows that show
+// that user; emoji, user groups and channel names re-bind them all.
+void MessageList::usersChanged() {
+    const model::Store &st    = _ctx.store();
+    const bool          full  = &st != _seenStore || st.textRevision() != _seenText;
+    const uint64_t      since = _seenProfile;
+    _seenStore                = &st;
+    _seenText                 = st.textRevision();
+    _seenProfile              = st.profileRevision();
+    if (!full && _seenProfile == since)
+        return;
+    rebuild(true); // a bot flag regroups rows
+    if (_items.empty())
+        return;
+    std::vector<model::UserRef>   refs;
+    std::vector<std::string_view> ids;
+    if (!full)
+        for (model::UserRef u = 0; u < st.userCount(); ++u)
+            if (st.userRevision(u) > since) {
+                refs.push_back(u);
+                if (!st.user(u).id.empty())
+                    ids.push_back(st.user(u).id);
+            }
+    // A roster reload that changed many people: re-binding all is cheaper
+    // than searching every message for each of them.
+    if (full || refs.size() > 64) {
+        _list->itemsChanged(0, int(_items.size()));
+        return;
+    }
+    for (size_t i = 0; i < _items.size(); ++i) {
+        const Item &it = _items[i];
+        if (it.kind != Kind::Message && it.kind != Kind::System)
+            continue;
+        const model::Message *m = message(it.ts);
+        if (!m)
+            continue;
+        bool hit = touchesUsers(*m, refs, ids);
+        // An inline thread's replies draw in their root's row.
+        if (!hit && _root == 0 && has(_inlineThreads, it.ts))
+            if (const auto *replies = st.replies(_conv, it.ts))
+                for (const model::Message &r : *replies)
+                    if ((hit = touchesUsers(r, refs, ids)))
+                        break;
+        if (hit)
+            _list->itemsChanged(int(i), 1);
+    }
 }
 
 std::string MessageList::itemLabel(size_t i) const {

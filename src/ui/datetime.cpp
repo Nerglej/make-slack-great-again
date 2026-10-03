@@ -40,60 +40,41 @@ public:
     SizeF measureContent(float, float) override { return {kCell * 7, kHead + kCell * 7}; }
     void  paint(gfx::Painter &p) override {
         Popup::paint(p);
-        const float k  = windowScale();
-        auto        tx = [&](std::string_view s, text::Style st, RectF r) {
-            text::AttributedText t;
-            t.append(s, st);
-            auto l = text::Layout::build(t, {}, k);
-            l->paint(
+        layouts();
+        auto tx = [&](const text::Layout &l, RectF r) {
+            l.paint(
                 p,
                 snapPx(
-                    {r.x + std::floor((r.w - l->width()) / 2),
-                     r.y + std::floor((r.h - l->height()) / 2)}
+                    {r.x + std::floor((r.w - l.width()) / 2),
+                     r.y + std::floor((r.h - l.height()) / 2)}
                 )
             );
         };
-        const float       ox = 8, oy = 8;
-        const std::string head = base::formatMonthYear(_y, _m);
-        tx(head,
-           ui::pxFont(13, text::Weight::Bold, ui::color(C::FormText)),
-           {ox, oy, kCell * 7, kHead});
-        tx("\xE2\x80\xB9",
-           ui::pxFont(18, text::Weight::Regular, ui::color(C::FormText)),
-           {ox, oy, kCell, kHead});
-        tx("\xE2\x80\xBA",
-           ui::pxFont(18, text::Weight::Regular, ui::color(C::FormText)),
-           {ox + kCell * 6, oy, kCell, kHead});
+        const float ox = 8, oy = 8;
+        tx(*_head, {ox, oy, kCell * 7, kHead});
+        tx(*_prev, {ox, oy, kCell, kHead});
+        tx(*_next, {ox + kCell * 6, oy, kCell, kHead});
         for (int i = 0; i < 7; ++i)
-            tx(base::weekdayShortName((i + base::firstDayOfWeek()) % 7),
-               ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted)),
-               {ox + kCell * float(i), oy + kHead, kCell, kCell});
+            tx(*_weekdays[size_t(i)], {ox + kCell * float(i), oy + kHead, kCell, kCell});
         const int first = column1();
         for (int d = 1; d <= daysIn(_y, _m); ++d) {
-            const int   i = first + d - 1;
-            const RectF r{
-                ox + kCell * float(i % 7), oy + kHead + kCell * float(1 + i / 7), kCell, kCell
-            };
-            const bool sel = _f.year() == _y && _f.month() == _m && _f.day() == d;
-            const bool off = before(d);
+            const RectF r   = cell(first + d - 1);
+            const bool  sel = _f.year() == _y && _f.month() == _m && _f.day() == d;
+            const bool  off = before(d);
             if (sel)
                 p.fillRoundRect({r.x + 2, r.y + 2, r.w - 4, r.h - 4}, 4, ui::color(C::Accent));
             else if (_hover == d && !off)
                 p.fillRoundRect(
                     {r.x + 2, r.y + 2, r.w - 4, r.h - 4}, 4, ui::color(C::FormHighlight)
                 );
-            tx(std::to_string(d),
-               ui::pxFont(
-                   13,
-                   text::Weight::Regular,
-                   ui::color(
-                       sel   ? C::AccentText
-                       : off ? C::FormTextFaint
-                             : C::FormText
-                   )
-               ),
-               r);
+            text::Layout &l = *_days[size_t(d - 1)];
+            l.setColor(ui::color(sel ? C::AccentText : off ? C::FormTextFaint : C::FormText));
+            tx(l, r);
         }
+    }
+    void styleChanged() override {
+        _days.clear(); // theme or text size: shaped again on the next paint
+        Popup::styleChanged();
     }
     // The hand over what a click acts on: the month arrows and pickable days.
     uint8_t cursorAt(PointF pt) const override {
@@ -107,8 +88,11 @@ public:
         if (e.type == EventType::PointerMove) {
             const int d = dayAt(x, y);
             if (d != _hover) {
+                // Only the two cells whose highlight changes.
+                for (int c : {_hover, d})
+                    if (c > 0)
+                        update(cell(column1() + c - 1));
                 _hover = d;
-                update();
             }
             return true;
         }
@@ -148,14 +132,56 @@ private:
         return d >= 1 && d <= daysIn(_y, _m) ? d : 0;
     }
     // The column of the month's first day.
-    int column1() const { return (weekday(_y, _m, 1) - base::firstDayOfWeek() + 7) % 7; }
+    int          column1() const { return (weekday(_y, _m, 1) - base::firstDayOfWeek() + 7) % 7; }
+    // Grid slot i's box (local; slot 0 = the first row's first column).
+    static RectF cell(int i) {
+        return {8 + kCell * float(i % 7), 8 + kHead + kCell * float(1 + i / 7), kCell, kCell};
+    }
+    // The static labels, shaped once per scale and text size (the header per
+    // month); day numbers are recoloured per paint, never reshaped.
+    void layouts() {
+        const float k    = windowScale();
+        const float body = ui::font(Font::Body).size;
+        auto        make = [&](std::string_view s, float px, text::Weight w, C c) {
+            text::AttributedText t;
+            t.append(s, ui::pxFont(px, w, ui::color(c)));
+            return text::Layout::build(t, {}, k);
+        };
+        if (_days.empty() || _scale != k || _body != body) {
+            _scale = k;
+            _body  = body;
+            _headY = _headM = 0;
+            _prev           = make("\xE2\x80\xB9", 18, text::Weight::Regular, C::FormText);
+            _next           = make("\xE2\x80\xBA", 18, text::Weight::Regular, C::FormText);
+            _weekdays.clear();
+            for (int i = 0; i < 7; ++i)
+                _weekdays.push_back(make(
+                    base::weekdayShortName((i + base::firstDayOfWeek()) % 7),
+                    11,
+                    text::Weight::Regular,
+                    C::FormTextMuted
+                ));
+            _days.clear();
+            for (int d = 1; d <= 31; ++d)
+                _days.push_back(make(std::to_string(d), 13, text::Weight::Regular, C::FormText));
+        }
+        if (_headY != _y || _headM != _m) {
+            _headY = _y;
+            _headM = _m;
+            _head  = make(base::formatMonthYear(_y, _m), 13, text::Weight::Bold, C::FormText);
+        }
+    }
 
 public:
     int _minY = 0, _minM = 0, _minD = 0;
 
 private:
-    DateTimeField &_f;
-    int            _y, _m, _hover = 0;
+    DateTimeField                             &_f;
+    int                                        _y, _m, _hover = 0;
+    std::unique_ptr<text::Layout>              _head, _prev, _next;
+    std::vector<std::unique_ptr<text::Layout>> _weekdays, _days;
+    float                                      _scale = 0, _body = 0;
+    int                                        _headY = 0, _headM = 0;
 };
 
 } // namespace
@@ -421,9 +447,7 @@ void DateTimeField::paint(gfx::Painter &p) {
         if (ps[i].field() && focus && sec == _sec) // the current section, selected
             p.fillRect({_xs[i], y, std::ceil(l->width()), l->height()}, ui::color(C::Accent));
         if (ps[i].field() && focus && sec == _sec) {
-            text::AttributedText t;
-            t.append(ps[i].text, ui::pxFont(13, text::Weight::Regular, ui::color(C::AccentText)));
-            text::Layout::build(t, {}, windowScale())->paint(p, snapPx({_xs[i], y}));
+            l->paintAs(p, snapPx({_xs[i], y}), ui::color(C::AccentText));
         } else {
             l->paint(p, snapPx({_xs[i], y}));
         }

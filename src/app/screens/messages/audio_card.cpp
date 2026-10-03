@@ -55,8 +55,11 @@ text::Style lineFont(C c) {
     return ui::pxFont(15, text::Weight::Regular, ui::color(c));
 }
 
+size_t gLayoutBuilds = 0; // audioCardLayoutBuilds()
+
 std::unique_ptr<text::Layout>
 oneLine(std::string_view s, const text::Style &st, float maxW, float scale) {
+    ++gLayoutBuilds;
     text::AttributedText t;
     t.append(std::string(s), st);
     text::LayoutOptions o;
@@ -66,6 +69,32 @@ oneLine(std::string_view s, const text::Style &st, float maxW, float scale) {
     o.lineHeight = kLine;
     return text::Layout::build(t, o, scale);
 }
+
+// One line kept between paints: shaped again only when its text, width,
+// scale or colour (`tag`) changes — the card repaints 5×/s while it plays.
+class LineCache {
+public:
+    template <class StyleFn>
+    const text::Layout &
+    get(std::string_view s, StyleFn style, float maxW, float scale, int tag = 0) {
+        maxW = std::max(1.f, maxW);
+        if (!_l || s != _s || maxW != _w || scale != _scale || tag != _tag) {
+            _l = oneLine(s, style(), maxW, scale);
+            _s.assign(s);
+            _w     = maxW;
+            _scale = scale;
+            _tag   = tag;
+        }
+        return *_l;
+    }
+    void reset() { _l.reset(); }
+
+private:
+    std::unique_ptr<text::Layout> _l;
+    std::string                   _s;
+    float                         _w = 0, _scale = 0;
+    int                           _tag = 0;
+};
 
 bool live(AudioPlayer::State s) {
     return s == AudioPlayer::State::Playing || s == AudioPlayer::State::Paused ||
@@ -230,12 +259,21 @@ public:
     }
     ui::SizeF measureContent(float, float) override {
         const float k = windowScale();
-        return {std::ceil(text::measure(label(), lineFont(C::Link), k)), 15 * kLine};
+        if (k != _measuredAt) {
+            _measuredAt = k;
+            _labelW     = std::ceil(text::measure(label(), lineFont(C::Link), k));
+        }
+        return {_labelW, 15 * kLine};
     }
     void paint(gfx::Painter &p) override {
-        const float k = windowScale();
-        auto        l = oneLine(label(), lineFont(C::Link), 1e9f, k);
-        l->paint(p, snapPx({0, std::floor((height() - l->height()) / 2)}));
+        const text::Layout &l =
+            _line.get(label(), [] { return lineFont(C::Link); }, 1e9f, windowScale());
+        l.paint(p, snapPx({0, std::floor((height() - l.height()) / 2)}));
+    }
+    void styleChanged() override {
+        _line.reset();
+        _measuredAt = 0;
+        Clickable::styleChanged();
     }
     std::string accessibleName() const override { return label(); }
     void        activate() override;
@@ -243,6 +281,8 @@ public:
 private:
     static std::string label() { return tr("View transcript"); }
     AudioCard         &_card;
+    LineCache          _line;
+    float              _measuredAt = 0, _labelW = 0;
 };
 
 class AudioCard final : public ui::Clickable {
@@ -257,8 +297,9 @@ public:
             _file.transcriptVtt.clear();
             _by = ai->by;
         }
-        _play       = add<PlayButton>(*this);
-        _transcribe = add<TranscribeButton>(*this);
+        _simpleTranscript = str::simplified(_file.transcript);
+        _play             = add<PlayButton>(*this);
+        _transcribe       = add<TranscribeButton>(*this);
         if (hasTranscript())
             _link = add<TranscriptLink>(*this);
         if (ctx.audio)
@@ -348,7 +389,15 @@ public:
         return Clickable::onEvent(e);
     }
 
-    void styleChanged() override { Clickable::styleChanged(); }
+    void styleChanged() override {
+        // Theme colours and text size are baked into the cached lines.
+        _name.reset();
+        _sub.reset();
+        _time.reset();
+        _transcriptLine.reset();
+        _barAt = _textAt = 0;
+        Clickable::styleChanged();
+    }
 
     void paint(gfx::Painter &p) override {
         const float                k  = windowScale();
@@ -364,11 +413,11 @@ public:
         );
 
         // Title block: name, then "0:05 (79 KB)" / Loading… / the error.
-        const float textX = kPad + kBtn + kPad;
-        const float textW = chip.w - textX - kPad;
-        auto        name  = oneLine(_file.name, nameFont(), textW, k);
-        std::string sub;
-        C           subColor = C::FormTextMuted;
+        const float         textX = kPad + kBtn + kPad;
+        const float         textW = chip.w - textX - kPad;
+        const text::Layout &name  = _name.get(_file.name, nameFont, textW, k);
+        std::string         sub;
+        C                   subColor = C::FormTextMuted;
         if (ph == AudioPlayer::State::Error) {
             sub      = st->error;
             subColor = C::FormError;
@@ -381,10 +430,12 @@ public:
             else
                 sub = sz.empty() ? _file.prettyType : sz;
         }
-        name->paint(p, snapPx({textX, kPad - 1}));
+        name.paint(p, snapPx({textX, kPad - 1}));
         if (!sub.empty())
-            oneLine(sub, subFont(subColor), textW, k)
-                ->paint(p, snapPx({textX, kPad - 1 + std::ceil(name->height()) + 2}));
+            _sub.get(
+                    sub, [subColor] { return subFont(subColor); }, textW, k, int(subColor)
+            )
+                .paint(p, snapPx({textX, kPad - 1 + std::ceil(name.height()) + 2}));
 
         // Slider: track, played part, knob.
         const bool isLive = live(ph) || _scrubMs >= 0;
@@ -414,15 +465,15 @@ public:
         else if (dur > 0)
             label = formatDuration(dur, true);
         if (!label.empty()) {
-            const ui::RectF action = actionRect();
-            auto            l      = oneLine(label, subFont(), 1e9f, k);
-            const float     right  = action.x - kLabelGap;
+            const ui::RectF     action = actionRect();
+            const text::Layout &l      = _time.get(label, [] { return subFont(); }, 1e9f, k);
+            const float         right  = action.x - kLabelGap;
             p.save();
             p.clipRect({bar.x + bar.w + 1, 0, std::max(0.f, right - bar.x - bar.w - 1), chip.h});
-            l->paint(
+            l.paint(
                 p,
                 snapPx(
-                    {right - std::ceil(l->width()), bar.y + bar.h / 2 - std::floor(l->height() / 2)}
+                    {right - std::ceil(l.width()), bar.y + bar.h / 2 - std::floor(l.height() / 2)}
                 )
             );
             p.restore();
@@ -433,8 +484,11 @@ public:
             const ui::RectF tl = transcriptText();
             p.fillRoundRect({0, tl.y, 3, tl.h}, 1.5f, ui::color(C::FormDivider));
             if (tl.w > 0)
-                oneLine(str::simplified(_file.transcript), lineFont(C::FormTextMuted), tl.w, k)
-                    ->paint(p, snapPx({tl.x, tl.y}));
+                _transcriptLine
+                    .get(
+                        _simpleTranscript, [] { return lineFont(C::FormTextMuted); }, tl.w, k
+                    )
+                    .paint(p, snapPx({tl.x, tl.y}));
         }
     }
 
@@ -473,28 +527,35 @@ private:
     // Sized from the duration so its right edge doesn't move as the time
     // ticks: the clip's length, or the widest "m:ss" when unknown.
     ui::RectF barRect(int64_t durationMs) const {
-        const float k  = windowScale();
-        const float lw = std::max(
-            text::measure(durationMs > 0 ? formatDuration(durationMs, true) : "0:00", subFont(), k),
-            text::measure("0:00", subFont(), k)
-        );
+        const float k = windowScale();
+        if (k != _barAt || durationMs != _barDur) { // measured once per length and scale
+            _barAt  = k;
+            _barDur = durationMs;
+            _barLw  = std::max(
+                text::measure(
+                    durationMs > 0 ? formatDuration(durationMs, true) : "0:00", subFont(), k
+                ),
+                text::measure("0:00", subFont(), k)
+            );
+        }
         const float x     = kPad + kKnob / 2;
-        const float right = actionRect().x - kLabelGap - std::ceil(lw) - 12;
+        const float right = actionRect().x - kLabelGap - std::ceil(_barLw) - 12;
         return {x, std::round(rowMid() - kBarH / 2), std::max(20.f, right - x), kBarH};
     }
     // The quoted preview's box: after the 3-px quote bar, as wide as the text
     // up to what leaves room for "View transcript".
     ui::RectF transcriptText() const {
-        const float k       = windowScale();
-        const float h       = 15 * kLine;
-        const float top     = kAudioCardH + std::floor((kAudioTranscriptH - h) / 2);
-        const float textX   = 3 + kPad;
-        const float linkW   = std::ceil(text::measure(tr("View transcript"), lineFont(C::Link), k));
-        const float avail   = width() - textX - linkW - 6;
-        const float natural = std::ceil(
-            text::measure(str::simplified(_file.transcript), lineFont(C::FormTextMuted), k)
-        );
-        return {textX, top, std::max(0.f, std::min(avail, natural)), h};
+        const float k     = windowScale();
+        const float h     = 15 * kLine;
+        const float top   = kAudioCardH + std::floor((kAudioTranscriptH - h) / 2);
+        const float textX = 3 + kPad;
+        if (k != _textAt) { // both widths depend only on the scale
+            _textAt  = k;
+            _linkW   = std::ceil(text::measure(tr("View transcript"), lineFont(C::Link), k));
+            _natural = std::ceil(text::measure(_simpleTranscript, lineFont(C::FormTextMuted), k));
+        }
+        const float avail = width() - textX - _linkW - 6;
+        return {textX, top, std::max(0.f, std::min(avail, _natural)), h};
     }
 
     Context                &_ctx;
@@ -509,6 +570,11 @@ private:
     uint32_t                _aiObs      = 0;
     int64_t                 _scrubMs    = -1; // ≥ 0 while dragging the slider
     bool                    _scrubbing  = false;
+    std::string             _simpleTranscript; // str::simplified(_file.transcript)
+    LineCache               _name, _sub, _time, _transcriptLine;
+    // barRect / transcriptText widths, per scale (0 = not measured yet).
+    mutable float           _barAt = 0, _barLw = 0, _textAt = 0, _linkW = 0, _natural = 0;
+    mutable int64_t         _barDur = 0;
 };
 
 void PlayButton::paint(gfx::Painter &p) {
@@ -582,6 +648,10 @@ void download(
 }
 
 } // namespace
+
+size_t audioCardLayoutBuilds() {
+    return gLayoutBuilds;
+}
 
 ui::View *
 addAudioCard(ui::View *parent, Context &ctx, MessageList *list, Ts ts, const model::File &f) {

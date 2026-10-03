@@ -2048,6 +2048,26 @@ void Composer::openGif() {
 void Composer::updatePickList() {
     if (_inPick) // the caret probe below moves the selection
         return;
+    PickInputs in;
+    in.text    = _edit->text();
+    in.caret   = _edit->caret();
+    in.anchor  = _edit->anchor();
+    in.conv    = _key.conv;
+    in.focused = _edit->focused();
+    in.thread  = _threadMode;
+    in.window  = window() != nullptr;
+    // Nothing moved since the last look, and the list is as that look left
+    // it (not closed by Escape or a pick meanwhile): the same answer again.
+    if (_pickInValid && in == _pickIn && _pickShown == (_pick != nullptr))
+        return;
+    _pickIn      = std::move(in);
+    _pickInValid = true;
+    computePickList();
+    _pickShown = _pick != nullptr;
+}
+
+void Composer::computePickList() {
+    ++_pickRecomputes;
     Window            *w       = window();
     const std::string &t       = _edit->text();
     const uint32_t     cur     = _edit->caret();
@@ -2091,6 +2111,8 @@ void Composer::updatePickList() {
             {"@everyone", "<!everyone>", N_("Notify everyone in your workspace")},
             {"@here", "<!here>", N_("Notify every online member here")},
         };
+        // The query folded once; every label is matched folded already.
+        const std::string fq = utf8::foldCase(query);
         if (!dm)
             for (const Alias &a : kAliases)
                 if (query.empty() || utf8::containsFolded(a.name, query)) {
@@ -2106,21 +2128,31 @@ void Composer::updatePickList() {
                 }
         wide      = _threadMode && !dm;
         int added = 0;
+        if (_folded.size() < st.userCount())
+            _folded.resize(st.userCount());
         for (model::UserRef u = 0; u < st.userCount() && added < 50; ++u) {
             const model::User &user = st.user(u);
             if (user.placeholder || user.deleted)
                 continue;
-            const std::string label(user.label());
-            if (!query.empty() && !utf8::containsFolded(label, query) &&
-                !utf8::containsFolded(user.name, query))
+            const std::string_view label = user.label();
+            FoldedUser            &f     = _folded[u];
+            if (f.label != label || f.name != user.name) { // new, renamed, another workspace
+                f.label  = label;
+                f.name   = user.name;
+                f.flabel = utf8::foldCase(label);
+                f.fname  = utf8::foldCase(user.name);
+                ++_mentionFolds;
+            }
+            if (!query.empty() && !utf8::containsPrefolded(f.flabel, fq) &&
+                !utf8::containsPrefolded(f.fname, fq))
                 continue;
             PickList::Item it;
             it.kind    = PickList::Item::Kind::Mention;
-            it.display = "@" + label;
+            it.display = str::concat({"@", label});
             it.title   = u == st.me ? str::concat({it.display, " ", tr("(you)")}) : it.display;
             it.insert  = str::concat({"<@", user.id, ">"});
-            if (!user.name.empty() && !utf8::containsFolded(user.name, label) &&
-                utf8::foldCase(user.name) != utf8::foldCase(label))
+            if (!user.name.empty() && !utf8::containsPrefolded(f.fname, f.flabel) &&
+                f.fname != f.flabel)
                 it.subtitle = user.name;
             it.bot      = user.bot;
             it.avatar   = user.avatar;
@@ -2211,8 +2243,11 @@ void Composer::updatePickList() {
     // the character; the @ list hangs from the line's bottom, the others
     // from its top.
     const PointF anchor{er.x + cr.x - 10, er.y + cr.y + (trig == '@' ? cr.h : 0) - 6};
-    dismiss();
-    _pickFrom                = start;
+    _pickFrom = start;
+    if (_pick) { // the open list takes the new rows (no close and reopen per key)
+        _pick->update(std::move(items), wide, anchor);
+        return;
+    }
     std::weak_ptr<int> alive = _alive;
     _pick                    = PickList::show(
         *w, _avatars, anchor, std::move(items), wide, [this, alive](const PickList::Item &it) {

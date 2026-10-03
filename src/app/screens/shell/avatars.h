@@ -1,29 +1,35 @@
 // Small bitmaps the shell draws everywhere (avatars, the workspace icon,
 // notification and tray pictures): decoded once per (path, size) and shared.
-// Message images are the messages screens' ImageCache's business; these are a
-// few dozen 40-80 px squares, so a plain map with no eviction is enough.
 // Files are PNG / JPEG / GIF / WebP, or SVG (Claude Code's teammate tiles),
 // which is rendered at the size asked for.
 //
-// A path may be an http(s) URL (Slack's avatars): on disk already
-// (RemoteImages) it decodes at once like a file; otherwise get() hands out an
-// EMPTY bitmap — ui::Image paints its placeholder for it — and starts the
-// download. When the picture lands that same bitmap is filled in place, so
-// every view already holding it shows it without being told, and onLoaded
-// runs (once per loop turn) for the shell to repaint the window. Callers that
-// need pixels now (tray, notifications) check empty() as well as null.
+// Nothing is decoded on the UI thread: get() hands out an EMPTY bitmap — ui::
+// Image paints its placeholder for it — and the ImageCache worker decodes the
+// file (centre-cropped to a square, resized to px×px). When the picture lands
+// that same bitmap is filled in place, so every view already holding it shows
+// it without being told, and onLoaded runs (once per loop turn) for the shell
+// to repaint the window. A path may be an http(s) URL (Slack's avatars): it
+// is downloaded first (RemoteImages) unless on disk already. Callers that
+// need pixels now (tray, notifications) use whenReady().
+//
+// The cache is bounded: least recently asked-for pictures go once their
+// pixels pass the budget (views holding one keep it).
 #pragma once
 
 #include "ui/ui.h"
 
+#include <cstdint>
 #include <functional>
+#include <list>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace screens {
+class ImageCache;
 class RemoteImages;
-}
+} // namespace screens
 
 namespace model {
 struct User;
@@ -33,28 +39,59 @@ namespace shell {
 
 class Avatars {
 public:
-    Avatars();
+    using Picture = std::shared_ptr<const gfx::Bitmap>;
+
+    explicit Avatars(screens::ImageCache &images, size_t budgetBytes = size_t(16) << 20);
     ~Avatars();
     Avatars(const Avatars &)            = delete;
     Avatars &operator=(const Avatars &) = delete;
 
     // The image at `path` scaled to fit px×px (aspect kept, centre-cropped to
-    // a square); null when the file is missing or undecodable (cached too);
-    // empty while a URL downloads (see above).
-    std::shared_ptr<const gfx::Bitmap> get(const std::string &path, int px);
-    size_t                             size() const { return _cache.size(); }
+    // a square); empty until decoded (or downloaded); null once the file
+    // turned out missing or undecodable (remembered too), or for a URL with
+    // no RemoteImages.
+    Picture get(const std::string &path, int px);
+    // The picture for `path` once it is there, null for none: at once when
+    // it is decoded already, failed, or a URL still downloading (a
+    // notification then goes without; the next one has it); otherwise as
+    // soon as the worker has decoded it (on the UI thread, never inside
+    // this call). Not called once this Avatars is gone.
+    void    whenReady(const std::string &path, int px, std::function<void(Picture)> fn);
+
+    size_t size() const { return _slots.size(); }
+    size_t bytes() const { return _bytes; }
+    size_t budget() const { return _budget; }
+    void   setBudget(size_t b);
+    // Decodes asked of the worker so far (tests).
+    size_t decodes() const { return _decodes; }
 
     void                  setRemote(screens::RemoteImages *r) { _remote = r; }
-    // A downloaded picture filled its bitmap (UI thread, coalesced).
+    // A picture filled its bitmap (UI thread, coalesced).
     std::function<void()> onLoaded;
 
 private:
+    struct Slot {
+        std::shared_ptr<gfx::Bitmap>              bmp; // null: failed
+        std::vector<std::function<void(Picture)>> waiting;
+        std::list<std::string>::iterator          lru; // valid while `ready`
+        size_t                                    bytes       = 0;
+        bool                                      ready       = false; // filled or failed
+        bool                                      downloading = false;
+    };
+    void decode(const std::string &key, const std::string &file, int px);
     void landed(const std::string &key, const std::string &file, int px);
+    void filled(const std::string &key, gfx::Bitmap b);
+    void markReady(Slot &s, const std::string &key);
+    void evict();
+    void notifyLoaded();
 
-    std::unordered_map<std::string, std::shared_ptr<gfx::Bitmap>> _cache;
-    screens::RemoteImages                                        *_remote = nullptr;
-    std::shared_ptr<char>                                         _alive; // guards downloads
-    bool                                                          _notifyQueued = false;
+    screens::ImageCache                  &_images;
+    std::unordered_map<std::string, Slot> _slots;
+    std::list<std::string>                _lru; // ready slots, most recently asked first
+    screens::RemoteImages                *_remote = nullptr;
+    std::shared_ptr<char>                 _alive; // guards downloads and decodes
+    size_t                                _bytes = 0, _budget, _decodes = 0;
+    bool                                  _notifyQueued = false;
 };
 
 // premultiplied gfx::Bitmap → plat::Image (tray icons, notification pictures).

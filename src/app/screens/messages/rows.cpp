@@ -1750,15 +1750,28 @@ void MessageRow::paintOver(gfx::Painter &p) {
     const ui::RectF r = dismissRect();
     if (r.w <= 0)
         return;
-    text::AttributedText t;
-    t.append("\xC3\x97", ui::pxFont(15 * 1.15f, text::Weight::Regular, bannerColor(1)));
-    auto l = text::Layout::build(t, {}, windowScale());
+    // Shaped once per colour and scale, not on every paint while hovered.
+    const gfx::Color c = bannerColor(1);
+    const float      k = windowScale();
+    if (!_dismissLayout || _dismissColor != c || _dismissScale != k) {
+        text::AttributedText t;
+        t.append("\xC3\x97", ui::pxFont(15 * 1.15f, text::Weight::Regular, c));
+        _dismissLayout = text::Layout::build(t, {}, k);
+        _dismissColor  = c;
+        _dismissScale  = k;
+    }
+    const text::Layout *l = _dismissLayout.get();
     l->paint(
         p,
         snapPx(
             {r.x + std::floor((r.w - l->width()) / 2), r.y + std::floor((r.h - l->height()) / 2)}
         )
     );
+}
+
+void MessageRow::styleChanged() {
+    _dismissLayout.reset(); // the text size is in it
+    View::styleChanged();
 }
 
 std::string MessageRow::tooltip() const {

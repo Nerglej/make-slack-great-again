@@ -429,9 +429,13 @@ TEST("agents: SVG avatars (the teammate tiles) decode at the size asked") {
             0600
         )
     );
-    shell::Avatars av;
-    const auto     b = av.get(path, 40);
+    screens::ImageCache images(app().platform());
+    shell::Avatars      av(images);
+    const auto          b = av.get(path, 40);
     REQUIRE(b != nullptr);
+    // Rendered on the worker; the bitmap handed out fills in place.
+    for (int i = 0; i < 400 && b->empty(); ++i)
+        app().pump(5);
     CHECK(b->width() == 40);
     CHECK(b->height() == 40);
     // The centre is the tile's orange, opaque.

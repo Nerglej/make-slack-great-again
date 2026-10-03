@@ -301,11 +301,14 @@ private:
         std::vector<model::UserRef>     pending,
         int                             tries
     );
-    void               huddleChanged(model::Store &st, const std::string &key, model::ConvRef conv);
-    model::Backend    &backendFor(const model::Store &st);
-    bool               storeAlive(const model::Store *st) const; // open or attached
-    std::string        teamTitle(const model::Store &st, const std::string &key, std::string title);
-    plat::Image        notificationImage(const std::string &path);
+    void            huddleChanged(model::Store &st, const std::string &key, model::ConvRef conv);
+    model::Backend &backendFor(const model::Store &st);
+    bool            storeAlive(const model::Store *st) const; // open or attached
+    std::string     teamTitle(const model::Store &st, const std::string &key, std::string title);
+    // The first of `paths` with a picture, for an OS notification, to `fn`:
+    // at once when decoded already (or there is none to wait for), else once
+    // the worker has decoded it.
+    void notificationImage(std::vector<std::string> paths, std::function<void(plat::Image)> fn);
     std::string        workspaceIconFor(const model::Store &st) const;
     uint64_t           post(const plat::Notification &n);
     model::NotifyLevel defaultLevel() const; // Settings → Notifications: All or Mentions
@@ -344,7 +347,8 @@ private:
     void saveSettingsNow();
     void
     showSampleNotification(plat::Notification n, std::function<void(const std::string &)> result);
-    void applyUpdate();  // the update bar's button
+    void sampleNotificationReady(const plat::Notification &n); // its picture is there
+    void applyUpdate();                                        // the update bar's button
     void storeVisited(); // the sidebar's visit stamps into _settings
     // Claude Code UI (msga's MainWindow parts for agent sessions): the
     // composer's lock and suggestion, slash commands that msga runs itself,

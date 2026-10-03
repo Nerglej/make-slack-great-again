@@ -89,6 +89,19 @@ public:
     size_t      userCount() const { return _users.size(); }
     // After changing users in place (presence, status): fires Users.
     void        usersChanged();
+    // What a Users change changed, for observers that only care about part
+    // of it. Each counter only grows; every Users emit refreshes them first.
+    //   profileRevision: any user's profile (all but presence/DND) changed
+    //     (or users were added); userRevision(u): the one at u's last change.
+    //   presenceRevision: any user's presence or DND changed.
+    //   textRevision: custom emoji, user groups or channel names changed
+    //     (they draw in names and messages too).
+    uint64_t    profileRevision() const { return _profileRev; }
+    uint64_t    userRevision(UserRef u) const {
+        return u < _userRev.size() ? _userRev[u] : _profileRev;
+    }
+    uint64_t presenceRevision() const { return _presenceRev; }
+    uint64_t textRevision() const { return _textRev; }
 
     // ── Conversations ───────────────────────────────────────────────────────
     ConvRef             addConversation(Conversation c); // merges by id like addUser
@@ -266,6 +279,7 @@ private:
     std::vector<Message> *listFor(Conversation &c, Ts thread, bool create);
     void                  recountUnread(Conversation &c);
     void                  emit(const Change &ch);
+    void                  noteUserRevisions(); // before a Users emit
 
     std::vector<User>                            _users;
     std::unordered_map<std::string, UserRef>     _userIndex;
@@ -282,6 +296,11 @@ private:
     int                                          _unreadThreads = 0;
 
     std::unordered_map<std::string, AiTranscript> _aiTranscripts;
+
+    // noteUserRevisions' memory: per user, the hashes last seen and the
+    // profile revision of its last change.
+    std::vector<uint64_t> _profileHash, _presenceHash, _userRev;
+    uint64_t              _profileRev = 0, _presenceRev = 0, _textRev = 0;
 
     struct Slot {
         ObserverId id;

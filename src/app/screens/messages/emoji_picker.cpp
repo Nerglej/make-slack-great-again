@@ -42,6 +42,20 @@ void stateChanged() {
         stateObserver()(recents(), g_tone);
 }
 
+// Every built-in emoji name through utf8::foldCase, in emoji::forEach order
+// (folded once for the process; the search matches against these).
+const std::vector<std::string> &foldedBuiltInNames() {
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> v;
+        emoji::forEach([&](std::string_view n, const std::string &) {
+            v.push_back(utf8::foldCase(n));
+            return true;
+        });
+        return v;
+    }();
+    return names;
+}
+
 std::string toneGlyph(int tone) {
     return tone >= 2 && tone <= 6
                ? emoji::toUnicode(str::concat({"skin-tone-", str::number(int64_t(tone))}))
@@ -246,12 +260,8 @@ public:
                         )
                     );
                 } else if (!c.image.empty()) {
-                    const int           px = int(std::lround(24 * scale));
-                    ImageCache::Request rq;
-                    rq.path   = c.image;
-                    rq.width  = px;
-                    rq.height = px;
-                    if (auto b = _ctx.images.get(rq, this))
+                    const int px = int(std::lround(24 * scale));
+                    if (auto b = _ctx.images.get(ImageCache::Ref{c.image, px, px}, this))
                         p.drawBitmap(b->view(), {cr.x + 6, cr.y + 6, 24, 24});
                 }
             }
@@ -540,12 +550,26 @@ void EmojiPicker::filter(std::string_view q) {
     if (_searching) {
         // One "Search results" section: workspace emoji first, then every
         // built-in whose name contains the query.
+        // The query folded once, the names folded once (built-ins for the
+        // process, the workspace's per picker until they change).
+        const std::string fq   = utf8::foldCase(q);
+        bool              same = _customFolded.size() == customs.size();
+        for (size_t i = 0; same && i < customs.size(); ++i)
+            same = _customFolded[i].first == customs[i].first;
+        if (!same) {
+            _customFolded.clear();
+            _customFolded.reserve(customs.size());
+            for (const auto &c : customs)
+                _customFolded.emplace_back(c.first, utf8::foldCase(c.first));
+        }
         std::vector<EmojiGrid::Cell> hits;
-        for (const auto &[name, image] : customs)
-            if (utf8::containsFolded(name, q))
-                hits.push_back({name, {}, image, false});
+        for (size_t i = 0; i < customs.size(); ++i)
+            if (utf8::containsPrefolded(_customFolded[i].second, fq))
+                hits.push_back({customs[i].first, {}, customs[i].second, false});
+        const std::vector<std::string> &builtIn = foldedBuiltInNames();
+        size_t                          at      = 0;
         emoji::forEach([&](std::string_view n, const std::string &u) {
-            if (utf8::containsFolded(n, q))
+            if (utf8::containsPrefolded(builtIn[at++], fq))
                 hits.push_back({std::string(n), u, {}, emoji::supportsSkinTone(n)});
             return true;
         });
@@ -554,12 +578,18 @@ void EmojiPicker::filter(std::string_view q) {
         std::vector<EmojiGrid::Cell> freq;
         for (const std::string &n : recents()) {
             const std::string u = emoji::toUnicode(n);
-            if (!u.empty())
+            if (!u.empty()) {
                 freq.push_back({n, u, {}, emoji::supportsSkinTone(n)});
-            else
-                for (const auto &[name, image] : customs)
-                    if (name == n)
-                        freq.push_back({n, {}, image, false});
+                continue;
+            }
+            // customEmojiImages is sorted by name (and names are unique).
+            const auto it = std::lower_bound(
+                customs.begin(), customs.end(), n, [](const auto &c, const std::string &key) {
+                    return c.first < key;
+                }
+            );
+            if (it != customs.end() && it->first == n)
+                freq.push_back({n, {}, it->second, false});
         }
         add(tr("Frequently used"), Icon::Clock, true, std::move(freq));
         std::vector<std::pair<std::string, std::string>> entries;

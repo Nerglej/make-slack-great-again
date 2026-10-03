@@ -41,6 +41,13 @@ extern char **environ;
 #if !defined(_WIN32) && !defined(__APPLE__)
 #define NET_TEST_POSIX 1
 #define NET_TEST_OWN_TLS 1 // our CA loading honours SSL_CERT_FILE
+#include "net/posix/posix.h"
+
+#include <atomic>
+#include <fcntl.h>
+#include <fstream>
+#include <poll.h>
+#include <thread>
 #endif
 
 namespace {
@@ -380,6 +387,78 @@ TEST("multipart: fields, a file, the closing boundary") {
         "--BND--\r\n"
     );
 }
+
+#ifdef NET_TEST_POSIX
+namespace {
+// The voluntary context switches of thread `tid` so far (Linux /proc).
+long voluntarySwitches(pid_t tid) {
+    std::ifstream f("/proc/self/task/" + std::to_string(tid) + "/status");
+    std::string   line;
+    while (std::getline(f, line))
+        if (line.rfind("voluntary_ctxt_switches:", 0) == 0)
+            return std::atol(line.c_str() + 24);
+    return -1;
+}
+} // namespace
+
+// An idle WebSocket reader waits with a wake fd and no deadline: it must
+// sleep until something happens (no 4×/s poll timeouts), yet an abort (flag +
+// wake write) still ends the wait at once.
+TEST("posix waitFd: a wake-fd wait blocks without periodic wakeups, aborts at once") {
+    int data[2], wake[2];
+    REQUIRE(pipe2(data, O_NONBLOCK | O_CLOEXEC) == 0);
+    REQUIRE(pipe2(wake, O_NONBLOCK | O_CLOEXEC) == 0);
+    std::atomic<bool>    cancel{false};
+    std::atomic<pid_t>   tid{0};
+    std::atomic<int>     result{-1};
+    std::atomic<int64_t> returnedAt{0};
+    std::thread          t([&] {
+        tid.store(gettid());
+        net::detail::Waiter w;
+        w.cancel = &cancel;
+        w.wakeFd = wake[0];
+        result.store(int(net::detail::waitFd(data[0], POLLIN, w, true)));
+        returnedAt.store(msNow());
+    });
+    while (!tid.load())
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const long before = voluntarySwitches(tid.load());
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    const long after = voluntarySwitches(tid.load());
+    CHECK(before >= 0);
+    // The old 250 ms slices woke it 4 times here.
+    CHECK(after - before <= 1);
+    CHECK(result.load() == -1);
+
+    const int64_t aborted = msNow();
+    cancel.store(true);
+    const char c = 1;
+    REQUIRE(::write(wake[1], &c, 1) == 1);
+    t.join();
+    CHECK(result.load() == int(net::detail::Wait::Cancelled));
+    CHECK(returnedAt.load() - aborted < 100);
+
+    // A plain wake (a queued send) returns Woken; readable data returns Ready.
+    cancel.store(false);
+    net::detail::Waiter w;
+    w.cancel = &cancel;
+    w.wakeFd = wake[0];
+    REQUIRE(::write(wake[1], &c, 1) == 1);
+    CHECK(net::detail::waitFd(data[0], POLLIN, w, true) == net::detail::Wait::Woken);
+    REQUIRE(::write(data[1], &c, 1) == 1);
+    CHECK(net::detail::waitFd(data[0], POLLIN, w, true) == net::detail::Wait::Ready);
+    // A deadline still times the wait out.
+    char drain;
+    REQUIRE(::read(data[0], &drain, 1) == 1);
+    w.deadline       = net::detail::nowMs() + 50;
+    const int64_t t0 = msNow();
+    CHECK(net::detail::waitFd(data[0], POLLIN, w, true) == net::detail::Wait::Timeout);
+    CHECK(msNow() - t0 < 500);
+    for (int fd : {data[0], data[1], wake[0], wake[1]})
+        ::close(fd);
+}
+#endif
 
 TEST("loopback port") {
     const int p = net::freeLoopbackPort();

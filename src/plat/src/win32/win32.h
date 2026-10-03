@@ -339,7 +339,10 @@ public:
     void                    pump(int timeoutMs) override;
     void                    post(std::function<void()> fn) override { _core.post(std::move(fn)); }
     TimerId                 addTimer(int ms, bool repeat, std::function<void()> fn) override {
-        return _core.addTimer(ms, repeat, std::move(fn));
+        const TimerId id = _core.addTimer(ms, repeat, std::move(fn));
+        if (_modalDepth) // added from a window proc inside an OS modal loop
+            armModal();
+        return id;
     }
     void     cancelTimer(TimerId id) override { _core.cancelTimer(id); }
     // Win32 has no fds: sockets, pipes and events are HANDLEs. The seam for a
@@ -412,9 +415,14 @@ public:
     // hidden window's messages, so it keeps going inside modal loops.
     void           service();
     // OS modal loops (live move/resize, menus) run their own message pump;
-    // a repeating SetTimer keeps timers and frames alive meanwhile.
+    // a SetTimer armed for the next due timer or frame keeps them alive
+    // meanwhile (posted work arrives as kWakeMsg anyway).
     void           enterModal();
     void           leaveModal();
+    // The modal timer for what is due next, or none: no ticks while idle.
+    void           armModal();
+    // For win32_tests: the modal timer's period now (-1: not armed).
+    int            modalTimerMs() const { return _modalTimerMs; }
 
     bool   oleReady() const { return _oleInit; }
     Shell &shell(); // created on first use
@@ -474,6 +482,7 @@ private:
     IDropTargetHelper *_dropHelper           = nullptr; // shell drag images over our windows
     std::unique_ptr<Shell, ShellDeleter> _shell;
     int                                  _modalDepth      = 0;
+    int                                  _modalTimerMs    = -1; // armed period, -1 = killed
     int                                  _frameIntervalMs = 16;
     std::vector<Win32Window *>           _windows;
 

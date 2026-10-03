@@ -263,4 +263,15 @@ bool containsFolded(std::string_view haystack, std::string_view needle) {
     return false;
 }
 
+bool containsPrefolded(std::string_view h, std::string_view n) {
+    if (n.empty())
+        return true;
+    if (h.find(n) == std::string_view::npos) // the usual answer, without segmenting
+        return false;
+    for (size_t start = 0; start < h.size(); start = nextBoundary(h, start))
+        if (h.compare(start, n.size(), n) == 0)
+            return true;
+    return false;
+}
+
 } // namespace utf8

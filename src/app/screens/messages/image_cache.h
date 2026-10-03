@@ -32,6 +32,9 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace screens {
@@ -39,16 +42,37 @@ namespace screens {
 class RemoteImages;
 
 class ImageCache {
+    struct Entry;
+
 public:
     enum class Shape : uint8_t { Square, Rounded, Circle };
+    // What is asked for, without owning the path (a paint asks with a view
+    // into its own string: no allocation per paint).
+    struct Ref {
+        std::string_view path;
+        int              width = 0, height = 0; // physical px; 0,0 = the natural size
+        Shape            shape  = Shape::Square;
+        float            radius = 0; // physical px, Rounded only
+    };
     struct Request {
         std::string path;
         int         width = 0, height = 0; // physical px; 0,0 = the natural size
         Shape       shape  = Shape::Square;
         float       radius = 0; // physical px, Rounded only
+                    operator Ref() const { return {path, width, height, shape, radius}; }
     };
     using Bitmap = std::shared_ptr<const gfx::Bitmap>;
     using Frames = std::shared_ptr<const std::vector<gfx::AnimFrame>>;
+    // A ready image a view keeps painting without a lookup (CachedImage):
+    // touch() keeps it recently used, and tells when it was evicted.
+    class Handle {
+    public:
+        void reset() { _e.reset(); }
+
+    private:
+        friend class ImageCache;
+        std::weak_ptr<Entry> _e;
+    };
 
     explicit ImageCache(plat::App &app, size_t budgetBytes = size_t(48) << 20);
     ~ImageCache(); // stops and joins the worker
@@ -56,17 +80,28 @@ public:
     ImageCache &operator=(const ImageCache &) = delete;
 
     // The still image (first frame of a GIF), or null while loading/failed.
-    Bitmap get(const Request &r, ui::View *waiter = nullptr);
+    // With `held`, a ready one's handle is stored there too.
+    Bitmap get(const Ref &r, ui::View *waiter = nullptr, Handle *held = nullptr);
     // Every frame of an animation (one frame for a still), or null.
-    Frames frames(const Request &r, ui::View *waiter = nullptr);
+    Frames frames(const Ref &r, ui::View *waiter = nullptr, Handle *held = nullptr);
+    // Marks a held image used (LRU); false once it was evicted.
+    bool   touch(const Handle &h);
     // True once the request finished decoding and failed (show a fallback).
-    bool   failed(const Request &r) const;
+    bool   failed(const Ref &r) const;
     // Drop `waiter` from every pending request (call from its destructor).
     void   forget(ui::View *waiter);
 
-    // Natural pixel size from the file header (no decode; memoised). False
-    // for a URL not downloaded yet.
+    // Natural pixel size from the file header (no decode; memoised, also
+    // from every decode the worker does). False for a URL not downloaded yet
+    // (remembered for a few seconds, and until its download lands here).
     bool naturalSize(const std::string &path, int *w, int *h);
+
+    // Decodes the local file `r.path` on the worker (cover-scaled to
+    // width×height, then masked for the shape) and hands the bitmap to
+    // `done` on the UI thread — empty when it can't be read as an image.
+    // Nothing is cached here (the caller keeps it: shell::Avatars); `urgent`
+    // jumps the queue (small pictures a window waits for).
+    void decodeOnce(Request r, std::function<void(gfx::Bitmap)> done, bool urgent = false);
 
     // Where URLs come from (main's; may stay null).
     void          setRemote(RemoteImages *r) { _remote = r; }
@@ -91,37 +126,60 @@ public:
     size_t entryCount() const;
     // Requests queued or decoding (tests pump until this is 0).
     size_t pending() const;
+    // How many naturalSize answers came from the disk, not the memo (tests).
+    size_t sizeProbes() const { return _sizeProbes; }
 
     struct Impl; // worker state, shared with posted results
 
 private:
-    struct Entry;
-    Entry *lookup(const Request &r, bool animated, ui::View *waiter);
-    void   load(Entry &e, const Request &r);
-    void   decode(uint64_t id, Request r, bool animated);
+    // An entry's identity: a view into its own path, so lookups by a Ref
+    // never allocate.
+    struct Key {
+        std::string_view path;
+        int              width, height, radius4;
+        uint8_t          shape;
+        bool             animated;
+        bool             operator==(const Key &) const = default;
+    };
+    struct KeyHash {
+        size_t operator()(const Key &k) const;
+    };
+    static Key keyOf(const Ref &r, bool animated);
+
+    Entry *lookup(const Ref &r, bool animated, ui::View *waiter);
+    void   load(Entry &e);
+    void   decode(uint64_t id, Request r, bool animated, bool urgent = false);
     void deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool ok, bool transient = false);
     void evict();
+    void lruUnlink(Entry &e);
+    void lruPushFront(Entry &e);
+    void noteSize(const std::string &path, int w, int h, bool ok);
 
-    plat::App                          &_app;
-    std::shared_ptr<Impl>               _impl;
-    RemoteImages                       *_remote = nullptr;
-    std::vector<std::unique_ptr<Entry>> _entries;
+    plat::App                                               &_app;
+    std::shared_ptr<Impl>                                    _impl;
+    RemoteImages                                            *_remote = nullptr;
+    std::unordered_map<Key, std::shared_ptr<Entry>, KeyHash> _entries;
+    std::unordered_map<uint64_t, Entry *>                    _loading;    // by id, until delivered
+    std::unordered_set<Entry *>                              _waited;     // entries with waiters
+    std::unordered_map<uint64_t, std::function<void(gfx::Bitmap)>> _once; // decodeOnce
+    Entry *_lruHead = nullptr, *_lruTail = nullptr; // ready entries, most recent first
     struct Listener {
         ListenerId            id;
         std::function<void()> fn;
     };
     std::vector<Listener> _listeners;
     struct SizeMemo {
-        std::string path;
-        int         w, h;
-        bool        ok;
+        int    w = 0, h = 0;
+        bool   ok      = false;
+        bool   missing = false; // a URL not on disk (yet)
+        double at      = 0;     // ms, when `missing` was found
     };
-    std::vector<SizeMemo> _sizes;
-    size_t                _bytes = 0, _budget;
-    uint64_t              _clock = 0, _nextId = 1;
-    ListenerId            _nextListener = 1;
-    bool                  _animate      = true;
-    bool                  _animateEmoji = true;
+    std::unordered_map<std::string, SizeMemo> _sizes; // bounded (kMaxSizeMemos)
+    size_t                                    _bytes = 0, _budget, _sizeProbes = 0;
+    uint64_t                                  _nextId       = 1;
+    ListenerId                                _nextListener = 1;
+    bool                                      _animate      = true;
+    bool                                      _animateEmoji = true;
 };
 
 // A view showing one cached image at its own size (avatars, favicons,
@@ -156,8 +214,9 @@ protected:
     virtual void paintPlaceholder(gfx::Painter &p, ui::RectF r, float radius);
 
 private:
-    ImageCache::Request request() const;
-    void                scheduleFrame();
+    ImageCache::Ref ref() const;
+    void            drop(); // forget the picture held (path, shape or mode changed)
+    void            scheduleFrame();
 
     std::string                   _loadingText;
     std::unique_ptr<text::Layout> _loadingLayout;
@@ -166,6 +225,9 @@ private:
     ImageCache        &_cache;
     std::string        _path;
     ImageCache::Frames _frames; // while animating
+    ImageCache::Bitmap _still;  // once ready: painted without a lookup
+    ImageCache::Handle _held;   // what _still / _frames came from
+    int                _heldW = 0, _heldH = 0;
     plat::TimerId      _timer  = 0;
     float              _radius = 0;
     int                _frame  = 0;

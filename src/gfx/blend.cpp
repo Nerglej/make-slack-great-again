@@ -230,6 +230,13 @@ void PainterImpl::maskAt(Painter &p, const Mask8 &m, int mx, int my, uint32_t pm
         span(p, y, x0, x1, m.data + size_t(y - my) * size_t(m.stride) + (x0 - mx), pm);
 }
 
+void Painter::snappedSize(RectF dst, int *w, int *h) const {
+    // drawBitmap's own rounding (below), so the sizes always agree.
+    const float s = _scale;
+    *w = int(std::lround((dst.right() + _s.tx) * s)) - int(std::lround((dst.x + _s.tx) * s));
+    *h = int(std::lround((dst.bottom() + _s.ty) * s)) - int(std::lround((dst.y + _s.ty) * s));
+}
+
 void Painter::drawBitmap(const BitmapView &src, RectF dst, Sampling smp, float opacity) {
     if (!src.pixels || src.width <= 0 || src.height <= 0 || dst.w <= 0 || dst.h <= 0)
         return;

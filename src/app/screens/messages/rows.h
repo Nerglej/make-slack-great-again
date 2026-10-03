@@ -63,6 +63,7 @@ public:
 
     void        paint(gfx::Painter &p) override;
     void        paintOver(gfx::Painter &p) override;
+    void        styleChanged() override;
     bool        onEvent(ui::Event &e) override;
     std::string tooltip() const override;
     ui::RectF   tooltipAnchor() const override;
@@ -112,6 +113,9 @@ private:
     // reminder strip (text; laid out when painted).
     std::string                   _pinText, _savedText;
     std::unique_ptr<text::Layout> _pinLayout, _savedLayout;
+    std::unique_ptr<text::Layout> _dismissLayout; // the attachment "×"
+    gfx::Color                    _dismissColor = 0;
+    float                         _dismissScale = 0;
     std::vector<RichLabel *>      _sel;
     ui::View                     *_attachCard = nullptr; // the hovered attachment card
     int                           _attach     = -1;      // … its index

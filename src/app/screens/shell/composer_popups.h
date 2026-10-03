@@ -36,7 +36,8 @@ public:
         std::string usage, source; // commands: the argument hint, where it comes from
         std::string avatar;        // path
         bool        bot = false, privateChannel = false;
-        int         presence = 0; // 0 none, 1 active, 2 away, 3 dnd
+        int         presence                       = 0; // 0 none, 1 active, 2 away, 3 dnd
+        bool        operator==(const Item &) const = default;
     };
     using Pick = std::function<void(const Item &)>;
 
@@ -51,6 +52,11 @@ public:
         Pick              onPick
     );
 
+    // New rows in the open list (the next keystroke's), re-anchored; the
+    // same rows again are kept as they are. Selects the first, as show() does.
+    void        update(std::vector<Item> items, bool wide, ui::PointF anchor);
+    // Tests: how many times the rows were made.
+    int         builds() const { return _builds; }
     bool        handleKey(const ui::Event &e); // true when it took the key
     int         selected() const { return _sel; }
     size_t      count() const { return _items.size(); }
@@ -60,13 +66,16 @@ public:
 
 private:
     void                         build();
+    void                         applyWidth(bool wide);
     Avatars                     *_avatars;
     std::vector<Item>            _items;
     std::vector<ui::Clickable *> _rows;
     std::vector<ui::View *>      _badges; // the selected row's "Enter" chip
     ui::ScrollView              *_scroll = nullptr;
     Pick                         _onPick;
-    int                          _sel = 0;
+    int                          _sel    = 0;
+    int                          _builds = 0;
+    bool                         _wide   = false;
 };
 
 // URL + Display text, Insert / Cancel; done(url, label) on Insert.

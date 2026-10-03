@@ -175,6 +175,11 @@ public:
     // Re-reads the trigger before the caret (msga's checkMentionPopup and
     // completer): opens, filters or closes the pick list.
     void      updatePickList();
+    // Tests: user labels folded into the @ filter's cache so far (each one
+    // once, again only when it changes), and the pick list recomputes (an
+    // edit's onChange + onSelectionChange count once).
+    size_t    mentionFolds() const { return _mentionFolds; }
+    size_t    pickRecomputes() const { return _pickRecomputes; }
     // Undo send: after a send, for 5 s, Ctrl+Z in the empty editor (or the
     // chip) deletes the message and puts the text and files back.
     bool      undoOffered() const { return _undoTs != 0; }
@@ -297,6 +302,25 @@ private:
     ui::View                *_chipRow  = nullptr;
     PickList                *_pick     = nullptr;
     uint32_t                 _pickFrom = 0; // the trigger character's offset
+    // What the last updatePickList saw (text, caret, anchor…): the same again
+    // (an edit's onSelectionChange after its onChange) changes nothing.
+    struct PickInputs {
+        std::string    text;
+        uint32_t       caret = 0, anchor = 0;
+        model::ConvRef conv    = model::kNoConv;
+        bool           focused = false, thread = false, window = false;
+        bool           operator==(const PickInputs &) const = default;
+    };
+    PickInputs _pickIn;
+    bool       _pickInValid = false, _pickShown = false;
+    // The @ filter's folded user labels and names, by UserRef; an entry
+    // refolds only when its user's label or name changed.
+    struct FoldedUser {
+        std::string label, name, flabel, fname;
+    };
+    std::vector<FoldedUser>  _folded;
+    size_t                   _mentionFolds = 0, _pickRecomputes = 0;
+    void                     computePickList();
     std::vector<std::string> _files;
     std::shared_ptr<int>     _alive      = std::make_shared<int>(0); // guards dialog callbacks
     double                   _lastTyping = -1e9;

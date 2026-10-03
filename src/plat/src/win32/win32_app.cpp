@@ -19,6 +19,9 @@ namespace {
 constexpr UINT     kWakeMsg     = WM_APP + 1;
 constexpr UINT_PTR kModalTimer  = 1;
 constexpr int      kModalTickMs = 10; // USER_TIMER_MINIMUM; the OS rounds it to its tick anyway
+// Handle watches (the single-instance pipe) have no wake of their own inside
+// an OS modal loop: polled this often while one is open.
+constexpr int      kModalHandlePollMs = 100;
 
 template <class T>
 T sym(HMODULE m, const char *name) {
@@ -302,6 +305,8 @@ void Win32App::service() {
     _core.runPosted();
     _core.runDueTimers();
     flushFrames();
+    if (_modalDepth)
+        armModal();
 }
 
 void Win32App::flushFrames() {
@@ -331,12 +336,36 @@ int Win32App::msUntilFrame() const {
 
 void Win32App::enterModal() {
     if (_modalDepth++ == 0)
-        SetTimer(_msgHwnd, kModalTimer, kModalTickMs, nullptr);
+        armModal();
 }
 
 void Win32App::leaveModal() {
-    if (_modalDepth > 0 && --_modalDepth == 0)
+    if (_modalDepth > 0 && --_modalDepth == 0 && _modalTimerMs >= 0) {
         KillTimer(_msgHwnd, kModalTimer);
+        _modalTimerMs = -1;
+    }
+}
+
+void Win32App::armModal() {
+    if (!_modalDepth || !_msgHwnd)
+        return;
+    int due = _core.msUntilNextTimer();
+    if (const int f = msUntilFrame(); f >= 0)
+        due = due < 0 ? f : std::min(due, f);
+    if (!_handleWatches.empty())
+        due = due < 0 ? kModalHandlePollMs : std::min(due, kModalHandlePollMs);
+    if (due < 0) { // nothing due: posted work still wakes us (kWakeMsg)
+        if (_modalTimerMs >= 0) {
+            KillTimer(_msgHwnd, kModalTimer);
+            _modalTimerMs = -1;
+        }
+        return;
+    }
+    // Re-armed after every service() while modal: the period is the wait
+    // until the next due thing (SetTimer with the same id replaces it).
+    const int ms = std::max(due, kModalTickMs);
+    if (ms != _modalTimerMs && SetTimer(_msgHwnd, kModalTimer, UINT(ms), nullptr))
+        _modalTimerMs = ms;
 }
 
 LRESULT CALLBACK Win32App::msgProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {

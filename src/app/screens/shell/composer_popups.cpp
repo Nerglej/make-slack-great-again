@@ -151,16 +151,33 @@ PickList::PickList(Avatars *avatars, std::vector<Item> items, bool wide, Pick on
     setModal(false); // the editor keeps the keyboard
     setCard(false);
     card(this, 6);
+    style().padding(4);
+    applyWidth(wide);
+    _scroll = add<ScrollView>();
+    _scroll->content()->style().spacing(1);
+    build();
+}
+
+void PickList::applyWidth(bool wide) {
+    _wide               = wide;
     const bool commands = !_items.empty() && _items[0].kind == Item::Kind::Command;
     // msga sizes the command list to its rows (460) and the scroll bar's room.
-    style().padding(4).width(
+    style().width(
         commands ? kCommandW + 8 + (_items.size() > size_t(kCmdVisible) ? 10 : 0)
         : wide   ? 560
                  : 360
     );
-    _scroll = add<ScrollView>();
-    _scroll->content()->style().spacing(1);
-    build();
+}
+
+void PickList::update(std::vector<Item> items, bool wide, PointF anchor) {
+    if (items != _items || wide != _wide) {
+        _items = std::move(items);
+        applyWidth(wide);
+        build();
+    } else {
+        select(0);
+    }
+    setAnchor({anchor.x, anchor.y, 0, 0}, Place::Above);
 }
 
 PickList *PickList::show(
@@ -173,6 +190,7 @@ PickList *PickList::show(
 }
 
 void PickList::build() {
+    ++_builds;
     View *c = _scroll->content();
     c->clearChildren();
     _rows.clear();

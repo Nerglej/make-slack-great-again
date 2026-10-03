@@ -14,6 +14,7 @@
 
 #include "app/screens/messages/context_fwd.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -31,6 +32,10 @@ inline constexpr float kAudioCardMaxW    = 380;
 // file, no file bar).
 ui::View *
 addAudioCard(ui::View *parent, Context &ctx, MessageList *list, Ts ts, const model::File &f);
+
+// Single-line layouts the audio cards have shaped so far (tests: playback
+// ticks reshape nothing but a changed time label).
+size_t audioCardLayoutBuilds();
 
 // Play or pause `f` (msga's toggleAudio): downloads it first when needed.
 void toggleAudio(Context &ctx, const model::File &f);

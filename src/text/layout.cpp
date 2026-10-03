@@ -14,8 +14,10 @@
 #include <hb.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <functional>
 
 namespace text {
 
@@ -23,6 +25,8 @@ using fonts::FontKey;
 using fonts::kNoFont;
 
 namespace {
+
+std::atomic<size_t> gBuilds{0};
 
 bool sameStyle(const Style &a, const Style &b) {
     return a.size == b.size && a.weight == b.weight && a.italic == b.italic && a.mono == b.mono &&
@@ -130,8 +134,17 @@ public:
             return 0;
         return _lines[line].baseline / _scale;
     }
-    bool                          truncated() const override { return _truncated; }
-    void                          paint(gfx::Painter &p, gfx::PointF origin) const override;
+    bool truncated() const override { return _truncated; }
+    void paint(gfx::Painter &p, gfx::PointF origin) const override {
+        paintImpl(p, origin, nullptr);
+    }
+    void paintAs(gfx::Painter &p, gfx::PointF origin, gfx::Color color) const override {
+        paintImpl(p, origin, &color);
+    }
+    void setColor(gfx::Color color) override {
+        for (Style &st : _styles)
+            st.color = color;
+    }
     gfx::RectF                    inkBounds() const override;
     float                         inkLean() const override;
     std::vector<gfx::RectF>       selectionRects(uint32_t from, uint32_t to) const override;
@@ -145,6 +158,7 @@ public:
     void build(const AttributedText &t, const LayoutOptions &o, float scale);
 
 private:
+    void paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color *tint) const;
     void shapeRun(Run &r, const char *utf8, int len, int itemOff, int itemLen, uint32_t script);
     void makeLine(uint32_t u0, uint32_t u1, bool ellipsis, bool soft, const LayoutOptions &o);
     int  lineOf(uint32_t off) const;
@@ -827,7 +841,8 @@ float LayoutImpl::inkLean() const {
     return n ? float(sum / n) / _scale : 0;
 }
 
-void LayoutImpl::paint(gfx::Painter &p, gfx::PointF origin) const {
+// tint: paintAs's one colour for every glyph and bar, backgrounds left out.
+void LayoutImpl::paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color *tint) const {
     cache::tick();
     const gfx::PointF phys = p.toPhysical(origin);
     const gfx::PointF base = p.toPhysical({0, 0});
@@ -847,7 +862,7 @@ void LayoutImpl::paint(gfx::Painter &p, gfx::PointF origin) const {
         for (uint32_t i = l.p0; i < l.p1;) {
             const Run   &r  = _runs[_pieces[i].run];
             const Style &st = _styles[r.span];
-            if (!(st.background >> 24)) { // none, or a transparent placeholder
+            if (tint || !(st.background >> 24)) { // none, or a transparent placeholder
                 ++i;
                 continue;
             }
@@ -882,6 +897,7 @@ void LayoutImpl::paint(gfx::Painter &p, gfx::PointF origin) const {
             int          span  = -1;
             uint32_t     spanA = 1, spanB = 0; // byte range of `span`
             const Style *st      = nullptr;
+            gfx::Color   ink     = 0;
             float        opac    = 1;
             int          barSpan = -1;
             float        barX0 = 0, barX1 = 0;
@@ -894,7 +910,9 @@ void LayoutImpl::paint(gfx::Painter &p, gfx::PointF origin) const {
                 auto         bar = [&](float yOff, float thick) {
                     const float th = std::max(1.f, std::round(thick * sz));
                     const float y  = std::round(blY + yOff);
-                    p.fillRect({toLx(barX0), toLy(y), (barX1 - barX0) / s, th / s}, bs.color);
+                    p.fillRect(
+                        {toLx(barX0), toLy(y), (barX1 - barX0) / s, th / s}, tint ? *tint : bs.color
+                    );
                 };
                 if (bs.underline)
                     bar(std::max(1.f, std::round(m.underlinePos * sz)), m.underlineThick);
@@ -909,7 +927,8 @@ void LayoutImpl::paint(gfx::Painter &p, gfx::PointF origin) const {
                     spanA = _spanStart[span];
                     spanB = spanEnd(span);
                     st    = &_styles[span];
-                    opac  = float(st->color >> 24) / 255.f;
+                    ink   = tint ? *tint : st->color;
+                    opac  = float(ink >> 24) / 255.f;
                     if (r.kind == KEllipsis)
                         spanA = 0, spanB = ~0u;
                 }
@@ -934,7 +953,7 @@ void LayoutImpl::paint(gfx::Painter &p, gfx::PointF origin) const {
                 if (cg->color)
                     p.blitColor(cache::colorView(*cg), X, Y, opac);
                 else
-                    p.blitMask(cache::mask(*cg), X, Y, st->color);
+                    p.blitMask(cache::mask(*cg), X, Y, ink);
             }
             flushBar();
         }
@@ -1268,6 +1287,7 @@ bool init(std::string *error) {
 
 std::unique_ptr<Layout>
 Layout::build(const AttributedText &t, const LayoutOptions &o, float scale) {
+    gBuilds.fetch_add(1, std::memory_order_relaxed);
     auto l = std::make_unique<LayoutImpl>();
     l->build(t, o, scale);
     return l;
@@ -1282,8 +1302,49 @@ layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth) 
     return Layout::build(t, o, scale);
 }
 
+size_t layoutBuilds() {
+    return gBuilds.load(std::memory_order_relaxed);
+}
+
+// measure()'s memo: direct-mapped on a hash of everything that shapes (the
+// colour and link id don't), per thread so no locking. Sidebar names,
+// badges and buttons ask the same few hundred questions on every pass.
 float measure(std::string_view utf8, const Style &s, float scale) {
-    return layoutPlain(utf8, s, scale)->width();
+    struct Slot {
+        std::string text;
+        Style       style;
+        float       scale = 0, width = 0;
+        bool        used = false;
+    };
+    static constexpr size_t  kSlots = 512;
+    static thread_local Slot memo[kSlots];
+    const auto               same = [&](const Slot &m) {
+        const Style &a = m.style;
+        return m.used && m.scale == scale && a.size == s.size && a.weight == s.weight &&
+               a.italic == s.italic && a.mono == s.mono && a.underline == s.underline &&
+               a.strike == s.strike && (a.background != 0) == (s.background != 0) &&
+               a.inlineBoxId == s.inlineBoxId && a.boxWidth == s.boxWidth &&
+               a.boxHeight == s.boxHeight && m.text == utf8;
+    };
+    size_t h = std::hash<std::string_view>{}(utf8);
+    for (float f : {s.size, scale, s.boxWidth, s.boxHeight}) {
+        uint32_t bits;
+        std::memcpy(&bits, &f, 4);
+        h = (h ^ bits) * 0x100000001b3ull;
+    }
+    h       = (h ^ (uint32_t(s.weight) << 8 | uint32_t(s.italic) << 1 | uint32_t(s.mono) << 2 |
+                    uint32_t(s.underline) << 3 | uint32_t(s.strike) << 4 |
+                    uint32_t(s.background != 0) << 5 | uint64_t(s.inlineBoxId) << 24)) *
+              0x100000001b3ull;
+    Slot &m = memo[(h ^ (h >> 29)) % kSlots];
+    if (same(m))
+        return m.width;
+    m.width = layoutPlain(utf8, s, scale)->width();
+    m.text.assign(utf8);
+    m.style = s;
+    m.scale = scale;
+    m.used  = true;
+    return m.width;
 }
 
 Metrics metrics(const Style &s, float scale) {

@@ -95,15 +95,27 @@ std::string Shell::teamTitle(const model::Store &st, const std::string &key, std
     return team.empty() ? title : str::concat({team, " \xC2\xB7 ", title});
 }
 
-// A picture already in the cache (msga's _imgCache->get: none this time
-// while it downloads; the next notification has it), rounded like msga's
-// roundedNotifIcon on every platform.
-plat::Image Shell::notificationImage(const std::string &path) {
-    if (path.empty())
-        return {};
-    if (auto b = _avatars.get(path, 64); b && !b->empty())
-        return roundedNotificationImage(*b);
-    return {};
+// A picture from the avatar cache (none this time while it downloads; the
+// next notification has it), masked into the rounded square on every
+// platform. One on disk but not decoded yet is waited for (the worker
+// decodes it; never this thread).
+void Shell::notificationImage(std::vector<std::string> paths, std::function<void(plat::Image)> fn) {
+    std::erase_if(paths, [](const std::string &p) { return p.empty(); });
+    if (paths.empty()) {
+        fn({});
+        return;
+    }
+    const std::string first = std::move(paths.front());
+    paths.erase(paths.begin());
+    // Avatars never calls back once gone, and it goes with this Shell.
+    _avatars.whenReady(
+        first, 64, [this, rest = std::move(paths), fn = std::move(fn)](Avatars::Picture b) mutable {
+            if (b && !b->empty())
+                fn(roundedNotificationImage(*b));
+            else
+                notificationImage(std::move(rest), std::move(fn));
+        }
+    );
 }
 
 std::string Shell::workspaceIconFor(const model::Store &st) const {
@@ -150,7 +162,6 @@ void Shell::messagesArrived(model::Store &st, const std::string &key, const mode
 void Shell::maybeNotify(
     model::Store &st, const std::string &key, ConvRef conv, const model::Message &m, bool allowDefer
 ) {
-    plat::App      &pa = _ctx.app.platform();
     model::Backend &be = backendFor(st);
     if (conv >= st.conversationCount())
         return;
@@ -220,20 +231,27 @@ void Shell::maybeNotify(
     n.title = teamTitle(st, key, std::move(n.title));
     n.body  = capped(std::move(body));
     // DMs: the sender's picture (a bot post's own); channels: the workspace's.
+    std::string pic;
     if (c.isDirect()) {
         const std::string &av = st.user(m.user).avatar;
-        n.image               = notificationImage(av.empty() && m.extra ? m.extra->botAvatar : av);
+        pic                   = av.empty() && m.extra ? m.extra->botAvatar : av;
     } else {
-        n.image = notificationImage(workspaceIconFor(st));
+        pic = workspaceIconFor(st);
     }
     n.timeoutMs = kNotifyTimeoutMs;
     // The chosen sound is ours to play (the old app's playNotificationSound);
     // the OS's own goes as the old app had it (sounds.h).
     n.silent    = sounds::kSilentNotifications;
-    if (const uint64_t id = post(n))
-        _notified[id] = {key, conv, root, 0, {}};
-    if (_settings.notifySound)
-        sounds::play(pa, _settings.soundId);
+    notificationImage(
+        {std::move(pic)},
+        [this, n = std::move(n), key = std::string(key), conv, root](plat::Image img) mutable {
+            n.image = std::move(img);
+            if (const uint64_t id = post(n))
+                _notified[id] = {key, conv, root, 0, {}};
+            if (_settings.notifySound)
+                sounds::play(_ctx.app.platform(), _settings.soundId);
+        }
+    );
 }
 
 void Shell::notifyWhenUsersResolve(
@@ -279,7 +297,6 @@ void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv
     }
     if (_notifiedHuddles.count(tag))
         return;
-    plat::App      &pa = _ctx.app.platform();
     model::Backend &be = backendFor(st);
     if (!_settings.notifications || !_settings.notifyHuddles || st.workspaceMuted ||
         !be.capabilities().huddles)
@@ -298,30 +315,38 @@ void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv
     const model::UserRef starter = ps.empty() ? kNoUser : ps.front();
     const std::string    name    = personName(st, starter);
     plat::Notification   n;
+    std::string          pic;
     if (c.isDirect()) {
         n.title = name;
         n.body  = tr("Started a huddle");
-        n.image = notificationImage(st.user(starter).avatar);
+        pic     = st.user(starter).avatar;
     } else {
         n.title = "#" + c.name;
         n.body  = i18n::arg(tr("%1 started a huddle"), name);
-        n.image = notificationImage(workspaceIconFor(st));
+        pic     = workspaceIconFor(st);
     }
     n.title          = teamTitle(st, key, std::move(n.title));
     n.actions        = {{"join", tr("Join")}};
     n.timeoutMs      = kNotifyTimeoutMs;
     n.silent         = sounds::kSilentNotifications;
     std::string join = c.huddleLink.empty() ? huddleJoinUrl(st, conv) : c.huddleLink;
-    if (const uint64_t id = post(n))
-        _notified[id] = {key, conv, 0, 0, std::move(join)};
-    if (_settings.notifySound)
-        sounds::play(pa, _settings.soundId);
+    notificationImage(
+        {std::move(pic)},
+        [this, n = std::move(n), key = std::string(key), conv, join = std::move(join)](
+            plat::Image img
+        ) mutable {
+            n.image = std::move(img);
+            if (const uint64_t id = post(n))
+                _notified[id] = {key, conv, 0, 0, std::move(join)};
+            if (_settings.notifySound)
+                sounds::play(_ctx.app.platform(), _settings.soundId);
+        }
+    );
 }
 
 // msga's notifyReminderDue: only the master switch gates it; the click opens
 // the message itself (its thread for a reply) and flashes it.
 void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef conv, Ts ts) {
-    plat::App &pa = _ctx.app.platform();
     if (!_settings.notifications || conv >= st.conversationCount())
         return;
     const model::Store::SavedItem *it = st.findSaved(conv, ts);
@@ -368,22 +393,29 @@ void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef 
     if (!author.empty() && !snippet.empty())
         body = str::concat({author, ": ", body});
     n.body = capped(std::move(body));
-    // The author's picture, a bot's, the DM peer's, the workspace's.
-    for (const std::string *p : std::initializer_list<const std::string *>{
-             it->author != kNoUser ? &st.user(it->author).avatar : nullptr,
-             &it->botAvatar,
-             c.kind == model::ConvKind::Dm ? &st.user(c.dmUser).avatar : nullptr
-         })
-        if (n.image.empty() && p && !p->empty())
-            n.image = notificationImage(*p);
-    if (n.image.empty())
-        n.image = notificationImage(workspaceIconFor(st));
+    // The author's picture, a bot's, the DM peer's, the workspace's: the
+    // first that has one.
+    std::vector<std::string> pics;
+    if (it->author != kNoUser)
+        pics.push_back(st.user(it->author).avatar);
+    pics.push_back(it->botAvatar);
+    if (c.kind == model::ConvKind::Dm)
+        pics.push_back(st.user(c.dmUser).avatar);
+    pics.push_back(workspaceIconFor(st));
     n.timeoutMs = kNotifyTimeoutMs;
     n.silent    = sounds::kSilentNotifications;
-    if (const uint64_t id = post(n))
-        _notified[id] = {key, conv, it->thread, ts, {}};
-    if (_settings.notifySound)
-        sounds::play(pa, _settings.soundId);
+    notificationImage(
+        std::move(pics),
+        [this, n = std::move(n), key = std::string(key), conv, thread = it->thread, ts](
+            plat::Image img
+        ) mutable {
+            n.image = std::move(img);
+            if (const uint64_t id = post(n))
+                _notified[id] = {key, conv, thread, ts, {}};
+            if (_settings.notifySound)
+                sounds::play(_ctx.app.platform(), _settings.soundId);
+        }
+    );
 }
 
 } // namespace shell

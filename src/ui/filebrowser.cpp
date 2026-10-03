@@ -71,6 +71,7 @@ public:
         _names.clear();
         _sizes.clear();
         _names.resize(_b._entries.size());
+        _nameWs.assign(_b._entries.size(), -1.f);
         _sizes.resize(_b._entries.size());
         invalidateLayout();
         update();
@@ -109,6 +110,7 @@ public:
         size_t            last  = std::min(n, size_t(std::ceil((off + viewH) / kRowH)) + 1);
         const int         hover =
             hovered() && window() ? rowAt(mapFromWindow(window()->pointerPos()).y) : -1;
+        _hoverRow = hover; // what is painted (a scroll moves rows under a still pointer)
         for (size_t i = first; i < last; ++i) {
             const file::DirEntry &e = _b._entries[i];
             const float           y = float(i) * kRowH;
@@ -142,7 +144,8 @@ public:
                 );
             }
             const float nameX = 12 + kIcon + 10, nameW = width() - nameX - 16 - sizeW - 12;
-            if (!_names[i] || _nameW != nameW) {
+            if (!_names[i] || _nameWs[i] != nameW) { // files: narrower by their size
+                _nameWs[i] = nameW;
                 text::AttributedText t;
                 t.append(e.name, font(Font::Body, e.hidden ? C::TextMuted : C::Text));
                 text::LayoutOptions o;
@@ -153,7 +156,6 @@ public:
             }
             _names[i]->paint(p, snapPx({nameX, y + std::floor((kRowH - _names[i]->height()) / 2)}));
         }
-        _nameW = width() - 12 - kIcon - 10 - 16 - 12; // most rows; others rebuild on demand
         if (n == 0) {
             text::AttributedText t;
             t.append(
@@ -187,8 +189,19 @@ public:
                 _b.select(i, toggle, range);
             return true;
         }
-        case EventType::PointerMove:
-            update(); // the hover row
+        case EventType::PointerMove: {
+            // Only the rows whose hover fill changes.
+            const int row = rowAt(e.pos.y);
+            if (row != _hoverRow) {
+                for (int r : {_hoverRow, row})
+                    if (r >= 0)
+                        update({0, float(r) * kRowH, width(), kRowH});
+                _hoverRow = row;
+            }
+            return false;
+        }
+        case EventType::PointerLeave:
+            _hoverRow = -1; // the hover repaint clears it
             return false;
         case EventType::PointerUp:
             return true;
@@ -213,7 +226,9 @@ public:
 private:
     FileBrowser                               &_b;
     std::vector<std::unique_ptr<text::Layout>> _names, _sizes;
-    float                                      _nameW = -1, _laidW = -1;
+    std::vector<float>                         _nameWs; // the width each name was built for
+    float                                      _laidW    = -1;
+    int                                        _hoverRow = -1;
 };
 
 // ── FileBrowser ─────────────────────────────────────────────────────────────

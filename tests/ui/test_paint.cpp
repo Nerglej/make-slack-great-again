@@ -323,3 +323,78 @@ TEST("theme: switching to dark restyles live without rebuilding the tree") {
     CHECK(ui::resolve(ui::themed(ui::C::Link)) == ui::color(ui::C::Link));
     CHECK(ui::resolve(0xff123456) == 0xff123456);
 }
+
+namespace {
+
+// The window's pixels over `r` (window coordinates; the test windows are 1x).
+std::vector<uint32_t> grab(Win &w, ui::RectF r) {
+    std::vector<uint32_t> px;
+    for (int y = int(r.y); y < int(r.bottom()); ++y)
+        for (int x = int(r.x); x < int(r.right()); ++x) {
+            uint32_t c = 0;
+            hooks().readPixel(w.native(), x, y, &c);
+            px.push_back(c);
+        }
+    return px;
+}
+
+} // namespace
+
+TEST("damage: colour changes and hover recolour text, never reshape it") {
+    Win   w(500, 300);
+    auto *col = w.root().add<ui::View>();
+    col->style().padding(20).spacing(10).items(ui::Align::Start);
+    auto *label = col->add<ui::Label>("Sidebar row name", ui::Font::Body, ui::C::TextMuted);
+    auto *rich  = col->add<ui::Label>();
+    text::AttributedText t;
+    t.append("rich ", ui::font(ui::Font::Body, ui::C::Text));
+    t.append("link", ui::font(ui::Font::Body, ui::C::Link));
+    rich->setRichText(t);
+    auto *ghost = col->add<ui::Button>("Ghost", ui::Button::Kind::Ghost);
+    auto *tab   = col->add<ui::Button>("Tab", ui::Button::Kind::Tab);
+    auto *form  = col->add<ui::FormButton>("Save", ui::FormButton::Kind::Secondary);
+    auto *spin  = col->add<ui::SpinBox>(14, 1, 99, " days");
+    w.frame();
+    const size_t n0 = text::layoutBuilds();
+    // A label's colour (the sidebar's hover ink); a rich label's (unused).
+    label->setColor(ui::C::Text);
+    rich->setColor(ui::C::Danger);
+    w.frame();
+    // Hovering buttons, recolouring one, toggling a form button, focusing a
+    // spin box (its number turns white on the accent).
+    const ui::RectF g = ghost->windowRect();
+    w.move(g.x + 5, g.y + 5);
+    ghost->setTextColor(ui::C::Danger);
+    w.frame();
+    form->setEnabled(false);
+    w.frame();
+    form->setEnabled(true);
+    spin->focus();
+    w.frame();
+    w.move(1, 1);
+    CHECK(text::layoutBuilds() == n0);
+    // The recoloured label paints what a label built in that colour does:
+    // a font round trip drops its layout and builds the reference.
+    const ui::RectF lr     = label->windowRect();
+    const auto      before = grab(w, lr);
+    label->setFont(ui::Font::BodyBold);
+    w.frame();
+    label->setFont(ui::Font::Body);
+    w.frame();
+    CHECK(text::layoutBuilds() > n0);
+    CHECK(grab(w, lr) == before);
+    // The same for the disabled form button.
+    form->setEnabled(false);
+    w.frame();
+    const auto fb = grab(w, form->windowRect());
+    form->setLabel("Other");
+    w.frame();
+    form->setLabel("Save");
+    w.frame();
+    CHECK(grab(w, form->windowRect()) == fb);
+    // A tab still turns bold when checked (its font follows the state).
+    const size_t n1 = text::layoutBuilds();
+    tab->setChecked(true);
+    w.frame();
+    CHECK(text::layoutBuilds() == n1 + 1);
+}

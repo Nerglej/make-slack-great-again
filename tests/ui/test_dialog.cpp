@@ -269,3 +269,38 @@ TEST("controls: a FormButton's label is vertically centred on its capitals") {
         }
     }
 }
+
+// M10: the calendar shapes its labels once; hovering days repaints only the
+// two cells whose highlight changes and reshapes nothing, nor does a
+// repaint; the focused date field's section paints white without a build.
+TEST("popup: the calendar repaints hovered cells only and keeps its labels") {
+    Win   w(500, 500);
+    auto *col = w.root().add<ui::View>();
+    col->style().padding(20);
+    auto *date = col->add<ui::DateTimeField>(ui::DateTimeField::Kind::Date);
+    date->setDate(2026, 10, 14);
+    w.frame();
+    date->focus();
+    w.frame();
+    const ui::RectF f = date->windowRect();
+    w.click(f.right() - 7, f.y + f.h / 2); // the drop-down arrow
+    ui::Popup *cal = w.w->topPopup();
+    REQUIRE(cal != nullptr);
+    const ui::RectF r  = cal->windowRect();
+    // Grid rows 2 and 3 always hold days (cells are 32 px under a 30 px head).
+    auto            at = [&](int col, int row) {
+        return ui::PointF{r.x + 8 + 32 * float(col) + 16, r.y + 8 + 30 + 32 * float(1 + row) + 16};
+    };
+    w.move(at(1, 2).x, at(1, 2).y);
+    const size_t n0 = text::layoutBuilds();
+    w.w->damageAll();
+    w.frame();
+    CHECK(text::layoutBuilds() == n0);
+    w.move(at(2, 2).x, at(2, 2).y);
+    const float s = w.w->scale();
+    CHECK(w.damageArea() > 0);
+    CHECK(w.damageArea() <= long(2 * 32 * s * 32 * s));
+    w.move(at(2, 3).x, at(2, 3).y);
+    CHECK(w.damageArea() <= long(2 * 32 * s * 32 * s));
+    CHECK(text::layoutBuilds() == n0);
+}

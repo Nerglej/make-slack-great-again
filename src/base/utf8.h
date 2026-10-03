@@ -53,5 +53,9 @@ std::string foldCase(std::string_view s);
 // True if `haystack` contains `needle` ignoring case. Folds on the fly, so no
 // copy of the haystack is made (search runs over every message).
 bool        containsFolded(std::string_view haystack, std::string_view needle);
+// containsFolded with both sides already through foldCase(string_view) — for
+// filters that fold the query once and keep their labels folded. Matches
+// start at a grapheme boundary, as containsFolded's do. No allocation.
+bool        containsPrefolded(std::string_view foldedHaystack, std::string_view foldedNeedle);
 
 } // namespace utf8

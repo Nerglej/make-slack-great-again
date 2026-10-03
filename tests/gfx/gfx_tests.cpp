@@ -767,6 +767,72 @@ void testAnim() {
     CHECK(decodeAnimation(png, &one) && one.size() == 1);
 }
 
+// The frame budget and the decode-time fit (P11): frames shrunk as they are
+// decoded are the frames coverResize makes of the full-size ones, and an
+// animation past the budget keeps its first frame only.
+void testAnimBudget() {
+    std::string bytes;
+    CHECK(readFile(std::string(MSGA_TEST_ASSETS) + "/gifs/party-confetti.gif", &bytes));
+    std::vector<AnimFrame> full, fit;
+    CHECK(decodeAnimation(bytes, &full) && full.size() > 2);
+    if (full.size() < 3)
+        return;
+    AnimOptions o;
+    o.width  = 80;
+    o.height = 60;
+    CHECK(decodeAnimation(bytes, &fit, o));
+    CHECK(fit.size() == full.size());
+    bool same = fit.size() == full.size();
+    for (size_t i = 0; same && i < fit.size(); ++i) {
+        const Bitmap want = coverResize(full[i].frame.view(), 80, 60);
+        same &= fit[i].frame.width() == 80 && fit[i].frame.height() == 60 &&
+                fit[i].delayMs == full[i].delayMs &&
+                std::memcmp(fit[i].frame.pixels(), want.pixels(), 80 * 60 * 4) == 0;
+    }
+    CHECK(same);
+    // Exactly the budget: every frame stays.
+    std::vector<AnimFrame> capped;
+    o.maxPixels = int64_t(80) * 60 * int64_t(full.size());
+    CHECK(decodeAnimation(bytes, &capped, o) && capped.size() == full.size());
+    // One pixel short: the first frame alone, still.
+    o.maxPixels -= 1;
+    CHECK(decodeAnimation(bytes, &capped, o) && capped.size() == 1);
+    CHECK(
+        capped.size() == 1 &&
+        std::memcmp(capped[0].frame.pixels(), fit[0].frame.pixels(), 80 * 60 * 4) == 0
+    );
+    // The default budget is about frames × canvas: a 240×160 animation fits.
+    CHECK(AnimOptions{}.maxPixels >= int64_t(240) * 160 * int64_t(full.size()));
+}
+
+// M17: a bitmap shrunk once to snappedSize() paints exactly what a Smooth
+// drawBitmap of the original paints (which shrinks on every call).
+void testSnapped() {
+    Bitmap src(97, 61);
+    for (int y = 0; y < 61; ++y)
+        for (int x = 0; x < 97; ++x)
+            src.pixels()[y * 97 + x] =
+                0xff000000u | uint32_t(x * 2) << 16 | uint32_t(y * 4) << 8 | uint32_t(x ^ y);
+    int checked = 0;
+    for (float scale : {1.f, 1.25f, 1.5f, 2.f})
+        for (float off : {0.f, 0.3f, 0.5f, 0.77f})
+            for (RectF dst : {RectF{3, 4, 40, 25}, RectF{1.5f, 2.25f, 33.3f, 20.1f}}) {
+                Bitmap  a(120, 90), b(120, 90);
+                Painter pa(a.view(), scale), pb(b.view(), scale);
+                pa.translate(off, off);
+                pb.translate(off, off);
+                pa.drawBitmap(src.view(), dst, Sampling::Smooth);
+                int dw = 0, dh = 0;
+                pb.snappedSize(dst, &dw, &dh);
+                CHECK(dw > 0 && dh > 0 && dw < 97 && dh < 61);
+                const Bitmap shrunk = resize(src.view(), dw, dh);
+                pb.drawBitmap(shrunk.view(), dst, Sampling::Smooth);
+                CHECK(std::memcmp(a.pixels(), b.pixels(), 120 * 90 * 4) == 0);
+                ++checked;
+            }
+    CHECK(checked == 32);
+}
+
 void testIcons() {
     CHECK(kIconCount == 89); // gfx/ui/*.svg + the tray plane + the logo
     for (int size : {16, 20, 24, 48}) {
@@ -1336,24 +1402,13 @@ struct Group {
     void (*fn)();
 };
 const Group kGroups[] = {
-    {"blend", testBlend},
-    {"fill", testFill},
-    {"clip", testClip},
-    {"roundrect", testRoundRect},
-    {"path", testPath},
-    {"stroke", testStroke},
-    {"bitmap", testBitmap},
-    {"blit", testBlit},
-    {"gradient", testGradient},
-    {"shadow", testShadow},
-    {"decode", testDecode},
-    {"anim", testAnim},
-    {"icons", testIcons},
-    {"paint2", testPaint2},
-    {"svg", testSvg},
-    {"svgsize", testSvgSize},
-    {"svgfuzz", testSvgFuzz},
-    {"cover", testCover},
+    {"blend", testBlend},           {"fill", testFill},       {"clip", testClip},
+    {"roundrect", testRoundRect},   {"path", testPath},       {"stroke", testStroke},
+    {"bitmap", testBitmap},         {"blit", testBlit},       {"gradient", testGradient},
+    {"shadow", testShadow},         {"decode", testDecode},   {"anim", testAnim},
+    {"animbudget", testAnimBudget}, {"snapped", testSnapped}, {"icons", testIcons},
+    {"paint2", testPaint2},         {"svg", testSvg},         {"svgsize", testSvgSize},
+    {"svgfuzz", testSvgFuzz},       {"cover", testCover},
 };
 
 } // namespace

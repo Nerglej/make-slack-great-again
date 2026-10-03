@@ -250,6 +250,71 @@ TEST("sidebar: the open chat isn't read while the window is in the background") 
     CHECK(h.store.conversation(mira).unread == 0);
 }
 
+TEST("sidebar: a presence flip restyles rows in place; a roster-shape change rebuilds") {
+    Harness         h;
+    auto           &sb   = h.sh->sidebar();
+    const ConvRef   mira = h.conv("D0MIRA");
+    const UserRef   peer = h.store.conversation(mira).dmUser;
+    const ui::View *row  = sb.rowView(mira);
+    REQUIRE(row != nullptr);
+    const int rebuilds = sb.rebuildCount();
+    const int dot      = sb.conversationPresence(mira);
+
+    // A burst of presence flips: the dot follows, no row is recreated.
+    for (int i = 0; i < 3; ++i) {
+        h.store.user(peer).active = !h.store.user(peer).active;
+        h.store.usersChanged();
+    }
+    pump();
+    CHECK(sb.rebuildCount() == rebuilds);
+    CHECK(sb.rowView(mira) == row);
+    CHECK(sb.conversationPresence(mira) != dot);
+    // DND, and someone off the list changing: in place too.
+    h.store.user(peer).dnd                              = !h.store.user(peer).dnd;
+    h.store.user(h.store.findUser("U0LENA")).statusText = "lunch";
+    h.store.usersChanged();
+    pump();
+    CHECK(sb.rebuildCount() == rebuilds);
+    CHECK(sb.rowView(mira) == row);
+
+    // What a row is built with (its initial, a status emoji) rebuilds once.
+    h.store.user(peer).displayName = "Mira (away)";
+    h.store.user(peer).statusEmoji = "palm_tree";
+    h.store.usersChanged();
+    pump();
+    CHECK(sb.rebuildCount() == rebuilds + 1);
+    // A deactivated peer leaves the list.
+    h.store.user(peer).deleted = true;
+    h.store.usersChanged();
+    pump();
+    CHECK(sb.rebuildCount() == rebuilds + 2);
+    CHECK_FALSE(sb.rowState(mira).exists);
+}
+
+TEST("sidebar: under unreads-only a Meta rebuilds only when a row's unread state flips") {
+    Harness       h;
+    auto         &sb  = h.sh->sidebar();
+    const ConvRef eng = h.conv("C0ENG");
+    const ConvRef rel = h.conv("C0RELEASES");
+    auto          f   = shell::Sidebar::Filters{};
+    f.unreadsOnly     = true;
+    sb.setFilters(f);
+    pump();
+    REQUIRE(sb.rowState(eng).exists && sb.rowState(rel).exists);
+    const int rebuilds = sb.rebuildCount();
+    // A topic: no unread change, no rebuild.
+    h.store.updateConversation(eng, [](Conversation &c) { c.topic = "new topic"; });
+    pump();
+    CHECK(sb.rebuildCount() == rebuilds);
+    // Read: it drops out of the list (once, after the burst).
+    h.store.markRead(eng, h.store.conversation(eng).latest);
+    h.store.markRead(rel, h.store.conversation(rel).latest);
+    pump();
+    CHECK(sb.rebuildCount() == rebuilds + 1);
+    CHECK_FALSE(sb.rowState(eng).exists);
+    CHECK_FALSE(sb.rowState(rel).exists);
+}
+
 TEST("sidebar: starring moves a row") {
     Harness       h;
     const ConvRef eng   = h.conv("C0ENG");
@@ -1588,7 +1653,8 @@ TEST("avatars: a URL hands out a blank that fills in place when the download lan
                 file::readAll(std::string(MSGA_TEST_ASSETS) + "/avatars/mira.png", &r.body);
             app().platform().post([done, r] { done(r); });
         });
-        shell::Avatars av;
+        screens::ImageCache images(app().platform());
+        shell::Avatars      av(images);
         av.setRemote(&remote);
         int loaded   = 0;
         av.onLoaded  = [&] { ++loaded; };
@@ -1599,11 +1665,12 @@ TEST("avatars: a URL hands out a blank that fills in place when the download lan
         REQUIRE(until([&] { return loaded == 1; }));
         CHECK(b->width() == 40 && b->height() == 40); // the same bitmap, filled
         CHECK(asked == 1);
-        // On disk now: a fresh cache decodes it at once, no download.
-        shell::Avatars again;
+        // On disk now: a fresh cache decodes it (on the worker), no download.
+        shell::Avatars again(images);
         again.setRemote(&remote);
         const auto c = again.get("https://avatars.test/mira.png", 24);
         REQUIRE(c != nullptr);
+        REQUIRE(until([&] { return !c->empty(); }));
         CHECK(c->width() == 24);
         CHECK(asked == 1);
         // A failed one keeps its blank; asking again during the cool-down
@@ -1616,14 +1683,94 @@ TEST("avatars: a URL hands out a blank that fills in place when the download lan
         pump(4);
         CHECK(asked == 2);
         // No RemoteImages: a URL is no picture.
-        shell::Avatars none;
+        shell::Avatars none(images);
         CHECK(none.get("https://avatars.test/mira.png", 40) == nullptr);
+        // whenReady: none while a URL downloads (the next notification has
+        // it), the picture once it is there.
+        int                     calls = 0;
+        shell::Avatars::Picture got;
+        av.whenReady("https://avatars.test/later.png", 40, [&](shell::Avatars::Picture p) {
+            ++calls;
+            got = p;
+        });
+        CHECK(calls == 1 && got == nullptr);
+        av.whenReady("https://avatars.test/mira.png", 40, [&](shell::Avatars::Picture p) {
+            ++calls;
+            got = p;
+        });
+        CHECK(calls == 2 && got == b);
+        REQUIRE(until([&] { return remote.pending() == 0 && images.pending() == 0; }));
     }
     std::vector<file::DirEntry> all;
     if (file::listDir(dir, &all))
         for (const auto &e : all)
             file::remove(file::join(dir, e.name));
     file::remove(dir);
+}
+
+TEST("avatars: files decode on the worker, never in get(); the cache is bounded") {
+    screens::ImageCache images(app().platform());
+    shell::Avatars      av(images);
+    int                 loaded = 0;
+    av.onLoaded                = [&] { ++loaded; };
+    const std::string mira     = std::string(MSGA_TEST_ASSETS) + "/avatars/mira.png";
+    // get() returns at once with a blank: the decode is the worker's.
+    const auto        b        = av.get(mira, 40);
+    REQUIRE(b != nullptr);
+    CHECK(b->empty());
+    CHECK(av.decodes() == 1);
+    CHECK(images.pending() == 1);
+    CHECK(av.get(mira, 40) == b); // asked again: the same blank, no second decode
+    CHECK(av.decodes() == 1);
+    // whenReady waits for it, and is never called inside the call.
+    int                     calls = 0;
+    shell::Avatars::Picture got;
+    av.whenReady(mira, 40, [&](shell::Avatars::Picture p) {
+        ++calls;
+        got = p;
+    });
+    CHECK(calls == 0);
+    REQUIRE(until([&] { return loaded == 1; }));
+    CHECK(calls == 1 && got == b);
+    CHECK(b->width() == 40 && b->height() == 40); // filled in place
+    CHECK(av.bytes() == 40 * 40 * 4);
+    // Decoded: whenReady answers at once.
+    av.whenReady(mira, 40, [&](shell::Avatars::Picture p) {
+        ++calls;
+        got = p;
+    });
+    CHECK(calls == 2 && got == b);
+    // Not an image: null from then on, and whenReady says so.
+    const std::string junk = std::string(MSGA_TEST_ASSETS) + "/fixture.json";
+    const auto        j    = av.get(junk, 40);
+    REQUIRE(j != nullptr);
+    av.whenReady(junk, 40, [&](shell::Avatars::Picture p) {
+        ++calls;
+        got = p;
+    });
+    REQUIRE(until([&] { return calls == 3; }));
+    CHECK(got == nullptr);
+    CHECK(j->empty());
+    CHECK(av.get(junk, 40) == nullptr);
+    // A budget of two 40 px pictures: the least recently asked for goes;
+    // a view holding one keeps its pixels.
+    av.setBudget(2 * 40 * 40 * 4);
+    const std::string jonas = std::string(MSGA_TEST_ASSETS) + "/avatars/jonas.png";
+    const std::string sam   = std::string(MSGA_TEST_ASSETS) + "/avatars/sam.png";
+    const auto        jb    = av.get(jonas, 40);
+    REQUIRE(until([&] { return !jb->empty(); }));
+    const auto sb = av.get(sam, 40);
+    REQUIRE(until([&] { return !sb->empty(); }));
+    CHECK(av.bytes() <= 2 * 40 * 40 * 4);
+    CHECK(b->width() == 40); // still held here
+    CHECK(av.get(sam, 40) == sb);
+    CHECK(av.get(jonas, 40) == jb);
+    const size_t before = av.decodes();
+    const auto   again  = av.get(mira, 40); // evicted: decoded anew
+    CHECK(again != b);
+    CHECK(av.decodes() == before + 1);
+    REQUIRE(until([&] { return images.pending() == 0; }));
+    CHECK(av.bytes() <= 2 * 40 * 40 * 4);
 }
 
 // ── The Threads page ────────────────────────────────────────────────────────
@@ -2020,6 +2167,10 @@ struct LiveFake : fake::FakeBackend {
 
 // Two signed-in workspaces the way Accounts runs them: each its own Store
 // and backend, attached to the shell; the screens' slot and proxy show one.
+#ifdef MSGA_HAVE_MESSAGES
+screens::ImageCache *gNotifyImages = nullptr; // the live TwoWorkspaces' cache
+#endif
+
 struct TwoWorkspaces {
     Store               blank, a, b;
     LiveFake            fa{a, app().platform()}, fb{b, app().platform()};
@@ -2039,6 +2190,9 @@ struct TwoWorkspaces {
     std::vector<std::string>      switched;
 
     TwoWorkspaces() {
+#ifdef MSGA_HAVE_MESSAGES
+        gNotifyImages = &images;
+#endif
         for (LiveFake *f : {&fa, &fb}) {
             f->setFixture(MSGA_TEST_ASSETS, base::fromLocal(2026, 9, 21, 16, 0));
             bool done = false;
@@ -2069,6 +2223,9 @@ struct TwoWorkspaces {
         pump();
     }
     ~TwoWorkspaces() {
+#ifdef MSGA_HAVE_MESSAGES
+        gNotifyImages = nullptr;
+#endif
         sh->detachWorkspace(kKeyA);
         sh->detachWorkspace(kKeyB);
         sh.reset();
@@ -2099,8 +2256,13 @@ struct TwoWorkspaces {
     }
 };
 
-// The newest notification shown (0: none).
+// The newest notification shown (0: none). A notification waits for its
+// picture to be decoded (the ImageCache worker's job): let that finish first.
 uint64_t lastNotification(plat::TestHooks::NotificationProbe *out) {
+#ifdef MSGA_HAVE_MESSAGES
+    if (gNotifyImages)
+        until([] { return gNotifyImages->pending() == 0; });
+#endif
     uint64_t last = 0;
     for (uint64_t id = 1; id < 4096; ++id) {
         plat::TestHooks::NotificationProbe p;
@@ -2172,16 +2334,15 @@ TEST("workspaces: each tile shows its own dot; the badge sums the unmuted ones")
     REQUIRE(until([&] { return w.sh->workspaceDot(kKeyB) == 2; }));
     CHECK(app().platform().testHooks()->badgeCount() == 1);
     // One in the open workspace too: both add up.
+    // (The open workspace recounts after its burst too: attentionSoon.)
     w.post(w.a, "C0GENERAL", "<@U0ALEX> here too");
-    pump();
-    CHECK(w.sh->workspaceDot(kKeyA) == 2);
+    REQUIRE(until([&] { return w.sh->workspaceDot(kKeyA) == 2; }));
     CHECK(app().platform().testHooks()->badgeCount() == 2);
     // A muted workspace keeps its dot but leaves the totals.
     w.b.workspaceMuted = true;
     w.a.markRead(aGeneral, w.a.conversation(aGeneral).latest);
-    pump();
+    REQUIRE(until([&] { return app().platform().testHooks()->badgeCount() == 0; }));
     CHECK(w.sh->workspaceDot(kKeyB) == 2);
-    CHECK(app().platform().testHooks()->badgeCount() == 0);
     w.b.workspaceMuted = false;
     // Switching keeps each one's state: the tiles trade places, nothing reloads.
     w.show(kKeyB);
@@ -2612,6 +2773,18 @@ TEST("notifications: msga's titles and gates — level, mutes, replies to unload
     (void)dm;
 }
 
+TEST("notifications: a sender's picture not decoded yet is waited for, not skipped") {
+    TwoWorkspaces w;
+    Store        &a = w.a;
+    REQUIRE(!a.user(a.findUser("U0MIRA")).avatar.empty()); // the fixture's mira.png
+    const uint64_t before = lastNotification(nullptr);
+    w.post(a, "D0MIRA", "lunch?");
+    plat::TestHooks::NotificationProbe n;
+    REQUIRE(until([&] { return lastNotification(&n) > before; }));
+    CHECK_STR(n.title, "Mira Okafor");
+    CHECK(n.imageSize.w == 64 && n.imageSize.h == 64);
+}
+
 TEST("huddles: the start notifies once with Join; the pill and the banner follow the room") {
     TwoWorkspaces w;
     std::string   opened;
@@ -2685,9 +2858,11 @@ TEST("reminders: the due notification names the place; its click opens the messa
     a.setSavedPreview(general, m.ts, &m);
     const uint64_t before = lastNotification(nullptr);
     w.sh->notifyReminderDue(kKeyA, a, general, m.ts);
+    // Posted once the author's picture is decoded (the worker's job).
     plat::TestHooks::NotificationProbe n;
-    const uint64_t                     id = lastNotification(&n);
-    REQUIRE(id > before);
+    REQUIRE(until([&] { return lastNotification(nullptr) > before; }));
+    const uint64_t id = lastNotification(&n);
+    CHECK(n.imageSize.w == 64); // the author's picture
     CHECK_STR(n.title, "Reminder \xE2\x80\x94 #general");
     CHECK(n.body.rfind(std::string(a.user(m.user).label()) + ": ", 0) == 0);
     plat::Event e;
@@ -2700,6 +2875,7 @@ TEST("reminders: the due notification names the place; its click opens the messa
     a.setSavedItem(general, m.ts, false);
     a.setSavedItem(general, m.ts + 1, true, 1);
     w.sh->notifyReminderDue(kKeyA, a, general, m.ts + 1);
+    REQUIRE(until([&] { return lastNotification(nullptr) > id; }));
     lastNotification(&n);
     CHECK_STR(n.body, "You asked to be reminded about a message.");
 }
@@ -2731,6 +2907,8 @@ TEST("workspace icon: a picture that can't be saved keeps the dialog open and sa
     const ui::PointF mid{h.win->size().w / 2, h.win->size().h / 2};
     h.win->handle(dropEvent(*h.win, plat::EventType::DropEnter, mid, {}));
     h.win->handle(dropEvent(*h.win, plat::EventType::Drop, mid, {base::test::fileUri(pic)}));
+    // The picture is checked by decoding it on the worker.
+    REQUIRE(until([&] { return h.ctx.images.pending() == 0; }));
     pump();
     std::function<ui::View *(ui::View *)> saveBtn = [&](ui::View *v) -> ui::View * {
         if (v->accessibleName() == "Save")

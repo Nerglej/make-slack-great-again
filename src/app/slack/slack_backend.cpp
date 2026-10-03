@@ -41,18 +41,19 @@ using model::UserRef;
 namespace {
 
 // Session::checkRealtimeHealth's cadences (old-msga/src/session/session.h).
-constexpr int64_t     kRosterReloadGapMs   = 60'000;
-constexpr int64_t     kCountsPollGapMs     = 10'000;
-constexpr int64_t     kThreadsPollGapMs    = 20'000;
-constexpr int64_t     kBackgroundPollGapMs = 2 * 60'000;
-constexpr int64_t     kPresencePollGapMs   = 60'000;
-constexpr int64_t     kSelfPresenceGapMs   = 60'000; // _selfPresenceTimer
-constexpr int64_t     kStarredGapMs        = 5 * 60'000;
-constexpr int64_t     kSavedGapMs          = 5 * 60'000; // kRemindersRefreshGapMs
-constexpr int64_t     kUsersRefreshGapMs   = 24 * 60 * 60'000;
-constexpr int64_t     kDmSweepGapSecs      = 12 * 3600; // across restarts, via the cache
-constexpr int         kOffRosterProbeMs    = 90'000;
-constexpr int         kPacedMs             = 1200; // the _infoApi background lane
+constexpr int64_t     kRosterReloadGapMs      = 60'000;
+constexpr int64_t     kCountsPollGapMs        = 10'000;
+constexpr int64_t     kThreadsPollGapMs       = 20'000;
+constexpr int64_t     kBackgroundPollGapMs    = 2 * 60'000;
+constexpr int64_t     kPresencePollGapMs      = 60'000;
+constexpr int64_t     kSelfPresenceGapMs      = 60'000; // _selfPresenceTimer
+constexpr int64_t     kStarredGapMs           = 5 * 60'000;
+constexpr int64_t     kSavedGapMs             = 5 * 60'000; // kRemindersRefreshGapMs
+constexpr int64_t     kUsersRefreshGapMs      = 24 * 60 * 60'000;
+constexpr int64_t     kLookupRetryTransientMs = 10 * 60'000; // a failed users.info after a 5xx
+constexpr int64_t     kDmSweepGapSecs         = 12 * 3600;   // across restarts, via the cache
+constexpr int         kOffRosterProbeMs       = 90'000;
+constexpr int         kPacedMs                = 1200; // the _infoApi background lane
 constexpr int         kPresenceHot = 12, kPresenceRotate = 8;
 constexpr int         kMaxDiffPolls = 8, kCountsFailureLimit = 3;
 constexpr int         kMaxThreadInjects = 12, kMaxThreadBacklog = 3;
@@ -132,6 +133,10 @@ struct SlackBackend::Read {
     model::OneShotTimers                     timers{b._app}; // pending one-shots
     plat::TimerId                            tickTimer = 0;
     std::deque<Call>                         paced;
+    // The queued (not yet issued) paced calls by method + form: a repeat
+    // joins the queued one instead of costing another request. Deque
+    // references survive push_back/pop_front of other elements.
+    std::unordered_map<std::string, Call *>  pacedByKey;
     bool                                     pacedBusy     = false;
     // Normal-lane calls not yet answered (in flight, backing off or waiting
     // out a 429): the paced lane holds while any is (msga's tryNext).
@@ -191,6 +196,11 @@ struct SlackBackend::Read {
     // ── Users ───────────────────────────────────────────────────────────────
     std::unordered_set<std::string>          pendingUsers, presenceUnavailable, offRoster;
     std::unordered_map<std::string, int64_t> probedAt;
+    // users.info/bots.info lookups that failed (user_not_found, a deleted or
+    // invisible account) or answered no user: not asked again until the
+    // stored now() value (a day; 10 min after a transient Slack error), or
+    // every 5 s poll of a channel showing their posts would re-request them.
+    std::unordered_map<std::string, int64_t> lookupRetryAt;
     SelfPresence                             self;
     size_t                                   presenceIdx = 0;
 
@@ -312,7 +322,27 @@ void SlackBackend::Read::call(std::string method, std::string form, ApiDone done
     // Background sweeps (conversations.info, users.getPresence, users.info)
     // trickle out one per 1.2 s so a sweep of a busy workspace stays under
     // its rate tier and never crowds out what the user is waiting for.
+    std::string key = str::concat({c.method, "\n", c.form});
+    if (const auto it = pacedByKey.find(key); it != pacedByKey.end()) {
+        // The same call is already waiting (a presence round while the lane
+        // is held): one request answers both callers.
+        Call &queued = *it->second;
+        if (c.done) {
+            if (!queued.done) {
+                queued.done = std::move(c.done);
+            } else {
+                queued.done = [a = std::move(queued.done), b = std::move(c.done)](
+                                  const json::Document &doc, const std::string &err
+                              ) {
+                    a(doc, err);
+                    b(doc, err);
+                };
+            }
+        }
+        return;
+    }
     paced.push_back(std::move(c));
+    pacedByKey.emplace(std::move(key), &paced.back());
     pumpPaced();
 }
 
@@ -322,8 +352,10 @@ void SlackBackend::Read::pumpPaced() {
     if (pacedBusy || paced.empty() || normalPending > 0)
         return;
     pacedBusy = true;
-    issue(std::move(paced.front()));
+    pacedByKey.erase(str::concat({paced.front().method, "\n", paced.front().form}));
+    Call next = std::move(paced.front());
     paced.pop_front();
+    issue(std::move(next));
     later(kPacedMs, [this] {
         pacedBusy = false;
         pumpPaced();
@@ -958,7 +990,12 @@ void SlackBackend::Read::fetchUserIfNeeded(UserRef ref) {
     if (ref == kNoUser || !s.user(ref).placeholder)
         return;
     const std::string id = s.user(ref).id;
+    // No isSlackSystemUser skip: users.list omits USLACK and USLACKBOT, and
+    // this one users.info is what names them ("Slack", its logo). Once
+    // resolved they are no longer placeholders, so they are never re-asked.
     if (pendingUsers.count(id))
+        return;
+    if (const auto it = lookupRetryAt.find(id); it != lookupRetryAt.end() && now() < it->second)
         return;
     const bool bot = id.size() > 1 && id[0] == 'B';
     if (!bot && !hasUserIdPrefix(id))
@@ -970,8 +1007,17 @@ void SlackBackend::Read::fetchUserIfNeeded(UserRef ref) {
         net::formEncode({{bot ? "bot" : "user", id}}),
         [this, id, bot](const json::Document &doc, const std::string &err) {
             pendingUsers.erase(id);
-            if (!err.empty())
+            // A lost connection or a cancel says nothing about the id: the
+            // next page asks again. Anything else waits out the backoff.
+            if (err == "cancelled" || isTransportError(err))
                 return;
+            if (!err.empty()) {
+                const bool transient = isTransientSlackError(err);
+                lookupRetryAt[id] =
+                    now() + (transient ? kLookupRetryTransientMs : kUsersRefreshGapMs);
+                return;
+            }
+            lookupRetryAt.erase(id);
             model::User u;
             if (bot) {
                 const json::Value o = doc.root()["bot"], icons = o["icons"];
@@ -983,8 +1029,10 @@ void SlackBackend::Read::fetchUserIfNeeded(UserRef ref) {
                 u.bot = true;
             } else {
                 u = mapjson::toUser(doc.root()["user"]);
-                if (u.id.empty())
+                if (u.id.empty()) {
+                    lookupRetryAt[id] = now() + kUsersRefreshGapMs;
                     return;
+                }
                 offRoster.insert(u.id); // only the daily re-probe refreshes it
                 probedAt[u.id] = now();
                 extrasChanged();

@@ -115,9 +115,13 @@ private:
     model::Store                             &_store;
     std::string                               _dir, _last;
     uint32_t                                  _clearGen; // clearAll() since: write nothing
-    model::Store::ObserverId                  _observer = 0;
-    uint64_t                                  _timer    = 0;
-    uint8_t                                   _dirty    = 0;
+    model::Store::ObserverId                  _observer        = 0;
+    uint64_t                                  _timer           = 0;
+    uint8_t                                   _dirty           = 0;
+    // The Store's profile/presence revisions users.json holds: a presence
+    // flip doesn't re-serialise the roster (it is saved at close, or with
+    // the next profile change).
+    uint64_t                                  _usersProfileRev = 0, _usersPresenceRev = 0;
     std::vector<uint8_t>                      _tracked, _checked, _msgDirty; // by ConvRef
     std::unordered_map<std::string, uint64_t> _written; // file → hash of its bytes
 };

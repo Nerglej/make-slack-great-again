@@ -8,11 +8,12 @@ add_executable(ui_tests
     test_paint.cpp
     test_menu.cpp
     test_dialog.cpp
+    test_image.cpp
     main.cpp
 )
 # One ctest test per case group ("hover: ..."), named exactly.
 set(ui_test_names layout visibility label hit hover focus shortcut popup menu scroll vlist textedit
-    html damage theme controls)
+    html damage theme controls image)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(ui_tests PRIVATE test_filebrowser.cpp)
     list(APPEND ui_test_names filebrowser)

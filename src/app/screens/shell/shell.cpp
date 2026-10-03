@@ -739,8 +739,9 @@ private:
 // ── Shell ───────────────────────────────────────────────────────────────────
 
 Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string settingsPath)
-    : _ctx(ctx), _win(win), _settings(settings), _settingsPath(std::move(settingsPath)) {
-    // Downloaded avatars fill the bitmaps the views already hold: repaint.
+    : _ctx(ctx), _win(win), _settings(settings), _settingsPath(std::move(settingsPath)),
+      _avatars(ctx.images) {
+    // Decoded avatars fill the bitmaps the views already hold: repaint.
     _avatars.setRemote(ctx.remote);
     _avatars.onLoaded = [this] { _win.damageAll(); };
     shortcuts::setCtrlEnterSends(settings.ctrlEnterSends);
@@ -1490,19 +1491,26 @@ void Shell::noteActivity() {
 void Shell::showSampleNotification(
     plat::Notification n, std::function<void(const std::string &)> result
 ) {
-    plat::App &pa = _ctx.app.platform();
-    n.image       = notificationImage(workspaceIconPath());
 #ifdef __APPLE__
     result(tr("Submitting notification to macOS\xE2\x80\xA6"));
 #endif
-    _sampleResult       = std::move(result);
+    _sampleResult = std::move(result);
+    notificationImage({workspaceIconPath()}, [this, n = std::move(n)](plat::Image img) mutable {
+        n.image = std::move(img);
+        sampleNotificationReady(n);
+    });
+}
+
+void Shell::sampleNotificationReady(const plat::Notification &n) {
+    plat::App &pa       = _ctx.app.platform();
     _sampleNotification = pa.notificationsAvailable() ? pa.notify(n) : 0;
 #ifdef __APPLE__
-    _sampleResult(
-        _sampleNotification
-            ? tr("Accepted by macOS. If no banner appears, check Focus and notification settings.")
-            : tr("The macOS notification service is unavailable.")
-    );
+    if (_sampleResult)
+        _sampleResult(
+            _sampleNotification ? tr("Accepted by macOS. If no banner appears, check Focus and "
+                                     "notification settings.")
+                                : tr("The macOS notification service is unavailable.")
+        );
 #endif
 }
 
@@ -1515,10 +1523,12 @@ void Shell::notifySessionExpired(const std::string &workspace) {
     n.body = workspace.empty()
                  ? std::string(tr("Your session has expired. Click to sign in again."))
                  : i18n::arg(tr("Your %1 session has expired. Click to sign in again."), workspace);
-    n.image     = notificationImage(workspaceIconPath());
     n.timeoutMs = 10000;
     n.silent    = sounds::kSilentNotifications;
-    pa.notify(n);
+    notificationImage({workspaceIconPath()}, [this, n = std::move(n)](plat::Image img) mutable {
+        n.image = std::move(img);
+        _ctx.app.platform().notify(n);
+    });
 }
 
 // Schedule-send is Slack's (chat.scheduleMessage): both composers' chevrons
@@ -2053,7 +2063,12 @@ void Shell::onChange(const model::Change &ch) {
             updateHeader();
         if (ch.conv == _current || ch.kind == K::Roster)
             applyComposerAccess(); // the lock flips while the chat is open
-        updateAttention();
+        // A poll or a roster reload brings a burst of Meta: count once after
+        // it (each count walks every conversation of every workspace).
+        if (ch.kind == K::Meta)
+            attentionSoon();
+        else
+            updateAttention();
         return;
     }
     if ((ch.kind != K::Append && ch.kind != K::Arrived) || !_live || ch.conv == kNoConv)
@@ -2776,8 +2791,8 @@ void Shell::onWorkspaceChange(const std::string &key, const model::Change &ch) {
         messagesArrived(*r->store, key, ch);
 }
 
-// A background workspace's unread counts changed: recount once the burst
-// (a poll's worth of conversations) is over.
+// A workspace's unread counts changed: recount once the burst (a poll's
+// worth of conversations) is over.
 void Shell::attentionSoon() {
     if (_attentionTimer)
         return;

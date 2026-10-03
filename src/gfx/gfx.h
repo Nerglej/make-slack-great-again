@@ -190,6 +190,10 @@ public:
     void drawBitmap(
         const BitmapView &src, RectF dst, Sampling s = Sampling::Smooth, float opacity = 1.0f
     );
+    // The whole physical pixels drawBitmap snaps `dst` to here (w×h): a
+    // bitmap resized to exactly that is drawn 1:1, with the pixels a Smooth
+    // shrink of the original would give.
+    void snappedSize(RectF dst, int *w, int *h) const;
 
     // Pre-rasterised content at *physical* integer positions relative to the
     // current (translated) origin converted to physical: text uses these.
@@ -235,8 +239,21 @@ struct AnimFrame {
     Bitmap frame; // full canvas-sized frame, already composited
     int    delayMs = 100;
 };
-// Animated GIF → composited frames; a still image yields one frame.
-bool decodeAnimation(std::string_view bytes, std::vector<AnimFrame> *out);
+// How decodeAnimation sizes and bounds what it keeps.
+struct AnimOptions {
+    // Each frame cover-resized to width×height as it is decoded (as
+    // coverResize would after); 0,0 keeps the canvas size.
+    int     width = 0, height = 0;
+    // The pixels all kept frames may take together (after the resize); an
+    // animation past it keeps its first frame only (shown still).
+    int64_t maxPixels = 32ll << 20; // 128 MB of ARGB32
+};
+// Animated GIF → composited frames, decoded one at a time (never the whole
+// animation at canvas size); a still image yields one frame.
+bool decodeAnimation(std::string_view bytes, std::vector<AnimFrame> *out, const AnimOptions &o);
+inline bool decodeAnimation(std::string_view bytes, std::vector<AnimFrame> *out) {
+    return decodeAnimation(bytes, out, AnimOptions{});
+}
 
 // High-quality resize (area-average down, bilinear up) — thumbnails, avatars.
 Bitmap resize(const BitmapView &src, int width, int height);

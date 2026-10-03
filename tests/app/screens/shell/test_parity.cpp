@@ -786,7 +786,7 @@ ui::View *findView(ui::View *v, const std::function<bool(ui::View *)> &match) {
 }
 } // namespace
 
-TEST("schedule send: msga's date-time picker, an hour out; a thread reply stays in its thread") {
+TEST("schedule send: the date-time picker, an hour out; a thread reply stays in its thread") {
     Harness       h;
     const ConvRef design = h.conv("C0DESIGN");
     const Ts      root   = h.backend.findTs(design, "Proposal B");
@@ -806,10 +806,18 @@ TEST("schedule send: msga's date-time picker, an hour out; a thread reply stays 
     const int64_t now = base::nowSecs();
     CHECK(when->value() >= now + 3600 - 60 && when->value() <= now + 3600);
     // Never under a minute out: stepping the hour back far stops there.
+    // (From 23:00 on, an hour out is past midnight: the hour, at 0, can't
+    // step back at all: the picker's sections stop at their bounds. The
+    // all-day sweep below pins both cases at fixed times.)
+    const int64_t initial = when->value();
+    const bool    atZero  = base::localTime(initial).hour == 0;
     when->setSection(3); // the hour ("MMM d, yyyy h:mm AP")
     when->step(-5);
     CHECK(when->value() >= now + 60);
-    CHECK(when->value() < now + 3600 - 60);
+    if (atZero)
+        CHECK(when->value() == initial);
+    else
+        CHECK(when->value() < now + 3600 - 60);
     when->setValue(now + 7200);
     const int64_t at       = when->value();
     auto         *schedule = static_cast<ui::Clickable *>(findView(p, [](ui::View *v) {
@@ -902,6 +910,30 @@ TEST(
     CHECK_STR(h.backend.scheduledText, "too late");
     CHECK_STR(c.edit().text(), "too late");
 }
+
+// The picker's hour step at every time of day (the schedule popup's
+// minimum a minute out, its value an hour out): it stops at the minimum, and
+// at midnight, never wrapping into the day before.
+TEST("schedule send: the picker's hour step, all day long") {
+    base::setDateLanguage("en");
+    const int64_t day = base::fromLocal(2026, 9, 30, 0, 0);
+    for (int64_t now = day; now < day + 86400; now += 7 * 60 + 13) {
+        ui::DateTimeField f(ui::DateTimeField::Kind::DateTime);
+        f.setMinimumValue(now + 60);
+        f.setValue(now + 3600);
+        const int64_t initial = f.value();
+        f.setSection(3); // the hour
+        f.step(-5);
+        const base::CivilTime t = base::localTime(initial);
+        if (!CHECK(f.value() >= now + 60))
+            std::fprintf(stderr, "  at %02d:%02d\n", t.hour, t.minute);
+        if (t.hour == 0)
+            CHECK(f.value() == initial); // past midnight: the hour is at its bound
+        else if (!CHECK(f.value() < initial && f.value() >= initial - 5 * 3600))
+            std::fprintf(stderr, "  at %02d:%02d\n", t.hour, t.minute);
+    }
+}
+
 #endif
 
 // ── Composer ────────────────────────────────────────────────────────────────

@@ -420,15 +420,13 @@ void SpinBox::paint(gfx::Painter &p) {
     // "14" (selected right after focusing, like a Qt spin box) + " days".
     const float scale = windowScale();
     const C     tc    = en ? C::FormText : C::FormTextFaint;
+    // Focus and enabled only recolour the shaped text; typing reshapes.
     if (!_num || _typing)
-        _num = layoutText(
-            _typing ? _typed : std::to_string(_value),
-            Font::Control,
-            _fresh && focused() ? C::AccentText : tc,
-            scale
-        );
+        _num = layoutText(_typing ? _typed : std::to_string(_value), Font::Control, tc, scale);
+    _num->setColor(color(_fresh && focused() ? C::AccentText : tc));
     if (!_suf)
         _suf = layoutText(_suffix, Font::Control, tc, scale);
+    _suf->setColor(color(tc));
     const float x = 9, y = snapPx(std::floor((height() - _num->height()) / 2));
     if (_fresh && focused())
         p.fillRect({x, y + 1, std::ceil(_num->width()), _num->height() - 2}, color(C::Accent));
@@ -442,13 +440,11 @@ bool SpinBox::onEvent(Event &e) {
     switch (e.type) {
     case EventType::FocusIn:
         _fresh = true;
-        _num.reset();
         update();
         return false;
     case EventType::FocusOut:
         _fresh = false;
         commit();
-        _num.reset();
         update();
         return false;
     case EventType::PointerMove: {
@@ -716,13 +712,14 @@ void FormButton::styleChanged() {
 }
 
 SizeF FormButton::measureContent(float, float) {
-    if (!_l || _lEnabled != enabled()) {
-        _lEnabled         = enabled();
-        const bool filled = _kind == Kind::Primary || _kind == Kind::Danger;
-        const Font f      = formButtonFont(_kind, _small);
-        const C    c      = !_lEnabled ? C::FormTextFaint : filled ? C::AccentText : C::FormText;
-        _l                = layoutText(_label, f, c, windowScale());
-    }
+    // The enabled state only changes the colour: recoloured, not reshaped.
+    const bool filled = _kind == Kind::Primary || _kind == Kind::Danger;
+    const C    c      = !enabled() ? C::FormTextFaint : filled ? C::AccentText : C::FormText;
+    if (!_l)
+        _l = layoutText(_label, formButtonFont(_kind, _small), c, windowScale());
+    else if (_lEnabled != enabled())
+        _l->setColor(color(c));
+    _lEnabled = enabled();
     return {std::ceil(_l->width()), std::ceil(_l->height())};
 }
 

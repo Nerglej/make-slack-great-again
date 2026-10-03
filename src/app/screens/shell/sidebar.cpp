@@ -2,6 +2,7 @@
 
 #include "screens/common/tag_badge.h"
 
+#include "base/crypto.h"
 #include "base/i18n.h"
 #include "base/str.h"
 #include "base/time.h"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 using namespace ui;
 using gfx::Icon;
@@ -632,8 +634,10 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
     _observer = ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
         switch (ch.kind) {
         case model::ChangeKind::Roster:
-        case model::ChangeKind::Users: // names, status emoji, presence
             rebuild();
+            break;
+        case model::ChangeKind::Users: // names, status emoji, presence
+            usersSoon();
             break;
         case model::ChangeKind::Append:
         case model::ChangeKind::Prepend:
@@ -663,9 +667,13 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
                 break;
             const auto &cv = _ctx.store().conversation(ch.conv);
             ConvRow    *r  = rowFor(ch.conv);
-            if (!r != !cv.member || (r && (r->section->kind == 0) != cv.starred) ||
-                _filters.unreadsOnly)
-                rebuild();
+            // Under unreads-only a row comes or goes when its bold state
+            // flips (the selected row and Starred stay regardless).
+            const bool  filterFlip =
+                _filters.unreadsOnly && ch.conv != _selected && !cv.starred &&
+                (r ? r->unread != paintsUnread(cv) : cv.member && paintsUnread(cv));
+            if (!r != !cv.member || (r && (r->section->kind == 0) != cv.starred) || filterFlip)
+                rebuildSoon(false); // once per burst; the list stays where it was scrolled
             else {
                 refresh(ch.conv);
                 refreshSections();
@@ -682,8 +690,9 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
 
 Sidebar::~Sidebar() {
     _ctx.store.unobserve(_observer);
-    if (_rebuildTimer)
-        _ctx.app.platform().cancelTimer(_rebuildTimer);
+    for (plat::TimerId t : {_rebuildTimer, _usersTimer})
+        if (t)
+            _ctx.app.platform().cancelTimer(t);
 }
 
 void Sidebar::paint(gfx::Painter &p) {
@@ -913,7 +922,77 @@ void Sidebar::rebuild() {
     refreshTeammates();
     refreshAll();
     _footer->refresh();
+    _userShape = userShape();
+    ++_rebuilds;
     invalidateLayout();
+}
+
+// Everything rebuild() reads from the users: which DMs are dead or apps (they
+// leave the list or change section), and what a row is built with but
+// refresh() doesn't restyle (avatar, EXT pill, status emoji, "you"), the
+// team. Equal → a users change only needs the rows restyled.
+uint64_t Sidebar::userShape() const {
+    const auto &store = _ctx.store();
+    uint64_t    h     = crypto::kFnvOffset;
+    const auto  mix   = [&h](std::string_view v) {
+        h = crypto::fnv1a(v, h);
+        h = crypto::fnv1a(std::string_view("\x1f", 1), h);
+    };
+    std::string bits;
+    for (ConvRef c = 0; c < store.conversationCount(); ++c) {
+        const auto &cv = store.conversation(c);
+        if (cv.kind == ConvKind::Dm)
+            bits += char('0' + (deadDm(store, cv) ? 1 : 0) + (isApp(cv) ? 2 : 0));
+    }
+    mix(bits);
+    mix(str::number(int64_t(store.me)));
+    for (const ConvRow *r : _rows) {
+        const auto &cv = store.conversation(r->conv);
+        if (cv.kind != ConvKind::Dm)
+            continue;
+        const model::User &u = store.user(cv.dmUser);
+        mix(u.avatar);
+        mix(u.label());
+        mix(u.stranger ? "1" : "0");
+        mix(u.statusEmoji);
+        if (!u.statusEmoji.empty()) {
+            const model::Store::EmojiGlyph g = store.emojiFor(u.statusEmoji);
+            mix(g.unicode);
+            mix(g.image);
+        }
+    }
+    if (_ctx.backend.capabilities().agentSessions)
+        for (const auto &mate : _ctx.backend.agentRoles()) {
+            mix(mate.id);
+            mix(mate.name);
+            mix(mate.avatar);
+            mix(str::number(int64_t(mate.user)));
+            if (mate.user < store.userCount())
+                mix(store.user(mate.user).avatar);
+        }
+    return h;
+}
+
+// A burst of users changes (a presence round, a users.list page) → one pass:
+// restyle the rows in place, rebuild only when the list's shape changed.
+void Sidebar::usersSoon() {
+    if (_usersTimer)
+        return;
+    std::weak_ptr<int> alive = _alive;
+    _usersTimer              = _ctx.app.platform().addTimer(0, false, [this, alive] {
+        if (alive.expired())
+            return;
+        _usersTimer = 0;
+        if (_rebuildTimer)
+            return; // the pending rebuild reads the users anyway
+        if (userShape() != _userShape) {
+            rebuild();
+            return;
+        }
+        refreshTeammates();
+        refreshAll();
+        _footer->refresh();
+    });
 }
 
 // Collapsed, a section lists nothing under its header (msga's rebuildRows).
@@ -930,7 +1009,8 @@ void Sidebar::showAllChannels() {
     rebuildSoon(); // not from inside the row's own click
 }
 
-void Sidebar::rebuildSoon() {
+void Sidebar::rebuildSoon(bool reveal) {
+    _revealOnRebuild = _revealOnRebuild || reveal;
     if (_rebuildTimer)
         return;
     std::weak_ptr<int> alive = _alive;
@@ -939,8 +1019,9 @@ void Sidebar::rebuildSoon() {
             return;
         _rebuildTimer = 0;
         rebuild();
-        if (ConvRow *r = rowFor(_selected))
+        if (ConvRow *r = rowFor(_selected); r && std::exchange(_revealOnRebuild, false))
             _scroll->ensureVisible(r, 8);
+        _revealOnRebuild = false;
     });
 }
 
@@ -1035,6 +1116,10 @@ void Sidebar::refreshSections() {
     // "Saved messages" shows while the saved list is not empty.
     if (_savedRow)
         _savedRow->setVisible(_ctx.store().hasSaved());
+}
+
+const ui::View *Sidebar::rowView(ConvRef conv) const {
+    return rowFor(conv);
 }
 
 ConvRow *Sidebar::rowFor(ConvRef conv) const {

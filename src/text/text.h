@@ -88,21 +88,29 @@ public:
     virtual bool  truncated() const        = 0; // ellipsis/maxLines cut something
 
     // Paints at `origin` (logical, top-left of the layout box).
-    virtual void                    paint(gfx::Painter &p, gfx::PointF origin) const = 0;
+    virtual void       paint(gfx::Painter &p, gfx::PointF origin) const                     = 0;
+    // paint() with every glyph, underline and strike in `color` (colour
+    // glyphs at its opacity) and no span backgrounds: the text as it shows
+    // over a selection highlight, from the same shaping.
+    virtual void       paintAs(gfx::Painter &p, gfx::PointF origin, gfx::Color color) const = 0;
+    // Every span's text colour becomes `color` (paint time only: nothing is
+    // reshaped). For one-colour text whose colour follows state (hover,
+    // enabled, focus).
+    virtual void       setColor(gfx::Color color)                                           = 0;
     // The ink box of the rasterised glyphs (pixels of at least 1/8 coverage;
     // logical, relative to the origin) as painted at an origin on a whole
     // device pixel; empty when nothing draws. For centring a few glyphs by
     // what shows: side bearings are uneven and hinting moves the cap height.
-    virtual gfx::RectF              inkBounds() const                                = 0;
+    virtual gfx::RectF inkBounds() const                                                    = 0;
     // How far right of its own ink box's centre each glyph's ink mass sits,
     // averaged over the glyphs (logical; 0 for colour glyphs). A "1"'s flag
     // widens its box to the left of the stem, so centring the box alone puts
     // the stem right of centre; centring on (box centre + lean) centres what
     // the eye weighs.
     // Per glyph, so a light "+" in "99+" does not drag the whole string.
-    virtual float                   inkLean() const                                  = 0;
+    virtual float      inkLean() const                                                      = 0;
     // Selection highlight between byte offsets, painted behind the text.
-    virtual std::vector<gfx::RectF> selectionRects(uint32_t from, uint32_t to) const = 0;
+    virtual std::vector<gfx::RectF> selectionRects(uint32_t from, uint32_t to) const        = 0;
 
     virtual HitResult  hitTest(gfx::PointF p) const                   = 0; // p relative to origin
     virtual gfx::RectF caretRect(uint32_t offset) const               = 0; // 1-px-wide caret box
@@ -116,8 +124,13 @@ public:
 std::unique_ptr<Layout>
 layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth = 1e9f);
 
-// Single-line width without building a full layout (sidebar names, badges).
+// Single-line width (sidebar names, badges). Answers repeated questions from
+// a small per-thread cache; a miss builds one layout.
 float measure(std::string_view utf8, const Style &s, float scale);
+
+// How many layouts Layout::build has made in this process (all threads): a
+// diagnostic for tests proving that a path does not reshape.
+size_t layoutBuilds();
 
 // Font metrics for layout decisions (line boxes, vertical centering).
 struct Metrics {

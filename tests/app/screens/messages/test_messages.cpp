@@ -32,6 +32,8 @@
 #include "ui/controls.h"
 
 #include <algorithm>
+#include <atomic>
+#include <new>
 #include <cmath>
 #include <cstring>
 #include <ctime>
@@ -46,6 +48,33 @@
 
 using namespace screens;
 using Kind = MessageList::ItemKind;
+
+// Heap allocations on this thread while counting (ImageCache lookups must
+// make none). The replacement operator new serves the whole test binary.
+namespace {
+thread_local bool   tCountAllocs = false;
+std::atomic<size_t> gAllocs{0};
+void                countAllocs(bool on) {
+    tCountAllocs = on;
+}
+size_t testAllocs() {
+    return gAllocs.load();
+}
+} // namespace
+
+void *operator new(size_t n) {
+    if (tCountAllocs)
+        ++gAllocs;
+    if (void *p = std::malloc(n ? n : 1))
+        return p;
+    std::abort(); // no exceptions in this build
+}
+void operator delete(void *p) noexcept {
+    std::free(p);
+}
+void operator delete(void *p, size_t) noexcept {
+    std::free(p);
+}
 
 namespace {
 
@@ -236,6 +265,103 @@ TEST("image: CachedImage shows a placeholder, then the image, without blocking")
     CHECK(px != ui::color(ui::C::Border)); // no longer the placeholder
 }
 
+TEST("image: a lookup of a cached picture allocates nothing; eviction is least recent first") {
+    ImageCache        cache(app().platform());
+    // Many entries: a lookup is a hash probe, not a walk over them.
+    const std::string mira = asset("avatars/mira.png"), jonas = asset("avatars/jonas.png");
+    for (int px = 8; px < 208; ++px)
+        cache.get(ImageCache::Ref{mira, px, px});
+    REQUIRE(until([&] { return cache.pending() == 0; }, 10000));
+    CHECK(cache.entryCount() == 200);
+    const ImageCache::Ref r{mira, 64, 64};
+    REQUIRE(cache.get(r) != nullptr);
+    const size_t before = testAllocs();
+    countAllocs(true);
+    bool all = true;
+    for (int i = 0; i < 1000; ++i)
+        all &= cache.get(ImageCache::Ref{mira, 8 + i % 200, 8 + i % 200}) != nullptr;
+    countAllocs(false);
+    CHECK(all);
+    CHECK(testAllocs() == before);
+    // Least recently used goes first: touch 64 px, then shrink the budget
+    // to two entries' worth.
+    const size_t two = size_t(64 * 64 + 207 * 207) * 4;
+    cache.get(r);
+    cache.get(ImageCache::Ref{mira, 207, 207});
+    cache.setBudget(two);
+    CHECK(cache.bytes() <= two);
+    CHECK(cache.get(r) != nullptr);
+    CHECK(cache.get(ImageCache::Ref{mira, 207, 207}) != nullptr);
+    CHECK(cache.get(ImageCache::Ref{mira, 100, 100}) == nullptr); // evicted: decoding again
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    CHECK(cache.bytes() <= two);
+    (void)jonas;
+}
+
+TEST("image: CachedImage keeps its ready picture; an eviction doesn't blank or re-decode it") {
+    Env   e(false);
+    auto *img = e.win->root().add<CachedImage>(
+        e.images, asset("avatars/jonas.png"), ImageCache::Shape::Rounded, 6
+    );
+    img->style().size(36, 36).alignSelf(ui::Align::Start);
+    pump();
+    REQUIRE(until([&] { return e.images.pending() == 0; }));
+    pump();
+    uint32_t shown = 0;
+    REQUIRE(app().platform().testHooks()->readPixel(e.win->native(), 18, 18, &shown));
+    CHECK(shown != ui::color(ui::C::Border));
+    e.images.setBudget(0); // everything evicted
+    CHECK(e.images.bytes() == 0);
+    img->update();
+    pump();
+    CHECK(e.images.pending() == 0); // no decode asked for again
+    uint32_t px = 0;
+    REQUIRE(app().platform().testHooks()->readPixel(e.win->native(), 18, 18, &px));
+    CHECK(px == shown);
+    e.images.setBudget(size_t(48) << 20);
+}
+
+TEST("image: natural sizes are memoised, from decodes too, with a negative entry for URLs") {
+    {
+        RemoteImages remote(app().platform(), nullptr, ""); // no disk: URLs are never there
+        ImageCache   cache(app().platform());
+        cache.setRemote(&remote);
+        int w = 0, h = 0;
+        // A file: one header read, then the memo.
+        CHECK(cache.naturalSize(asset("avatars/sam.png"), &w, &h) && w > 0 && h > 0);
+        CHECK(cache.sizeProbes() == 1);
+        CHECK(cache.naturalSize(asset("avatars/sam.png"), &w, &h));
+        CHECK(cache.sizeProbes() == 1);
+        // Not an image: remembered as such.
+        CHECK_FALSE(cache.naturalSize(asset("fixture.json"), &w, &h));
+        CHECK_FALSE(cache.naturalSize(asset("fixture.json"), &w, &h));
+        CHECK(cache.sizeProbes() == 2);
+        // A URL not on disk: false, and not looked for again right away.
+        CHECK_FALSE(cache.naturalSize("https://img.test/none.png", &w, &h));
+        CHECK_FALSE(cache.naturalSize("https://img.test/none.png", &w, &h));
+        CHECK(cache.sizeProbes() == 3);
+        // A picture the worker decoded: its size came along, no probe.
+        cache.get(ImageCache::Ref{asset("avatars/alex.png"), 20, 20});
+        REQUIRE(until([&] { return cache.pending() == 0; }));
+        CHECK(cache.naturalSize(asset("avatars/alex.png"), &w, &h) && w > 0 && h > 0);
+        CHECK(cache.sizeProbes() == 3);
+    }
+}
+
+TEST("image: animations decode at the asked size, frame by frame") {
+    ImageCache                cache(app().platform());
+    const ImageCache::Request r{asset("gifs/party-confetti.gif"), 80, 60};
+    cache.frames(r);
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    ImageCache::Frames f = cache.frames(r);
+    REQUIRE(f != nullptr);
+    // Decoded at the asked size frame by frame: the cache holds frames × 80×60.
+    CHECK(f->size() > 1);
+    CHECK(cache.bytes() == f->size() * 80 * 60 * 4);
+    for (const gfx::AnimFrame &a : *f)
+        CHECK(a.frame.width() == 80 && a.frame.height() == 60);
+}
+
 TEST("grouping: same author within 5 minutes; roots and system lines stand alone") {
     Env                         e(false);
     const int64_t               t0 = base::nowSecs() - 3600;
@@ -269,6 +395,54 @@ TEST("grouping: same author within 5 minutes; roots and system lines stand alone
     e.store.addMessage(c, msg(1, t0 + 530, "live 2"));
     pump();
     CHECK(e.list->items()[10].grouped);
+}
+
+TEST("users: a presence flip re-binds no row; a name re-binds only the rows showing it") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 3600;
+    std::vector<model::Message> ms;
+    ms.push_back(msg(0, t0, "one"));
+    ms.push_back(msg(0, t0 + 400, "hi <@U3>"));
+    ms.push_back(msg(1, t0 + 800, "two"));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    model::User   lena;
+    lena.id                 = "U3";
+    lena.displayName        = "Lena";
+    const model::UserRef u3 = e.store.addUser(lena);
+    e.list->showConversation(c);
+    e.store.usersChanged(); // the first Users after showing: everything once
+    pump(8);
+    REQUIRE(e.list->items().size() == 4);
+    const int       binds = e.list->rowBinds();
+    const ui::View *two   = e.row(e.list->items()[3].ts);
+    REQUIRE(two != nullptr);
+
+    // Presence and DND aren't drawn in message rows: nothing re-binds,
+    // however many flips the burst holds.
+    for (int i = 0; i < 5; ++i) {
+        e.store.user(1).active = !e.store.user(1).active;
+        e.store.user(1).dnd    = !e.store.user(1).dnd;
+        e.store.usersChanged();
+    }
+    pump(8);
+    CHECK(e.list->rowBinds() == binds);
+    CHECK(e.row(e.list->items()[3].ts) == two); // the same row object
+
+    // Mira's name: only her row.
+    e.store.user(1).displayName = "Mira O.";
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 1);
+    // Lena, mentioned in a message: only that one.
+    e.store.user(u3).displayName = "Lena W.";
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 2);
+    // Custom emoji draw anywhere: every row.
+    e.store.setCustomEmoji("party", "https://e/p.png");
+    e.store.usersChanged();
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 2 + 3);
 }
 
 TEST("dates: separators say Today, Yesterday, then the date") {
@@ -2602,4 +2776,36 @@ TEST("audio: WebVTT cues and duration labels") {
     CHECK_STR(formatDuration(3723000), "1:02:03");
     CHECK_STR(media::AudioPlayer::extensionOf("https://f/x/Clip.MP3?t=1"), "mp3");
     CHECK_STR(media::AudioPlayer::extensionOf("voice note"), "");
+}
+
+TEST("audio: playback ticks reshape nothing but a changed time label") {
+    AudioEnv e;
+    REQUIRE(e.ts != 0);
+    ui::View *card = e.card();
+    REQUIRE(card != nullptr);
+    auto *play = static_cast<ui::Clickable *>(findNamed(card, "Play"));
+    REQUIRE(play != nullptr);
+    play->activate();
+    REQUIRE(until([&] { return audioState(e.player) == media::AudioPlayer::State::Playing; }));
+    card = e.card();
+    REQUIRE(card != nullptr);
+    e.log.pos = 1200;
+    REQUIRE(until([&] { return e.player.status().positionMs == 1200; }, 1000));
+    gfx::Bitmap  bmp(int(card->width()) + 1, int(card->height()) + 1);
+    gfx::Painter p(bmp.view(), 1.f);
+    card->paint(p);
+    const size_t warm = audioCardLayoutBuilds();
+    // The same second, painted again and again (the player's 200 ms ticks).
+    for (int i = 0; i < 5; ++i)
+        card->paint(p);
+    CHECK(audioCardLayoutBuilds() == warm);
+    // A new second: the time label alone is shaped again (maybe already by
+    // the window's own repaint), once.
+    e.log.pos = 2200;
+    REQUIRE(until([&] { return e.player.status().positionMs == 2200; }, 1000));
+    card->paint(p);
+    card->paint(p);
+    CHECK(audioCardLayoutBuilds() == warm + 1);
+    e.log.playing = false;
+    e.player.stop();
 }

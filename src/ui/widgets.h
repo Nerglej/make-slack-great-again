@@ -62,7 +62,7 @@ public:
 
 private:
     const text::Layout           *layoutFor(float width);
-    std::unique_ptr<text::Layout> buildLayout(float width, float scale, bool selected) const;
+    std::unique_ptr<text::Layout> buildLayout(float width, float scale) const;
     void                          dropLayout();
     void                          updateInk();
 
@@ -153,7 +153,8 @@ private:
     float                         _iconSize = 18;
     uint16_t                      _icon     = kNoIcon;
     Kind                          _kind;
-    C                             _text = C::Text;
+    C                             _text       = C::Text;
+    bool                          _layoutBold = false; // a tab's layout: built checked
 };
 
 // Square icon-only button: IconButton(gfx::Icon::Bold, "Bold").
@@ -235,9 +236,25 @@ public:
     void  paint(gfx::Painter &p) override;
     void  windowChanged() override;
 
+    // Smooth shrinks made since the bitmap / frames were set (tests).
+    int  shrinkCount() const { return _shrinks; }
+    // Whether the next animation frame is due (tests).
+    bool frameScheduled() const { return _timer != 0; }
+
 private:
     void scheduleFrame();
 
+    // A shown bitmap shrunk once to the pixels it was painted at (painting
+    // then blits it 1:1): one for a still, one per frame of an animation.
+    // Keyed by the source's pixels, so a bitmap filled in place (an avatar
+    // that downloaded) is shrunk again.
+    struct Shrunk {
+        const uint32_t *src = nullptr;
+        int             sw = 0, sh = 0, dw = 0, dh = 0;
+        gfx::Bitmap     bmp;
+    };
+    std::vector<Shrunk>                _shrunk;
+    int                                _shrinks = 0;
     std::shared_ptr<const gfx::Bitmap> _bitmap;
     std::shared_ptr<const Frames>      _frames;
     plat::TimerId                      _timer       = 0;

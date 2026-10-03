@@ -440,7 +440,7 @@ double paintEmojiBoxes(
             );
             continue;
         }
-        const ImageCache::Request r{
+        const ImageCache::Ref r{
             images[b.id - 1], int(std::lround(b.rect.w * scale)), int(std::lround(b.rect.h * scale))
         };
         const ui::RectF    dst{b.rect.x + o.x, b.rect.y + o.y, b.rect.w, b.rect.h};

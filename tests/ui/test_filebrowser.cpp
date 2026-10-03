@@ -278,3 +278,29 @@ TEST("filebrowser: an unreadable start falls back to home, a bad folder keeps th
     CHECK_STR(r.b->dir(), t.root);
     CHECK(r.b->entryCount() == 4);
 }
+
+// M9: file rows (narrower by their size column) keep their shaped names
+// across repaints, and moving the pointer repaints only the rows whose
+// hover fill changes.
+TEST("filebrowser: hovering repaints two rows and reshapes no names") {
+    Tree t;
+    Run  r({.mode = Mode::Open, .initialDir = t.root});
+    r.win.move(r.rowPos(2).x, r.rowPos(2).y); // Alpha.txt, a file
+    r.win.frame();
+    const size_t n0 = text::layoutBuilds();
+    // Still pointer, a full repaint: nothing reshaped.
+    r.win.w->damageAll();
+    r.win.frame();
+    CHECK(text::layoutBuilds() == n0);
+    // Within the row: nothing to repaint.
+    const int frames = r.win.w->stats().frames;
+    r.win.move(r.rowPos(2).x + 30, r.rowPos(2).y + 3);
+    CHECK(r.win.w->stats().frames == frames);
+    // To the next row: the old and the new row, nothing else.
+    r.win.move(r.rowPos(3).x, r.rowPos(3).y);
+    const ui::View *list = Run::findList(r.b);
+    const float     s    = r.win.w->scale();
+    CHECK(r.win.damageArea() > 0);
+    CHECK(r.win.damageArea() <= long(2 * 28 * s * list->width() * s) + 2);
+    CHECK(text::layoutBuilds() == n0);
+}

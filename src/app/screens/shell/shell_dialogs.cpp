@@ -676,7 +676,7 @@ public:
     }
     void paint(gfx::Painter &p) override {
         const RectF r{0, 0, 96, 96};
-        if (_bmp) {
+        if (_bmp && !_bmp->empty()) {
             p.save();
             p.clipRoundRect(r, 24);
             p.drawBitmap(_bmp->view(), r, gfx::Sampling::Smooth);
@@ -832,21 +832,26 @@ private:
         });
     }
     void load(const std::string &path) {
-        auto bmp = _avatars.get(path, 192);
-        if (!bmp) {
-            text::AttributedText t;
-            t.append(
-                tr("That file could not be read as an image."),
-                ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
-            );
-            _hint->setRichText(std::move(t));
-            return;
-        }
-        _chosen  = path;
-        _resetOn = false;
-        _dirty   = true;
-        _preview->set(std::move(bmp));
-        refresh();
+        // Decoded on the worker: the answer comes once it is.
+        std::weak_ptr<char> alive = _alive;
+        _avatars.whenReady(path, 192, [this, alive, path](Avatars::Picture bmp) {
+            if (alive.expired())
+                return;
+            if (!bmp) {
+                text::AttributedText t;
+                t.append(
+                    tr("That file could not be read as an image."),
+                    ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
+                );
+                _hint->setRichText(std::move(t));
+                return;
+            }
+            _chosen  = path;
+            _resetOn = false;
+            _dirty   = true;
+            _preview->set(std::move(bmp));
+            refresh();
+        });
     }
     void saveFailed() {
         text::AttributedText t;
@@ -889,6 +894,7 @@ private:
     Label                                   *_hint = nullptr;
     std::string                              _chosen;
     bool                                     _hasCustom, _resetOn = false, _dirty = false;
+    std::shared_ptr<char>                    _alive = std::make_shared<char>(0); // guards load()
     std::function<void(const std::string &)> _done;
 };
 

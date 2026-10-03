@@ -576,6 +576,93 @@ void emojiPaint() {
     }
 }
 
+// The pixels a layout paints at `scale` on a fixed backdrop (paintAs `as`).
+std::vector<uint32_t> pixels(const Layout &l, float scale, const gfx::Color *as = nullptr) {
+    gfx::Bitmap  bmp(320, 80);
+    gfx::Painter p(bmp.view(), scale);
+    p.fillRect({0, 0, 320 / scale, 80 / scale}, 0xff336699);
+    if (as)
+        l.paintAs(p, {3.25f, 4}, *as);
+    else
+        l.paint(p, {3.25f, 4});
+    return {bmp.pixels(), bmp.pixels() + 320 * 80};
+}
+
+// M6: a colour change recolours the shaped text (setColor), and a selection
+// paints white from the same shaping (paintAs): both pixel-identical to a
+// layout built in that colour, and neither builds a layout.
+void recolor() {
+    for (float scale : {1.f, 1.5f}) {
+        Style a;
+        a.size          = 14;
+        a.color         = 0xff1d1c1d;
+        Style link      = a;
+        link.color      = 0xff1264a3;
+        link.underline  = true;
+        Style code      = a;
+        code.mono       = true;
+        code.background = 0xffeeeeee;
+        AttributedText t;
+        t.append("Hello ", a);
+        t.append("link", link);
+        t.append(" and code ", a);
+        t.append("x()", code);
+        t.append(" \xF0\x9F\x98\x80 done", a);
+        LayoutOptions  o;
+        auto           l = Layout::build(t, o, scale);
+        // The selected look as Label built it: every span white, fills clear.
+        AttributedText w = t;
+        for (Span &sp : w.spans) {
+            sp.style.color = 0xffffffff;
+            if (sp.style.background)
+                sp.style.background = 0x00ffffff;
+        }
+        auto             white = Layout::build(w, o, scale);
+        const gfx::Color wc    = 0xffffffff;
+        CHECK(pixels(*l, scale, &wc) == pixels(*white, scale));
+        CHECK(pixels(*l, scale) != pixels(*white, scale));
+        // One colour for the whole text (a plain label's hover colour).
+        Style hov = a;
+        hov.color = 0xffd1d2d3;
+        AttributedText plain, plain2;
+        plain.append("Sidebar row \xE2\x80\x94 general", a);
+        plain2.append("Sidebar row \xE2\x80\x94 general", hov);
+        auto         pl     = Layout::build(plain, o, scale);
+        const auto   want   = pixels(*Layout::build(plain2, o, scale), scale);
+        const size_t n0     = layoutBuilds();
+        const auto   before = pixels(*pl, scale);
+        pl->setColor(hov.color);
+        CHECK(before != want);
+        CHECK(pixels(*pl, scale) == want);
+        CHECK(pixels(*l, scale, &wc) == pixels(*white, scale));
+        CHECK(layoutBuilds() == n0);
+    }
+}
+
+// M8: the same measure() question again builds nothing; another size,
+// weight, scale or text is another question (and gets the right answer).
+void measureCache() {
+    Style s;
+    s.size                = 13;
+    const std::string txt = "measure-cache-" + std::to_string(std::rand());
+    const size_t      n0  = layoutBuilds();
+    const float       w1  = measure(txt, s, 1.25f);
+    CHECK(layoutBuilds() == n0 + 1);
+    for (int i = 0; i < 100; ++i)
+        CHECK(measure(txt, s, 1.25f) == w1);
+    Style red = s;
+    red.color = 0xffff0000; // colour doesn't shape: still a hit
+    CHECK(measure(txt, red, 1.25f) == w1);
+    CHECK(layoutBuilds() == n0 + 1);
+    CHECK(w1 == lay(txt, 1e9f, 1.25f, s)->width());
+    Style bold  = s;
+    bold.weight = Weight::Bold;
+    CHECK(measure(txt, bold, 1.25f) == lay(txt, 1e9f, 1.25f, bold)->width());
+    CHECK(measure(txt, s, 2.f) == lay(txt, 1e9f, 2.f, s)->width());
+    CHECK(measure(txt + "x", s, 1.25f) == lay(txt + "x", 1e9f, 1.25f, s)->width());
+    CHECK(measure(txt, bold, 1.25f) != w1);
+}
+
 struct Case {
     const char *name;
     void (*fn)();
@@ -597,6 +684,8 @@ constexpr Case kCases[] = {
     {"ink_bounds", inkBounds},
     {"ink_lean", inkLean},
     {"perf", perf},
+    {"recolor", recolor},
+    {"measure_cache", measureCache},
 };
 
 } // namespace

@@ -183,6 +183,10 @@ public:
     PresenceLink                             presenceLink() const override;
     void                                     noteUserActivity() override;
     RtmPresence                             *presenceLinkForTest() const; // null: OAuth
+    // readCall, for the tests of the lanes.
+    void readCallForTest(std::string method, std::string form, ApiDone done, bool background) {
+        readCall(std::move(method), std::move(form), std::move(done), background);
+    }
 
     // ── Shared by both halves ───────────────────────────────────────────────
     // A Web API call with this workspace's auth; tracked so the destructor

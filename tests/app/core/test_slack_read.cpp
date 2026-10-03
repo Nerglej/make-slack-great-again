@@ -44,6 +44,13 @@ struct Log {
             n += r["method"].str() == method;
         return n;
     }
+    // Calls of `method` whose form has field == value.
+    int count(std::string_view method, std::string_view field, std::string_view value) const {
+        int n = 0;
+        for (json::Value r : doc.root())
+            n += r["method"].str() == method && r["form"][field].str() == value;
+        return n;
+    }
     json::Value get(std::string_view method, int n = 0) const {
         for (json::Value r : doc.root())
             if (r["method"].str() == method && n-- == 0)
@@ -424,6 +431,100 @@ TEST("slack read: the open chat's poll delivers new messages and deletions") {
     set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
               {"type": "message", "ts": "1700000100.000000", "user": "UJONAS", "text": "old"}]}})");
     REQUIRE(pumpUntil([&] { return e.store.findMessage(c, hi) == nullptr; }, 3000));
+}
+
+TEST("slack read: a failed author lookup is not re-asked on every poll") {
+    if (!haveServer())
+        return;
+    Env e;
+    // Authors users.list doesn't know: a deleted account (user_not_found), one
+    // users.info answers without a user, a bot bots.info can't find, and a
+    // Slack Connect peer that resolves.
+    set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
+              {"type": "message", "ts": "1700000400.000000", "user": "UGONE", "text": "a"},
+              {"type": "message", "ts": "1700000300.000000", "user": "UBLANK", "text": "b"},
+              {"type": "message", "ts": "1700000200.000000", "bot_id": "BGONE", "text": "c"},
+              {"type": "message", "ts": "1700000100.000000", "user": "UPEER", "text": "d"}]},
+            "users.info?user=UGONE": {"ok": false, "error": "user_not_found"},
+            "users.info?user=UBLANK": {"ok": true},
+            "users.info?user=UPEER": {"ok": true, "user": {"id": "UPEER", "name": "peer"}},
+            "bots.info?bot=BGONE": {"ok": false, "error": "bot_not_found"}})");
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(e.history(c, 0));
+    e.be->setActiveConversation(c, 0);
+    // The open chat polls every 50 ms here (5 s × 1/100): ~30 polls.
+    const int polls = Log().count("conversations.history");
+    fakeslack::pumpFor(1500);
+    Log l;
+    CHECK(l.count("conversations.history") - polls >= 10);
+    CHECK(l.count("users.info", "user", "UGONE") == 1);
+    CHECK(l.count("users.info", "user", "UBLANK") == 1);
+    CHECK(l.count("bots.info", "bot", "BGONE") == 1);
+    CHECK(l.count("users.info", "user", "UPEER") == 1);
+    CHECK_FALSE(e.user("UPEER").placeholder);
+    CHECK(e.user("UGONE").placeholder);
+}
+
+TEST("slack read: a background call already queued is not queued twice") {
+    if (!haveServer())
+        return;
+    Env e(nullptr);
+    // A slow interactive call holds the paced lane.
+    set(R"({"conversations.history": {"ok": true, "has_more": false, "messages": [],
+                                      "__delay": 0.4}})");
+    bool slow = false;
+    e.be->readCallForTest(
+        "conversations.history",
+        "channel=C1",
+        [&](const json::Document &, const std::string &) { slow = true; },
+        false
+    );
+    int a = 0, b = 0, other = 0;
+    e.be->readCallForTest(
+        "users.getPresence",
+        "user=UMIRA",
+        [&](const json::Document &, const std::string &err) { a += err.empty(); },
+        true
+    );
+    e.be->readCallForTest(
+        "users.getPresence",
+        "user=UJONAS",
+        [&](const json::Document &, const std::string &err) { other += err.empty(); },
+        true
+    );
+    e.be->readCallForTest(
+        "users.getPresence",
+        "user=UMIRA",
+        [&](const json::Document &, const std::string &err) { b += err.empty(); },
+        true
+    );
+    REQUIRE(pumpUntil([&] { return slow && a && b && other; }, 5000));
+    fakeslack::pumpFor(100);
+    Log l;
+    CHECK(l.count("users.getPresence", "user", "UMIRA") == 1); // both callers answered by one
+    CHECK(l.count("users.getPresence", "user", "UJONAS") == 1);
+    CHECK(a == 1 && b == 1 && other == 1);
+}
+
+TEST("slack read: a roster reload that changed nothing emits no Meta") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    fakeslack::pumpFor(300); // the connect's own follow-ups settle
+    int        meta = 0, roster = 0;
+    const auto id    = e.store.observe(model::Store::kAnyConv, [&](const model::Change &ch) {
+        meta += ch.kind == model::ChangeKind::Meta;
+        roster += ch.kind == model::ChangeKind::Roster;
+    });
+    // Without push the roster reloads every 60 s (0.6 s here): wait for two.
+    const int  lists = Log().count("conversations.list");
+    REQUIRE(pumpUntil([&] { return Log().count("conversations.list") >= lists + 4; }, 5000));
+    fakeslack::pumpFor(100);
+    e.store.unobserve(id);
+    CHECK(meta == 0);
+    CHECK(roster == 0);
 }
 
 TEST("slack read: a rate-limited call waits out Retry-After and retries") {

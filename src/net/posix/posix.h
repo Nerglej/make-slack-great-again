@@ -20,9 +20,11 @@ int64_t nowMs(); // monotonic
 
 using str::iequals; // ASCII case-insensitive
 
-// What every blocking step waits for besides its fd. Waits are cut into
-// ≤250 ms slices so a cancel flag set from another thread is seen promptly;
-// a wake fd (WebSocket send/abort) interrupts at once.
+// What every blocking step waits for besides its fd. Without a wake fd,
+// waits are cut into ≤250 ms slices so a cancel flag set from another thread
+// is seen promptly. With one (WebSocket send/abort) the wait blocks until the
+// fd, the wake fd or the deadline fires, with no periodic wakeups, so whoever
+// sets `cancel` must also write the wake fd.
 struct Waiter {
     int64_t                  deadline = 0; // nowMs() value; 0 = none
     const std::atomic<bool> *cancel   = nullptr;

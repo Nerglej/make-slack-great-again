@@ -197,6 +197,53 @@ TEST("slack cache: a cold start writes it, a warm start shows it before the netw
     CHECK_STR(e.c("C1").messages[1].text, "third"); // "second" was deleted
 }
 
+TEST("slack cache: a presence flip doesn't re-serialise users.json; a profile change does") {
+    if (!haveServer())
+        return;
+    wipe();
+    Env e;
+    // Mira's presence is ours to flip: the sweep stops asking after a failure.
+    set(R"({"users.getPresence?user=UMIRA": {"ok": false, "error": "internal_error"}})");
+    REQUIRE(e.connect());
+    const std::string path = file::join(cacheDir(), "users.json");
+    REQUIRE(pumpUntil([&] { return file::exists(path); }, 5000));
+    fakeslack::pumpFor(1500); // the first presence round and its write settle
+    std::string before;
+    REQUIRE(file::readAll(path, &before));
+    const model::UserRef mira = e.store.findUser("UMIRA");
+    REQUIRE(mira != model::kNoUser);
+
+    // Presence only, waited past the 1 s write throttle: no write.
+    e.store.user(mira).active = !e.store.user(mira).active;
+    e.store.usersChanged();
+    fakeslack::pumpFor(1500);
+    std::string after;
+    REQUIRE(file::readAll(path, &after));
+    CHECK(after == before);
+
+    // A profile change is written (with the presence it carries).
+    e.store.user(mira).displayName = "Mira O.";
+    e.store.usersChanged();
+    REQUIRE(pumpUntil(
+        [&] {
+            std::string now;
+            return file::readAll(path, &now) && now != before;
+        },
+        3000
+    ));
+    std::string profile;
+    REQUIRE(file::readAll(path, &profile));
+    CHECK(profile.find("Mira O.") != std::string::npos);
+
+    // Quitting saves the last presence: the next start's dots.
+    e.store.user(mira).active = !e.store.user(mira).active;
+    e.store.usersChanged();
+    e.be.reset();
+    std::string closed;
+    REQUIRE(file::readAll(path, &closed));
+    CHECK(closed != profile);
+}
+
 TEST("slack cache: a cached run the head page doesn't reach is replaced, not left with a hole") {
     if (!haveServer())
         return;

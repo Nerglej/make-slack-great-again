@@ -153,6 +153,8 @@ public:
             _toolbarRow = nullptr;
     }
     MessageRow *toolbarRow() const { return _toolbarRow; }
+    // Tests: how many times a message row was (re)bound so far.
+    int         rowBinds() const { return _rowBinds; }
     bool        flashing(Ts ts) const { return ts == _flashTs; }
     void        openMenu(Ts ts, ui::PointF windowPos);
     // The menus as data, and what their items do (tests drive these). Items,
@@ -241,6 +243,7 @@ private:
     void updateState();
     void subscribe();
     void onChange(const model::Change &ch);
+    void usersChanged(); // a coalesced Users burst: re-bind what it touched
     void updateTyping();
     void scheduleEdgeCheck();
     void checkEdges();
@@ -305,7 +308,11 @@ private:
     ConvRef                    _conv = model::kNoConv;
     Ts                         _root = 0, _markedTs = 0, _flashTs = 0, _jumpTs = 0;
     uint32_t                   _observer  = 0;
-    plat::TimerId              _edgeTimer = 0, _flashTimer = 0;
+    plat::TimerId              _edgeTimer = 0, _flashTimer = 0, _usersTimer = 0;
+    // The Store revisions the rows were last bound against (usersChanged).
+    const model::Store        *_seenStore   = nullptr;
+    uint64_t                   _seenProfile = 0, _seenText = 0;
+    int                        _rowBinds     = 0;
     bool                       _loadingOlder = false, _loadingThread = false, _waiting = false;
     // Selection (msga's _selAnchor / _selFocus / _selDragging).
     TextPos                    _selAnchor, _selFocus;

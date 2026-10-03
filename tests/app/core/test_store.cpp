@@ -79,6 +79,84 @@ TEST("store: users are interned and merged in place") {
     CHECK(s.user(kNoUser).id.empty());
 }
 
+TEST("store: re-adding an unchanged conversation (a roster reload) emits nothing") {
+    Store s;
+    for (const char *id : {"C1", "C2", "D1"}) {
+        Conversation c;
+        c.id   = id;
+        c.name = id;
+        s.addConversation(std::move(c));
+    }
+    {
+        std::vector<Message> page(1);
+        page[0].ts   = 5;
+        page[0].text = "kept";
+        s.addPage(0, std::move(page));
+    }
+    int meta = 0, roster = 0;
+    s.observe(Store::kAnyConv, [&](const Change &ch) {
+        meta += ch.kind == ChangeKind::Meta;
+        roster += ch.kind == ChangeKind::Roster;
+    });
+    // The reload: the same metadata again, no messages.
+    for (ConvRef r = 0; r < 3; ++r) {
+        const Conversation &cur = s.conversation(r);
+        Conversation        c;
+        c.id     = cur.id;
+        c.name   = cur.name;
+        c.latest = cur.latest;
+        s.addConversation(std::move(c));
+    }
+    CHECK(meta == 0);
+    CHECK(roster == 0);
+    CHECK(s.conversation(0).messages.size() == 1); // the loaded messages stay
+    // A real change is still news, once.
+    Conversation c;
+    c.id    = "C2";
+    c.name  = "C2";
+    c.topic = "new topic";
+    s.addConversation(std::move(c));
+    CHECK(meta == 1);
+    CHECK(s.conversation(1).topic == "new topic");
+}
+
+TEST("store: user revisions tell profile changes from presence flips") {
+    Store s;
+    User  a, b;
+    a.id             = "UA";
+    a.name           = "a";
+    b.id             = "UB";
+    b.name           = "b";
+    const UserRef ra = s.addUser(a);
+    const UserRef rb = s.addUser(b);
+    s.usersChanged();
+    const uint64_t p0 = s.profileRevision(), q0 = s.presenceRevision(), t0 = s.textRevision();
+    CHECK(s.userRevision(ra) == p0 && s.userRevision(rb) == p0);
+    // A presence flip: the presence revision moves, the profile one doesn't.
+    s.user(ra).active = true;
+    s.usersChanged();
+    CHECK(s.profileRevision() == p0);
+    CHECK(s.presenceRevision() != q0);
+    // Nothing changed: nothing moves.
+    const uint64_t q1 = s.presenceRevision();
+    s.usersChanged();
+    CHECK(s.profileRevision() == p0 && s.presenceRevision() == q1);
+    // A name: only that user's revision moves.
+    s.user(rb).displayName = "Bee";
+    s.usersChanged();
+    CHECK(s.profileRevision() > p0);
+    CHECK(s.userRevision(rb) == s.profileRevision());
+    CHECK(s.userRevision(ra) == p0);
+    // A new user counts as changed.
+    const UserRef rc = s.internUser("UC");
+    s.usersChanged();
+    CHECK(s.userRevision(rc) == s.profileRevision());
+    // Emoji and channel names are text, not users.
+    s.setCustomEmoji("party", "https://e/p.png");
+    s.setChannelName("C9", "nine");
+    CHECK(s.textRevision() != t0);
+}
+
 TEST("store: pages prepend, append and insert with the right change kinds") {
     Fixture  f;
     Recorder r;

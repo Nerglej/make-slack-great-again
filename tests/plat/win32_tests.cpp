@@ -885,6 +885,57 @@ void caseDoDragDropKeepsTimersAlive() {
     pumpFor(600);
 }
 
+// An OS modal loop (a menu, a file dialog, a window move) runs its own pump:
+// the modal timer is armed for the next due timer or frame only, killed when
+// nothing is due (no 10 ms ticks while a dialog sits open), and posted work
+// still arrives through the wake message. The modal loop is simulated with a
+// bare GetMessage/DispatchMessage loop, as the OS ones are.
+void caseModalTimerArmsOnlyForDueWork() {
+    auto &w32 = static_cast<Win32App &>(*g_app);
+    pumpFor(300); // pending frames and timers settle
+    const auto modalPump = [](int ms, const std::function<bool()> &until) {
+        const auto end = Clock::now() + std::chrono::milliseconds(ms);
+        while (Clock::now() < end && !(until && until())) {
+            MSG m;
+            if (MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE) ==
+                WAIT_TIMEOUT)
+                continue;
+            while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&m);
+                DispatchMessageW(&m);
+            }
+        }
+    };
+    w32.enterModal();
+    std::printf("    idle modal timer: %d ms\n", w32.modalTimerMs());
+    // Nothing due (no plat timer, no frame; a handle watch polls at 100 ms).
+    CHECK(w32.modalTimerMs() == -1 || w32.modalTimerMs() >= 100);
+    // A plat timer: armed for it (not 10 ms), and it fires inside the loop.
+    bool    fired = false;
+    TimerId t     = g_app->addTimer(300, false, [&] { fired = true; });
+    std::printf("    with a 300 ms timer: %d ms\n", w32.modalTimerMs());
+    CHECK(w32.modalTimerMs() >= 100 && w32.modalTimerMs() <= 300);
+    modalPump(2000, [&] { return fired; });
+    CHECK(fired);
+    // Posted work reaches the modal loop through the wake message.
+    bool posted = false;
+    g_app->post([&] { posted = true; });
+    modalPump(1000, [&] { return posted; });
+    CHECK(posted);
+    // A frame request: served inside the loop.
+    const int frames = g_frames;
+    g_win->requestFrame();
+    modalPump(1000, [&] { return g_frames > frames; });
+    CHECK(g_frames > frames);
+    // Idle again: no ticks.
+    modalPump(100, nullptr);
+    std::printf("    idle again: %d ms\n", w32.modalTimerMs());
+    CHECK(w32.modalTimerMs() == -1 || w32.modalTimerMs() >= 100);
+    w32.leaveModal();
+    CHECK(w32.modalTimerMs() == -1);
+    g_app->cancelTimer(t);
+}
+
 void caseDesktopQueries() {
     std::printf("    darkMode %d, doubleClickMs %d\n", g_app->darkMode(), g_app->doubleClickMs());
     CHECK(g_app->doubleClickMs() > 0);
@@ -1400,6 +1451,7 @@ int main() {
     runCase("tray is re-added on TaskbarCreated", caseTaskbarCreatedReAdds);
     runCase("balloon fallback: click, timeout, close", caseBalloonFallback);
     runCase("DoDragDrop keeps timers alive; Escape cancels", caseDoDragDropKeepsTimersAlive);
+    runCase("modal timer: armed for due work only", caseModalTimerArmsOnlyForDueWork);
     runCase("desktop queries; openUrl rejects paths", caseDesktopQueries);
     runCase("mixed-DPI rule: physical origins, logical sizes", caseMixedDpiMath);
     runCase("WindowDesc::position / setPosition place the client", caseLiveMonitorsAndPosition);

@@ -94,39 +94,54 @@ bool decodeImage(std::string_view bytes, Bitmap *out) {
     return true;
 }
 
-bool decodeAnimation(std::string_view bytes, std::vector<AnimFrame> *out) {
+bool decodeAnimation(std::string_view bytes, std::vector<AnimFrame> *out, const AnimOptions &o) {
     out->clear();
+    const bool fit = o.width > 0 && o.height > 0;
     if (!isGif(bytes) || bytes.size() > 0x7fffffff) {
         Bitmap b;
         if (!decodeImage(bytes, &b))
             return false;
+        if (fit && (b.width() != o.width || b.height() != o.height))
+            b = coverResize(b.view(), o.width, o.height);
         out->push_back({std::move(b)});
         return true;
     }
     const auto *d = reinterpret_cast<const stbi_uc *>(bytes.data());
-    int         w = 0, h = 0, frames = 0, comp = 0;
-    int        *delays = nullptr;
+    int         w = 0, h = 0, comp = 0;
     if (!stbi_info_from_memory(d, int(bytes.size()), &w, &h, &comp) || tooBig(w, h))
         return false;
     // stb composites every frame onto the canvas, honouring the disposal
-    // methods (none / background / previous).
-    stbi_uc *all =
-        stbi_load_gif_from_memory(d, int(bytes.size()), &delays, &w, &h, &frames, &comp, 4);
-    if (!all)
-        return false;
-    const size_t px = size_t(w) * size_t(h);
-    out->reserve(size_t(frames));
-    for (int i = 0; i < frames; ++i) {
-        AnimFrame f{Bitmap(w, h), 100};
-        premultiplyRgba(all + px * 4 * size_t(i), f.frame.pixels(), px);
+    // methods (none / background / previous); each is premultiplied (and
+    // shrunk) as it comes, so only the kept frames add up.
+    struct Sink {
+        std::vector<AnimFrame> *out;
+        const AnimOptions      &o;
+        bool                    fit, over = false;
+        int64_t                 kept = 0;
+    } sink{out, o, fit};
+    const auto each = [](void *ctx, const unsigned char *rgba, int fw, int fh, int dm) -> int {
+        Sink        &s  = *static_cast<Sink *>(ctx);
+        const size_t px = size_t(fw) * size_t(fh);
+        AnimFrame    f{Bitmap(fw, fh), 100};
+        premultiplyRgba(rgba, f.frame.pixels(), px);
+        if (s.fit && (fw != s.o.width || fh != s.o.height))
+            f.frame = coverResize(f.frame.view(), s.o.width, s.o.height);
         // Browsers treat 0 and 10 ms as "unspecified" and play them at
         // 100 ms; anything else is kept, so the effective minimum is 20 ms.
-        const int dm = delays ? delays[i] : 0;
-        f.delayMs    = dm <= 10 ? 100 : dm;
-        out->push_back(std::move(f));
+        f.delayMs = dm <= 10 ? 100 : dm;
+        s.kept += int64_t(f.frame.width()) * f.frame.height();
+        if (s.kept > s.o.maxPixels && !s.out->empty()) {
+            s.over = true; // past the budget: the first frame alone, still
+            return 0;
+        }
+        s.out->push_back(std::move(f));
+        return 1;
+    };
+    msga_gif_frames(d, int(bytes.size()), each, &sink);
+    if (sink.over) {
+        out->resize(1);
+        out->shrink_to_fit();
     }
-    std::free(delays);
-    stbi_image_free(all);
     return !out->empty();
 }
 

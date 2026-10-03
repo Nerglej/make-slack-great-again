@@ -5,31 +5,69 @@
 #include "base/file.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <thread>
-#include <unordered_map>
 
 namespace screens {
 
 namespace {
 
-std::string keyOf(const ImageCache::Request &r, bool animated) {
-    std::string k = r.path;
-    k += '\x1f';
-    k += std::to_string(r.width);
-    k += 'x';
-    k += std::to_string(r.height);
-    k += char('0' + int(r.shape));
-    if (r.shape == ImageCache::Shape::Rounded)
-        k += std::to_string(int(r.radius * 4));
-    k += animated ? 'A' : 'S';
-    return k;
+// naturalSize's memo stays this small (it is cleared when full).
+constexpr size_t kMaxSizeMemos  = 4096;
+// How long "a URL not on disk yet" is believed without a new look.
+constexpr double kMissingMemoMs = 5000;
+
+double monoMs() {
+    using namespace std::chrono;
+    return double(duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count()) /
+           1000.0;
 }
 
 } // namespace
+
+ImageCache::Key ImageCache::keyOf(const Ref &r, bool animated) {
+    return {
+        r.path,
+        r.width,
+        r.height,
+        r.shape == Shape::Rounded ? int(r.radius * 4) : 0,
+        uint8_t(r.shape),
+        animated
+    };
+}
+
+size_t ImageCache::KeyHash::operator()(const Key &k) const {
+    size_t h = std::hash<std::string_view>{}(k.path);
+    for (const uint64_t v :
+         {uint64_t(uint32_t(k.width)) << 32 | uint32_t(k.height),
+          uint64_t(uint32_t(k.radius4)) << 16 | uint64_t(k.shape) << 1 | uint64_t(k.animated)})
+        h ^= std::hash<uint64_t>{}(v) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+    return h;
+}
+
+struct ImageCache::Entry {
+    std::string             path; // the Key's view points here
+    int                     width = 0, height = 0;
+    float                   radius = 0;
+    Shape                   shape  = Shape::Square;
+    Bitmap                  still;
+    Frames                  frames;
+    std::vector<ui::View *> waiters;
+    size_t                  bytes = 0;
+    uint64_t                id    = 0;
+    Entry                  *prev = nullptr, *next = nullptr; // the LRU list (Ready only)
+    bool                    retry = false; // a failed download: ask again once RemoteImages would
+    enum : uint8_t { Loading, Ready, Failed } state = Loading;
+    bool animated                                   = false;
+    bool inLru                                      = false;
+
+    Key     key() const { return keyOf(Ref{path, width, height, shape, radius}, animated); }
+    Request request() const { return {path, width, height, shape, radius}; }
+};
 
 // ── Worker ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +77,11 @@ struct ImageCache::Impl {
         Request  req;
         bool     animated;
     };
+    struct Result {
+        std::vector<gfx::AnimFrame> frames;
+        int                         naturalW = 0, naturalH = 0;
+        bool                        ok = false, sized = false;
+    };
     std::mutex              m;
     std::condition_variable cv;
     std::deque<Job>         jobs;
@@ -47,6 +90,55 @@ struct ImageCache::Impl {
     plat::App              *app      = nullptr;
     ImageCache             *owner    = nullptr; // UI thread only; null once destroyed
     size_t                  inflight = 0;       // UI thread: queued, decoding or posted
+
+    static void work(const Job &job, Result &out) {
+        const Request &r = job.req;
+        std::string    data;
+        if (!file::readAll(r.path, &data))
+            return;
+        // naturalSize's answer for it, while the file is at hand.
+        if (int32_t nw = 0, nh = 0; model::imageSize(r.path, &nw, &nh)) {
+            out.sized    = true;
+            out.naturalW = nw;
+            out.naturalH = nh;
+        }
+        auto &frames = out.frames;
+        bool  ok     = false;
+        if (job.animated) {
+            // Each frame is shrunk as it is decoded, under the frame budget.
+            gfx::AnimOptions o;
+            o.width  = r.width;
+            o.height = r.height;
+            ok       = gfx::decodeAnimation(data, &frames, o) && !frames.empty();
+        } else {
+            gfx::AnimFrame f;
+            ok = gfx::decodeImage(data, &f.frame);
+            if (ok)
+                frames.push_back(std::move(f));
+        }
+        // An SVG (the Claude Code teammates' glyph tiles): rendered to cover
+        // the requested size, as the shell's avatars are.
+        if (gfx::AnimFrame f; !ok && gfx::renderSvgCover(data, r.width, r.height, &f.frame)) {
+            ok = true;
+            frames.clear();
+            frames.push_back(std::move(f));
+        }
+        data = {};
+        if (!ok) {
+            frames.clear();
+            return;
+        }
+        for (gfx::AnimFrame &f : frames) {
+            if (r.width > 0 && r.height > 0 &&
+                (r.width != f.frame.width() || r.height != f.frame.height()))
+                f.frame = gfx::coverResize(f.frame.view(), r.width, r.height);
+            if (r.shape == Shape::Circle)
+                gfx::maskRoundedRect(f.frame, 1e9f);
+            else if (r.shape == Shape::Rounded)
+                gfx::maskRoundedRect(f.frame, r.radius);
+        }
+        out.ok = true;
+    }
 
     static void run(std::shared_ptr<Impl> self) {
         for (;;) {
@@ -59,59 +151,25 @@ struct ImageCache::Impl {
                 job = std::move(self->jobs.front());
                 self->jobs.pop_front();
             }
-            auto        frames = std::make_shared<std::vector<gfx::AnimFrame>>();
-            bool        ok     = false;
-            std::string data;
-            if (file::readAll(job.req.path, &data)) {
-                if (job.animated) {
-                    ok = gfx::decodeAnimation(data, frames.get()) && !frames->empty();
-                } else {
-                    gfx::AnimFrame f;
-                    ok = gfx::decodeImage(data, &f.frame);
-                    if (ok)
-                        frames->push_back(std::move(f));
+            auto res = std::make_shared<Result>();
+            work(job, *res);
+            self->app->post([self, id = job.id, path = std::move(job.req.path), res] {
+                ImageCache *owner = self->owner;
+                if (!owner)
+                    return;
+                if (res->sized) { // under the path asked for (a URL, not its local copy)
+                    const auto it = owner->_loading.find(id);
+                    owner->noteSize(
+                        it != owner->_loading.end() ? it->second->path : path,
+                        res->naturalW,
+                        res->naturalH,
+                        true
+                    );
                 }
-                // An SVG (the Claude Code teammates' glyph tiles): rendered
-                // to cover the requested size, as the shell's avatars do.
-                if (gfx::AnimFrame f;
-                    !ok && gfx::renderSvgCover(data, job.req.width, job.req.height, &f.frame)) {
-                    ok = true;
-                    frames->clear();
-                    frames->push_back(std::move(f));
-                }
-            }
-            data = {};
-            if (ok) {
-                const Request &r = job.req;
-                for (gfx::AnimFrame &f : *frames) {
-                    if (r.width > 0 && r.height > 0 &&
-                        (r.width != f.frame.width() || r.height != f.frame.height()))
-                        f.frame = gfx::coverResize(f.frame.view(), r.width, r.height);
-                    if (r.shape == Shape::Circle)
-                        gfx::maskRoundedRect(f.frame, 1e9f);
-                    else if (r.shape == Shape::Rounded)
-                        gfx::maskRoundedRect(f.frame, r.radius);
-                }
-            }
-            const uint64_t id = job.id;
-            self->app->post([self, id, frames, ok] {
-                if (self->owner)
-                    self->owner->deliver(id, std::move(*frames), ok);
+                owner->deliver(id, std::move(res->frames), res->ok);
             });
         }
     }
-};
-
-struct ImageCache::Entry {
-    std::string             key;
-    Bitmap                  still;
-    Frames                  frames;
-    std::vector<ui::View *> waiters;
-    size_t                  bytes   = 0;
-    uint64_t                lastUse = 0, id = 0;
-    bool                    retry = false; // a failed download: ask again once RemoteImages would
-    enum : uint8_t { Loading, Ready, Failed } state = Loading;
-    bool animated                                   = false;
 };
 
 ImageCache::ImageCache(plat::App &app, size_t budget)
@@ -133,44 +191,79 @@ ImageCache::~ImageCache() {
         _impl->thread.join();
 }
 
-ImageCache::Entry *ImageCache::lookup(const Request &r, bool animated, ui::View *waiter) {
+void ImageCache::lruUnlink(Entry &e) {
+    if (!e.inLru)
+        return;
+    if (e.prev)
+        e.prev->next = e.next;
+    else
+        _lruHead = e.next;
+    if (e.next)
+        e.next->prev = e.prev;
+    else
+        _lruTail = e.prev;
+    e.prev = e.next = nullptr;
+    e.inLru         = false;
+}
+
+void ImageCache::lruPushFront(Entry &e) {
+    e.prev = nullptr;
+    e.next = _lruHead;
+    if (_lruHead)
+        _lruHead->prev = &e;
+    _lruHead = &e;
+    if (!_lruTail)
+        _lruTail = &e;
+    e.inLru = true;
+}
+
+ImageCache::Entry *ImageCache::lookup(const Ref &r, bool animated, ui::View *waiter) {
     if (r.path.empty())
         return nullptr;
-    const std::string key = keyOf(r, animated);
-    for (auto &e : _entries) {
-        if (e->key != key)
-            continue;
-        e->lastUse = ++_clock;
-        // Its cool-down is RemoteImages' (which a sign-in also ends).
-        if (e->state == Entry::Failed && e->retry && _remote && !_remote->failedRecently(r.path)) {
-            e->state = Entry::Loading;
-            e->retry = false;
-            load(*e, r);
+    if (const auto it = _entries.find(keyOf(r, animated)); it != _entries.end()) {
+        Entry &e = *it->second;
+        if (e.inLru && _lruHead != &e) { // now the most recently used
+            lruUnlink(e);
+            lruPushFront(e);
         }
-        if (e->state == Entry::Loading && waiter &&
-            std::find(e->waiters.begin(), e->waiters.end(), waiter) == e->waiters.end())
-            e->waiters.push_back(waiter);
-        return e.get();
+        // Its cool-down is RemoteImages' (which a sign-in also ends).
+        if (e.state == Entry::Failed && e.retry && _remote && !_remote->failedRecently(e.path)) {
+            e.state = Entry::Loading;
+            e.retry = false;
+            load(e);
+        }
+        if (e.state == Entry::Loading && waiter &&
+            std::find(e.waiters.begin(), e.waiters.end(), waiter) == e.waiters.end()) {
+            e.waiters.push_back(waiter);
+            _waited.insert(&e);
+        }
+        return &e;
     }
-    auto e      = std::make_unique<Entry>();
-    e->key      = key;
+    auto e      = std::make_shared<Entry>();
+    e->path     = std::string(r.path);
+    e->width    = r.width;
+    e->height   = r.height;
+    e->shape    = r.shape;
+    e->radius   = r.radius;
     e->id       = _nextId++;
     e->animated = animated;
-    e->lastUse  = ++_clock;
-    if (waiter)
+    if (waiter) {
         e->waiters.push_back(waiter);
+        _waited.insert(e.get());
+    }
     Entry *raw = e.get();
-    _entries.push_back(std::move(e));
-    load(*raw, r);
+    _entries.emplace(raw->key(), std::move(e));
+    load(*raw);
     return raw;
 }
 
-void ImageCache::load(Entry &e, const Request &r) {
+void ImageCache::load(Entry &e) {
     ++_impl->inflight; // until deliver(), whichever way the bytes come
+    _loading[e.id]    = &e;
     const uint64_t id = e.id;
     const bool     an = e.animated;
-    if (!RemoteImages::isRemote(r.path)) {
-        decode(id, r, an);
+    if (!RemoteImages::isRemote(e.path)) {
+        decode(id, e.request(), an);
         return;
     }
     if (!_remote) {
@@ -180,15 +273,17 @@ void ImageCache::load(Entry &e, const Request &r) {
         });
         return;
     }
-    if (std::string local = _remote->cachedPath(r.path); !local.empty()) {
-        Request lr = r;
+    if (std::string local = _remote->cachedPath(e.path); !local.empty()) {
+        Request lr = e.request();
         lr.path    = std::move(local);
         decode(id, std::move(lr), an);
         return;
     }
-    _remote->fetch(r.path, [impl = _impl, id, r, an](const std::string &path) {
+    _remote->fetch(e.path, [impl = _impl, id, r = e.request(), an](const std::string &path) {
         if (!impl->owner)
             return;
+        // What naturalSize remembered about it not being here is over.
+        impl->owner->_sizes.erase(r.path);
         if (path.empty()) {
             impl->owner->deliver(id, {}, false, true);
             return;
@@ -199,49 +294,86 @@ void ImageCache::load(Entry &e, const Request &r) {
     });
 }
 
-void ImageCache::decode(uint64_t id, Request r, bool animated) {
+void ImageCache::decode(uint64_t id, Request r, bool animated, bool urgent) {
     {
         std::lock_guard lock(_impl->m);
-        _impl->jobs.push_back({id, std::move(r), animated});
+        if (urgent)
+            _impl->jobs.push_front({id, std::move(r), animated});
+        else
+            _impl->jobs.push_back({id, std::move(r), animated});
     }
     _impl->cv.notify_one();
 }
 
-ImageCache::Bitmap ImageCache::get(const Request &r, ui::View *waiter) {
+void ImageCache::decodeOnce(Request r, std::function<void(gfx::Bitmap)> done, bool urgent) {
+    ++_impl->inflight; // until deliver()
+    const uint64_t id = _nextId++;
+    _once.emplace(id, std::move(done));
+    decode(id, std::move(r), false, urgent);
+}
+
+ImageCache::Bitmap ImageCache::get(const Ref &r, ui::View *waiter, Handle *held) {
     Entry *e = lookup(r, false, waiter);
-    return e && e->state == Entry::Ready ? e->still : nullptr;
+    if (!e || e->state != Entry::Ready)
+        return nullptr;
+    if (held)
+        held->_e = _entries.find(e->key())->second;
+    return e->still;
 }
 
-ImageCache::Frames ImageCache::frames(const Request &r, ui::View *waiter) {
+ImageCache::Frames ImageCache::frames(const Ref &r, ui::View *waiter, Handle *held) {
     Entry *e = lookup(r, true, waiter);
-    return e && e->state == Entry::Ready ? e->frames : nullptr;
+    if (!e || e->state != Entry::Ready)
+        return nullptr;
+    if (held)
+        held->_e = _entries.find(e->key())->second;
+    return e->frames;
 }
 
-bool ImageCache::failed(const Request &r) const {
-    const std::string k1 = keyOf(r, false), k2 = keyOf(r, true);
-    for (const auto &e : _entries)
-        if ((e->key == k1 || e->key == k2) && e->state == Entry::Failed)
+bool ImageCache::touch(const Handle &h) {
+    const std::shared_ptr<Entry> e = h._e.lock();
+    if (!e || !e->inLru)
+        return false;
+    if (_lruHead != e.get()) {
+        lruUnlink(*e);
+        lruPushFront(*e);
+    }
+    return true;
+}
+
+bool ImageCache::failed(const Ref &r) const {
+    for (const bool animated : {false, true})
+        if (const auto it = _entries.find(keyOf(r, animated));
+            it != _entries.end() && it->second->state == Entry::Failed)
             return true;
     return false;
 }
 
 void ImageCache::forget(ui::View *waiter) {
-    for (auto &e : _entries)
-        e->waiters.erase(
-            std::remove(e->waiters.begin(), e->waiters.end(), waiter), e->waiters.end()
-        );
+    // Only loading entries have waiters.
+    for (auto it = _waited.begin(); it != _waited.end();) {
+        auto &ws = (*it)->waiters;
+        ws.erase(std::remove(ws.begin(), ws.end(), waiter), ws.end());
+        it = ws.empty() ? _waited.erase(it) : std::next(it);
+    }
 }
 
 void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool ok, bool transient) {
     --_impl->inflight;
-    Entry *e = nullptr;
-    for (auto &x : _entries)
-        if (x->id == id)
-            e = x.get();
-    if (!e)
+    if (const auto once = _once.find(id); once != _once.end()) {
+        auto done = std::move(once->second);
+        _once.erase(once);
+        done(ok && !frames.empty() ? std::move(frames.front().frame) : gfx::Bitmap());
         return;
+    }
+    const auto it = _loading.find(id);
+    if (it == _loading.end())
+        return;
+    Entry *e = it->second;
+    _loading.erase(it);
     if (ok) {
         e->state = Entry::Ready;
+        e->bytes = 0;
         for (const gfx::AnimFrame &f : frames)
             e->bytes += size_t(f.frame.width()) * size_t(f.frame.height()) * 4;
         if (e->animated) {
@@ -250,12 +382,14 @@ void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool o
             e->still = std::make_shared<const gfx::Bitmap>(std::move(frames.front().frame));
         }
         _bytes += e->bytes;
+        lruPushFront(*e);
     } else {
         e->state = Entry::Failed;
         e->retry = transient; // the download failed, not the decode: ask again later
     }
     std::vector<ui::View *> waiters = std::move(e->waiters);
     e->waiters.clear();
+    _waited.erase(e);
     for (ui::View *v : waiters)
         v->update();
     for (size_t i = 0; i < _listeners.size(); ++i) {
@@ -266,16 +400,12 @@ void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool o
 }
 
 void ImageCache::evict() {
-    while (_bytes > _budget) {
-        size_t victim = SIZE_MAX;
-        for (size_t i = 0; i < _entries.size(); ++i)
-            if (_entries[i]->state == Entry::Ready &&
-                (victim == SIZE_MAX || _entries[i]->lastUse < _entries[victim]->lastUse))
-                victim = i;
-        if (victim == SIZE_MAX)
-            return;
-        _bytes -= _entries[victim]->bytes;
-        _entries.erase(_entries.begin() + ptrdiff_t(victim));
+    // The least recently used ready entry goes first, O(1) each.
+    while (_bytes > _budget && _lruTail) {
+        Entry &victim = *_lruTail;
+        lruUnlink(victim);
+        _bytes -= victim.bytes;
+        _entries.erase(victim.key()); // destroys it; held handles expire
     }
 }
 
@@ -305,25 +435,41 @@ void ImageCache::unlisten(ListenerId id) {
     );
 }
 
+void ImageCache::noteSize(const std::string &path, int w, int h, bool ok) {
+    if (_sizes.size() >= kMaxSizeMemos && !_sizes.count(path))
+        _sizes.clear(); // a bound, not a policy: an answer is cheap to find again
+    _sizes[path] = {w, h, ok, false, 0};
+}
+
 bool ImageCache::naturalSize(const std::string &path, int *w, int *h) {
-    for (const SizeMemo &m : _sizes)
-        if (m.path == path) {
+    *w = *h = 0;
+    if (const auto it = _sizes.find(path); it != _sizes.end()) {
+        const SizeMemo &m = it->second;
+        if (!m.missing) {
             *w = m.w;
             *h = m.h;
             return m.ok;
         }
+        if (monoMs() - m.at < kMissingMemoMs)
+            return false;
+        _sizes.erase(it); // look again
+    }
+    ++_sizeProbes;
     std::string file = path;
     if (RemoteImages::isRemote(path)) {
         // Only once it is on disk; until then the caller has its own guess.
         file = _remote ? _remote->cachedPath(path) : std::string();
         if (file.empty()) {
-            *w = *h = 0;
+            if (_sizes.size() >= kMaxSizeMemos)
+                _sizes.clear();
+            _sizes[path] = {0, 0, false, true, monoMs()};
             return false;
         }
     }
+    // The header only (a few KB), no decode.
     int32_t    iw = 0, ih = 0;
     const bool ok = model::imageSize(file, &iw, &ih);
-    _sizes.push_back({path, iw, ih, ok});
+    noteSize(path, iw, ih, ok);
     *w = iw;
     *h = ih;
     return ok;
@@ -345,7 +491,7 @@ void CachedImage::setPath(std::string path) {
     if (path == _path)
         return;
     _path = std::move(path);
-    _frames.reset();
+    drop();
     _frame = 0;
     update();
 }
@@ -372,6 +518,8 @@ void CachedImage::paintPlaceholder(gfx::Painter &p, ui::RectF r, float radius) {
 }
 
 void CachedImage::setShape(ImageCache::Shape s, float radius) {
+    if (s != _shape || radius != _radius)
+        drop();
     _shape  = s;
     _radius = radius;
     update();
@@ -380,11 +528,18 @@ void CachedImage::setShape(ImageCache::Shape s, float radius) {
 void CachedImage::setAnimated(bool on, bool emoji) {
     _animated = on;
     _emoji    = emoji;
-    _frames.reset();
+    drop();
     update();
 }
 
-ImageCache::Request CachedImage::request() const {
+void CachedImage::drop() {
+    _frames.reset();
+    _still.reset();
+    _held.reset();
+    _heldW = _heldH = 0;
+}
+
+ImageCache::Ref CachedImage::ref() const {
     const float s = windowScale();
     return {
         _path, int(std::lround(width() * s)), int(std::lround(height() * s)), _shape, _radius * s
@@ -414,20 +569,30 @@ void CachedImage::paint(gfx::Painter &p) {
     View::paint(p);
     if (width() <= 0 || height() <= 0)
         return;
-    const gfx::Bitmap *bmp = nullptr;
-    ImageCache::Bitmap still;
-    if (_animated) {
-        const ImageCache::Request r = request();
-        if (!_frames || (*_frames)[0].frame.width() != r.width)
-            if (auto f = _cache.frames(r, this))
-                _frames = std::move(f);
-        if (_frames) {
-            bmp = &(*_frames)[size_t(_frame) % _frames->size()].frame;
-            scheduleFrame();
+    const gfx::Bitmap    *bmp = nullptr;
+    const ImageCache::Ref q   = ref();
+    // Once ready, the picture is kept and painted without a lookup; the
+    // cache only hears that it is still in use (its LRU). A new size asks again.
+    const bool            held =
+        (_animated ? bool(_frames) : bool(_still)) && q.width == _heldW && q.height == _heldH;
+    if (held) {
+        _cache.touch(_held);
+    } else if (_animated) {
+        if (auto f = _cache.frames(q, this, &_held)) {
+            _frames = std::move(f);
+            _heldW  = q.width;
+            _heldH  = q.height;
         }
     } else {
-        still = _cache.get(request(), this);
-        bmp   = still.get();
+        _still = _cache.get(q, this, &_held); // the placeholder until this size is there
+        _heldW = _still ? q.width : 0;
+        _heldH = _still ? q.height : 0;
+    }
+    if (_animated && _frames) {
+        bmp = &(*_frames)[size_t(_frame) % _frames->size()].frame;
+        scheduleFrame();
+    } else if (!_animated) {
+        bmp = _still.get();
     }
     const ui::RectF r      = bounds();
     const float     radius = _shape == ImageCache::Shape::Circle    ? std::min(r.w, r.h) / 2

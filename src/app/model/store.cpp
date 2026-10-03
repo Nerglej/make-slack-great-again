@@ -5,6 +5,7 @@
 #include "base/time.h"
 
 #include <algorithm>
+#include <tuple>
 #include <charconv>
 #include <cstdio>
 
@@ -150,6 +151,7 @@ void Store::clear() {
     workspaceMuted     = false;
     answersAreMentions = false;
     me                 = kNoUser;
+    ++_textRev;
     emit({ChangeKind::Roster});
     emit({ChangeKind::Users});
 }
@@ -168,6 +170,68 @@ UserRef Store::addUser(User u) {
 
 void Store::usersChanged() {
     emit({ChangeKind::Users});
+}
+
+namespace {
+
+uint64_t mixHash(uint64_t h, std::string_view v) {
+    for (const char c : v)
+        h = (h ^ uint8_t(c)) * 1099511628211ull;
+    return (h ^ 0x1f) * 1099511628211ull; // a separator: "ab","c" ≠ "a","bc"
+}
+
+} // namespace
+
+// O(users) hashing per Users emit: far cheaper than what an observer would
+// redo without it (re-binding every message row, re-serialising users.json).
+void Store::noteUserRevisions() {
+    const size_t n       = _users.size();
+    bool         profile = n < _profileHash.size(), presence = false;
+    _profileHash.resize(n, 0);
+    _presenceHash.resize(n, 0);
+    _userRev.resize(n, 0);
+    const uint64_t next = _profileRev + 1;
+    for (size_t i = 0; i < n; ++i) {
+        const User &u = _users[i];
+        uint64_t    h = 14695981039346656037ull;
+        for (const std::string *f :
+             {&u.id,
+              &u.name,
+              &u.displayName,
+              &u.title,
+              &u.email,
+              &u.avatar,
+              &u.statusEmoji,
+              &u.statusText})
+            h = mixHash(h, *f);
+        const char flags[] = {
+            char(u.hasTz),
+            char(u.bot),
+            char(u.admin),
+            char(u.owner),
+            char(u.placeholder),
+            char(u.unavailable),
+            char(u.deleted),
+            char(u.stranger)
+        };
+        h = mixHash(h, std::string_view(flags, sizeof flags));
+        h = mixHash(h, std::string_view(reinterpret_cast<const char *>(&u.tzOffset), 4));
+        h |= 1; // never 0: a new slot always differs
+        if (h != _profileHash[i]) {
+            _profileHash[i] = h;
+            _userRev[i]     = next;
+            profile         = true;
+        }
+        const uint64_t p = 2 | uint64_t(u.active) | uint64_t(u.dnd) << 2;
+        if (p != _presenceHash[i]) {
+            _presenceHash[i] = p;
+            presence         = true;
+        }
+    }
+    if (profile)
+        _profileRev = next;
+    if (presence)
+        ++_presenceRev;
 }
 
 UserRef Store::internUser(std::string_view id) {
@@ -197,17 +261,59 @@ User &Store::user(UserRef u) {
     return u < _users.size() ? _users[u] : scratch;
 }
 
+namespace {
+
+// Every Conversation field but the loaded messages and threads. A field added
+// to Conversation belongs here too, or changing only it emits no Meta.
+bool sameMeta(const Conversation &a, const Conversation &b) {
+    const auto meta = [](const Conversation &c) {
+        return std::tie(
+            c.id,
+            c.name,
+            c.topic,
+            c.kind,
+            c.dmUser,
+            c.members,
+            c.memberCount,
+            c.unread,
+            c.mentions,
+            c.lastRead,
+            c.latest,
+            c.starred,
+            c.muted,
+            c.member,
+            c.notify,
+            c.canvasTitle,
+            c.canvasId,
+            c.localName,
+            c.readOnly,
+            c.huddleActive,
+            c.huddleLink,
+            c.huddleParticipants,
+            c.hasMoreBefore
+        );
+    };
+    return meta(a) == meta(b);
+}
+
+} // namespace
+
 ConvRef Store::addConversation(Conversation c) {
     if (const auto it = _convIndex.find(c.id); it != _convIndex.end()) {
-        Conversation &old = _convs[it->second];
+        Conversation &old      = _convs[it->second];
         // Keep the loaded messages: a roster refresh only brings metadata.
-        if (c.messages.empty() && c.threads.empty()) {
+        const bool    metaOnly = c.messages.empty() && c.threads.empty();
+        if (metaOnly) {
             c.messages      = std::move(old.messages);
             c.threads       = std::move(old.threads);
             c.hasMoreBefore = old.hasMoreBefore;
         }
-        old = std::move(c);
-        emit({ChangeKind::Meta, it->second});
+        // A roster reload re-adds every conversation: only a real change is
+        // news (N no-op Meta emits cost the sidebar and the shell N passes).
+        const bool changed = !metaOnly || !sameMeta(old, c);
+        old                = std::move(c);
+        if (changed)
+            emit({ChangeKind::Meta, it->second});
         return it->second;
     }
     const ConvRef ref = ConvRef(_convs.size());
@@ -765,6 +871,7 @@ void Store::setUsergroups(std::vector<Usergroup> groups) {
             mine.push_back(g.id);
     myGroups    = std::move(mine);
     _usergroups = std::move(groups);
+    ++_textRev;
     emit({ChangeKind::Users});
 }
 
@@ -785,6 +892,7 @@ void Store::setLinkedAuthor(std::string_view conv, std::string_view ts, UserRef 
 
 void Store::setChannelName(std::string id, std::string name) {
     _channelNames[std::move(id)] = std::move(name);
+    ++_textRev;
     emit({ChangeKind::Users});
 }
 
@@ -884,6 +992,7 @@ std::vector<std::pair<std::string, std::string>> Store::customEmojiImages() cons
 
 void Store::setCustomEmoji(std::string name, std::string value) {
     _customEmoji[std::move(name)] = std::move(value);
+    ++_textRev;
 }
 
 Store::EmojiGlyph Store::emojiFor(std::string_view name) const {
@@ -953,6 +1062,8 @@ void Store::unobserve(ObserverId id) {
 
 void Store::emit(const Change &ch) {
     const bool global = ch.kind == ChangeKind::Roster || ch.kind == ChangeKind::Users;
+    if (ch.kind == ChangeKind::Users)
+        noteUserRevisions();
     ++_dispatching;
     for (auto &s : _observers) {
         if (s.id == 0)
