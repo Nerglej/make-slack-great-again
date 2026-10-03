@@ -80,6 +80,131 @@ uint32_t TextEdit::toModel(uint32_t d) const {
     return std::min(d - uint32_t(_preedit.size()), uint32_t(_text.size()));
 }
 
+// ── Paragraphs ──────────────────────────────────────────────────────────────
+
+// Paragraphs of [from, end): one per '\n' ("\r\n" breaks as one), and with
+// `last` the one after the final break, up to the end of the text.
+void TextEdit::scanParas(uint32_t from, uint32_t end, bool last, std::vector<Para> &out) const {
+    for (;;) {
+        const size_t k = _text.find('\n', from);
+        if (k == std::string::npos || k >= end) {
+            if (last)
+                out.push_back({from, end - from, 0});
+            return;
+        }
+        Para p;
+        p.start = from;
+        p.len   = uint32_t(k) - from;
+        p.brk   = 1;
+        if (k > from && _text[k - 1] == '\r') {
+            --p.len;
+            p.brk = 2;
+        }
+        out.push_back(std::move(p));
+        from = uint32_t(k) + 1;
+        if (from >= end && !last)
+            return;
+    }
+}
+
+void TextEdit::splitParas() {
+    _paras.clear();
+    if (_masked) // one line of bullets, breaks included
+        _paras.push_back({0, uint32_t(_text.size()), 0});
+    else
+        scanParas(0, uint32_t(_text.size()), true, _paras);
+    _parasDirty = true;
+}
+
+// _text[pos, pos + removed) became `inserted` bytes: re-split the paragraphs
+// that held the old range (their layouts go) and shift the ones after it.
+void TextEdit::editParas(uint32_t pos, size_t removed, size_t inserted) {
+    if (_masked || _paras.empty())
+        return splitParas();
+    auto holder = [&](uint32_t off) { // the last paragraph starting at or before off
+        size_t lo = 0, hi = _paras.size();
+        while (hi - lo > 1) {
+            const size_t mid                     = (lo + hi) / 2;
+            (_paras[mid].start <= off ? lo : hi) = mid;
+        }
+        return lo;
+    };
+    const size_t   i0    = holder(pos);
+    const size_t   i1    = holder(pos + uint32_t(removed));
+    const bool     toEnd = i1 + 1 == _paras.size();
+    const int64_t  delta = int64_t(inserted) - int64_t(removed);
+    const uint32_t end =
+        toEnd ? uint32_t(_text.size()) : uint32_t(int64_t(_paras[i1 + 1].start) + delta);
+    std::vector<Para> fresh;
+    scanParas(_paras[i0].start, end, toEnd, fresh);
+    for (size_t i = i1 + 1; i < _paras.size(); ++i)
+        _paras[i].start = uint32_t(int64_t(_paras[i].start) + delta);
+    _paras.erase(_paras.begin() + long(i0), _paras.begin() + long(i1) + 1);
+    _paras.insert(
+        _paras.begin() + long(i0),
+        std::make_move_iterator(fresh.begin()),
+        std::make_move_iterator(fresh.end())
+    );
+    if (!_preedit.empty())
+        dropParaAt(_preeditPos);
+    _parasDirty = true;
+}
+
+// The paragraph holding model offset `modelPos` is to be laid out again.
+void TextEdit::dropParaAt(uint32_t modelPos) {
+    if (_paras.empty())
+        return;
+    size_t lo = 0, hi = _paras.size();
+    while (hi - lo > 1) {
+        const size_t mid                          = (lo + hi) / 2;
+        (_paras[mid].start <= modelPos ? lo : hi) = mid;
+    }
+    _paras[lo].layout.reset();
+    _parasDirty = true;
+}
+
+void TextEdit::dropLayouts() {
+    for (Para &p : _paras)
+        p.layout.reset();
+    _parasDirty = true;
+}
+
+bool TextEdit::holdsPreedit(const Para &p) const {
+    return !_preedit.empty() && _preeditPos >= p.start && _preeditPos <= p.start + p.len;
+}
+
+uint32_t TextEdit::paraStart(size_t i) const {
+    if (_masked)
+        return 0;
+    const uint32_t s = _paras[i].start;
+    return !_preedit.empty() && s > _preeditPos ? s + uint32_t(_preedit.size()) : s;
+}
+
+uint32_t TextEdit::paraLen(size_t i) const {
+    const Para &p = _paras[i];
+    if (_masked)
+        return p.len * kBulletBytes;
+    return p.len + (holdsPreedit(p) ? uint32_t(_preedit.size()) : 0);
+}
+
+size_t TextEdit::paraAt(uint32_t d) const {
+    size_t lo = 0, hi = _paras.size();
+    while (hi - lo > 1) {
+        const size_t mid                = (lo + hi) / 2;
+        (paraStart(mid) <= d ? lo : hi) = mid;
+    }
+    return lo;
+}
+
+size_t TextEdit::paraAtY(float y) const {
+    size_t lo = 0, hi = _paras.size();
+    while (hi - lo > 1) {
+        const size_t mid                 = (lo + hi) / 2;
+        (_paras[mid].top <= y ? lo : hi) = mid;
+    }
+    return lo;
+}
+
 // ── Layout ──────────────────────────────────────────────────────────────────
 
 float TextEdit::contentWidth() const {
@@ -95,10 +220,7 @@ float TextEdit::lineHeight() const {
     return std::ceil(baseStyle(C::Text).size * 1.4f);
 }
 
-const text::Layout *TextEdit::layoutFor(float w) {
-    const float scale = windowScale();
-    if (_layout && w == _layoutW)
-        return _layout.get();
+std::unique_ptr<text::Layout> TextEdit::buildPara(const Para &p, float w) const {
     const text::Style    base = baseStyle(C::Text);
     text::AttributedText t;
     auto                 styleFor = [&](uint16_t f) {
@@ -133,34 +255,173 @@ const text::Layout *TextEdit::layoutFor(float w) {
             i = j;
         }
     };
+    const uint32_t a = p.start, b = p.start + p.len;
     if (_masked) {
         std::string dots;
         for (size_t i = 0; i < _text.size(); ++i)
             dots += "\xE2\x80\xA2";
         t.append(dots, base);
-    } else if (_preedit.empty()) {
-        appendRange(0, uint32_t(_text.size()));
+    } else if (!holdsPreedit(p)) {
+        appendRange(a, b);
     } else {
-        appendRange(0, _preeditPos);
+        appendRange(a, _preeditPos);
         text::Style pe = _preeditPos > 0 ? styleFor(_fmt[_preeditPos - 1]) : base;
         pe.underline   = true;
         t.append(_preedit, pe);
-        appendRange(_preeditPos, uint32_t(_text.size()));
+        appendRange(_preeditPos, b);
+    }
+    // An empty line is as tall as its line break's style (for the last
+    // line, the break before it), as in one layout of the whole text.
+    if (t.text.empty() && !_masked) {
+        uint32_t k = UINT32_MAX;
+        if (p.brk)
+            k = b;
+        else if (a > 0)
+            k = a >= 2 && _text[a - 2] == '\r' ? a - 2 : a - 1;
+        if (k < _fmt.size())
+            t.spans.push_back({0, 0, styleFor(_fmt[k])});
     }
     text::LayoutOptions o;
     o.maxWidth = w;
-    _layout    = text::Layout::build(std::move(t), o, scale);
-    _layoutW   = w;
-    return _layout.get();
+    return text::Layout::build(std::move(t), o, windowScale());
 }
 
-const text::Layout *TextEdit::currentLayout() {
-    return layoutFor(contentWidth());
+void TextEdit::layoutFor(float w) {
+    if (_paras.empty())
+        splitParas();
+    if (w != _layoutW) {
+        dropLayouts();
+        _layoutW = w;
+    }
+    if (!_parasDirty)
+        return;
+    // Tops add up in whole physical pixels (every line box is one), as one
+    // layout of the whole text stacks its lines.
+    const float scale = windowScale() > 0 ? windowScale() : 1;
+    float       y     = 0;
+    for (Para &p : _paras) {
+        if (!p.layout)
+            p.layout = buildPara(p, w);
+        p.top = y / scale;
+        y += std::round(p.layout->height() * scale);
+    }
+    _parasDirty = false;
 }
 
-float TextEdit::clampedHeight(const text::Layout *l) const {
+void TextEdit::currentLayout() {
+    layoutFor(contentWidth());
+}
+
+float TextEdit::docHeight() const {
+    const Para &p = _paras.back();
+    return p.top + p.layout->height();
+}
+
+RectF TextEdit::docCaretRect(uint32_t d) const {
+    const size_t i = paraAt(d);
+    const Para  &p = _paras[i];
+    RectF        r = p.layout->caretRect(std::min(d - std::min(d, paraStart(i)), paraLen(i)));
+    r.y += p.top;
+    return r;
+}
+
+uint32_t TextEdit::docHitTest(PointF pt) const {
+    const size_t i = paraAtY(pt.y);
+    const Para  &p = _paras[i];
+    return paraStart(i) + p.layout->hitTest({pt.x, pt.y - p.top}).offset;
+}
+
+uint32_t TextEdit::docMoveCaret(uint32_t d, int dx, int dy) const {
+    const size_t   n   = _paras.size();
+    const uint32_t end = paraStart(n - 1) + paraLen(n - 1);
+    d                  = std::min(d, end);
+    // Over a paragraph's edge the next grapheme is the next paragraph's start
+    // (a line break is one grapheme), the previous one the previous one's end.
+    for (; dx > 0; --dx) {
+        const size_t   i = paraAt(d);
+        const uint32_t s = paraStart(i), len = paraLen(i), l = std::min(d - s, len);
+        if (l >= len)
+            d = i + 1 < n ? paraStart(i + 1) : s + len;
+        else
+            d = s + _paras[i].layout->moveCaret(l, 1, 0);
+    }
+    for (; dx < 0; ++dx) {
+        const size_t   i = paraAt(d);
+        const uint32_t s = paraStart(i), l = std::min(d - s, paraLen(i));
+        if (l == 0)
+            d = i > 0 ? paraStart(i - 1) + paraLen(i - 1) : 0;
+        else
+            d = s + _paras[i].layout->moveCaret(l, -1, 0);
+    }
+    // Lines: within the paragraph, else to the previous one's last line (the
+    // next one's first) at the caret's x; past either end, to that end.
+    for (const int step = dy < 0 ? -1 : 1; dy; dy -= step) {
+        const size_t        i = paraAt(d);
+        const uint32_t      s = paraStart(i), len = paraLen(i), l = std::min(d - s, len);
+        const text::Layout *pl = _paras[i].layout.get();
+        const RectF         c  = pl->caretRect(l);
+        if (c.y != pl->caretRect(step < 0 ? 0 : len).y) // not on its first / last line
+            d = s + pl->moveCaret(l, 0, step);
+        else if (step < 0)
+            d = i == 0 ? 0 : paraStart(i - 1) + _paras[i - 1].layout->hitTest({c.x, 1e6f}).offset;
+        else
+            d = i + 1 == n ? end
+                           : paraStart(i + 1) + _paras[i + 1].layout->hitTest({c.x, -1e6f}).offset;
+    }
+    return d;
+}
+
+// A line break is a word of its own: at a paragraph's end, before the break,
+// the word starts there and ends past it.
+uint32_t TextEdit::docWordStart(uint32_t d) const {
+    const size_t   i = paraAt(d);
+    const uint32_t s = paraStart(i);
+    if (d - s >= paraLen(i) && i + 1 < _paras.size())
+        return d;
+    return s + _paras[i].layout->wordStart(d - s);
+}
+
+uint32_t TextEdit::docWordEnd(uint32_t d) const {
+    const size_t   i = paraAt(d);
+    const uint32_t s = paraStart(i), len = paraLen(i);
+    if (d - s >= len)
+        return i + 1 < _paras.size() ? paraStart(i + 1) : s + len;
+    return s + _paras[i].layout->wordEnd(d - s);
+}
+
+std::vector<RectF> TextEdit::docSelectionRects(uint32_t from, uint32_t to) const {
+    std::vector<RectF> out;
+    if (from > to)
+        std::swap(from, to);
+    if (from == to)
+        return out;
+    const size_t last = paraAt(to);
+    for (size_t i = paraAt(from); i <= last; ++i) {
+        const Para    &p = _paras[i];
+        const uint32_t s = paraStart(i), len = paraLen(i);
+        const uint32_t a = std::min(from - std::min(from, s), len);
+        const uint32_t b = std::min(to - std::min(to, s), len);
+        if (a < b)
+            for (RectF r : p.layout->selectionRects(a, b)) {
+                r.y += p.top;
+                out.push_back(r);
+            }
+        // A selected line break shows as a stub at its line's end, 0.3 of
+        // the size the text starts in wide.
+        if (i + 1 < _paras.size() && from < paraStart(i + 1) && paraStart(i + 1) <= to) {
+            const RectF lr = p.layout->lineRect(p.layout->lineCount() - 1);
+            float       sz = baseStyle(C::Text).size;
+            if ((_preedit.empty() || _preeditPos > 0) && (_fmt[0] & Code))
+                sz = std::max(10.f, sz - 2);
+            out.push_back({lr.x + lr.w, p.top + lr.y, 0.3f * sz, lr.h});
+        }
+    }
+    return out;
+}
+
+float TextEdit::clampedHeight() const {
     const float lh = lineHeight();
-    float       h  = std::max(l->height(), lh);
+    float       h  = std::max(docHeight(), lh);
     h              = std::max(h, lh * _minLines);
     if (_maxLines > 0)
         h = std::min(h, lh * _maxLines);
@@ -168,9 +429,9 @@ float TextEdit::clampedHeight(const text::Layout *l) const {
 }
 
 SizeF TextEdit::measureContent(float aw, float ah) {
-    const float         w = aw < kInf / 2 ? aw : 400;
-    const text::Layout *l = layoutFor(std::max(1.f, w));
-    return {w, clampedHeight(l)};
+    const float w = aw < kInf / 2 ? aw : 400;
+    layoutFor(std::max(1.f, w));
+    return {w, clampedHeight()};
 }
 
 void TextEdit::layout() {
@@ -179,7 +440,7 @@ void TextEdit::layout() {
 }
 
 void TextEdit::styleChanged() {
-    _layout.reset();
+    dropLayouts();
     _placeholderLayout.reset();
     _layoutW = -1;
     update();
@@ -193,17 +454,15 @@ void TextEdit::windowChanged() {
 bool TextEdit::caretOnEdgeLine(bool top) const {
     // Edge: Up / Down lands on the same line (the layout may still move the
     // caret along it, to the line's end).
-    auto               *self = const_cast<TextEdit *>(this);
-    const text::Layout *l    = self->currentLayout();
-    const uint32_t      d    = toDisplay(_caret);
-    const uint32_t      to   = l->moveCaret(d, 0, top ? -1 : 1);
-    return to == d || l->caretRect(to).y == l->caretRect(d).y;
+    const_cast<TextEdit *>(this)->currentLayout();
+    const uint32_t d  = toDisplay(_caret);
+    const uint32_t to = docMoveCaret(d, 0, top ? -1 : 1);
+    return to == d || docCaretRect(to).y == docCaretRect(d).y;
 }
 
 RectF TextEdit::caretRect() const {
-    auto               *self = const_cast<TextEdit *>(this);
-    const text::Layout *l    = self->currentLayout();
-    uint32_t            d    = toDisplay(_caret);
+    const_cast<TextEdit *>(this)->currentLayout();
+    uint32_t d = toDisplay(_caret);
     if (!_preedit.empty())
         d = _preeditPos + uint32_t(
                               std::clamp(
@@ -212,7 +471,7 @@ RectF TextEdit::caretRect() const {
                                   int(_preedit.size())
                               )
                           );
-    RectF        r = l->caretRect(d);
+    RectF        r = docCaretRect(d);
     const Style &s = currentStyle();
     r.x += s.pad.l;
     r.y += s.pad.t - _scrollY;
@@ -225,16 +484,16 @@ RectF TextEdit::caretRect() const {
 void TextEdit::ensureCaretVisible() {
     if (width() <= 0)
         return;
-    const text::Layout *l    = currentLayout();
-    const Style        &s    = currentStyle();
-    const float         view = std::max(1.f, height() - s.pad.t - s.pad.b);
-    RectF               r    = l->caretRect(toDisplay(_caret));
-    const float         old  = _scrollY;
+    currentLayout();
+    const Style &s    = currentStyle();
+    const float  view = std::max(1.f, height() - s.pad.t - s.pad.b);
+    RectF        r    = docCaretRect(toDisplay(_caret));
+    const float  old  = _scrollY;
     if (r.y < _scrollY)
         _scrollY = r.y;
     if (r.y + r.h > _scrollY + view)
         _scrollY = r.y + r.h - view;
-    _scrollY = std::clamp(_scrollY, 0.f, std::max(0.f, l->height() - view));
+    _scrollY = std::clamp(_scrollY, 0.f, std::max(0.f, docHeight() - view));
     if (_scrollY != old)
         update();
 }
@@ -285,6 +544,7 @@ void TextEdit::apply(const Edit &e, bool reverse) {
     _text.replace(e.pos, out.size(), in);
     _fmt.erase(_fmt.begin() + e.pos, _fmt.begin() + e.pos + out.size());
     _fmt.insert(_fmt.begin() + e.pos, inF.begin(), inF.end());
+    editParas(e.pos, out.size(), in.size());
 }
 
 void TextEdit::replace(
@@ -363,12 +623,10 @@ void TextEdit::replace(
 }
 
 void TextEdit::contentChanged() {
-    _layout.reset();
-    _layoutW = -1;
     if (width() > 0) {
-        const text::Layout *l    = currentLayout();
-        const Style        &s    = currentStyle();
-        const float         want = clampedHeight(l) + s.pad.t + s.pad.b;
+        currentLayout();
+        const Style &s    = currentStyle();
+        const float  want = clampedHeight() + s.pad.t + s.pad.b;
         if (std::abs(want - height()) > 0.5f)
             invalidateLayout(); // grow/shrink the composer
     } else {
@@ -431,6 +689,7 @@ void TextEdit::setText(std::string_view plain) {
     _typingSet       = false;
     _caretTyped      = false;
     _scrollY         = 0;
+    splitParas();
     contentChanged();
 }
 
@@ -554,7 +813,7 @@ void TextEdit::setPlaceholder(std::string s) {
 void TextEdit::setMasked(bool on) {
     _masked = on;
     _preedit.clear();
-    _layout.reset();
+    splitParas();
     invalidateLayout();
     update();
 }
@@ -623,7 +882,7 @@ void TextEdit::cut() {
 
 void TextEdit::setLinkBackground(C c) {
     _linkBg = c;
-    _layout.reset();
+    dropLayouts();
     update();
 }
 
@@ -683,9 +942,9 @@ void TextEdit::setPrimarySelection() {
 // ── Navigation helpers ──────────────────────────────────────────────────────
 
 uint32_t TextEdit::hitOffset(PointF local) {
-    const Style        &s = currentStyle();
-    const text::Layout *l = currentLayout();
-    return toModel(l->hitTest({local.x - s.pad.l, local.y - s.pad.t + _scrollY}).offset);
+    const Style &s = currentStyle();
+    currentLayout();
+    return toModel(docHitTest({local.x - s.pad.l, local.y - s.pad.t + _scrollY}));
 }
 
 uint32_t TextEdit::wordLeft(uint32_t o) {
@@ -694,7 +953,8 @@ uint32_t TextEdit::wordLeft(uint32_t o) {
     if (o == 0)
         return 0;
     const uint32_t p = prevChar(o);
-    const uint32_t w = toModel(currentLayout()->wordStart(toDisplay(p)));
+    currentLayout();
+    const uint32_t w = toModel(docWordStart(toDisplay(p)));
     return std::min(w, p);
 }
 
@@ -704,14 +964,15 @@ uint32_t TextEdit::wordRight(uint32_t o) {
         ++o;
     if (o >= n)
         return n;
-    const uint32_t w = toModel(currentLayout()->wordEnd(toDisplay(o)));
+    currentLayout();
+    const uint32_t w = toModel(docWordEnd(toDisplay(o)));
     return w > o ? w : nextChar(o);
 }
 
 uint32_t TextEdit::lineEdge(uint32_t o, bool end) {
-    const text::Layout *l = currentLayout();
-    const RectF         r = l->caretRect(toDisplay(o));
-    return toModel(l->hitTest({end ? 1e6f : -1e6f, r.y + r.h / 2}).offset);
+    currentLayout();
+    const RectF r = docCaretRect(toDisplay(o));
+    return toModel(docHitTest({end ? 1e6f : -1e6f, r.y + r.h / 2}));
 }
 
 std::vector<MenuItem> TextEdit::standardMenuItems() const {
@@ -806,19 +1067,26 @@ void TextEdit::shiftSquiggles(uint32_t pos, size_t removed, size_t inserted) {
 }
 
 // A 1-px zigzag 2 px below each line's baseline (spell-check underline).
-void TextEdit::paintSquiggles(gfx::Painter &p, const text::Layout *l) const {
+void TextEdit::paintSquiggles(gfx::Painter &p) const {
     const Color c = color(C::Danger);
     for (const Range &r : _squiggles) {
         if (!squiggleShown(r) || r.to > _text.size())
             continue;
-        for (const RectF &b : l->selectionRects(toDisplay(r.from), toDisplay(r.to))) {
+        const uint32_t a = toDisplay(r.from), z = toDisplay(r.to);
+        for (const RectF &b : docSelectionRects(a, z)) {
             float y = b.y + b.h - 2;
-            for (int i = 0; i < l->lineCount(); ++i) {
-                const float base = l->baseline(i);
-                if (base >= b.y && base <= b.y + b.h) {
-                    y = base + 2;
-                    break;
+            for (size_t k = paraAt(a), e = paraAt(z); k <= e; ++k) {
+                const Para &pa    = _paras[k];
+                bool        found = false;
+                for (int i = 0; i < pa.layout->lineCount() && !found; ++i) {
+                    const float base = pa.top + pa.layout->baseline(i);
+                    if (base >= b.y && base <= b.y + b.h) {
+                        y     = base + 2;
+                        found = true;
+                    }
                 }
+                if (found)
+                    break;
             }
             gfx::Path       path;
             constexpr float kStep = 2, kAmp = 1;
@@ -835,8 +1103,8 @@ void TextEdit::paintSquiggles(gfx::Painter &p, const text::Layout *l) const {
 
 void TextEdit::paint(gfx::Painter &p) {
     View::paint(p);
-    const Style        &s = currentStyle();
-    const text::Layout *l = currentLayout();
+    const Style &s = currentStyle();
+    currentLayout();
     p.save();
     p.clipRect({s.pad.l, s.pad.t, contentWidth(), std::max(0.f, height() - s.pad.t - s.pad.b)});
     p.translate(snapPx(s.pad.l), snapPx(s.pad.t - _scrollY));
@@ -856,12 +1124,15 @@ void TextEdit::paint(gfx::Painter &p) {
         const uint32_t a = toDisplay(std::min(_caret, _anchor));
         const uint32_t b = toDisplay(std::max(_caret, _anchor));
         const Color c = focused() ? color(C::Selection) : gfx::withAlpha(color(C::Selection), 0.5f);
-        for (const RectF &r : l->selectionRects(a, b))
+        for (const RectF &r : docSelectionRects(a, b))
             p.fillRect(r, c);
     }
-    l->paint(p, {0, 0});
+    // Only the paragraphs in view.
+    const float view = height() - s.pad.t - s.pad.b;
+    for (size_t i = paraAtY(_scrollY); i < _paras.size() && _paras[i].top <= _scrollY + view; ++i)
+        _paras[i].layout->paint(p, {0, _paras[i].top});
     if (!_squiggles.empty())
-        paintSquiggles(p, l);
+        paintSquiggles(p);
     p.restore();
     const bool active = window() && window()->isActive();
     if (focused() && active && _caretOn && !hasSelection()) {
@@ -891,6 +1162,7 @@ bool TextEdit::onEvent(Event &e) {
             onFocusChange(false);
         stopBlink();
         if (!_preedit.empty()) {
+            dropParaAt(_preeditPos);
             _preedit.clear();
             contentChanged();
         }
@@ -907,6 +1179,8 @@ bool TextEdit::onEvent(Event &e) {
                 if (c != 0x7f)
                     t.push_back(c);
         const bool hadPreedit = !_preedit.empty();
+        if (hadPreedit)
+            dropParaAt(_preeditPos);
         _preedit.clear();
         if (t.empty()) {
             if (hadPreedit)
@@ -927,6 +1201,8 @@ bool TextEdit::onEvent(Event &e) {
     case EventType::TextPreedit: {
         if (!e.raw || _masked)
             return false;
+        if (!_preedit.empty())
+            dropParaAt(_preeditPos); // where it showed
         if (e.raw->text.empty()) {
             if (_preedit.empty())
                 return true;
@@ -938,9 +1214,8 @@ bool TextEdit::onEvent(Event &e) {
                 _preeditPos = std::min(_caret, uint32_t(_text.size()));
             _preedit       = e.raw->text;
             _preeditCursor = e.raw->preeditCursorBegin;
+            dropParaAt(_preeditPos);
         }
-        _layout.reset();
-        _layoutW = -1;
         invalidateLayout();
         update();
         updateIme();
@@ -963,10 +1238,10 @@ bool TextEdit::onEvent(Event &e) {
             return false;
         const uint32_t o = hitOffset(e.pos);
         if (e.clicks == 2) {
-            const text::Layout *l = currentLayout();
-            _selOriginA           = toModel(l->wordStart(toDisplay(o)));
-            _selOriginB           = toModel(l->wordEnd(toDisplay(o)));
-            _selMode              = 1;
+            currentLayout();
+            _selOriginA = toModel(docWordStart(toDisplay(o)));
+            _selOriginB = toModel(docWordEnd(toDisplay(o)));
+            _selMode    = 1;
             setSelection(_selOriginA, _selOriginB);
         } else if (e.clicks >= 3) {
             uint32_t a = o, b = o;
@@ -993,11 +1268,11 @@ bool TextEdit::onEvent(Event &e) {
             if (_selMode == 0) {
                 moveTo(o, true);
             } else {
-                const text::Layout *l = currentLayout();
-                uint32_t            a = _selOriginA, b = _selOriginB;
+                currentLayout();
+                uint32_t a = _selOriginA, b = _selOriginB;
                 if (_selMode == 1) {
-                    a = std::min(a, toModel(l->wordStart(toDisplay(o))));
-                    b = std::max(b, toModel(l->wordEnd(toDisplay(o))));
+                    a = std::min(a, toModel(docWordStart(toDisplay(o))));
+                    b = std::max(b, toModel(docWordEnd(toDisplay(o))));
                 } else {
                     a = std::min(a, o);
                     b = std::max(b, o);
@@ -1016,10 +1291,10 @@ bool TextEdit::onEvent(Event &e) {
         setPrimarySelection();
         return true;
     case EventType::Scroll: {
-        const Style        &s    = currentStyle();
-        const text::Layout *l    = currentLayout();
-        const float         view = height() - s.pad.t - s.pad.b;
-        const float         max  = std::max(0.f, l->height() - view);
+        const Style &s = currentStyle();
+        currentLayout();
+        const float view = height() - s.pad.t - s.pad.b;
+        const float max  = std::max(0.f, docHeight() - view);
         if (max <= 0)
             return false;
         const float old = _scrollY;
@@ -1047,6 +1322,7 @@ bool TextEdit::onEvent(Event &e) {
     }
     if (!_preedit.empty())
         return true; // the IME owns the keyboard while composing
+    currentLayout(); // caret movement asks the paragraphs' layouts
     const uint32_t m = e.mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper);
     const uint32_t primary = plat::primaryMod();
     const bool     shift   = m & plat::ModShift;
@@ -1082,7 +1358,7 @@ bool TextEdit::onEvent(Event &e) {
             if (word)
             c = left ? wordLeft(c) : wordRight(c);
         else
-            c = toModel(currentLayout()->moveCaret(toDisplay(c), left ? -1 : 1, 0));
+            c = toModel(docMoveCaret(toDisplay(c), left ? -1 : 1, 0));
         moveTo(c, shift);
         return true;
     }
@@ -1096,7 +1372,7 @@ bool TextEdit::onEvent(Event &e) {
         else
 #endif
         {
-            c = toModel(currentLayout()->moveCaret(toDisplay(_caret), 0, up ? -1 : 1));
+            c = toModel(docMoveCaret(toDisplay(_caret), 0, up ? -1 : 1));
             if (c == _caret)
                 c = up ? 0 : uint32_t(_text.size()); // first/last line: to the edge
         }
@@ -1115,8 +1391,8 @@ bool TextEdit::onEvent(Event &e) {
         if (hasSelection())
             deleteSelection(EditKind::Backspace);
         else if (_caret > 0) {
-            uint32_t from = word ? wordLeft(_caret)
-                                 : toModel(currentLayout()->moveCaret(toDisplay(_caret), -1, 0));
+            uint32_t from =
+                word ? wordLeft(_caret) : toModel(docMoveCaret(toDisplay(_caret), -1, 0));
             if (from >= _caret)
                 from = prevChar(_caret);
             replace(from, _caret, {}, nullptr, 0, EditKind::Backspace);
@@ -1126,8 +1402,7 @@ bool TextEdit::onEvent(Event &e) {
         if (hasSelection())
             deleteSelection(EditKind::DeleteForward);
         else if (_caret < _text.size()) {
-            uint32_t to = word ? wordRight(_caret)
-                               : toModel(currentLayout()->moveCaret(toDisplay(_caret), 1, 0));
+            uint32_t to = word ? wordRight(_caret) : toModel(docMoveCaret(toDisplay(_caret), 1, 0));
             if (to <= _caret)
                 to = nextChar(_caret);
             replace(_caret, to, {}, nullptr, 0, EditKind::DeleteForward);

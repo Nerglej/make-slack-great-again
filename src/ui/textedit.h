@@ -169,23 +169,52 @@ private:
     void     setPrimarySelection();
     uint16_t typingFormat() const;
 
-    const text::Layout *layoutFor(float contentWidth);
-    const text::Layout *currentLayout();
-    float               contentWidth() const;
-    float               lineHeight() const;
-    text::Style         baseStyle(C c) const;
-    float               clampedHeight(const text::Layout *l) const;
-    uint32_t            toDisplay(uint32_t m) const;
-    uint32_t            toModel(uint32_t d) const;
-    uint32_t            hitOffset(PointF local);
-    uint32_t            prevChar(uint32_t o) const; // code point boundaries
-    uint32_t            nextChar(uint32_t o) const;
-    uint32_t            wordLeft(uint32_t o);
-    uint32_t            wordRight(uint32_t o);
-    uint32_t            lineEdge(uint32_t o, bool end);
-    void                showContextMenu(PointF local);
-    void                shiftSquiggles(uint32_t pos, size_t removed, size_t inserted);
-    void                paintSquiggles(gfx::Painter &p, const text::Layout *l) const;
+    // The text as paragraphs (split at '\n'), each laid out on its own, so
+    // an edit reshapes only the paragraphs it touches.
+    struct Para {
+        uint32_t                      start = 0, len = 0; // model bytes; len without the break
+        uint8_t                       brk = 0; // break bytes after it: 0 (last), 1 "\n", 2 "\r\n"
+        float                         top = 0; // logical y in the document
+        std::unique_ptr<text::Layout> layout;  // null: to build
+    };
+    void splitParas(); // all of them anew from _text
+    void scanParas(uint32_t from, uint32_t end, bool last, std::vector<Para> &out) const;
+    void editParas(uint32_t pos, size_t removed, size_t inserted);
+    void dropParaAt(uint32_t modelPos);
+    void dropLayouts();
+    std::unique_ptr<text::Layout> buildPara(const Para &p, float w) const;
+    bool                          holdsPreedit(const Para &p) const;
+    uint32_t                      paraStart(size_t i) const; // display offsets
+    uint32_t                      paraLen(size_t i) const;
+    size_t                        paraAt(uint32_t display) const;
+    size_t                        paraAtY(float y) const;
+    // The document over the paragraphs, in display offsets and content
+    // coordinates: what one Layout of the whole text answers.
+    float                         docHeight() const;
+    RectF                         docCaretRect(uint32_t d) const;
+    uint32_t                      docHitTest(PointF p) const;
+    uint32_t                      docMoveCaret(uint32_t d, int dx, int dy) const;
+    uint32_t                      docWordStart(uint32_t d) const;
+    uint32_t                      docWordEnd(uint32_t d) const;
+    std::vector<RectF>            docSelectionRects(uint32_t from, uint32_t to) const;
+
+    void        layoutFor(float contentWidth);
+    void        currentLayout();
+    float       contentWidth() const;
+    float       lineHeight() const;
+    text::Style baseStyle(C c) const;
+    float       clampedHeight() const;
+    uint32_t    toDisplay(uint32_t m) const;
+    uint32_t    toModel(uint32_t d) const;
+    uint32_t    hitOffset(PointF local);
+    uint32_t    prevChar(uint32_t o) const; // code point boundaries
+    uint32_t    nextChar(uint32_t o) const;
+    uint32_t    wordLeft(uint32_t o);
+    uint32_t    wordRight(uint32_t o);
+    uint32_t    lineEdge(uint32_t o, bool end);
+    void        showContextMenu(PointF local);
+    void        shiftSquiggles(uint32_t pos, size_t removed, size_t inserted);
+    void        paintSquiggles(gfx::Painter &p) const;
 
     std::string                   _text;
     std::vector<uint16_t>         _fmt;   // per byte: format bits | link index << 8
@@ -193,7 +222,8 @@ private:
     std::vector<Range>            _squiggles;
     std::string                   _preedit, _placeholder;
     std::vector<Edit>             _undo, _redo;
-    std::unique_ptr<text::Layout> _layout, _placeholderLayout;
+    std::vector<Para>             _paras;
+    std::unique_ptr<text::Layout> _placeholderLayout;
     std::shared_ptr<char>         _alive; // guards async clipboard callbacks
     float                         _layoutW = -1, _scrollY = 0;
     uint32_t                      _caret = 0, _anchor = 0, _preeditPos = 0;
@@ -207,7 +237,8 @@ private:
     bool                          _typingSet = false, _caretOn = true, _dragging = false;
     bool                          _caretTyped = false; // the caret last moved by an edit
     bool                          _masked = false, _plainPaste = false;
-    C                             _linkBg = C::None;
+    bool                          _parasDirty = true; // a layout to build or tops to place
+    C                             _linkBg     = C::None;
 };
 
 // HTML fragments ↔ formatted text (the clipboard's text/html; also handy for

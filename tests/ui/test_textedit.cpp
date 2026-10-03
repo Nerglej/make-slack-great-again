@@ -272,6 +272,108 @@ TEST("textedit: a popup that closes when its field loses focus survives deactiva
     CHECK(w.w->focusView() == nullptr);
 }
 
+TEST("textedit: an edit in a long text lays out only the paragraphs it touches") {
+    EditWin     t;
+    std::string doc;
+    for (int i = 0; i < 300; ++i)
+        doc += "paragraph " + std::to_string(i) + " with a few words to shape\n";
+    t.edit->setText(doc);
+    const uint32_t mid = uint32_t(doc.find("paragraph 150 ")) + 10;
+    t.edit->setSelection(mid, mid);
+    t.frame();
+    auto builds = [&](auto &&step) {
+        const size_t n = text::layoutBuilds();
+        step();
+        t.frame();
+        return text::layoutBuilds() - n;
+    };
+    CHECK(builds([&] { t.text("x"); }) == 1);
+    CHECK(builds([&] { t.key(K::Backspace); }) == 1);
+    CHECK(builds([&] { t.chord(plat::ModShift, K::Enter); }) == 2); // split in two
+    CHECK(builds([&] { t.key(K::Backspace); }) == 1);               // joined again
+    CHECK(builds([&] { t.key(K::Down); }) == 0);
+    CHECK(builds([&] { t.preedit("ni"); }) == 1);
+    CHECK(builds([&] { t.preedit(""); }) == 1);
+    CHECK_STR(t.edit->text(), doc);
+}
+
+// The paragraphs answer what one layout of the whole text would: caret
+// boxes, Left / Right, Up / Down and clicks, around empty paragraphs (one
+// as tall as its code-formatted break), wrapped lines and a trailing break.
+TEST("textedit: paragraphs place the caret as one layout of the whole text") {
+    EditWin t;
+    t.edit->setMaxLines(0);
+    const std::string doc = "alpha beta\n\nA longer paragraph that wraps over a few lines of the "
+                            "field, with words enough to wrap twice at least.\ncode\n\nend\n";
+    t.edit->setText(doc);
+    // Code on "beta" and on the breaks after "code" (the empty line takes
+    // its break's size), bold on "code".
+    const uint32_t c0 = uint32_t(doc.find("code"));
+    for (const auto &[a, b, f] :
+         {std::tuple{6u, 10u, ui::TextEdit::Code},
+          std::tuple{c0 + 4, c0 + 6, ui::TextEdit::Code},
+          std::tuple{c0, c0 + 4, ui::TextEdit::Bold}}) {
+        t.edit->setSelection(a, b);
+        t.edit->toggleFormat(f);
+    }
+    t.frame();
+
+    const text::Style    base = ui::font(ui::Font::Body, ui::C::Text);
+    text::AttributedText at;
+    for (const auto &r : t.edit->runs()) {
+        text::Style st = base;
+        if (r.format & ui::TextEdit::Bold)
+            st.weight = text::Weight::Bold;
+        if (r.format & ui::TextEdit::Code) {
+            st.mono       = true;
+            st.size       = std::max(10.f, base.size - 2);
+            st.background = ui::color(ui::C::CodeBg);
+        }
+        at.append(std::string_view(doc).substr(r.start, r.end - r.start), st);
+    }
+    const ui::Style    &s = t.edit->currentStyle();
+    text::LayoutOptions o;
+    o.maxWidth     = std::max(1.f, t.edit->frame().w - s.pad.l - s.pad.r);
+    const auto ref = text::Layout::build(at, o, t.edit->windowScale());
+    REQUIRE(ref->lineCount() >= 8);
+
+    const uint32_t n      = uint32_t(doc.size());
+    int            misses = 0;
+    for (uint32_t i = 0; i <= n; ++i) {
+        if (i < n && (uint8_t(doc[i]) & 0xc0) == 0x80)
+            continue;
+        t.edit->setSelection(i, i);
+        const ui::RectF c = t.edit->caretRect(), r = ref->caretRect(i);
+        if (!near(c.x, r.x + s.pad.l, 0.01f) || !near(c.y, r.y + s.pad.t, 0.01f) ||
+            !near(c.h, r.h, 0.01f))
+            ++misses;
+        auto moved = [&](K k, uint32_t want) {
+            t.edit->setSelection(i, i);
+            t.key(k);
+            if (t.edit->caret() != want)
+                ++misses;
+        };
+        moved(K::Left, ref->moveCaret(i, -1, 0));
+        moved(K::Right, ref->moveCaret(i, 1, 0));
+        const uint32_t up = ref->moveCaret(i, 0, -1), down = ref->moveCaret(i, 0, 1);
+        moved(K::Up, up == i ? 0 : up);
+        moved(K::Down, down == i ? n : down);
+    }
+    CHECK(misses == 0);
+    // Clicks: left of, inside and right of each line.
+    const ui::RectF wr = t.edit->windowRect();
+    for (int li = 0; li < ref->lineCount(); ++li) {
+        const float y = ref->baseline(li) - 2;
+        for (const float x : {-5.f, 30.f, 120.f, o.maxWidth + 3}) {
+            t.clickN(wr.x + s.pad.l + x, wr.y + s.pad.t + y, 1);
+            t.frame(1);
+            if (t.edit->caret() != ref->hitTest({x, y}).offset)
+                ++misses;
+        }
+    }
+    CHECK(misses == 0);
+}
+
 TEST("html: reader handles blocks, entities, links, whitespace") {
     std::string              text;
     std::vector<uint16_t>    fmt;

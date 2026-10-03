@@ -153,6 +153,7 @@ public:
     gfx::RectF                    inkBounds() const override;
     float                         inkLean() const override;
     std::vector<gfx::RectF>       selectionRects(uint32_t from, uint32_t to) const override;
+    gfx::RectF                    lineRect(int line) const override;
     HitResult                     hitTest(gfx::PointF p) const override;
     gfx::RectF                    caretRect(uint32_t offset) const override;
     uint32_t                      moveCaret(uint32_t offset, int dx, int dy) const override;
@@ -1099,6 +1100,13 @@ std::vector<gfx::RectF> LayoutImpl::selectionRects(uint32_t from, uint32_t to) c
         }
     }
     return out;
+}
+
+gfx::RectF LayoutImpl::lineRect(int line) const {
+    if (line < 0 || line >= int(_lines.size()))
+        return {};
+    const Line &l = _lines[line];
+    return {l.x / _scale, l.top / _scale, l.w / _scale, l.height / _scale};
 }
 
 HitResult LayoutImpl::hitTest(gfx::PointF pt) const {

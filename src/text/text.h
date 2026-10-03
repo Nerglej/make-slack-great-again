@@ -123,6 +123,9 @@ public:
     virtual float      inkLean() const                                                      = 0;
     // Selection highlight between byte offsets, painted behind the text.
     virtual std::vector<gfx::RectF> selectionRects(uint32_t from, uint32_t to) const        = 0;
+    // A line's box (logical, relative to the origin): x and w span its
+    // visible text (hanging trailing spaces left out), y and h its height.
+    virtual gfx::RectF              lineRect(int line) const                                = 0;
 
     virtual HitResult  hitTest(gfx::PointF p) const                   = 0; // p relative to origin
     virtual gfx::RectF caretRect(uint32_t offset) const               = 0; // 1-px-wide caret box
