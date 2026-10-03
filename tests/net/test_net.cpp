@@ -17,6 +17,7 @@
 #include "support/test.h"
 #include "net/net.h"
 #include "net/transport.h"
+#include "net/worker.h"
 #include "plat/plat.h"
 
 #include <algorithm>
@@ -44,6 +45,7 @@ extern char **environ;
 #include "net/posix/posix.h"
 
 #include <atomic>
+#include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <poll.h>
@@ -85,10 +87,11 @@ void pumpFor(int ms) {
 }
 
 struct Server {
-    std::string base;    // "http://127.0.0.1:port"
-    std::string tlsBase; // "https://localhost:port", empty when not available
-    std::string tlsWhy;  // why not
-    std::string host;    // of base
+    std::string base;      // "http://127.0.0.1:port"
+    std::string tlsBase;   // "https://localhost:port", empty when not available
+    std::string tls12Base; // the same, capped at TLS 1.2
+    std::string tlsWhy;    // why not
+    std::string host;      // of base
     int         port = 0;
 };
 
@@ -149,7 +152,11 @@ void spawnServer(Server *s) {
 #ifdef NET_TEST_OWN_TLS
             // Before the first TLS connection: the CA store loads once.
             base::test::setEnv("SSL_CERT_FILE", bundle);
-            s->tlsBase = "https://localhost:" + std::to_string(tlsPort);
+            s->tlsBase         = "https://localhost:" + std::to_string(tlsPort);
+            int          tls12 = 0;
+            const size_t t12   = out.find("TLS12 ");
+            if (t12 != std::string::npos && std::sscanf(out.c_str() + t12, "TLS12 %d", &tls12) == 1)
+                s->tls12Base = "https://localhost:" + std::to_string(tls12);
 #else
             s->tlsWhy = "the OS's TLS ignores SSL_CERT_FILE";
 #endif
@@ -778,6 +785,22 @@ TEST("redirect: limits and POST to GET") {
     CHECK_FALSE(contains(r.body, "content-length\": \"3"));
 }
 
+TEST("redirect: a 307 sends the POST body again") {
+    NEED_SERVER();
+    net::Request req;
+    req.method = "POST";
+    req.url    = srv.base + "/post-307";
+    req.headers.push_back({"Content-Type", "text/plain"});
+    req.body              = std::string(100000, 'b') + "end";
+    const net::Response r = fetch(std::move(req));
+    CHECK_STR(r.error, "");
+    CHECK(r.status == 200);
+    CHECK_STR(r.url, srv.base + "/echo");
+    CHECK(contains(r.body, "\"method\": \"POST\""));
+    CHECK(contains(r.body, "bbbend\""));
+    CHECK(contains(r.body, "\"content-length\": \"100003\""));
+}
+
 // ── Failures ────────────────────────────────────────────────────────────────
 
 TEST("error: bad url") {
@@ -835,6 +858,75 @@ TEST("error: cancel — no callback, prompt") {
     CHECK(pumpUntil([&] { return second; }));
 }
 
+// The transport sleeps on the request's Cancel object, not on a 250 ms poll
+// of its flag: set() ends a blocked exchange at once.
+TEST("error: cancel wakes a blocked exchange at once") {
+    NEED_SERVER();
+    net::Url u;
+    REQUIRE(u.parse(srv.base + "/slow?ms=3000"));
+    for (int round = 0; round < 3; ++round) {
+        net::detail::Cancel  cancel;
+        net::Request         req;
+        net::Response        resp;
+        std::atomic<int64_t> returned{0};
+        req.url = u.str();
+        net::detail::Thread t;
+        REQUIRE(t.start([&] {
+            net::detail::perform(u, req, resp, cancel, {});
+            returned.store(msNow());
+        }));
+        pumpFor(150 + round * 70); // somewhere inside a would-be 250 ms slice
+        const int64_t at = msNow();
+        cancel.set();
+        t.join();
+        CHECK_STR(resp.error, "cancelled");
+        if (!CHECK(returned.load() - at < 100))
+            std::fprintf(stderr, "    took %lld ms\n", (long long)(returned.load() - at));
+    }
+}
+
+#ifdef NET_TEST_POSIX
+namespace {
+int threadCount() {
+    int  n = 0;
+    DIR *d = opendir("/proc/self/task");
+    if (!d)
+        return -1;
+    while (const dirent *e = readdir(d))
+        n += e->d_name[0] != '.';
+    closedir(d);
+    return n;
+}
+} // namespace
+#endif
+
+TEST("client: idle workers end; the next request starts one") {
+    NEED_SERVER();
+    net::detail::setWorkerIdleMs(150);
+    {
+        net::Client c(app());
+#ifdef NET_TEST_POSIX
+        const int before = threadCount();
+#endif
+        for (int round = 0; round < 2; ++round) {
+            int done = 0;
+            for (int i = 0; i < 3; ++i)
+                c.send({.url = srv.base + "/plain"}, [&](net::Response r) {
+                    done += r.body == "hello world";
+                });
+            REQUIRE(pumpUntil([&] { return done == 3; }));
+#ifdef NET_TEST_POSIX
+            CHECK(threadCount() > before);
+#endif
+            pumpFor(500); // past the idle time: every worker has ended
+#ifdef NET_TEST_POSIX
+            CHECK(threadCount() == before);
+#endif
+        }
+    }
+    net::detail::setWorkerIdleMs(30000);
+}
+
 TEST("error: Client destroyed with requests in flight") {
     NEED_SERVER();
     int     called = 0;
@@ -886,6 +978,55 @@ TEST("tls: local server, hostname checked") {
     r = get("https://127.0.0.1:" + std::to_string(srv.port) + "/plain");
     CHECK(startsWith(r.error, "tls"));
 }
+
+#ifdef NET_TEST_POSIX
+// A host name is resolved once a minute, not per connection.
+TEST("dns: a reconnect within the minute skips the lookup") {
+    NEED_SERVER();
+    const std::string url = "http://localhost:" + std::to_string(srv.port) + "/closehdr";
+    CHECK(get(url).status == 200); // may itself come from the cache (an earlier test)
+    const int64_t before = net::detail::dnsLookups();
+    for (int i = 0; i < 3; ++i)
+        CHECK(get(url).status == 200); // Connection: close → a new connection each time
+    CHECK(net::detail::dnsLookups() == before);
+    // A failed name is not cached.
+    const int64_t failedBefore = net::detail::dnsLookups();
+    CHECK(startsWith(get("http://nonexistent.invalid/").error, "dns"));
+    CHECK(startsWith(get("http://nonexistent.invalid/").error, "dns"));
+    CHECK(net::detail::dnsLookups() == failedBefore + 2);
+}
+#endif
+
+#ifdef NET_TEST_OWN_TLS
+// The second connection offers the first one's session (a TLS 1.3 ticket,
+// a TLS 1.2 session id or ticket) and the server takes it: no certificate
+// chain this time. The server says whether it resumed; so does our counter.
+TEST("tls: a reconnect resumes the session (TLS 1.3 and 1.2)") {
+    NEED_SERVER();
+    if (srv.tlsBase.empty())
+        return skip("local TLS", srv.tlsWhy.empty() ? "no TLS server" : srv.tlsWhy);
+    for (const std::string &base : {srv.tlsBase, srv.tls12Base}) {
+        if (base.empty())
+            continue;
+        const net::Response first = get(base + "/tls-session");
+        CHECK_STR(first.error, "");
+        const int64_t before = net::detail::tlsResumptions();
+        for (int i = 0; i < 2; ++i) {
+            const net::Response again = get(base + "/tls-session"); // Connection: close
+            CHECK_STR(again.error, "");
+            if (!CHECK_STR(again.body, "reused"))
+                std::fprintf(stderr, "    %s\n", base.c_str());
+        }
+        CHECK(net::detail::tlsResumptions() == before + 2);
+    }
+    // A session is per host and port, and resuming leaves the hostname check
+    // in place.
+    net::Url u;
+    REQUIRE(u.parse(srv.tlsBase));
+    const net::Response r = get("https://127.0.0.1:" + std::to_string(u.port) + "/plain");
+    CHECK_STR(r.error, "tls: hostname mismatch");
+}
+#endif
 
 // ── WebSocket ───────────────────────────────────────────────────────────────
 
@@ -1107,6 +1248,37 @@ TEST("live: https slack.com api.test") {
     CHECK(r.status == 200);
     CHECK(contains(r.body, "\"ok\":true"));
 }
+
+#ifdef NET_TEST_POSIX
+// Real hosts: the next connection (the last Client's keep-alive pool is gone
+// with it) resumes the TLS session. A server farm may now and then decline
+// a ticket another machine issued, so one resumption in three is the bar.
+TEST("live: a reconnect resumes the TLS session") {
+    if (!live())
+        return skip("live", "MSGA_NET_LIVE is not 1");
+    for (const char *url : {"https://slack.com/api/api.test", "https://www.cloudflare.com/"}) {
+        int64_t t0 = msNow();
+        CHECK_STR(get(url).error, "");
+        std::fprintf(stderr, "    %s: first %lld ms", url, (long long)(msNow() - t0));
+        bool resumed = false;
+        for (int i = 0; i < 3 && !resumed; ++i) {
+            const int64_t before  = net::detail::tlsResumptions();
+            t0                    = msNow();
+            const net::Response r = get(url);
+            resumed               = net::detail::tlsResumptions() == before + 1;
+            CHECK_STR(r.error, "");
+            std::fprintf(
+                stderr,
+                ", again %lld ms (%s)",
+                (long long)(msNow() - t0),
+                resumed ? "resumed" : "full handshake"
+            );
+        }
+        std::fprintf(stderr, "\n");
+        CHECK(resumed);
+    }
+}
+#endif
 
 TEST("live: TLS variants and refusals (badssl.com)") {
     if (!live())

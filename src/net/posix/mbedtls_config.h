@@ -10,8 +10,10 @@
 //     handshake signatures) and ECDSA, hashed with SHA-256/384/512.
 //     SHA-1 is not accepted in chains (mbedTLS's default profile).
 //   - SNI on, hostname verification on (done in tls.cpp), system CAs.
-// Off: the server side, DTLS, renegotiation, session tickets, debug and
-// error strings, PEM/ASN.1 writing, key generation, every legacy cipher.
+//   - session resumption (TLS 1.3 tickets with psk_dhe_ke, TLS 1.2 session
+//     ids and tickets): a reconnect skips the certificate chain (tls.cpp).
+// Off: the server side, DTLS, renegotiation, early data, debug and error
+// strings, PEM/ASN.1 writing, key generation, every legacy cipher.
 //
 // Randomness comes straight from the kernel (getrandom) through
 // MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG: no entropy collector, no CTR-DRBG.
@@ -100,6 +102,10 @@
 #define MBEDTLS_SSL_PROTO_TLS1_2
 #define MBEDTLS_SSL_PROTO_TLS1_3
 #define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
+// Resumption: a ticket plus a fresh ECDHE (psk_dhe_ke, what servers offer;
+// pure PSK without forward secrecy stays off).
+#define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
+#define MBEDTLS_SSL_SESSION_TICKETS
 #define MBEDTLS_SSL_TLS1_3_COMPATIBILITY_MODE // middleboxes drop "pure" 1.3 handshakes
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_RSA_ENABLED
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA_ENABLED

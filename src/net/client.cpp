@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -19,6 +20,10 @@ namespace net {
 namespace {
 
 constexpr int kMaxWorkers = 4;
+
+// A worker with nothing to do for this long ends; the next burst starts
+// new ones. Slack's polling keeps one busy, an idle app has none.
+std::atomic<int> g_workerIdleMs{30000};
 
 using str::iequals;
 
@@ -130,10 +135,15 @@ struct Jar {
 };
 
 struct Job {
-    RequestId                          id = 0;
-    Request                            req;
-    std::shared_ptr<std::atomic<bool>> cancel;
-    bool                               progress = false; // the caller set onProgress
+    RequestId                       id = 0;
+    Request                         req;
+    std::shared_ptr<detail::Cancel> cancel;
+    bool                            progress = false; // the caller set onProgress
+};
+
+struct Worker {
+    detail::Thread thread;
+    bool           retired = false; // under Impl::mutex: it has left workerLoop
 };
 
 } // namespace
@@ -145,24 +155,28 @@ struct Client::Impl : std::enable_shared_from_this<Client::Impl> {
     // UI thread only.
     RequestId                                                            nextId = 1;
     std::unordered_map<RequestId, std::function<void(Response)>>         done;
-    std::unordered_map<RequestId, std::shared_ptr<std::atomic<bool>>>    flags;
+    std::unordered_map<RequestId, std::shared_ptr<detail::Cancel>>       flags;
     std::unordered_map<RequestId, std::function<void(int64_t, int64_t)>> progress;
 
     // Shared with the workers.
-    std::mutex                 mutex;
-    std::condition_variable    wake;
-    std::deque<Job>            queue;
-    bool                       stopping = false;
-    int                        idle     = 0;
-    std::deque<detail::Thread> workers; // deque: Thread is not movable
+    std::mutex                           mutex;
+    std::condition_variable              wake;
+    std::deque<Job>                      queue;
+    bool                                 stopping = false;
+    int                                  idle     = 0;
+    std::vector<std::unique_ptr<Worker>> workers; // retired ones are joined by send()
 
-    void workerLoop();
+    void workerLoop(Worker *self);
     void run(Job &job);
     void deliver(RequestId id, Response resp);
     void report(RequestId id, int64_t received, int64_t total);
 };
 
 namespace detail {
+
+void setWorkerIdleMs(int ms) {
+    g_workerIdleMs.store(ms);
+}
 
 bool parseContentLength(std::string_view v, int64_t *out) {
     v = str::trim(v);
@@ -220,16 +234,22 @@ std::string_view Response::header(std::string_view name) const {
     return detail::headerValue(headers, name);
 }
 
-void Client::Impl::workerLoop() {
+void Client::Impl::workerLoop(Worker *self) {
     for (;;) {
         Job job;
         {
             std::unique_lock<std::mutex> lock(mutex);
             ++idle;
-            wake.wait(lock, [this] { return stopping || !queue.empty(); });
+            const auto idleFor = std::chrono::milliseconds(g_workerIdleMs.load());
+            const bool work =
+                wake.wait_for(lock, idleFor, [this] { return stopping || !queue.empty(); });
             --idle;
             if (stopping)
                 return;
+            if (!work) {
+                self->retired = true;
+                return;
+            }
             job = std::move(queue.front());
             queue.pop_front();
         }
@@ -274,21 +294,24 @@ void Client::Impl::run(Job &job) {
     if (!agent)
         req.headers.push_back({"User-Agent", detail::kUserAgent});
     const std::string firstHost = url.host;
+    // Every hop sends `req` itself, its headers adjusted in place: the body
+    // (an upload can be tens of megabytes) is never copied.
     for (int hop = 0;; ++hop) {
-        Request one = req;
-        if (url.host != firstHost) { // credentials never leak to another host
-            for (size_t i = 0; i < one.headers.size();) {
-                if (iequals(one.headers[i].name, "authorization"))
-                    one.headers.erase(one.headers.begin() + i);
+        if (url.host != firstHost) { // credentials never leak to another host, nor come back
+            for (size_t i = 0; i < req.headers.size();) {
+                if (iequals(req.headers[i].name, "authorization"))
+                    req.headers.erase(req.headers.begin() + i);
                 else
                     ++i;
             }
         }
         const std::string cookie = jar.headerFor(url.host);
         if (!cookie.empty())
-            one.headers.push_back({"Cookie", cookie});
+            req.headers.push_back({"Cookie", cookie});
         resp = Response();
-        detail::perform(url, one, resp, *job.cancel, progress);
+        detail::perform(url, req, resp, *job.cancel, progress);
+        if (!cookie.empty())
+            req.headers.pop_back();
         resp.url = url.str();
         if (!resp.error.empty() || resp.status < 300 || resp.status >= 400 || resp.status == 304)
             break;
@@ -379,12 +402,12 @@ Client::~Client() {
         std::lock_guard<std::mutex> lock(_impl->mutex);
         _impl->stopping = true;
         for (auto &[id, flag] : _impl->flags)
-            flag->store(true);
+            flag->set();
         _impl->queue.clear();
     }
     _impl->wake.notify_all();
     for (auto &w : _impl->workers)
-        w.join();
+        w->thread.join();
     _impl->done.clear();
     _impl->progress.clear();
     if (g_liveClients.fetch_sub(1, std::memory_order_acq_rel) == 1)
@@ -394,7 +417,7 @@ Client::~Client() {
 RequestId Client::send(Request req, std::function<void(Response)> done) {
     Impl           &d    = *_impl;
     const RequestId id   = d.nextId++;
-    auto            flag = std::make_shared<std::atomic<bool>>(false);
+    auto            flag = std::make_shared<detail::Cancel>();
     d.done.emplace(id, std::move(done));
     d.flags.emplace(id, flag);
     // The callback stays on the UI thread; the worker only knows it exists.
@@ -402,24 +425,33 @@ RequestId Client::send(Request req, std::function<void(Response)> done) {
     if (progress)
         d.progress.emplace(id, std::move(req.onProgress));
     req.onProgress = nullptr;
+    std::vector<std::unique_ptr<Worker>> retired; // joined on return, outside the lock
     {
         std::lock_guard<std::mutex> lock(d.mutex);
         d.queue.push_back({id, std::move(req), flag, progress});
+        for (size_t i = 0; i < d.workers.size();)
+            if (d.workers[i]->retired) {
+                retired.push_back(std::move(d.workers[i]));
+                d.workers.erase(d.workers.begin() + ptrdiff_t(i));
+            } else {
+                ++i;
+            }
         if (d.idle < int(d.queue.size()) && int(d.workers.size()) < kMaxWorkers) {
-            d.workers.emplace_back();
-            Impl *raw = &d; // the destructor joins every worker before Impl goes
-            if (!d.workers.back().start([raw] { raw->workerLoop(); }))
-                d.workers.pop_back();
+            auto    w   = std::make_unique<Worker>();
+            Impl   *raw = &d; // the destructor joins every worker before Impl goes
+            Worker *me  = w.get();
+            if (w->thread.start([raw, me] { raw->workerLoop(me); }))
+                d.workers.push_back(std::move(w));
         }
     }
     d.wake.notify_one();
-    return id;
+    return id; // a retired thread has left its loop: joining it is quick
 }
 
 void Client::cancel(RequestId id) {
     Impl &d = *_impl;
     if (auto it = d.flags.find(id); it != d.flags.end()) {
-        it->second->store(true);
+        it->second->set();
         d.flags.erase(it);
     }
     d.done.erase(id);

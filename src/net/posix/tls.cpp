@@ -1,6 +1,12 @@
 // TLS for the POSIX transport: mbedTLS client sessions over our non-blocking
 // sockets, verified against the system's CA bundle.
 //
+// The last session per host:port (a TLS 1.3 ticket, or a TLS 1.2 session id
+// or ticket) is kept and offered on the next connection there. When the
+// server takes it, the handshake skips the certificate chain and its
+// signature checks: a reconnect after the keep-alive pool let go (30 s) or a
+// recycled WebSocket costs one key exchange instead of a full handshake.
+//
 // The CA store is kept as DER only. Parsing every root up front (what
 // mbedtls_x509_crt_parse_file does) costs ~2.5× the DER in RAM for ~150
 // certificates of which a session touches one; instead mbedTLS asks us for
@@ -23,6 +29,7 @@ extern "C" { // psa_util.h lacks its own C++ guard in 3.6
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <mutex>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -237,6 +244,11 @@ Shared *shared() {
         mbedtls_ssl_conf_authmode(&sh->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
         mbedtls_ssl_conf_ca_cb(&sh->conf, caCallback, sh);
         mbedtls_ssl_conf_rng(&sh->conf, mbedtls_psa_get_random, MBEDTLS_PSA_RANDOM_STATE);
+        // TLS 1.3 tickets come after the handshake; mbedTLS hands them over
+        // only when asked to (tlsRead/tlsWrite then keep them).
+        mbedtls_ssl_conf_tls13_enable_signal_new_session_tickets(
+            &sh->conf, MBEDTLS_SSL_TLS1_3_SIGNAL_NEW_SESSION_TICKETS_ENABLED
+        );
         sh->ok = true;
         return sh;
     }();
@@ -263,11 +275,104 @@ std::string hexCode(int code) {
 struct TlsConn {
     mbedtls_ssl_context ssl;
     int                 fd       = -1;
-    int                 sysErr   = 0; // errno of the last failed socket call
-    size_t              inflight = 0; // length of a write that returned WANT_*
+    int                 sysErr   = 0;     // errno of the last failed socket call
+    size_t              inflight = 0;     // length of a write that returned WANT_*
+    std::string         key;              // "host:port", for the session cache
+    bool                offered  = false; // a cached session went into the ClientHello
+    bool                verified = false; // a certificate chain was checked: a full handshake
 };
 
 namespace {
+
+// ── Session cache ───────────────────────────────────────────────────────────
+
+constexpr size_t kMaxSessions = 16; // hosts; the least recently stored goes first
+
+struct SessionCache {
+    struct Entry {
+        std::string          key;
+        mbedtls_ssl_session *session;
+    };
+    std::mutex         mutex;
+    std::vector<Entry> entries; // the most recently stored last
+};
+
+SessionCache &sessions() {
+    static SessionCache *const c = new SessionCache; // never destroyed, like shared()
+    return *c;
+}
+
+std::atomic<int64_t> g_resumed{0};
+
+void freeSession(mbedtls_ssl_session *s) {
+    if (!s)
+        return;
+    mbedtls_ssl_session_free(s);
+    delete s;
+}
+
+// After a TLS 1.2 handshake, or whenever a TLS 1.3 ticket arrived.
+void keepSession(TlsConn *c) {
+    auto *s = new mbedtls_ssl_session;
+    mbedtls_ssl_session_init(s);
+    if (mbedtls_ssl_get_session(&c->ssl, s) != 0) {
+        freeSession(s);
+        return;
+    }
+    mbedtls_ssl_session *drop[2] = {nullptr, nullptr}; // freed outside the lock
+    {
+        SessionCache               &sc = sessions();
+        std::lock_guard<std::mutex> lock(sc.mutex);
+        for (size_t i = 0; i < sc.entries.size(); ++i)
+            if (sc.entries[i].key == c->key) {
+                drop[0] = sc.entries[i].session;
+                sc.entries.erase(sc.entries.begin() + ptrdiff_t(i));
+                break;
+            }
+        if (sc.entries.size() >= kMaxSessions) {
+            drop[1] = sc.entries.front().session;
+            sc.entries.erase(sc.entries.begin());
+        }
+        sc.entries.push_back({c->key, s});
+    }
+    freeSession(drop[0]);
+    freeSession(drop[1]);
+}
+
+// Puts the host's session (if any) into the ClientHello. Copied: the cache
+// keeps it for the next connection too (servers accept a ticket more than
+// once; one that doesn't simply runs a full handshake).
+void offerSession(TlsConn *c) {
+    SessionCache               &sc = sessions();
+    std::lock_guard<std::mutex> lock(sc.mutex);
+    for (const auto &e : sc.entries)
+        if (e.key == c->key) {
+            c->offered = mbedtls_ssl_set_session(&c->ssl, e.session) == 0;
+            return;
+        }
+}
+
+void forgetSession(const std::string &key) {
+    mbedtls_ssl_session *drop = nullptr;
+    {
+        SessionCache               &sc = sessions();
+        std::lock_guard<std::mutex> lock(sc.mutex);
+        for (size_t i = 0; i < sc.entries.size(); ++i)
+            if (sc.entries[i].key == key) {
+                drop = sc.entries[i].session;
+                sc.entries.erase(sc.entries.begin() + ptrdiff_t(i));
+                break;
+            }
+    }
+    freeSession(drop);
+}
+
+// Runs for every certificate of a chain being verified, which a resumed
+// handshake never has.
+int onVerify(void *ctx, mbedtls_x509_crt *, int, uint32_t *) {
+    static_cast<TlsConn *>(ctx)->verified = true;
+    return 0; // the flags stay as mbedTLS found them
+}
 
 int bioSend(void *ctx, const unsigned char *buf, size_t len) {
     auto *c = static_cast<TlsConn *>(ctx);
@@ -344,7 +449,11 @@ long result(TlsConn *c, int rc, short *want, std::string *error) {
 
 } // namespace
 
-TlsConn *tlsNew(int fd, const std::string &host, std::string *error) {
+int64_t tlsResumptions() {
+    return g_resumed.load(std::memory_order_relaxed);
+}
+
+TlsConn *tlsNew(int fd, const Url &url, std::string *error) {
     Shared *sh = shared();
     if (!sh->ok) {
         *error = sh->cas.entries.empty() ? "tls: no CA certificates" : "tls: setup failed";
@@ -352,16 +461,19 @@ TlsConn *tlsNew(int fd, const std::string &host, std::string *error) {
     }
     auto *c = new TlsConn;
     c->fd   = fd;
+    c->key  = str::concat({url.host, ":", str::number(url.port)});
     mbedtls_ssl_init(&c->ssl);
     // set_hostname turns on both SNI and the certificate name check.
     if (mbedtls_ssl_setup(&c->ssl, &sh->conf) != 0 ||
-        mbedtls_ssl_set_hostname(&c->ssl, host.c_str()) != 0) {
+        mbedtls_ssl_set_hostname(&c->ssl, url.host.c_str()) != 0) {
         mbedtls_ssl_free(&c->ssl);
         delete c;
         *error = "tls: setup failed";
         return nullptr;
     }
     mbedtls_ssl_set_bio(&c->ssl, c, bioSend, bioRecv, nullptr);
+    mbedtls_ssl_set_verify(&c->ssl, onVerify, c);
+    offerSession(c);
     return c;
 }
 
@@ -373,12 +485,28 @@ void tlsFree(TlsConn *c) {
 }
 
 long tlsHandshake(TlsConn *c, short *want, std::string *error) {
-    const int rc = mbedtls_ssl_handshake(&c->ssl);
-    return rc == 0 ? 0 : result(c, rc, want, error);
+    int rc;
+    while ((rc = mbedtls_ssl_handshake(&c->ssl)) == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+        keepSession(c);
+    if (rc == 0) {
+        if (c->offered && !c->verified)
+            g_resumed.fetch_add(1, std::memory_order_relaxed);
+        // TLS 1.2 sessions are whole now; TLS 1.3 tickets arrive later.
+        if (mbedtls_ssl_get_version_number(&c->ssl) == MBEDTLS_SSL_VERSION_TLS1_2)
+            keepSession(c);
+        return 0;
+    }
+    const long r = result(c, rc, want, error);
+    if (r == Stream::Fail && c->offered)
+        forgetSession(c->key); // in case the server chokes on it: not again
+    return r;
 }
 
 long tlsRead(TlsConn *c, char *buf, size_t n, short *want, std::string *error) {
-    const int rc = mbedtls_ssl_read(&c->ssl, reinterpret_cast<unsigned char *>(buf), n);
+    int rc;
+    while ((rc = mbedtls_ssl_read(&c->ssl, reinterpret_cast<unsigned char *>(buf), n)) ==
+           MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+        keepSession(c);
     if (rc >= 0)
         return rc;
     // Most servers skip close_notify; a bare TCP close is the end too.
@@ -391,7 +519,10 @@ long tlsWrite(TlsConn *c, const char *buf, size_t n, short *want, std::string *e
     // mbedtls_ssl_write must be repeated with the same length after WANT_*.
     if (c->inflight && c->inflight <= n)
         n = c->inflight;
-    const int rc = mbedtls_ssl_write(&c->ssl, reinterpret_cast<const unsigned char *>(buf), n);
+    int rc;
+    while ((rc = mbedtls_ssl_write(&c->ssl, reinterpret_cast<const unsigned char *>(buf), n)) ==
+           MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+        keepSession(c);
     if (rc >= 0) {
         c->inflight = 0;
         return rc;

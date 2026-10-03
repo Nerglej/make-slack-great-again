@@ -11,6 +11,7 @@
 #include "net/net.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -21,24 +22,50 @@ namespace net::detail {
 // same on every OS, and the one msga has always sent.
 inline constexpr const char *kUserAgent = "Mozilla/5.0";
 
+// A request's cancel flag plus an OS object that set() signals, so a
+// transport blocked on the request wakes at once instead of polling the
+// flag: an eventfd (POSIX), a manual-reset event (Windows), a dispatch
+// semaphore that the exchange also waits on for its answer (macOS). Made
+// on the UI thread with the request, set there by Client::cancel or the
+// Client's destructor. If the OS object can't be made, waits fall back to
+// looking at the flag every 250 ms.
+class Cancel {
+public:
+    Cancel();
+    ~Cancel();
+    Cancel(const Cancel &)            = delete;
+    Cancel &operator=(const Cancel &) = delete;
+
+    void                     set(); // any thread; idempotent
+    bool                     isSet() const { return _flag.load(std::memory_order_acquire); }
+    const std::atomic<bool> &flag() const { return _flag; }
+    // The OS object: an fd (-1: none), a HANDLE (0: none) or a
+    // dispatch_semaphore_t.
+    intptr_t                 os() const { return _os; }
+
+private:
+    std::atomic<bool> _flag{false};
+    intptr_t          _os = -1;
+};
+
 // One HTTP exchange — no redirect following, no cookie handling, no
 // decompression (the request carries no Accept-Encoding; a stack that adds
 // one must also decode). Blocks the calling worker thread. Fills
 // resp.status/headers/body, or resp.error (see Response::error) with
-// status 0. Honours req.timeoutMs; returns promptly (within ~250 ms) with
-// error "cancelled" once *cancel turns true. resp.url is set by the caller.
-// May keep connections alive between calls (thread-safe pool).
+// status 0. Honours req.timeoutMs; returns promptly with error "cancelled"
+// once `cancel` is set. resp.url is set by the caller. May keep connections
+// alive between calls (thread-safe pool).
+//
+// req.body may be moved out while the OS stack still needs it (WinHTTP
+// reads it asynchronously); it is back in req whenever the server answered,
+// so a 307/308 can send it again. After a failure it may be gone.
 //
 // `progress`, when set, hears the body as it arrives (bytes so far, the
 // Content-Length or 0) on the calling worker thread, as often as the
 // transport likes: client.cpp throttles it. req.onProgress is never set.
 using Progress = std::function<void(int64_t received, int64_t total)>;
 void perform(
-    const Url               &url,
-    const Request           &req,
-    Response                &resp,
-    const std::atomic<bool> &cancel,
-    const Progress          &progress
+    const Url &url, Request &req, Response &resp, const Cancel &cancel, const Progress &progress
 );
 // The Content-Length header's value; 0 when absent or not a number.
 int64_t          contentLength(const std::vector<Header> &headers);
@@ -51,6 +78,10 @@ std::string_view headerValue(const std::vector<Header> &headers, std::string_vie
 // the blank line (CRLF-separated; obsolete folded lines are joined on). False
 // for a line that is not a header; *out then holds those before it.
 bool             parseHeaderLines(std::string_view lines, std::vector<Header> *out);
+
+// For tests: how long an idle Client worker thread waits for work before it
+// ends (30 s).
+void setWorkerIdleMs(int ms);
 
 // Drops idle kept-alive connections (Client destructor of the last client).
 void closeIdleConnections();

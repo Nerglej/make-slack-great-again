@@ -9,10 +9,12 @@
 // on the wire) and drop the Content-Encoding / Content-Length headers that
 // no longer describe the body we return.
 //
-// Every wait is a semaphore in short slices so `cancel` and the deadline
-// are seen within ~250 ms. Completion blocks only store into __block
-// storage and signal; the blocks keep that storage alive, so giving up early
-// (cancel → [task cancel]) never leaves a block writing into a dead frame.
+// Every wait is a semaphore that whoever ends the wait signals: the
+// completion block, or the request's Cancel (it is that very semaphore), or
+// a WebSocket's abort. Only download progress wakes it in 250 ms slices.
+// Completion blocks only store into __block storage and signal; the blocks
+// keep that storage alive, so giving up early (cancel → [task cancel])
+// never leaves a block writing into a dead frame.
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 
@@ -188,7 +190,8 @@ int64_t deadlineAfter(int timeoutMs) {
 
 enum class Wait { Done, Cancelled, TimedOut };
 
-// `tick`, when set, runs after every slice that ended without the signal.
+// Whoever sets `cancel` must also signal `sem`. `tick`, when set, runs
+// every kSliceMs while the wait goes on.
 Wait waitFor(
     dispatch_semaphore_t         sem,
     int64_t                      deadline,
@@ -201,10 +204,12 @@ Wait waitFor(
         const int64_t left = deadline - nowMs();
         if (left <= 0)
             return Wait::TimedOut;
-        const int64_t slice = left < kSliceMs ? left : kSliceMs;
-        if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, slice * NSEC_PER_MSEC)) ==
-            0)
-            return Wait::Done;
+        const int64_t         slice = tick && left > kSliceMs ? kSliceMs : left;
+        const dispatch_time_t until = !tick && deadline == INT64_MAX
+                                          ? DISPATCH_TIME_FOREVER
+                                          : dispatch_time(DISPATCH_TIME_NOW, slice * NSEC_PER_MSEC);
+        if (dispatch_semaphore_wait(sem, until) == 0)
+            return cancel.load() ? Wait::Cancelled : Wait::Done;
         if (tick)
             tick();
     }
@@ -369,6 +374,8 @@ public:
         {
             std::lock_guard<std::mutex> lock(_mutex);
             [_task cancel];
+            if (_delegate) // a connect waiting for the handshake
+                dispatch_semaphore_signal(_delegate->opened);
         }
         dispatch_semaphore_signal(_recvSem);
     }
@@ -447,12 +454,23 @@ private:
 
 } // namespace
 
+// The semaphore an exchange waits on: its completion block signals it, and
+// so does set(). A stale signal (set() while nothing waits) only makes the
+// next wait look at the flag, which is then set.
+Cancel::Cancel() : _os(intptr_t((__bridge_retained void *)dispatch_semaphore_create(0))) {}
+
+Cancel::~Cancel() {
+    dispatch_semaphore_t sem = (__bridge_transfer dispatch_semaphore_t)(void *)_os;
+    (void)sem;
+}
+
+void Cancel::set() {
+    _flag.store(true, std::memory_order_release);
+    dispatch_semaphore_signal((__bridge dispatch_semaphore_t)(void *)_os);
+}
+
 void perform(
-    const Url               &url,
-    const Request           &req,
-    Response                &resp,
-    const std::atomic<bool> &cancel,
-    const Progress          &progress
+    const Url &url, Request &req, Response &resp, const Cancel &cancel, const Progress &progress
 ) {
     @autoreleasepool {
         const int64_t        deadline = deadlineAfter(req.timeoutMs);
@@ -467,7 +485,7 @@ void perform(
         __block NSData        *data     = nil;
         __block NSURLResponse *response = nil;
         __block NSError       *error    = nil;
-        dispatch_semaphore_t   sem      = dispatch_semaphore_create(0);
+        dispatch_semaphore_t   sem      = (__bridge dispatch_semaphore_t)(void *)cancel.os();
         NSURLSessionDataTask  *task =
             [session() dataTaskWithRequest:r
                          completionHandler:^(NSData *d, NSURLResponse *rr, NSError *e) {
@@ -488,7 +506,7 @@ void perform(
                     progress(got, total > 0 ? total : 0);
                 }
             };
-        switch (waitFor(sem, deadline, cancel, tick)) {
+        switch (waitFor(sem, deadline, cancel.flag(), tick)) {
         case Wait::Done:
             break;
         case Wait::Cancelled:

@@ -9,7 +9,6 @@
 #include <climits>
 #include <atomic>
 #include <cerrno>
-#include <condition_variable>
 #include <cstring>
 #include <fcntl.h>
 #include <mutex>
@@ -18,6 +17,7 @@
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -26,12 +26,29 @@ namespace net::detail {
 
 // tls.cpp
 struct TlsConn;
-TlsConn *tlsNew(int fd, const std::string &host, std::string *error);
+TlsConn *tlsNew(int fd, const Url &url, std::string *error);
 void     tlsFree(TlsConn *c);
 long     tlsHandshake(TlsConn *c, short *want, std::string *error);
 long     tlsRead(TlsConn *c, char *buf, size_t n, short *want, std::string *error);
 long     tlsWrite(TlsConn *c, const char *buf, size_t n, short *want, std::string *error);
 bool     tlsPending(const TlsConn *c);
+
+// An eventfd: readable from set() on, so a waitFd with it as the wake fd
+// returns Cancelled at once (and every later wait sees the flag first).
+Cancel::Cancel() : _os(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {}
+
+Cancel::~Cancel() {
+    if (_os >= 0)
+        ::close(int(_os));
+}
+
+void Cancel::set() {
+    _flag.store(true, std::memory_order_release);
+    if (_os >= 0) {
+        const uint64_t                 one = 1;
+        [[maybe_unused]] const ssize_t r   = ::write(int(_os), &one, sizeof one);
+    }
+}
 
 int64_t nowMs() {
     timespec ts;
@@ -84,24 +101,111 @@ std::string waitError(Wait r) {
     return r == Wait::Cancelled ? "cancelled" : "timeout";
 }
 
+// One address to connect to.
+struct Addr {
+    sockaddr_storage sa;
+    socklen_t        len = 0;
+};
+
+// What a host name resolved to, kept kDnsTtlMs: a reconnect (keep-alive
+// expired, a WebSocket recycled, a burst of requests) skips the lookup
+// thread. getaddrinfo doesn't report the record's TTL; a minute is about
+// the short TTL that CDN and load-balancer names use. A name whose
+// addresses all failed to connect is dropped, so a moved host is looked up
+// again at once.
+constexpr int64_t kDnsTtlMs    = 60000;
+constexpr size_t  kDnsMaxHosts = 16;
+
+struct DnsEntry {
+    std::string       key; // "host:port"
+    std::vector<Addr> addrs;
+    int64_t           expires = 0;
+};
+
+struct DnsCache {
+    std::mutex            mutex;
+    std::vector<DnsEntry> entries;
+};
+
+DnsCache &dnsCache() {
+    static DnsCache *const c = new DnsCache; // never destroyed: workers may outlive statics
+    return *c;
+}
+
+std::atomic<int64_t> g_dnsLookups{0};
+
+bool dnsCached(const std::string &key, std::vector<Addr> *out) {
+    DnsCache                   &c = dnsCache();
+    std::lock_guard<std::mutex> lock(c.mutex);
+    const int64_t               now = nowMs();
+    for (size_t i = 0; i < c.entries.size(); ++i)
+        if (c.entries[i].key == key) {
+            if (c.entries[i].expires <= now) {
+                c.entries.erase(c.entries.begin() + ptrdiff_t(i));
+                return false;
+            }
+            *out = c.entries[i].addrs;
+            return true;
+        }
+    return false;
+}
+
+void dnsStore(const std::string &key, const std::vector<Addr> &addrs) {
+    DnsCache                   &c = dnsCache();
+    std::lock_guard<std::mutex> lock(c.mutex);
+    const int64_t               now = nowMs();
+    for (size_t i = 0; i < c.entries.size();)
+        if (c.entries[i].key == key || c.entries[i].expires <= now)
+            c.entries.erase(c.entries.begin() + ptrdiff_t(i));
+        else
+            ++i;
+    if (c.entries.size() >= kDnsMaxHosts)
+        c.entries.erase(c.entries.begin()); // the oldest
+    c.entries.push_back({key, addrs, now + kDnsTtlMs});
+}
+
+void dnsForget(const std::string &key) {
+    DnsCache                   &c = dnsCache();
+    std::lock_guard<std::mutex> lock(c.mutex);
+    for (size_t i = 0; i < c.entries.size(); ++i)
+        if (c.entries[i].key == key) {
+            c.entries.erase(c.entries.begin() + ptrdiff_t(i));
+            return;
+        }
+}
+
+void appendAddrs(const addrinfo *list, std::vector<Addr> *out) {
+    for (const addrinfo *ai = list; ai; ai = ai->ai_next) {
+        if (ai->ai_addrlen > sizeof(sockaddr_storage))
+            continue;
+        Addr a;
+        std::memcpy(&a.sa, ai->ai_addr, ai->ai_addrlen);
+        a.len = socklen_t(ai->ai_addrlen);
+        out->push_back(a);
+    }
+}
+
 // getaddrinfo cannot be interrupted, and a dead resolver can block it for
 // tens of seconds. It runs on its own detached thread so the caller can give
-// up on time. Both sides hold a reference; the last one out frees the state
-// (and an answer nobody waits for any more).
+// up on time; the thread raises `fd` (an eventfd) when the answer is in, so
+// the caller sleeps on it, its cancel fd and the deadline together. Both
+// sides hold a reference; the last one out frees the state (and an answer
+// nobody waits for any more).
 struct Lookup {
-    std::mutex              mutex;
-    std::condition_variable cv;
-    std::string             host, port;
-    addrinfo               *result = nullptr;
-    int                     rc     = 0;
-    bool                    done   = false;
-    std::atomic<int>        refs{2};
+    std::mutex       mutex;
+    std::string      host, port;
+    addrinfo        *result = nullptr;
+    int              rc     = 0;
+    int              fd     = -1;
+    std::atomic<int> refs{2};
 
     void release() {
         if (refs.fetch_sub(1, std::memory_order_acq_rel) != 1)
             return;
         if (result)
             freeaddrinfo(result);
+        if (fd >= 0)
+            ::close(fd);
         delete this;
     }
 };
@@ -117,26 +221,39 @@ void *lookupThread(void *p) {
         std::lock_guard<std::mutex> lock(lk->mutex);
         lk->rc     = rc;
         lk->result = rc == 0 ? res : nullptr;
-        lk->done   = true;
-        lk->cv.notify_one();
     }
+    const uint64_t                 one = 1;
+    [[maybe_unused]] const ssize_t r   = ::write(lk->fd, &one, sizeof one);
     lk->release();
     return nullptr;
 }
 
-addrinfo *resolve(const Url &url, const Waiter &w, std::string *error) {
+// False with *error ("dns: …", "cancelled", "timeout") when there is none.
+bool resolve(const Url &url, const Waiter &w, std::vector<Addr> *out, std::string *error) {
     const std::string port = str::number(url.port);
     addrinfo          hints{};
     hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags    = AI_NUMERICHOST | AI_NUMERICSERV;
     addrinfo *res     = nullptr;
-    if (getaddrinfo(url.host.c_str(), port.c_str(), &hints, &res) == 0)
-        return res; // an IP literal: nothing to wait for
+    if (getaddrinfo(url.host.c_str(), port.c_str(), &hints, &res) == 0) {
+        appendAddrs(res, out); // an IP literal: nothing to wait for
+        freeaddrinfo(res);
+        return !out->empty();
+    }
+    const std::string key = str::concat({url.host, ":", port});
+    if (dnsCached(key, out))
+        return true;
 
     auto *lk = new Lookup;
     lk->host = url.host;
     lk->port = port;
+    lk->fd   = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (lk->fd < 0) {
+        *error = sysError("dns", errno);
+        delete lk;
+        return false;
+    }
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -146,43 +263,42 @@ addrinfo *resolve(const Url &url, const Waiter &w, std::string *error) {
     const int started = pthread_create(&t, &attr, lookupThread, lk);
     pthread_attr_destroy(&attr);
     if (started != 0) {
+        ::close(lk->fd);
         delete lk;
         *error = "dns: no thread";
-        return nullptr;
+        return false;
     }
-    int rc = 0;
-    {
-        std::unique_lock<std::mutex> lock(lk->mutex);
-        while (!lk->done) {
-            const bool cancelled = w.cancel && w.cancel->load(std::memory_order_relaxed);
-            if (cancelled || (w.deadline && nowMs() >= w.deadline)) {
-                *error = cancelled ? "cancelled" : "timeout";
-                break;
-            }
-            lk->cv.wait_for(lock, std::chrono::milliseconds(100));
-        }
-        if (lk->done) {
-            rc         = lk->rc;
-            res        = lk->result;
-            lk->result = nullptr; // ours now
-        } else {
-            res = nullptr;
-        }
+    g_dnsLookups.fetch_add(1, std::memory_order_relaxed);
+    const Wait r  = waitFd(lk->fd, POLLIN, w);
+    int        rc = 0;
+    if (r == Wait::Ready) {
+        std::lock_guard<std::mutex> lock(lk->mutex);
+        rc         = lk->rc;
+        res        = lk->result;
+        lk->result = nullptr; // ours now
+    } else {
+        *error = waitError(r);
     }
-    const bool gaveUp = !res && rc == 0;
     lk->release();
-    if (gaveUp)
-        return nullptr;
+    if (r != Wait::Ready)
+        return false;
     if (rc != 0) {
         *error = str::concat({"dns: ", gai_strerror(rc)});
-        return nullptr;
+        return false;
     }
-    return res;
+    appendAddrs(res, out);
+    freeaddrinfo(res);
+    if (out->empty()) {
+        *error = "dns: no address";
+        return false;
+    }
+    dnsStore(key, *out);
+    return true;
 }
 
 // One non-blocking connect; returns the fd or -1 with *error.
-int connectOne(const addrinfo *ai, const Waiter &w, std::string *error) {
-    const int fd = ::socket(ai->ai_family, ai->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+int connectOne(const Addr &ai, const Waiter &w, std::string *error) {
+    const int fd = ::socket(ai.sa.ss_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) {
         *error = sysError("connect", errno);
         return -1;
@@ -192,7 +308,7 @@ int connectOne(const addrinfo *ai, const Waiter &w, std::string *error) {
 #ifdef SO_NOSIGPIPE
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
-    if (::connect(fd, ai->ai_addr, ai->ai_addrlen) == 0)
+    if (::connect(fd, reinterpret_cast<const sockaddr *>(&ai.sa), ai.len) == 0)
         return fd;
     if (errno != EINPROGRESS) {
         *error = sysError("connect", errno);
@@ -218,6 +334,10 @@ int connectOne(const addrinfo *ai, const Waiter &w, std::string *error) {
 
 } // namespace
 
+int64_t dnsLookups() {
+    return g_dnsLookups.load(std::memory_order_relaxed);
+}
+
 Stream::Stream() = default;
 
 Stream::~Stream() {
@@ -228,29 +348,31 @@ Stream::~Stream() {
 }
 
 bool Stream::open(const Url &url, const Waiter &w, std::string *error) {
-    addrinfo *list = resolve(url, w, error);
-    if (!list)
+    std::vector<Addr> addrs;
+    if (!resolve(url, w, &addrs, error))
         return false;
-    for (const addrinfo *ai = list; ai; ai = ai->ai_next) {
+    for (size_t i = 0; i < addrs.size(); ++i) {
         // A black-holed address (broken IPv6) must not eat the whole
         // timeout while another one would answer.
         Waiter one = w;
-        if (ai->ai_next) {
+        if (i + 1 < addrs.size()) {
             const int64_t cap = nowMs() + 4000;
             if (!one.deadline || one.deadline > cap)
                 one.deadline = cap;
         }
-        _fd = connectOne(ai, one, error);
+        _fd = connectOne(addrs[i], one, error);
         if (_fd >= 0 || *error == "cancelled" ||
             (*error == "timeout" && one.deadline == w.deadline))
             break;
     }
-    freeaddrinfo(list);
-    if (_fd < 0)
+    if (_fd < 0) {
+        if (*error != "cancelled") // the host may have moved: look it up afresh next time
+            dnsForget(str::concat({url.host, ":", str::number(url.port)}));
         return false;
+    }
     if (!url.secure())
         return true;
-    _tls = tlsNew(_fd, url.host, error);
+    _tls = tlsNew(_fd, url, error);
     if (!_tls)
         return false;
     for (;;) {

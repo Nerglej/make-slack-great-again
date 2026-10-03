@@ -20,11 +20,12 @@ int64_t nowMs(); // monotonic
 
 using str::iequals; // ASCII case-insensitive
 
-// What every blocking step waits for besides its fd. Without a wake fd,
-// waits are cut into ≤250 ms slices so a cancel flag set from another thread
-// is seen promptly. With one (WebSocket send/abort) the wait blocks until the
+// What every blocking step waits for besides its fd. With a wake fd (an HTTP
+// request's Cancel, a WebSocket's send/abort pipe) the wait blocks until the
 // fd, the wake fd or the deadline fires, with no periodic wakeups, so whoever
-// sets `cancel` must also write the wake fd.
+// sets `cancel` must also write the wake fd. Without one (the Cancel's
+// eventfd could not be made), waits are cut into ≤250 ms slices so a cancel
+// flag set from another thread is still seen promptly.
 struct Waiter {
     int64_t                  deadline = 0; // nowMs() value; 0 = none
     const std::atomic<bool> *cancel   = nullptr;
@@ -93,5 +94,10 @@ long readHead(
 );
 // "Host" header value: IPv6 literals in brackets, the port unless default.
 std::string hostHeader(const Url &url);
+
+// For tests: name lookups that went to the resolver (not answered by the
+// DNS cache), and TLS handshakes that resumed a cached session.
+int64_t dnsLookups();
+int64_t tlsResumptions();
 
 } // namespace net::detail

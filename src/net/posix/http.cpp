@@ -361,14 +361,11 @@ std::string hostHeader(const Url &url) {
 }
 
 void perform(
-    const Url               &url,
-    const Request           &req,
-    Response                &resp,
-    const std::atomic<bool> &cancel,
-    const Progress          &progress
+    const Url &url, Request &req, Response &resp, const Cancel &cancel, const Progress &progress
 ) {
     Waiter w;
-    w.cancel               = &cancel;
+    w.cancel               = &cancel.flag();
+    w.wakeFd               = int(cancel.os()); // -1 without one: sliced waits
     w.deadline             = req.timeoutMs > 0 ? nowMs() + req.timeoutMs : 0;
     const std::string key  = str::concat({url.scheme, "://", url.host, ":", str::number(url.port)});
     const std::string head = requestHead(url, req);
@@ -388,7 +385,7 @@ void perform(
         const bool    idempotent = req.method == "GET" || req.method == "HEAD";
         if (reused && (o == Outcome::Unsent || (o == Outcome::Retry && idempotent)))
             continue;
-        if (o == Outcome::Kept && !cancel.load()) {
+        if (o == Outcome::Kept && !cancel.isSet()) {
             putIdle(key, std::move(s));
             return;
         }
@@ -396,7 +393,7 @@ void perform(
             return;
         break;
     }
-    if (cancel.load())
+    if (cancel.isSet())
         error = "cancelled";
     resp       = Response();
     resp.error = error.empty() ? "connect" : error;

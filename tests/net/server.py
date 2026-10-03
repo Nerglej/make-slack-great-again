@@ -9,6 +9,7 @@ Prints, one per line, then serves until stdin closes (or it is killed):
                               with a fresh self-signed cert for "localhost" (no
                               IP SAN); <ca-bundle> = that cert + the system CAs
     TLS none <why>            --tls asked, but no cert could be made
+    TLS12 <n>                 with TLS: the same, capped at TLS 1.2
     READY
 
 Run it by hand (e.g. `server.py --host 0.0.0.0 --port 8099`) and point
@@ -104,6 +105,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/closehdr':  # a length, but Connection: close
             self.send_body(str(self.client_address[1]), extra=[('Connection', 'close')])
             self.close_connection = True
+        elif path == '/tls-session':  # "reused" when the TLS handshake resumed a session
+            reused = getattr(self.connection, 'session_reused', False)
+            self.send_body('reused' if reused else 'new', extra=[('Connection', 'close')])
+            self.close_connection = True
         elif path == '/keepalive':  # the client's port: same port = same connection
             self.send_body(str(self.client_address[1]))
         elif path == '/swallowed':  # how many /post-swallow requests arrived
@@ -180,6 +185,8 @@ class Handler(BaseHTTPRequestHandler):
             }), ctype='application/json')
         elif path == '/post-redirect':
             self.redirect('/headers', status=302)
+        elif path == '/post-307':  # the body must be sent again
+            self.redirect('/echo', status=307)
         elif path == '/post-swallow':  # takes the POST, then closes without an answer
             Handler.swallowed += 1
             self.close_connection = True
@@ -361,6 +368,12 @@ def main():
             tlsd = TlsServer((host, 0), Handler, ctx)
             print('TLS %d %s' % (tlsd.server_address[1], files[2]), flush=True)
             threading.Thread(target=tlsd.serve_forever, daemon=True).start()
+            ctx12 = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx12.maximum_version = ssl.TLSVersion.TLSv1_2
+            ctx12.load_cert_chain(files[1], files[0])
+            tls12d = TlsServer((host, 0), Handler, ctx12)
+            print('TLS12 %d' % tls12d.server_address[1], flush=True)
+            threading.Thread(target=tls12d.serve_forever, daemon=True).start()
         else:
             print('TLS none %s' % why, flush=True)
     print('READY', flush=True)

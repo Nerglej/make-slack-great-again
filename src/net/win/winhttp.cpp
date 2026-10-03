@@ -6,14 +6,14 @@
 // from the thread that is blocked in it, and closing a handle from another
 // thread races with that thread's next call on it. Async keeps every handle
 // owned by one thread: that thread starts an operation, then waits on an
-// event the status callback sets, in short slices so it can notice `cancel`
-// and the deadline. Giving up means closing the handle from the owning
-// thread and returning at once: how soon WinHTTP really abandons the
-// operation varies (Wine waits for the server), so everything it may still
-// touch — the context, events, read buffers, the request body, queued
-// WebSocket sends — lives in a heap block that the owner and the handle
-// share; HANDLE_CLOSING (the last callback a handle gets) drops the
-// handle's reference.
+// event the status callback sets, together with a wake event (the request's
+// Cancel, a WebSocket's abort) and the deadline. Giving up means closing the
+// handle from the owning thread and returning at once: how soon WinHTTP
+// really abandons the operation varies (Wine waits for the server), so
+// everything it may still touch — the context, events, read buffers, the
+// request body, queued WebSocket sends — lives in a heap block that the
+// owner and the handle share; HANDLE_CLOSING (the last callback a handle
+// gets) drops the handle's reference.
 #include "base/str.h"
 #include "base/utf8.h"
 #include "net/transport.h"
@@ -29,9 +29,10 @@ namespace net::detail {
 
 namespace {
 
-constexpr DWORD kChunk         = 64 * 1024; // one ReadData / WebSocketReceive
-constexpr DWORD kWsKeepAliveMs = 20000;     // see session()
-constexpr DWORD kSlice         = 250;       // how often a wait looks at `cancel`
+constexpr DWORD  kChunk         = 64 * 1024; // one ReadData / WebSocketReceive
+constexpr DWORD  kWsKeepAliveMs = 20000;     // see session()
+constexpr DWORD  kSlice         = 250; // how often a wait looks at `cancel` without a wake event
+constexpr size_t kMaxQueued = 64 * 1024 * 1024; // unsent WebSocket data beyond this: send() fails
 
 std::wstring wide(std::string_view s) {
     std::wstring out;
@@ -165,6 +166,7 @@ struct WsCtx final : Ctx {
     // sending (a deque: pushing more never moves it).
     std::mutex      mutex;
     std::deque<Out> out;
+    size_t          queued    = 0; // bytes in `out`
     int             closeCode = 0; // what close() asked for
     bool            ended     = false;
 };
@@ -296,7 +298,7 @@ bool attach(HINTERNET h, Ctx *ctx) {
 struct Exchange {
     Op       *op      = new Op;
     HINTERNET connect = nullptr, request = nullptr;
-    HANDLE    wake = nullptr; // optional: wakes a wait early (WebSocket abort)
+    HANDLE    wake = nullptr; // wakes a wait early: the request's Cancel, a WebSocket's abort
 
     ~Exchange() {
         closeRequest();
@@ -323,7 +325,11 @@ struct Exchange {
                 closeRequest();
                 return "timeout";
             }
-            const DWORD slice = deadline - now < kSlice ? DWORD(deadline - now) : kSlice;
+            // With a wake event whoever sets `cancel` signals it: no polling.
+            const ULONGLONG left = deadline - now;
+            const ULONGLONG most = wake ? ULONGLONG(INFINITE - 1) : kSlice;
+            const DWORD     slice =
+                deadline == ~ULONGLONG(0) && wake ? INFINITE : DWORD(left < most ? left : most);
             if (WaitForMultipleObjects(wake ? 2 : 1, evs, FALSE, slice) == WAIT_OBJECT_0)
                 return op->status == WINHTTP_CALLBACK_STATUS_REQUEST_ERROR
                            ? failure(op->error, op->cert)
@@ -331,11 +337,13 @@ struct Exchange {
         }
     }
     // Connects, sends the request and waits for the response headers.
+    // *body (may be null) is moved into the Op, where WinHTTP reads it from
+    // until the response has begun; it is moved back once it has.
     std::string start(
         const Url                 &url,
         std::string_view           method,
         const std::vector<Header> &headers,
-        std::string_view           body,
+        std::string               *body,
         int                        timeoutMs,
         bool                       upgrade,
         ULONGLONG                  deadline,
@@ -384,7 +392,8 @@ struct Exchange {
             op->headers += wide(h.value);
             op->headers += L"\r\n";
         }
-        op->body.assign(body);
+        if (body)
+            op->body = std::move(*body);
         if (!WinHttpSendRequest(
                 request,
                 op->headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : op->headers.c_str(),
@@ -399,7 +408,10 @@ struct Exchange {
             return e;
         if (!WinHttpReceiveResponse(request, nullptr))
             return failure(GetLastError());
-        return await(deadline, cancel);
+        std::string e = await(deadline, cancel);
+        if (e.empty() && body) // WinHTTP is done with it
+            *body = std::move(op->body);
+        return e;
     }
     DWORD status() const {
         DWORD code = 0, len = sizeof code;
@@ -474,7 +486,7 @@ public:
     ) override {
         _x.wake            = _ctx->wakeEv;
         const ULONGLONG dl = deadlineAfter(timeoutMs);
-        std::string     e  = _x.start(url, "GET", headers, {}, timeoutMs, true, dl, _aborted);
+        std::string     e  = _x.start(url, "GET", headers, nullptr, timeoutMs, true, dl, _aborted);
         if (e.empty()) {
             const DWORD status = _x.status();
             if (status != 101) {
@@ -543,9 +555,10 @@ public:
 
     bool send(std::string_view data, bool text) override {
         std::lock_guard<std::mutex> lock(_ctx->mutex);
-        if (_ctx->ended || _ctx->closeCode)
+        if (_ctx->ended || _ctx->closeCode || _ctx->queued + data.size() > kMaxQueued)
             return false;
         _ctx->out.push_back({std::string(data), text});
+        _ctx->queued += data.size();
         SetEvent(_ctx->wakeEv); // the reader thread makes the WinHTTP call
         return true;
     }
@@ -579,10 +592,12 @@ private:
             WsCtx::Out &o    = _ctx->out.front();
             const auto  type = o.text ? WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE
                                       : WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE;
-            if (WinHttpWebSocketSend(_ws, type, o.data.data(), DWORD(o.data.size())) == NO_ERROR)
+            if (WinHttpWebSocketSend(_ws, type, o.data.data(), DWORD(o.data.size())) == NO_ERROR) {
                 _writing = Sending;
-            else
+            } else {
+                _ctx->queued -= o.data.size();
                 _ctx->out.pop_front(); // a broken socket: the pending receive ends it
+            }
         } else if (_ctx->closeCode && !_shutdownSent) {
             shutdown(USHORT(_ctx->closeCode));
             _closeDeadline = GetTickCount64() + 5000;
@@ -596,6 +611,7 @@ private:
     void writeDone() {
         if (_writing == Sending) {
             std::lock_guard<std::mutex> lock(_ctx->mutex);
+            _ctx->queued -= _ctx->out.front().data.size();
             _ctx->out.pop_front();
         }
         _writing = Idle;
@@ -652,21 +668,34 @@ private:
 
 } // namespace
 
+// A manual-reset event: once set it stays signalled, so every later wait
+// returns at once and sees the flag.
+Cancel::Cancel() : _os(intptr_t(CreateEventW(nullptr, TRUE, FALSE, nullptr))) {}
+
+Cancel::~Cancel() {
+    if (_os)
+        CloseHandle(HANDLE(_os));
+}
+
+void Cancel::set() {
+    _flag.store(true, std::memory_order_release);
+    if (_os)
+        SetEvent(HANDLE(_os));
+}
+
 void perform(
-    const Url               &url,
-    const Request           &req,
-    Response                &resp,
-    const std::atomic<bool> &cancel,
-    const Progress          &progress
+    const Url &url, Request &req, Response &resp, const Cancel &cancel, const Progress &progress
 ) {
     Exchange        x;
     const ULONGLONG deadline = deadlineAfter(req.timeoutMs);
-    std::string     e =
-        x.start(url, req.method, req.headers, req.body, req.timeoutMs, false, deadline, cancel);
+    x.wake                   = HANDLE(cancel.os()); // null: sliced waits
+    std::string e            = x.start(
+        url, req.method, req.headers, &req.body, req.timeoutMs, false, deadline, cancel.flag()
+    );
     if (e.empty()) {
         resp.status = int(x.status());
         x.headers(resp.headers);
-        e = x.read(resp.body, deadline, cancel, progress, contentLength(resp.headers));
+        e = x.read(resp.body, deadline, cancel.flag(), progress, contentLength(resp.headers));
     }
     if (!e.empty()) {
         resp.status = 0;
