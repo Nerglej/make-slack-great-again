@@ -223,6 +223,11 @@ int main(int argc, char **argv) {
         return 2;
     }
 #endif
+    // Destroyed after everything below, the App included: sockets retired at
+    // exit wait in its posted closures and timers, and go with its loop.
+    struct NetCaches {
+        ~NetCaches() { net::releaseCaches(); }
+    } netCaches;
     auto app = ui::App::create(&err);
     if (!app) {
         std::fprintf(stderr, "msga: %s\n", err.c_str());
@@ -292,11 +297,6 @@ int main(int argc, char **argv) {
     );
     app->setUserTextScale(settings.fontScale());
     settings.applyPalettes();
-
-    // Destroyed after everything below, so every Client and WebSocket is gone.
-    struct NetCaches {
-        ~NetCaches() { net::releaseCaches(); }
-    } netCaches;
 
     // The demo workspace, or the signed-in one (Accounts swaps it in behind
     // the proxy the screens hold).
