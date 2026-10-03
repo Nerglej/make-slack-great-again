@@ -86,12 +86,12 @@ Checker &Checker::instance() {
 
 Checker::Checker() = default;
 
-void Checker::configure(plat::App &app, bool enabled, std::vector<std::string> languages) {
+void Checker::configure(plat::App &app, bool enabled, const std::vector<std::string> &languages) {
     _app = &app;
     if (enabled == _enabled && languages == _languages)
         return;
     _enabled   = enabled;
-    _languages = std::move(languages);
+    _languages = languages;
     apply();
 }
 

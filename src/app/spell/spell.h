@@ -109,7 +109,7 @@ public:
     // language's, defaultLanguages). Turning it on loads them in the
     // background; changed() follows once words can be checked. A no-op when
     // nothing changed.
-    void configure(plat::App &app, bool enabled, std::vector<std::string> languages);
+    void configure(plat::App &app, bool enabled, const std::vector<std::string> &languages);
     bool enabled() const { return _enabled; }
     const std::vector<std::string> &languages() const { return _languages; }
     // Enabled with its dictionaries loaded: words get checked.
