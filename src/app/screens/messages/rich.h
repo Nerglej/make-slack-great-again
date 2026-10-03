@@ -15,9 +15,29 @@
 
 namespace screens {
 
+// A piece of message text the message list selects across (RichOptions::
+// labels, MessageRow::selectionLabels): a body label, or a data table's cells
+// (TableView). Offsets are bytes of its text (selectableTexts' part).
+class SelectableText {
+public:
+    virtual ui::View &textView()                             = 0; // its geometry
+    virtual uint32_t  textSize() const                       = 0;
+    // The highlighted range (from == to: none).
+    virtual void      selectText(uint32_t from, uint32_t to) = 0;
+    // The offset nearest to a point in textView()'s coordinates.
+    virtual uint32_t  textOffsetAt(ui::PointF local) const   = 0;
+    // Double click: the word around an offset; triple click: the line
+    // (a table's row) under a point. [*from, *to).
+    virtual void      wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const  = 0;
+    virtual void      lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const = 0;
+
+protected:
+    ~SelectableText() = default;
+};
+
 // A Label that knows what its links point at and paints custom emoji boxes.
 // Clicks go through the Context (openUrl / openConversation / openProfile).
-class RichLabel : public ui::Label {
+class RichLabel : public ui::Label, public SelectableText {
 public:
     struct Target {
         mrkdwn::Kind kind;
@@ -37,6 +57,13 @@ public:
     // Message text the list selects across: the I-beam over plain text.
     void setSelectable(bool on) { _selectable = on; }
     bool selectable() const { return _selectable; }
+
+    ui::View &textView() override { return *this; }
+    uint32_t  textSize() const override { return uint32_t(text().size()); }
+    void      selectText(uint32_t from, uint32_t to) override { setSelection(from, to); }
+    uint32_t  textOffsetAt(ui::PointF local) const override { return offsetAt(local); }
+    void      wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const override;
+    void      lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const override;
 
     void        paint(gfx::Painter &p) override;
     // Hover on a mention or name: the profile card; right click on a link:
@@ -66,16 +93,16 @@ private:
 };
 
 struct RichOptions {
-    ui::Font                  font     = ui::Font::Body;
-    ui::C                     color    = ui::C::Text;
-    bool                      edited   = false; // append " (edited)" to the last text block
-    int                       maxLines = 0;     // > 0: one paragraph, ellipsized (previews)
-    float                     scale    = 1;     // the font size times this (Block Kit headers: 1.1)
+    ui::Font                       font     = ui::Font::Body;
+    ui::C                          color    = ui::C::Text;
+    bool                           edited   = false; // append " (edited)" to the last text block
+    int                            maxLines = 0;     // > 0: one paragraph, ellipsized (previews)
+    float                          scale  = 1; // the font size times this (Block Kit headers: 1.1)
     // Stop at this byte offset of the parsed text with "…" (previewCut);
     // UINT32_MAX = the whole text.
-    uint32_t                  cut      = UINT32_MAX;
+    uint32_t                       cut    = UINT32_MAX;
     // Collects the text labels made, in order (the message list's selection).
-    std::vector<RichLabel *> *labels   = nullptr;
+    std::vector<SelectableText *> *labels = nullptr;
 };
 
 // Appends the blocks of `mrkdwnText` to `column` (a Column view).

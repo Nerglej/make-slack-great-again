@@ -245,6 +245,24 @@ uint8_t RichLabel::cursorAt(ui::PointF local) const {
     return ui::Label::cursorAt(local);
 }
 
+void RichLabel::wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const {
+    const text::Layout *l = textLayout();
+    *from                 = l ? l->wordStart(offset) : offset;
+    *to                   = l ? l->wordEnd(offset) : offset;
+}
+
+// The visual line under the point.
+void RichLabel::lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const {
+    const text::Layout *l = textLayout();
+    if (!l) {
+        *from = *to = 0;
+        return;
+    }
+    const float y = local.y - textOrigin().y;
+    *from         = l->hitTest({-1e6f, y}).offset;
+    *to           = l->hitTest({1e6f, y}).offset;
+}
+
 void RichLabel::setContent(
     text::AttributedText t, std::vector<Target> targets, std::vector<std::string> images
 ) {

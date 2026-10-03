@@ -263,25 +263,26 @@ private:
 
 // The label under (or, between two, nearest to) a window y, and the base
 // offset of its text; null when y is above the first or below the last.
-RichLabel *labelAt(const MessageRow &row, float wy, uint32_t *base) {
-    const std::vector<RichLabel *> &labels = row.selectionLabels();
+SelectableText *labelAt(const MessageRow &row, float wy, uint32_t *base) {
+    const std::vector<SelectableText *> &labels = row.selectionLabels();
     if (labels.empty())
         return nullptr;
-    const ui::RectF first = labels.front()->windowRect(), last = labels.back()->windowRect();
+    const ui::RectF first = labels.front()->textView().windowRect();
+    const ui::RectF last  = labels.back()->textView().windowRect();
     if (wy < first.y || wy > last.y + last.h)
         return nullptr;
-    uint32_t   b    = 0;
-    RichLabel *best = nullptr;
-    float      dist = 1e9f;
-    for (RichLabel *l : labels) {
-        const ui::RectF r = l->windowRect();
+    uint32_t        b    = 0;
+    SelectableText *best = nullptr;
+    float           dist = 1e9f;
+    for (SelectableText *l : labels) {
+        const ui::RectF r = l->textView().windowRect();
         const float     d = wy < r.y ? r.y - wy : wy > r.y + r.h ? wy - (r.y + r.h) : 0;
         if (d < dist) {
             dist  = d;
             best  = l;
             *base = b;
         }
-        b += uint32_t(l->text().size()) + 1;
+        b += l->textSize() + 1;
     }
     return best;
 }
@@ -1407,23 +1408,16 @@ bool MessageList::onEvent(ui::Event &e) {
             return false;
         const TextPos tp = textPosAt(e.windowPos);
         if (tp.ts && e.clicks >= 2) {
-            uint32_t    base = 0;
-            const int   i    = itemIndex(tp.ts);
-            auto       *row  = i >= 0 ? static_cast<MessageRow *>(_list->viewFor(i)) : nullptr;
-            RichLabel  *l    = row ? labelAt(*row, e.windowPos.y, &base) : nullptr;
-            const auto *lay  = l ? l->textLayout() : nullptr;
-            if (lay) {
-                const uint32_t at = tp.offset - base;
-                uint32_t       a = 0, b = 0;
-                if (e.clicks == 2) {
-                    a = lay->wordStart(at);
-                    b = lay->wordEnd(at);
-                } else { // the visual line under the pointer
-                    const ui::PointF o = l->textOrigin();
-                    const float      y = l->mapFromWindow(e.windowPos).y - o.y;
-                    a                  = lay->hitTest({-1e6f, y}).offset;
-                    b                  = lay->hitTest({1e6f, y}).offset;
-                }
+            uint32_t        base = 0;
+            const int       i    = itemIndex(tp.ts);
+            auto           *row  = i >= 0 ? static_cast<MessageRow *>(_list->viewFor(i)) : nullptr;
+            SelectableText *l    = row ? labelAt(*row, e.windowPos.y, &base) : nullptr;
+            if (l) {
+                uint32_t a = 0, b = 0;
+                if (e.clicks == 2)
+                    l->wordAt(tp.offset - base, &a, &b);
+                else
+                    l->lineAt(l->textView().mapFromWindow(e.windowPos), &a, &b);
                 _selDragging = false;
                 select({tp.ts, base + a}, {tp.ts, base + b});
                 return true;
@@ -2163,15 +2157,15 @@ MessageList::TextPos MessageList::textPosAt(ui::PointF wp) const {
         const ui::RectF r = row->windowRect();
         if (wp.y < r.y || wp.y >= r.y + r.h)
             continue;
-        uint32_t   base = 0;
-        RichLabel *l    = labelAt(*row, wp.y, &base);
+        uint32_t        base = 0;
+        SelectableText *l    = labelAt(*row, wp.y, &base);
         if (!l)
             return {};
-        const ui::RectF  lr = l->windowRect();
-        const ui::PointF p  = l->mapFromWindow(
+        const ui::RectF  lr = l->textView().windowRect();
+        const ui::PointF p  = l->textView().mapFromWindow(
             {std::max(wp.x, lr.x), std::clamp(wp.y, lr.y, lr.y + std::max(0.f, lr.h - 1))}
         );
-        return {row->ts(), base + l->offsetAt(p)};
+        return {row->ts(), base + l->textOffsetAt(p)};
     }
     return {};
 }
@@ -2207,13 +2201,13 @@ void MessageList::applySelection(MessageRow &row) const {
         to   = ts == f.ts ? f.offset : UINT32_MAX;
     }
     uint32_t base = 0;
-    for (RichLabel *l : row.selectionLabels()) {
-        const uint32_t n  = uint32_t(l->text().size());
+    for (SelectableText *l : row.selectionLabels()) {
+        const uint32_t n  = l->textSize();
         const uint32_t lo = std::max(from, base), hi = std::min<uint64_t>(to, uint64_t(base) + n);
         if (hi > lo)
-            l->setSelection(lo - base, hi - base);
+            l->selectText(lo - base, hi - base);
         else
-            l->setSelection(0, 0);
+            l->selectText(0, 0);
         base += n + 1;
     }
 }

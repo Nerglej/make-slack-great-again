@@ -952,6 +952,10 @@ std::vector<std::string> selectableTexts(Context &ctx, const model::Message &m) 
     }
     std::vector<std::string> out;
     for (const model::Block &b : m.extra->blocks) {
+        if (b.kind == model::Block::Kind::Table) {
+            out.push_back(tableText(ctx, b.rows));
+            continue;
+        }
         if (b.kind != model::Block::Kind::Text && b.kind != model::Block::Kind::Header)
             continue;
         RichOptions o;
@@ -1190,7 +1194,7 @@ void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root)
     auto       *body = col->add<ui::View>();
     body->style().spacing(2).margins(0, root && _kind != kRowGrouped ? 1 : 0, 0, 0);
     // The root's text is what the list selects across (not inline replies').
-    std::vector<RichLabel *> *labels = root ? &_sel : nullptr;
+    std::vector<SelectableText *> *labels = root ? &_sel : nullptr;
     if (m.isHuddle()) {
         // A huddle row: one sentence in text.secondary, never "(edited)"
         // (Slack edits every huddle message when it ends).
@@ -1237,7 +1241,7 @@ void MessageRow::buildBlocks(
     Ts                               ts,
     int                              attachment,
     bool                             edited,
-    std::vector<RichLabel *>        *labels
+    std::vector<SelectableText *>   *labels
 ) {
     // Text blocks as paragraphs (2 px apart), a header
     // 1.1x bold, a divider hairline, an image under its title (the title
@@ -1298,9 +1302,15 @@ void MessageRow::buildBlocks(
                 addThumb(col, b.image, b.width, b.height, kImgMaxW, kImgMaxH, 2);
             break;
         }
-        case K::Table:
-            col->add<TableView>(ctx, b.rows)->style().alignSelf(Align::Start);
+        case K::Table: {
+            auto *t = col->add<TableView>(ctx, b.rows);
+            t->style().alignSelf(Align::Start);
+            if (labels) {
+                t->setSelectable(true);
+                labels->push_back(t);
+            }
             break;
+        }
         }
     }
     if (edited) {

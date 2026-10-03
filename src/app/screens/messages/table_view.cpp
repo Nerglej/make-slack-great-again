@@ -18,7 +18,44 @@ constexpr float kMarginV = 8;          // the table's 8-px margins
 constexpr float kPadX = 12, kPadY = 5; // cell padding
 constexpr float kPillH = 28, kPillIconPad = 40;
 
+// The rows an inline table shows, rich (mentions, links, emoji) as the body
+// draws them: the header bold, the last row dimmed when rows were cut ("more
+// below"). Custom emoji boxes are numbered across the table.
+std::vector<std::vector<text::AttributedText>> inlineCells(
+    Context                                     &ctx,
+    const std::vector<std::vector<std::string>> &cells,
+    std::vector<std::string>                    *images
+) {
+    const size_t total = cells.size();
+    const size_t shown = std::min(total, size_t(kMaxInlineTableRows));
+    std::vector<std::vector<text::AttributedText>> texts(shown);
+    for (size_t r = 0; r < shown; ++r)
+        for (size_t c = 0; c < cells[r].size(); ++c) {
+            RichOptions o;
+            o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
+            o.color = shown < total && r + 1 == shown ? C::TextFaint : C::Text;
+            texts[r].push_back(richText(ctx, cells[r][c], o, images));
+        }
+    return texts;
+}
+
 } // namespace
+
+std::string tableText(Context &ctx, const std::vector<std::vector<std::string>> &cells) {
+    std::vector<std::string> images;
+    std::string              out;
+    const auto               texts = inlineCells(ctx, cells, &images);
+    for (size_t r = 0; r < texts.size(); ++r) {
+        if (r)
+            out += '\n';
+        for (size_t c = 0; c < texts[r].size(); ++c) {
+            if (c)
+                out += '\t';
+            out += texts[r][c].text;
+        }
+    }
+    return out;
+}
 
 // ── TableGrid ───────────────────────────────────────────────────────────────
 
@@ -39,6 +76,76 @@ void TableGrid::setCells(std::vector<std::vector<text::AttributedText>> cells, f
     _naturalW = 0;
     for (float v : _natW)
         _naturalW += v;
+    // Offsets as tableText joins the cells; a row's last entry is its end.
+    uint32_t off = 0;
+    _base.assign(_texts.size(), {});
+    for (size_t r = 0; r < _texts.size(); ++r) {
+        if (r)
+            ++off;
+        for (size_t c = 0; c < _texts[r].size(); ++c) {
+            if (c)
+                ++off;
+            _base[r].push_back(off);
+            off += uint32_t(_texts[r][c].text.size());
+        }
+        _base[r].push_back(off);
+    }
+    _textSize = off;
+    _selFrom = _selTo = 0;
+}
+
+void TableGrid::setSelection(uint32_t from, uint32_t to) {
+    _selFrom = std::min(from, _textSize);
+    _selTo   = std::min(to, _textSize);
+}
+
+size_t TableGrid::rowIndexAt(float y) const {
+    float top = 0;
+    for (size_t r = 0; r + 1 < _rowH.size(); ++r) {
+        top += _rowH[r];
+        if (y < top)
+            return r;
+    }
+    return _rowH.size() - 1;
+}
+
+uint32_t TableGrid::offsetAt(ui::PointF p) const {
+    if (_rowH.empty())
+        return 0;
+    const size_t r   = rowIndexAt(p.y);
+    float        top = 0;
+    for (size_t i = 0; i < r; ++i)
+        top += _rowH[i];
+    if (_texts[r].empty())
+        return _base[r].back();
+    // The column under x (past a short row's end: its last cell).
+    size_t c = 0;
+    float  x = 0;
+    while (c + 1 < _texts[r].size() && p.x >= x + _colW[c])
+        x += _colW[c++];
+    return _base[r][c] + cell(r, c).hitTest({p.x - x - kPadX, p.y - top - kPadY}).offset;
+}
+
+void TableGrid::wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const {
+    *from = *to = offset;
+    for (size_t r = 0; r < _texts.size() && r < _wrapped.size(); ++r)
+        for (size_t c = 0; c < _texts[r].size(); ++c) {
+            const uint32_t b = _base[r][c], n = uint32_t(_texts[r][c].text.size());
+            if (offset < b || offset > b + n)
+                continue;
+            *from = b + cell(r, c).wordStart(offset - b);
+            *to   = b + cell(r, c).wordEnd(offset - b);
+            return;
+        }
+}
+
+void TableGrid::rowAt(float y, uint32_t *from, uint32_t *to) const {
+    *from = *to = 0;
+    if (_rowH.empty())
+        return;
+    const size_t r = rowIndexAt(y);
+    *from          = _base[r].front();
+    *to            = _base[r].back();
 }
 
 void TableGrid::fit(float width, float minColW, float emptyRowH) {
@@ -104,9 +211,22 @@ void TableGrid::paint(
         }
         float x = 0;
         for (size_t c = 0; c < _natural[r].size(); ++c) {
-            const text::Layout &l = _wrapped[r][c] ? *_wrapped[r][c] : *_natural[r][c];
+            const text::Layout &l = cell(r, c);
             const ui::PointF    o = v.snapPx({x + kPadX, y + kPadY});
             l.paint(p, o);
+            // A message selection: the system highlight, the text on it
+            // white (as Label draws one).
+            const uint32_t b = _base[r][c], n = uint32_t(_texts[r][c].text.size());
+            const uint32_t lo = std::max(_selFrom, b), hi = std::min(_selTo, b + n);
+            if (hi > lo)
+                for (const gfx::RectF &sr : l.selectionRects(lo - b, hi - b)) {
+                    const ui::RectF rr{sr.x + o.x, sr.y + o.y, sr.w, sr.h};
+                    p.save();
+                    p.clipRect(rr);
+                    p.fillRect(rr, ui::systemHighlight());
+                    l.paintAs(p, o, 0xffffffff);
+                    p.restore();
+                }
             if (ctx && !images.empty())
                 anim->schedule(paintEmojiBoxes(*ctx, p, l, o, images, &v));
             x += _colW[c];
@@ -122,6 +242,7 @@ TableView::TableView(Context &ctx, std::vector<std::vector<std::string>> cells)
     setHoverRepaint(true);
     setRole(ui::Role::Group);
     _anim      = std::make_unique<EmojiFrameTimer>(ctx, *this);
+    _textSize  = uint32_t(tableText(ctx, _cells).size());
     onOpenFull = [this] {
         if (window())
             showTableViewer(*window(), _ctx, _cells);
@@ -148,22 +269,13 @@ void TableView::styleChanged() {
 void TableView::build(float width) {
     const float scale = windowScale();
     if (_grid.scale() != scale) {
-        // Rich cells (mentions, links, emoji) as the body draws them; the
-        // header bold, the last row dimmed when rows were cut ("more
-        // below"). Custom emoji boxes are numbered across the table.
-        const size_t total = _cells.size();
-        const size_t shown = std::min(total, size_t(kMaxInlineTableRows));
-        std::vector<std::vector<text::AttributedText>> texts(shown);
         _images.clear();
-        for (size_t r = 0; r < shown; ++r)
-            for (size_t c = 0; c < _cells[r].size(); ++c) {
-                RichOptions o;
-                o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
-                o.color = shown < total && r + 1 == shown ? C::TextFaint : C::Text;
-                texts[r].push_back(richText(_ctx, _cells[r][c], o, &_images));
-                ui::resolveSpans(texts[r].back());
-            }
+        auto texts = inlineCells(_ctx, _cells, &_images);
+        for (auto &row : texts)
+            for (text::AttributedText &t : row)
+                ui::resolveSpans(t);
         _grid.setCells(std::move(texts), scale);
+        _grid.setSelection(_selFrom, _selTo);
         _builtW = -1;
     }
     if (_builtW == width)
@@ -189,6 +301,32 @@ void TableView::layout() {
 void TableView::paint(gfx::Painter &p) {
     build(width());
     _grid.paint(p, *this, kMarginV, -ui::kInf, ui::kInf, &_ctx, _images, _anim.get());
+}
+
+void TableView::selectText(uint32_t from, uint32_t to) {
+    from = std::min(from, _textSize);
+    to   = std::min(to, _textSize);
+    if (to < from)
+        std::swap(from, to);
+    if (from == _selFrom && to == _selTo)
+        return;
+    _selFrom = from;
+    _selTo   = to;
+    _grid.setSelection(from, to);
+    update();
+}
+
+uint32_t TableView::textOffsetAt(ui::PointF local) const {
+    return _grid.offsetAt({local.x, local.y - kMarginV});
+}
+
+void TableView::wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const {
+    _grid.wordAt(offset, from, to);
+}
+
+// The table row under the point.
+void TableView::lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const {
+    _grid.rowAt(local.y - kMarginV, from, to);
 }
 
 ui::RectF TableView::pillRect() const {
@@ -259,6 +397,8 @@ bool TableView::onEvent(ui::Event &e) {
 uint8_t TableView::cursorAt(ui::PointF local) const {
     if (pillRect().contains(local))
         return uint8_t(plat::Cursor::Hand);
+    if (_selectable)
+        return uint8_t(plat::Cursor::IBeam);
     return View::cursorAt(local);
 }
 

@@ -34,7 +34,7 @@ void           paintCardFrame(
     gfx::Painter &p, ui::RectF r, float radius = 8, ui::C border = ui::C::FileChipBorder
 );
 
-class RichLabel;
+class SelectableText;
 
 // A huddle row's sentence ("Mira and Jonas were in
 // the huddle for 1h 5m.").
@@ -57,16 +57,16 @@ public:
     MessageRow(MessageList &list, int kind);
     ~MessageRow() override;
 
-    void                            bind(const MessageList::Item &item);
+    void                                 bind(const MessageList::Item &item);
     // Shown again as built (the list kept it, its message unchanged): false
     // when its text went stale with the clock (a reminder due, the day).
-    bool                            reuse();
-    Ts                              ts() const { return _ts; }
-    // The message's text labels a selection runs over, in order.
-    const std::vector<RichLabel *> &selectionLabels() const { return _sel; }
+    bool                                 reuse();
+    Ts                                   ts() const { return _ts; }
+    // The message's text labels (and tables) a selection runs over, in order.
+    const std::vector<SelectableText *> &selectionLabels() const { return _sel; }
     // An attachment card under the pointer (index), for the "×" in the
     // gutter beside it (the dismiss button on link previews).
-    void                            attachHovered(int index, ui::View *card, bool on);
+    void                                 attachHovered(int index, ui::View *card, bool on);
 
     void        paint(gfx::Painter &p) override;
     void        paintOver(gfx::Painter &p) override;
@@ -92,7 +92,7 @@ private:
         Ts                               ts,
         int                              attachment,
         bool                             edited,
-        std::vector<RichLabel *>        *labels
+        std::vector<SelectableText *>   *labels
     );
     void      buildReactions(ui::View *col, const model::Message &m);
     void      buildThreadSummary(ui::View *col, const model::Message &m);
@@ -126,7 +126,7 @@ private:
     std::unique_ptr<text::Layout> _dismissLayout; // the attachment "×"
     gfx::Color                    _dismissColor = 0;
     float                         _dismissScale = 0;
-    std::vector<RichLabel *>      _sel;
+    std::vector<SelectableText *> _sel;
     ui::View                     *_attachCard = nullptr; // the hovered attachment card
     int                           _attach     = -1;      // … its index
     Ts                            _ts         = 0;

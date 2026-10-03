@@ -657,7 +657,10 @@ TEST("rows: scrolling back over seen messages rebuilds nothing; edits and reacti
     CHECK(e.list->rowBinds() == binds + 2);
     auto *edited = static_cast<MessageRow *>(e.row(seen));
     REQUIRE(edited != nullptr && !edited->selectionLabels().empty());
-    CHECK(edited->selectionLabels()[0]->text().find("edited words") != std::string::npos);
+    CHECK(
+        static_cast<RichLabel *>(edited->selectionLabels()[0])->text().find("edited words") !=
+        std::string::npos
+    );
     // A name change re-binds the rows showing it, kept ones too.
     l.scrollToBottom();
     pump(8);
@@ -2470,8 +2473,8 @@ TEST("blocks: headers, dividers, images and tables; ten rows and the pill; cards
     auto *table = static_cast<TableView *>(findLeaf(row, "*Step* | Drop-off"));
     REQUIRE(table != nullptr);
     CHECK(table->clipped()); // 15 rows: ten shown, the pill on hover
-    // The header and text blocks are what a selection runs over.
-    CHECK(static_cast<MessageRow *>(row)->selectionLabels().size() == 2);
+    // The header and text blocks and the table are what a selection runs over.
+    CHECK(static_cast<MessageRow *>(row)->selectionLabels().size() == 3);
     ui::View *row2 = e.row((t0 + 600) * 1000000);
     REQUIRE(row2 != nullptr);
     CHECK(findLeaf(row2, "Posted in #design") != nullptr);
@@ -2495,6 +2498,51 @@ TEST("blocks: headers, dividers, images and tables; ten rows and the pill; cards
     row2 = e.row((t0 + 600) * 1000000);
     REQUIRE(row2 != nullptr);
     CHECK(findLeaf(row2, "quoted words") == nullptr);
+}
+
+TEST("selection: runs over a table's cells, tab apart, a row per line") {
+    Env            e(false);
+    const int64_t  t0 = base::nowSecs() - 3600;
+    model::Message m  = msg(0, t0, "fallback");
+    using K           = model::Block::Kind;
+    m.extras().blocks.push_back({K::Text, "Intro", {}, {}, 0, 0, {}});
+    model::Block tb;
+    tb.kind = K::Table;
+    tb.rows = {{"*Name*", "Score"}, {"Ann", "12"}, {"Bob", "7"}};
+    m.extras().blocks.push_back(tb);
+    std::vector<model::Message> ms;
+    ms.push_back(std::move(m));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    const Ts   a     = t0 * 1000000;
+    const auto texts = selectableTexts(e.ctx, *e.store.findMessage(c, a));
+    REQUIRE(texts.size() == 2);
+    CHECK_STR(texts[1], "Name\tScore\nAnn\t12\nBob\t7");
+    auto *tv = static_cast<TableView *>(findLeaf(e.row(a), "*Name* | Score"));
+    REQUIRE(tv != nullptr);
+    CHECK(tv->textSize() == texts[1].size());
+    // A cell's start, a point past a row's last cell, through the list.
+    const ui::RectF r = tv->windowRect();
+    CHECK(tv->textOffsetAt({13, 14}) == 0);
+    CHECK(tv->textOffsetAt({r.w - 2, r.h - 14}) == tv->textSize());
+    const auto p = e.list->textPosAt({r.x + 13, r.y + r.h - 14});
+    CHECK(p.ts == a && p.offset == 6 + 18); // "Intro\n" + "Name\tScore\nAnn\t12\n"
+    // Double click: the cell's word; triple click: the table row.
+    uint32_t from = 0, to = 0;
+    tv->wordAt(12, &from, &to);
+    CHECK(from == 11 && to == 14);
+    tv->lineAt({13, 14}, &from, &to);
+    CHECK(from == 0 && to == 10);
+    // From the text into the table; Ctrl+C copies the grid.
+    e.list->select({a, 0}, {a, 6 + 17});
+    pump(2);
+    dump(e, "table_selection");
+    CHECK_STR(e.list->selectedText(), "Intro\nName\tScore\nAnn\t12");
+    ui::Event copy = key(plat::Key::C, plat::primaryMod());
+    CHECK(e.list->onEvent(copy));
+    CHECK_STR(clipboard(), "Intro\nName\tScore\nAnn\t12");
+    CHECK(tv->cursorAt({13, 14}) == uint8_t(plat::Cursor::IBeam));
 }
 
 TEST("blocks: a table shapes its cells once; a narrower column shapes only what wraps") {
@@ -2640,7 +2688,7 @@ TEST("blocks: a table, a canvas card and a selection as rendered (MSGA_TEST_DUMP
             if (auto *row =
                     static_cast<MessageRow *>(list->list().viewFor(int(&it - &list->items()[0]))))
                 if (!row->selectionLabels().empty())
-                    row->selectionLabels()[0]->setSelection(0, 14);
+                    row->selectionLabels()[0]->selectText(0, 14);
     pump(4);
     if (dir)
         win->dumpFullRepaint(std::string(dir) + "/rich_list.ppm");

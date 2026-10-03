@@ -7,6 +7,7 @@
 #pragma once
 
 #include "app/screens/messages/context_fwd.h"
+#include "app/screens/messages/rich.h"
 
 #include <functional>
 #include <memory>
@@ -18,6 +19,11 @@ namespace screens {
 class EmojiFrameTimer;
 
 constexpr int kMaxInlineTableRows = 10;
+
+// What a selection copies from an inline table (the rows it shows): the
+// cells' text '\t' apart, rows '\n' apart — a grid when pasted into a
+// spreadsheet. TableView's selectable text.
+std::string tableText(Context &ctx, const std::vector<std::vector<std::string>> &cells);
 
 // The table itself, for TableView and the table viewer (message_dialogs.h):
 // cells shaped once at their natural width, columns shrunk in proportion
@@ -51,19 +57,44 @@ public:
     float height() const { return _tableH; }
     bool  squeezed() const { return _squeezed; }
 
+    // The cells' text as one string (tableText): a highlighted range of it,
+    // and hit tests (after fit; y from the table's top).
+    void     setSelection(uint32_t from, uint32_t to);
+    uint32_t textSize() const { return _textSize; }
+    uint32_t offsetAt(ui::PointF p) const;
+    void     wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const;
+    void     rowAt(float y, uint32_t *from, uint32_t *to) const;
+
 private:
+    const text::Layout &cell(size_t r, size_t c) const {
+        return _wrapped[r][c] ? *_wrapped[r][c] : *_natural[r][c];
+    }
+    size_t rowIndexAt(float y) const;
+
     std::vector<std::vector<text::AttributedText>>          _texts;
     std::vector<std::vector<std::unique_ptr<text::Layout>>> _natural, _wrapped;
     std::vector<float>                                      _colW, _natW, _rowH;
-    float _scale = 0, _naturalW = 0, _tableW = 0, _tableH = 0;
-    bool  _squeezed = false;
+    std::vector<std::vector<uint32_t>>                      _base; // each cell's text offset
+    float    _scale = 0, _naturalW = 0, _tableW = 0, _tableH = 0;
+    uint32_t _textSize = 0, _selFrom = 0, _selTo = 0;
+    bool     _squeezed = false;
 };
 
-class TableView : public ui::View {
+class TableView : public ui::View, public SelectableText {
 public:
     // cells: mrkdwn, row-major.
     TableView(Context &ctx, std::vector<std::vector<std::string>> cells);
     ~TableView() override;
+
+    // Message text the list selects across (tableText): the I-beam over it.
+    void setSelectable(bool on) { _selectable = on; }
+
+    ui::View &textView() override { return *this; }
+    uint32_t  textSize() const override { return _textSize; }
+    void      selectText(uint32_t from, uint32_t to) override;
+    uint32_t  textOffsetAt(ui::PointF local) const override;
+    void      wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const override;
+    void      lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const override;
 
     // The pill was pressed (default: the table viewer with every row, the
     // cells rich as here).
@@ -92,7 +123,8 @@ private:
     std::unique_ptr<EmojiFrameTimer>      _anim;
     std::unique_ptr<text::Layout>         _pillText;
     float                                 _builtW   = -1;
-    bool                                  _overPill = false;
+    uint32_t                              _textSize = 0, _selFrom = 0, _selTo = 0;
+    bool                                  _overPill = false, _selectable = false;
 };
 
 } // namespace screens
