@@ -51,6 +51,10 @@ Click **+** (Add workspace) in the rail and choose **Claude Code**. msga needs a
 
 msga reads the sessions from Claude Code's own state, so sessions you started in a terminal show up too (read-only while a terminal drives them). What you send from msga runs as a Claude Code background session, which keeps working if msga quits. Sessions can be started with a role from your team (the built-in specialists or teammates you add), and when you remove a session that msga started, msga cleans up its git worktrees as well.
 
+Mention a teammate (`@Engineer`, `@Designer`, …) in a session and it gets to work in a thread of its own, where you can reply to it directly. Slash commands, files Claude makes (shown as attachments) and new teammates with their own instructions all work from the same window:
+
+![Claude Code sessions in msga](gfx/screenshots/recording-claude.webp)
+
 ## Or build your own version
 
 You can build msga yourself, for example to bake your own Slack app keys into the binary. Note that **Slack session sign-in and Claude Code need no keys at all**: they work with a plain build.

@@ -45,6 +45,10 @@ struct TourStep {
         MessagesTab,  // click the "Messages" tab (back from the canvas)
         Post,         // conv + user + arg = mrkdwn: another user posts right now;
                       // arg2 = root text fragment → as a reply in that thread
+        Click,        // arg = a view's name, tooltip or shown text (fragment) — click it;
+                      // arg2 = where to look: sidebar | dialog | "" (popups, then the window)
+        Point,        // as Click, but only moves the pointer there (what shows on hover)
+        Field,        // num = which text field of the topmost dialog (0 = first) — click it
         Quit,         //
     };
     Kind                     kind = Kind::Wait;

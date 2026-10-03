@@ -841,8 +841,8 @@ Ts FakeBackend::postAs(ConvRef conv, model::UserRef user, std::string text, Ts t
     return ts;
 }
 
-Ts FakeBackend::findTs(ConvRef conv, std::string_view fragment) const {
-    if (conv >= _store.conversationCount())
+Ts findTs(const model::Store &store, ConvRef conv, std::string_view fragment) {
+    if (conv >= store.conversationCount())
         return 0;
     // Text, then file names and attachment titles: a voice clip or an image
     // post has no text of its own.
@@ -857,7 +857,7 @@ Ts FakeBackend::findTs(ConvRef conv, std::string_view fragment) const {
                 return true;
         return false;
     };
-    const auto &c = _store.conversation(conv);
+    const auto &c = store.conversation(conv);
     for (const auto &m : c.messages)
         if (hit(m))
             return m.ts;

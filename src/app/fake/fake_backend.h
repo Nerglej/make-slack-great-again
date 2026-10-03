@@ -19,6 +19,12 @@
 
 namespace fake {
 
+// The first message of `conv` (top-level, then a loaded thread's replies)
+// whose rendered text, file name or attachment title contains `fragment`,
+// case-insensitively; 0 = none. Any backend's Store: the demo tours name
+// messages this way on the Claude Code workspace too.
+model::Ts findTs(const model::Store &store, model::ConvRef conv, std::string_view fragment);
+
 // Not final: tests derive from it (e.g. to make a DM an agent session).
 class FakeBackend : public model::Backend {
 public:
@@ -100,7 +106,9 @@ public:
     postAs(model::ConvRef conv, model::UserRef user, std::string text, model::Ts thread = 0);
     // The first message (top-level or reply) whose rendered text contains
     // `fragment`, case-insensitively — how tour scripts name messages.
-    model::Ts findTs(model::ConvRef conv, std::string_view fragment) const;
+    model::Ts findTs(model::ConvRef conv, std::string_view fragment) const {
+        return fake::findTs(_store, conv, fragment);
+    }
 
     // Latencies, like a network backend (never synchronous; see backend.h).
     static constexpr int kReadLatencyMs = 25;

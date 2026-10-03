@@ -31,11 +31,13 @@ namespace demo {
 
 class Tour {
 public:
+    // `backend`: the Slack demo's fake backend (Post needs it); null on the
+    // Claude Code demo, which runs the real workspace.
     Tour(
         screens::Context  &ctx,
         shell::Shell      &sh,
         ui::Window        &win,
-        fake::FakeBackend &backend,
+        fake::FakeBackend *backend,
         TourScript         script
     );
     ~Tour();
@@ -76,7 +78,7 @@ private:
     screens::Context     &_ctx;
     shell::Shell         &_sh;
     ui::Window           &_win;
-    fake::FakeBackend    &_backend;
+    fake::FakeBackend    *_backend;
     TourScript            _script;
     size_t                _index  = 0;
     ui::PointF            _pos    = {640, 400};

@@ -48,7 +48,9 @@
 #endif
 
 #ifdef MSGA_DEMO
+#include "app/claude/backend.h"
 #include "app/fake/fake_backend.h"
+#include "screens/shell/demo/claude_demo.h"
 #include "screens/shell/demo/soak.h"
 #include "screens/shell/demo/tour.h"
 #endif
@@ -310,13 +312,29 @@ int main(int argc, char **argv) {
             {cache::WorkspaceCache::root(pa), file::join(cache, "workspace-icons")}
         );
 #ifdef MSGA_DEMO
+    // A Slack fixture runs on the fake backend; a Claude Code one
+    // (claude-code.json) on the real Claude Code workspace, whose `claude` is
+    // the fixture's stand-in (demo/claude_demo.h).
     std::optional<fake::FakeBackend> demoBackend;
-    if (!demo.empty()) {
+    std::unique_ptr<claude::Backend> demoClaude;
+    std::string                      demoStart;
+    if (!demo.empty() && demo::isClaudeFixture(demo)) {
+        demo::ClaudeDemo cd;
+        if (!demo::prepareClaudeDemo(demo, pa, settings, &cd, &err)) {
+            std::fprintf(stderr, "msga --demo: %s\n", err.c_str());
+            return 2;
+        }
+        store.workspaceName = "Claude Code";
+        demoClaude =
+            std::make_unique<claude::Backend>(store, pa, claude::Credentials{cd.claudePath});
+        backend.setTarget(*demoClaude);
+        demoStart = cd.startSession;
+    } else if (!demo.empty()) {
         demoBackend.emplace(store, pa);
         demoBackend->setFixture(demo, 0);
         backend.setTarget(*demoBackend);
     }
-    const bool demoMode = bool(demoBackend);
+    const bool demoMode = demoBackend || demoClaude;
 #else
     const bool demoMode = false;
 #endif
@@ -467,23 +485,27 @@ int main(int argc, char **argv) {
     }
 #ifdef MSGA_DEMO
     else {
-        fake::FakeBackend &fb = *demoBackend;
-        const double       t0 = app->nowMs();
+        fake::FakeBackend *fb = demoBackend ? &*demoBackend : nullptr;
+        model::Backend    &db = fb ? static_cast<model::Backend &>(*fb) : *demoClaude;
+        if (demoClaude) // as Accounts does for a workspace
+            demoClaude->onError = [&sh](const std::string &message) { sh.showError(message); };
+        const double t0 = app->nowMs();
         sh.setSignedIn(true); // the workspace opening: the first-load state until connected
         // t0 by value: connect answers after this block has ended.
-        fb.connect([&, t0](bool ok, const std::string &why) {
+        db.connect([&, fb, t0](bool ok, const std::string &why) {
             if (!ok) {
                 std::fprintf(stderr, "msga: %s\n", why.c_str());
                 app->quit();
                 return;
             }
-            model::ConvRef start = fb.fixture().startConversation;
+            model::ConvRef start =
+                fb ? fb->fixture().startConversation : store.findConversation(demoStart);
             if (!openId.empty())
                 if (model::ConvRef c = store.findConversation(openId); c != model::kNoConv)
                     start = c;
             sh.open(start);
             if (!threadText.empty())
-                if (model::Ts root = fb.findTs(start, threadText))
+                if (model::Ts root = fake::findTs(store, start, threadText))
                     sh.openThread(start, root);
             sh.setLive(true);
             std::fprintf(

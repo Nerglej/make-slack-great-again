@@ -37,6 +37,19 @@ View *find(View *v, const std::function<bool(View *)> &match) {
     return nullptr;
 }
 
+// The text fields under `v`, in order: the outermost view of each (a field
+// and the editor inside it are one).
+void textFields(View *v, std::vector<View *> &out) {
+    if (!v || !v->visible())
+        return;
+    if (v->role() == Role::TextInput) {
+        out.push_back(v);
+        return;
+    }
+    for (size_t i = 0; i < v->childCount(); ++i)
+        textFields(v->child(i), out);
+}
+
 plat::Key keyNamed(const std::string &name) {
     if (name == "Return")
         return plat::Key::Enter;
@@ -57,7 +70,7 @@ Tour::Tour(
     screens::Context  &ctx,
     shell::Shell      &sh,
     ui::Window        &win,
-    fake::FakeBackend &backend,
+    fake::FakeBackend *backend,
     TourScript         script
 )
     : _ctx(ctx), _sh(sh), _win(win), _backend(backend), _script(std::move(script)) {}
@@ -234,13 +247,21 @@ PointF Tour::centerOf(const View *v) const {
 }
 
 ConvRef Tour::conv(const std::string &id) const {
-    return _ctx.store().findConversation(id);
+    const model::Store &st = _ctx.store();
+    if (const ConvRef c = st.findConversation(id); c != kNoConv)
+        return c;
+    // A Claude Code session started during the tour has an id nobody knows
+    // beforehand: it goes by its name instead.
+    for (ConvRef c = 0; c < st.conversationCount(); ++c)
+        if (st.conversation(c).member && utf8::containsFolded(st.displayName(c), id))
+            return c;
+    return kNoConv;
 }
 
 View *Tour::messageView(const TourStep &step, Done retry, Ts *ts, bool *retrying) {
     *retrying       = false;
     const ConvRef c = _sh.current();
-    *ts             = c == kNoConv ? 0 : _backend.findTs(c, step.arg);
+    *ts             = c == kNoConv ? 0 : fake::findTs(_ctx.store, c, step.arg);
     if (!*ts) {
         std::fprintf(stderr, "tour: no message contains \"%s\"\n", step.arg.c_str());
         return nullptr;
@@ -351,7 +372,15 @@ void Tour::run(const TourStep &step, Done done) {
         case K::Thread:
             moveTo(pos, [this, c, ts, done] {
                 _sh.openThread(c, ts);
-                done();
+                // Its reply box takes the keys, so what is typed next goes to
+                // the thread.
+                after(400, [this, done] {
+                    std::vector<View *> fields;
+                    textFields(_sh.threadPanel(), fields);
+                    if (!fields.empty())
+                        fields.back()->focus();
+                    done();
+                });
             });
             return;
         case K::React:
@@ -618,13 +647,49 @@ void Tour::run(const TourStep &step, Done done) {
     case K::Post: {
         const ConvRef        c = conv(step.conv);
         const model::UserRef u = st.findUser(step.user);
-        if (c == kNoConv || u == model::kNoUser) {
+        if (!_backend || c == kNoConv || u == model::kNoUser) {
+            std::fprintf(stderr, "tour: cannot post to %s here\n", step.conv.c_str());
             done();
             return;
         }
-        const Ts root = step.arg2.empty() ? 0 : _backend.findTs(c, step.arg2);
-        _backend.postAs(c, u, step.arg, root);
+        const Ts root = step.arg2.empty() ? 0 : fake::findTs(st, c, step.arg2);
+        _backend->postAs(c, u, step.arg, root);
         done();
+        return;
+    }
+
+    case K::Click:
+    case K::Point: {
+        View *in = nullptr;
+        if (step.arg2 == "sidebar")
+            in = &_sh.sidebar();
+        else if (step.arg2 == "dialog")
+            in = _win.topPopup();
+        View *v = findName(step.arg, in);
+        if (!v)
+            v = findText(step.arg, in);
+        if (!v) {
+            std::fprintf(stderr, "tour: nothing named \"%s\"\n", step.arg.c_str());
+            done();
+            return;
+        }
+        if (step.kind == K::Point)
+            moveTo(centerOf(v), done);
+        else
+            click(centerOf(v), done);
+        return;
+    }
+
+    case K::Field: {
+        std::vector<View *> fields;
+        textFields(_win.topPopup(), fields);
+        const size_t n = size_t(std::max(0.0, step.num));
+        if (n >= fields.size()) {
+            std::fprintf(stderr, "tour: no text field %zu in a dialog\n", n);
+            done();
+            return;
+        }
+        click(centerOf(fields[n]), done);
         return;
     }
 

@@ -85,7 +85,8 @@ endif()
 if(MSGA_DEMO)
     # msga's scripted walkthrough (--demo-tour) and the leak soak (--soak):
     # demo builds only.
-    target_sources(msga PRIVATE demo/tour.cpp demo/tour_script.cpp demo/soak.cpp)
+    target_sources(msga PRIVATE
+        demo/tour.cpp demo/tour_script.cpp demo/soak.cpp demo/claude_demo.cpp)
     target_link_libraries(msga PRIVATE msga_app_fake)
     target_compile_definitions(msga PRIVATE MSGA_DEMO)
     # Demo mode's own checks (the tour parser, ../../../../demo's tour.json and

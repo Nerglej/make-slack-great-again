@@ -42,15 +42,37 @@ TEST("demo tour: the script parses the tour verbs; mistakes are named") {
     CHECK_STR(s.steps[7].arg2, "export");
     CHECK(s.steps[10].kind == K::Quit);
 
+    // Pointing at views by name, and a dialog's text fields by place.
+    REQUIRE(
+        demo::parseTour(
+            R"({"steps": [{"point": "Team", "in": "sidebar"},
+            {"click": "Add teammate", "in": "sidebar"}, {"click": "Change folder"},
+            {"field": 2}]})",
+            &s,
+            &err
+        )
+    );
+    REQUIRE(s.steps.size() == 4);
+    CHECK(s.steps[0].kind == K::Point);
+    CHECK_STR(s.steps[0].arg2, "sidebar");
+    CHECK(s.steps[1].kind == K::Click);
+    CHECK_STR(s.steps[1].arg, "Add teammate");
+    CHECK(s.steps[2].arg2.empty());
+    CHECK(s.steps[3].kind == K::Field);
+    CHECK(s.steps[3].num == 2);
+    CHECK_FALSE(demo::parseTour(R"({"steps": [{"click": "x", "in": "menu"}]})", &s, &err));
+
     CHECK_FALSE(demo::parseTour(R"({"steps": [{"dance": 1}]})", &s, &err));
     CHECK_STR(err, "tour: step 1: unknown verb \"dance\"");
     CHECK_FALSE(demo::parseTour(R"({"steps": [{"theme": "blue"}]})", &s, &err));
     CHECK_FALSE(demo::parseTour(R"({"steps": [{"key": "F5"}]})", &s, &err));
     CHECK_FALSE(demo::parseTour(R"({"window": [640, 480], "steps": [{"quit": 1}]})", &s, &err));
     CHECK_FALSE(demo::parseTour(R"({"steps": []})", &s, &err));
-    // The repository's own tour.
+    // The repository's own tours: the Slack workspace's, the Claude Code one's.
     REQUIRE(demo::loadTour(std::string(MSGA_DEMO_DIR) + "/tour.json", &s, &err));
     CHECK(s.steps.size() > 50);
+    REQUIRE(demo::loadTour(std::string(MSGA_DEMO_DIR) + "/claude/tour.json", &s, &err));
+    CHECK(s.steps.size() > 30);
 
     char  a0[] = "msga", a1[] = "--demo-tour=demo/tour.json", a2[] = "--demo-tour", a3[] = "t.json";
     char *v1[] = {a0, a1};

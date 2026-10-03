@@ -53,6 +53,9 @@ constexpr Verb kVerbs[] = {
     {"canvas", K::Canvas, Verb::None},
     {"messagesTab", K::MessagesTab, Verb::None},
     {"post", K::Post, Verb::Post},
+    {"click", K::Click, Verb::Text},
+    {"point", K::Point, Verb::Text},
+    {"field", K::Field, Verb::Number},
     {"quit", K::Quit, Verb::None},
 };
 
@@ -174,6 +177,11 @@ bool parseTour(std::string_view text, TourScript *out, std::string *error) {
         }
         if (st.kind == K::Type)
             st.num = o["cps"].number(16);
+        if (st.kind == K::Click || st.kind == K::Point) {
+            st.arg2 = std::string(o["in"].str());
+            if (!st.arg2.empty() && st.arg2 != "sidebar" && st.arg2 != "dialog")
+                return fail(at + verb->name + " \"in\" is sidebar|dialog");
+        }
         if (st.kind == K::Theme && st.arg != "light" && st.arg != "dark")
             return fail(at + "theme is light|dark");
         if (st.kind == K::Key && !oneOf(st.arg, kKeys))
