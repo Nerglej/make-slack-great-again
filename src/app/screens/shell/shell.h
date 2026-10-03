@@ -36,6 +36,7 @@ class CanvasPage;
 class ConvHeader;
 class TeammatePage;
 class SavedPage;
+class ScheduledPage;
 class ThreadsPage;
 class ConvTabs;
 class HuddleBanner;
@@ -179,17 +180,22 @@ public:
     // The sidebar's Threads entry: the followed
     // threads in the content area, no channel composer (the cards have their
     // own reply boxes). Reloaded on every open.
-    void         openThreads();
-    bool         threadsOpen() const;
-    ThreadsPage *threadsPage() const { return _threadsPage; }
+    void           openThreads();
+    bool           threadsOpen() const;
+    ThreadsPage   *threadsPage() const { return _threadsPage; }
     // The sidebar's Saved messages entry: the
     // saved list as cards in the content area, no composer.
-    void         openSaved();
-    bool         savedOpen() const;
-    SavedPage   *savedPage() const { return _savedPage; }
+    void           openSaved();
+    bool           savedOpen() const;
+    SavedPage     *savedPage() const { return _savedPage; }
+    // The sidebar's Scheduled messages entry: what waits to be posted, as
+    // cards in the content area, no composer.
+    void           openScheduled();
+    bool           scheduledOpen() const;
+    ScheduledPage *scheduledPage() const { return _scheduledPage; }
     // The conversation, then the message (inside
     // its thread when `thread` is its root), scrolled to and flashed.
-    void         jumpToMessage(model::ConvRef conv, model::Ts ts, model::Ts thread);
+    void           jumpToMessage(model::ConvRef conv, model::Ts ts, model::Ts thread);
 
     // The Settings dialog (the rail's gear, the tray menu); a second call
     // while it is open does nothing.
@@ -335,6 +341,9 @@ private:
     void buildTeammatePage(ui::View *stack);
     void buildThreadsPage(ui::View *stack);
     void buildSavedPage(ui::View *stack);
+    void buildScheduledPage(ui::View *stack);
+    void leaveConversationChrome(); // what the Saved and Scheduled pages hide
+    void leaveScheduled();
     void setupComposer(Composer &c); // the avatars, GIF key and tips every composer gets
     void leaveThreads();
     void leaveSaved();
@@ -429,9 +438,10 @@ private:
     std::shared_ptr<const gfx::Bitmap> _trayImage;
     // The teammate page and what was typed to each teammate (the
     // "teammate:<role>" drafts); guards the agent flows' callbacks.
-    TeammatePage                      *_teammatePage = nullptr;
-    ThreadsPage                       *_threadsPage  = nullptr;
-    SavedPage                         *_savedPage    = nullptr;
+    TeammatePage                      *_teammatePage  = nullptr;
+    ThreadsPage                       *_threadsPage   = nullptr;
+    SavedPage                         *_savedPage     = nullptr;
+    ScheduledPage                     *_scheduledPage = nullptr;
     struct TeammateDraft {
         std::string              role, html;
         std::vector<std::string> files;

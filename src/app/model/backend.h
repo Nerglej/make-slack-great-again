@@ -343,6 +343,16 @@ public:
         (void)blocks;
         scheduleMessage(conv, std::move(text), threadTs, postAt, std::move(done));
     }
+    // The messages still waiting to be posted, listed into the Store again
+    // (Store::setScheduled): the Scheduled messages page asks when it opens.
+    virtual void refreshScheduled() {}
+    // Cancels one (Store::ScheduledItem::id); the Store drops it once the
+    // service agrees.
+    virtual void cancelScheduled(const std::string &id, Done done) {
+        (void)id;
+        if (done)
+            done(false, "not_supported");
+    }
     // Everyone in a channel or group DM (the header's member list); `error`
     // is the service's reason when the list couldn't be loaded.
     using MembersDone = std::function<void(std::vector<UserRef> members, std::string error)>;

@@ -45,6 +45,8 @@ constexpr int64_t     kPresencePollGapMs      = 60'000;
 constexpr int64_t     kSelfPresenceGapMs      = 60'000; // _selfPresenceTimer
 constexpr int64_t     kStarredGapMs           = 5 * 60'000;
 constexpr int64_t     kSavedGapMs             = 5 * 60'000; // kRemindersRefreshGapMs
+constexpr int64_t     kScheduledGapMs         = 5 * 60'000; // ones scheduled elsewhere
+constexpr int64_t     kScheduledSentSlackMs   = 15'000;     // re-list this long after one is due
 constexpr int64_t     kUsersRefreshGapMs      = 24 * 60 * 60'000;
 constexpr int64_t     kLookupRetryTransientMs = 10 * 60'000; // a failed users.info after a 5xx
 constexpr int64_t     kDmSweepGapSecs         = 12 * 3600;   // across restarts, via the cache
@@ -214,6 +216,12 @@ struct SlackBackend::Read {
     std::unordered_map<std::string, int64_t> serverSaved; // "conv:ts" → due (0 = none)
     void                                     refreshStarred();
     void                                     refreshSaved();
+
+    // ── Scheduled messages (the sidebar's "Scheduled messages") ─────────────
+    bool     scheduledUnavailable = false;
+    int64_t  lastScheduled        = 0;
+    uint64_t scheduledWake        = 0; // the due-time re-list armed last
+    void     refreshScheduled();
 
     // ── Message reminders ───────────────────────────────────────────────────
     plat::TimerId reminderTimer = 0;
@@ -560,13 +568,15 @@ void SlackBackend::Read::connectSettled(const std::string &) {
         return;
     started         = true;
     const int64_t t = now();
-    lastRoster = lastUsers = lastStarred = lastSaved = lastSelf = lastPresence = t;
-    lastBg                                                                     = t;
+    lastRoster = lastUsers = lastStarred = lastSaved = lastScheduled = lastSelf = lastPresence = t;
+    lastBg                                                                                     = t;
     // The first activity snapshot seeds the unread badges at once (the
     // cache may already have them); presence starts with the hot set.
     pollUnreadCounts();
     lastCounts = t;
     pollDmPresence();
+    // After the roster: the list names its conversations by id.
+    refreshScheduled();
     loadEmoji();
     // The safety timer: min(15 s, the open-chat cadence).
     const int tickMs = int((session ? 5'000 : 15'000) / speed);
@@ -1279,6 +1289,84 @@ void SlackBackend::Read::refreshSaved() {
     );
 }
 
+// The messages still waiting to be posted. A session lists the web client's
+// dated drafts (drafts.list; chat.scheduledMessages.list refuses its token),
+// a token Slack's scheduled messages. Either way the list replaces the
+// Store's, and a re-list follows each due time so a sent one goes.
+void SlackBackend::Read::refreshScheduled() {
+    lastScheduled = now();
+    if (scheduledUnavailable)
+        return;
+    const bool        drafts = session;
+    const char *const method = drafts ? "drafts.list" : "chat.scheduledMessages.list";
+    call(
+        method,
+        drafts ? "is_active=true&limit=100" : "limit=100",
+        [this, drafts, method](const json::Document &doc, const std::string &err) {
+            if (!err.empty()) {
+                if (methodUnavailable(err)) {
+                    LOG_INFO(
+                        "slack", "%s: %s, not listing scheduled messages", method, err.c_str()
+                    );
+                    scheduledUnavailable = true;
+                }
+                return;
+            }
+            // Epoch seconds, as a number or a string.
+            const auto secs = [](const json::Value &v) -> int64_t {
+                return v.isString() ? std::strtoll(std::string(v.str()).c_str(), nullptr, 10)
+                                    : v.integer();
+            };
+            std::vector<model::Store::ScheduledItem> items;
+            for (const json::Value d : doc.root()[drafts ? "drafts" : "scheduled_messages"]) {
+                model::Store::ScheduledItem it;
+                if (drafts) {
+                    // Only dated drafts are scheduled; a sent or deleted one
+                    // may linger in the list.
+                    it.at = secs(d["date_scheduled"]);
+                    if (it.at <= 0 || d["is_sent"].boolean() || d["is_deleted"].boolean())
+                        continue;
+                    const json::Value dest = d["destinations"][0];
+                    it.id                  = std::string(d["id"].str());
+                    it.version             = std::string(d["last_updated_ts"].str());
+                    it.conv                = s.findConversation(dest["channel_id"].str());
+                    it.thread              = model::parseTs(dest["thread_ts"].str());
+                    it.text                = mapjson::blocksToMrkdwn(d["blocks"]);
+                } else {
+                    // No thread in this list: a reply can't be sent early.
+                    it.id          = std::string(d["id"].str());
+                    it.at          = secs(d["post_at"]);
+                    it.conv        = s.findConversation(d["channel_id"].str());
+                    it.threadKnown = false;
+                    it.text        = std::string(d["text"].str());
+                }
+                if (!it.id.empty() && it.conv != kNoConv)
+                    items.push_back(std::move(it));
+            }
+            int64_t soonest = 0;
+            for (const auto &it : items)
+                if (!soonest || it.at < soonest)
+                    soonest = it.at;
+            s.setScheduled(std::move(items));
+            if (soonest) {
+                const uint64_t wake = ++scheduledWake;
+                const int64_t  ms   = std::max<int64_t>(
+                    (soonest - base::nowSecs()) * 1000 + kScheduledSentSlackMs,
+                    kScheduledSentSlackMs
+                );
+                later(ms, [this, wake] {
+                    if (wake == scheduledWake)
+                        refreshScheduled();
+                });
+            }
+        }
+    );
+}
+
+void SlackBackend::refreshScheduled() {
+    _read->refreshScheduled();
+}
+
 // ── Message reminders ───────────────────────────────────────────────────────
 
 // Wake at the nearest due reminder not fired yet
@@ -1868,6 +1956,8 @@ void SlackBackend::Read::tick() {
     }
     if (t - lastSaved >= kSavedGapMs)
         refreshSaved();
+    if (t - lastScheduled >= kScheduledGapMs)
+        refreshScheduled();
     if (t - lastStarred >= kStarredGapMs)
         refreshStarred();
     if (t - lastPresence >= kPresencePollGapMs) {

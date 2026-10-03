@@ -144,6 +144,7 @@ void Store::clear() {
     _aiTranscripts.clear();
     _reminders.clear();
     _saved.clear();
+    _scheduled.clear();
     _usergroups.clear();
     _channelNames.clear();
     _linkedAuthors.clear();
@@ -854,6 +855,32 @@ void Store::setReminderFired(ConvRef c, Ts ts, bool fired) {
             emit({ChangeKind::Update, c, 0, ts});
             return;
         }
+}
+
+void Store::setScheduled(std::vector<ScheduledItem> items) {
+    std::stable_sort(
+        items.begin(), items.end(), [](const ScheduledItem &a, const ScheduledItem &b) {
+            return a.at < b.at;
+        }
+    );
+    const auto same = [](const ScheduledItem &a, const ScheduledItem &b) {
+        return a.id == b.id && a.version == b.version && a.conv == b.conv && a.thread == b.thread &&
+               a.threadKnown == b.threadKnown && a.at == b.at && a.text == b.text;
+    };
+    if (std::equal(items.begin(), items.end(), _scheduled.begin(), _scheduled.end(), same))
+        return;
+    _scheduled = std::move(items);
+    emit({ChangeKind::Meta});
+}
+
+void Store::removeScheduled(const std::string &id) {
+    const auto it = std::find_if(_scheduled.begin(), _scheduled.end(), [&](const ScheduledItem &s) {
+        return s.id == id;
+    });
+    if (it == _scheduled.end())
+        return;
+    _scheduled.erase(it);
+    emit({ChangeKind::Meta});
 }
 
 const Store::Usergroup *Store::findUsergroup(std::string_view id) const {

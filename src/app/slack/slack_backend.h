@@ -141,6 +141,8 @@ public:
         int64_t        postAt,
         Done           done
     ) override;
+    void refreshScheduled() override;
+    void cancelScheduled(const std::string &id, Done done) override;
     void loadMembers(model::ConvRef conv, MembersDone done) override;
     void search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
     void markThreadRead(model::ConvRef conv, model::Ts root, model::Ts ts) override;
@@ -266,6 +268,15 @@ private:
     Done bannerOnFailure(const char *what, Done done);
     // A reminder was set or moved here: the alarm re-arms (slack_backend.cpp).
     void rearmReminders();
+    // cancelScheduled's calls (slack_actions.cpp): a session's draft (retry:
+    // once more on draft_has_conflict), a token's scheduled message, and
+    // what either answer does to the Store's list.
+    void deleteDraft(const std::string &id, std::string version, bool retry, Done done);
+    void deleteScheduled(
+        const std::string &id, const std::string &channel, const char *method, Done done
+    );
+    void
+    scheduledGone(const std::string &id, const char *method, const std::string &err, Done done);
 
     plat::App                         &_app;
     net::Client                       &_client;

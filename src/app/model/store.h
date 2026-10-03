@@ -229,6 +229,28 @@ public:
     // A reminder went off (or was found long overdue). Fires Update for ts.
     void setReminderFired(ConvRef c, Ts ts, bool fired);
 
+    // ── Scheduled messages ──────────────────────────────────────────────────
+    // Messages waiting on the service to post them (Slack's "Scheduled"),
+    // as the backend last listed them: the sidebar's "Scheduled messages"
+    // entry shows while there are any.
+    struct ScheduledItem {
+        std::string id;      // the service's (a draft id or a scheduled message id)
+        std::string version; // what cancelling it needs besides the id ("" = none)
+        ConvRef     conv        = kNoConv;
+        Ts          thread      = 0;    // a reply's thread
+        bool        threadKnown = true; // false: the service doesn't say (Send now is off)
+        int64_t     at          = 0;    // epoch secs
+        std::string text;               // mrkdwn
+    };
+    // Soonest first.
+    const std::vector<ScheduledItem> &scheduled() const { return _scheduled; }
+    bool                              hasScheduled() const { return !_scheduled.empty(); }
+    // Replaces the list (sorted here); fires Meta with conv = kNoConv when it
+    // changed.
+    void                              setScheduled(std::vector<ScheduledItem> items);
+    // Drops one (cancelled or sent from here); fires Meta like setScheduled.
+    void                              removeScheduled(const std::string &id);
+
     // ── "Transcribe with AI" ────────────────────────────────────────────────
     // AI transcripts of audio files (app-local: Slack has no write API
     // for a file's transcript). Setting one fires Update for every loaded
@@ -289,6 +311,7 @@ private:
     std::unordered_map<std::string, std::string> _customEmoji;
     std::vector<Mark>                            _mutedThreads, _reminders; // few: linear is fine
     std::vector<SavedItem>                       _saved;
+    std::vector<ScheduledItem>                   _scheduled;
     std::vector<Usergroup>                       _usergroups;
     std::unordered_map<std::string, std::string> _channelNames;
     std::unordered_map<std::string, UserRef>     _linkedAuthors; // "conv/ts"

@@ -19,6 +19,7 @@
 #include "screens/shell/header.h"
 #include "screens/shell/nav_chrome.h"
 #include "app/mrkdwn/markdown.h"
+#include "screens/shell/scheduled_page.h"
 #include "screens/shell/shell.h"
 #include "screens/shell/sidebar_footer.h"
 #include "screens/shell/status_dialog.h"
@@ -123,6 +124,17 @@ struct Fake : fake::FakeBackend {
     ConvRef     suggestFor = kNoConv;
     std::string membersError, lastBlocks;
     std::string scheduleError; // scheduleMessage fails with it
+    void        refreshScheduled() override { ++scheduledRefreshes; }
+    void        cancelScheduled(const std::string &id, Done done) override {
+        cancelled.push_back(id);
+        if (cancelError.empty())
+            store().removeScheduled(id);
+        if (done)
+            done(cancelError.empty(), cancelError);
+    }
+    int                      scheduledRefreshes = 0;
+    std::vector<std::string> cancelled;
+    std::string              cancelError;
 
     std::string presenceError; // setPresence fails with it
     std::string statusError;   // setStatus too
@@ -908,6 +920,91 @@ TEST(
     scheduleNow();
     CHECK_STR(h.backend.scheduledText, "too late");
     CHECK_STR(c.edit().text(), "too late");
+}
+
+TEST(
+    "scheduled messages: the sidebar entry shows only while something is scheduled; its "
+    "page sends now or cancels"
+) {
+    Harness h;
+    h.backend.schedule = true;
+    h.sh->workspaceChanged();
+    h.sidebar().rebuild();
+    pump();
+    const auto entries = [&] { return joined(h.sidebar().sectionTitles()); };
+    CHECK(entries().find("Scheduled messages") == std::string::npos); // nothing scheduled
+
+    const ConvRef               design = h.conv("C0DESIGN");
+    const Ts                    root   = h.backend.findTs(design, "Proposal B");
+    model::Store::ScheduledItem later, reply, unknown;
+    later.id            = "S2";
+    later.conv          = design;
+    later.at            = base::nowSecs() + 7200;
+    later.text          = "later";
+    reply               = later;
+    reply.id            = "S1";
+    reply.at            = base::nowSecs() + 3600; // soonest: first
+    reply.text          = "a reply";
+    reply.thread        = root;
+    unknown             = later;
+    unknown.id          = "S3";
+    unknown.at          = base::nowSecs() + 9000;
+    unknown.threadKnown = false; // a token workspace's: no Send now
+    h.store.setScheduled({later, reply, unknown});
+    pump();
+    CHECK(h.sidebar().scheduledShown());
+    CHECK(entries().find("Scheduled messages") != std::string::npos);
+
+    h.sh->openScheduled();
+    pump();
+    REQUIRE(h.sh->scheduledOpen());
+    CHECK(h.sidebar().scheduledSelected());
+    CHECK_FALSE(h.composer().visible());
+    CHECK(h.backend.scheduledRefreshes == 1); // opening re-lists
+    shell::ScheduledPage *p = h.sh->scheduledPage();
+    REQUIRE(p->cardCount() == 3);
+    CHECK_STR(p->whenText(0), "Sends " + base::formatDateTime(reply.at));
+    CHECK(p->canSendNow(0));
+    CHECK_FALSE(p->canSendNow(2));
+
+    // Send now: unscheduled first, then posted to its thread.
+    p->sendNow(0);
+    pump();
+    CHECK(h.backend.cancelled.size() == 1 && h.backend.cancelled[0] == "S1");
+    const auto *replies = h.store.replies(design, root);
+    REQUIRE(replies != nullptr);
+    CHECK_STR(replies->back().text, "a reply");
+    REQUIRE(p->cardCount() == 2);
+
+    // A refused cancel keeps the card, clickable again.
+    h.backend.cancelError = "not_allowed";
+    p->cancel(0);
+    pump();
+    CHECK(p->cardCount() == 2);
+    h.backend.cancelError.clear();
+    p->cancel(0);
+    pump();
+    CHECK(h.backend.cancelled.size() == 3);
+    REQUIRE(p->cardCount() == 1);
+    p->cancel(0);
+    pump();
+    CHECK(p->cardCount() == 0);
+    CHECK_STR(p->statusText(), "Messages you schedule will appear here until they're sent.");
+    // Nothing left: the entry goes, even with its page still open.
+    CHECK_FALSE(h.sidebar().scheduledShown());
+
+    // Opening a conversation leaves the page.
+    h.sh->open(design);
+    pump();
+    CHECK_FALSE(h.sh->scheduledOpen());
+    CHECK(h.composer().visible());
+
+    // A workspace that can't schedule never shows it.
+    h.store.setScheduled({later});
+    h.backend.schedule = false;
+    h.sidebar().rebuild();
+    pump();
+    CHECK(entries().find("Scheduled messages") == std::string::npos);
 }
 
 // The picker's hour step at every time of day (the schedule popup's

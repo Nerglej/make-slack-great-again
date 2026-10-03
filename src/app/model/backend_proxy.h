@@ -92,6 +92,8 @@ public:
     void scheduleBlocks(
         ConvRef c, std::string text, std::string blocks, Ts thread, int64_t postAt, Done d
     ) override;
+    void        refreshScheduled() override;
+    void        cancelScheduled(const std::string &id, Done d) override;
     void        loadMembers(ConvRef c, MembersDone done) override;
     bool        gifSearchAvailable() const override;
     void        searchGifs(std::string query, std::function<void(std::vector<Gif>)> done) override;

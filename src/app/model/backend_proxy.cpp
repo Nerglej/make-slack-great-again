@@ -140,6 +140,12 @@ void BackendProxy::scheduleBlocks(
 ) {
     _t->scheduleBlocks(c, std::move(text), std::move(blocks), thread, postAt, std::move(d));
 }
+void BackendProxy::refreshScheduled() {
+    _t->refreshScheduled();
+}
+void BackendProxy::cancelScheduled(const std::string &id, Done d) {
+    _t->cancelScheduled(id, std::move(d));
+}
 void BackendProxy::loadMembers(ConvRef c, MembersDone done) {
     _t->loadMembers(c, std::move(done));
 }

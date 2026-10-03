@@ -1226,10 +1226,108 @@ void SlackBackend::scheduleBlocks(
                     onError(
                         i18n::arg(i18n::tr("Couldn't schedule message: %1"), friendlySendError(err))
                     );
+            } else {
+                refreshScheduled(); // the sidebar's "Scheduled messages" lists it
             }
             if (done)
                 done(err.empty(), err);
         });
+}
+
+namespace {
+// A draft's last_updated_ts as drafts.delete wants it: 7 decimals.
+std::string draftTs(std::string ts) {
+    const size_t dot = ts.find('.');
+    if (dot == std::string::npos)
+        return ts;
+    while (ts.size() - dot - 1 < 7)
+        ts += '0';
+    return ts;
+}
+} // namespace
+
+void SlackBackend::cancelScheduled(const std::string &id, Done done) {
+    const model::Store::ScheduledItem *found = nullptr;
+    for (const auto &it : _store.scheduled())
+        if (it.id == id)
+            found = &it;
+    if (!found) {
+        if (done)
+            done(false, "not_found");
+        return;
+    }
+    // A session's are the web client's dated drafts; a token's, Slack's
+    // scheduled messages.
+    const bool drafts = _creds.sessionAuth();
+    if (drafts)
+        deleteDraft(id, draftTs(found->version), true, std::move(done));
+    else
+        deleteScheduled(id, convId(found->conv), "chat.deleteScheduledMessage", std::move(done));
+}
+
+void SlackBackend::deleteDraft(const std::string &id, std::string version, bool retry, Done done) {
+    std::string form;
+    addParam(form, "draft_id", id);
+    addParam(form, "client_last_updated_ts", version);
+    api("drafts.delete",
+        std::move(form),
+        [this, id, retry, done = std::move(done)](
+            const json::Document &, const std::string &err
+        ) mutable {
+            // The version moved on (an edit elsewhere): once more with now,
+            // which is newer than any.
+            if (err == "draft_has_conflict" && retry) {
+                char          now[32];
+                const int64_t us = base::nowMicros();
+                std::snprintf(
+                    now,
+                    sizeof now,
+                    "%lld.%06lld0",
+                    (long long)(us / 1000000),
+                    (long long)(us % 1000000)
+                );
+                deleteDraft(id, now, false, std::move(done));
+                return;
+            }
+            scheduledGone(id, "drafts.delete", err, std::move(done));
+        });
+}
+
+void SlackBackend::deleteScheduled(
+    const std::string &id, const std::string &channel, const char *method, Done done
+) {
+    std::string form;
+    addParam(form, "channel", channel);
+    addParam(form, "scheduled_message_id", id);
+    api(method,
+        std::move(form),
+        [this, id, method, done = std::move(done)](
+            const json::Document &, const std::string &err
+        ) mutable { scheduledGone(id, method, err, std::move(done)); });
+}
+
+void SlackBackend::scheduledGone(
+    const std::string &id, const char *method, const std::string &err, Done done
+) {
+    if (err == "cancelled")
+        return;
+    // Already sent or cancelled elsewhere: gone either way.
+    const bool gone = err == "invalid_scheduled_message_id" || err == "draft_not_found" ||
+                      err == "draft_deleted" || err == "draft_sent";
+    if (err.empty() || gone) {
+        _store.removeScheduled(id);
+    } else {
+        LOG_WARN("slack", "%s: %s", method, err.c_str());
+        if (onError)
+            onError(
+                i18n::arg(
+                    i18n::tr("Couldn't cancel the scheduled message: %1"), friendlySendError(err)
+                )
+            );
+    }
+    refreshScheduled();
+    if (done)
+        done(err.empty(), err);
 }
 
 void SlackBackend::userTyping(ConvRef, Ts) {

@@ -29,6 +29,7 @@
 #include "screens/shell/session_status_dialog.h"
 #include "screens/shell/teammate_page.h"
 #include "screens/shell/saved_page.h"
+#include "screens/shell/scheduled_page.h"
 #include "screens/shell/threads_page.h"
 #include "screens/shell/shortcuts.h"
 #include "screens/shell/sidebar_footer.h"
@@ -1361,6 +1362,7 @@ void Shell::buildMain(View *parent) {
     buildTeammatePage(stack); // an agent workspace's teammate page (shell_agents.cpp)
     buildThreadsPage(stack);
     buildSavedPage(stack);
+    buildScheduledPage(stack);
     _swipeBadge = stack->add<SwipeIndicator>(); // above the list, the panel and the canvas
     _typing     = area->add<TypingIndicator>(_ctx);
     _composer   = area->add<Composer>(_ctx, _drafts);
@@ -1424,6 +1426,7 @@ void Shell::setWaiting(bool on) {
         leaveTeammate();
         leaveThreads();
         leaveSaved();
+        leaveScheduled();
         _header->setVisible(false);
         _tabs->setVisible(false);
         _huddleBanner->setVisible(false);
@@ -1553,6 +1556,7 @@ void Shell::open(ConvRef conv) {
     leaveTeammate(); // the teammate page keeps what was typed to it
     leaveThreads();
     leaveSaved();
+    leaveScheduled();
     _search->hideNow();
     if (conv != _current && threadOpen())
         closeThread(); // a leave path: the thread composer stashes its draft
@@ -1602,10 +1606,13 @@ void Shell::leaveWorkspace() {
     leaveTeammate();
     leaveThreads();
     leaveSaved();
+    leaveScheduled();
     if (_threadsPage)
         _threadsPage->clear(); // its cards point into the old workspace
     if (_savedPage)
         _savedPage->clear();
+    if (_scheduledPage)
+        _scheduledPage->clear();
     _search->reset(); // another workspace: the query and results go
     if (threadOpen())
         closeThread(); // a leave path: the thread composer stashes its draft
@@ -1846,6 +1853,7 @@ void Shell::openThreads() {
         return;
     leaveTeammate();
     leaveSaved();
+    leaveScheduled();
     _search->hideNow();
     if (threadOpen())
         closeThread();
@@ -1892,6 +1900,16 @@ void Shell::openSaved() {
         return;
     leaveTeammate();
     leaveThreads();
+    leaveScheduled();
+    leaveConversationChrome();
+    _sidebar->selectSaved(true);
+    _savedPage->setVisible(true);
+    _savedPage->open();
+}
+
+// What the overview pages (Saved, Scheduled) take away: the conversation's
+// chrome and the composer, its draft stashed.
+void Shell::leaveConversationChrome() {
     _search->hideNow();
     if (threadOpen())
         closeThread();
@@ -1908,9 +1926,6 @@ void Shell::openSaved() {
     _typing->setTarget(kNoConv, 0);
     _typing->setVisible(false);
     _ctx.backend.setActiveConversation(kNoConv, 0);
-    _sidebar->selectSaved(true);
-    _savedPage->setVisible(true);
-    _savedPage->open();
 }
 
 void Shell::leaveSaved() {
@@ -1918,6 +1933,39 @@ void Shell::leaveSaved() {
         return;
     _savedPage->setVisible(false);
     _sidebar->selectSaved(false);
+    _composer->setVisible(true);
+}
+
+// ── The Scheduled messages page ─────────────────────────────────────────────
+
+void Shell::buildScheduledPage(View *stack) {
+    _scheduledPage = stack->add<ScheduledPage>(_ctx, _avatars);
+    _scheduledPage->setVisible(false);
+    _scheduledPage->onOpenChannel = [this](ConvRef c) { open(c); };
+    _sidebar->onScheduled         = [this] { openScheduled(); };
+}
+
+bool Shell::scheduledOpen() const {
+    return _scheduledPage && _scheduledPage->visible();
+}
+
+void Shell::openScheduled() {
+    if (!_scheduledPage || !_signedIn || !_ctx.backend.capabilities().scheduledSend)
+        return;
+    leaveTeammate();
+    leaveThreads();
+    leaveSaved();
+    leaveConversationChrome();
+    _sidebar->selectScheduled(true);
+    _scheduledPage->setVisible(true);
+    _scheduledPage->open();
+}
+
+void Shell::leaveScheduled() {
+    if (!scheduledOpen())
+        return;
+    _scheduledPage->setVisible(false);
+    _sidebar->selectScheduled(false);
     _composer->setVisible(true);
 }
 

@@ -627,6 +627,134 @@ TEST(
     CHECK_STR(s["post_at"].str(), "1900000000");
 }
 
+TEST("slack write: scheduled messages — a session lists dated drafts and cancels one") {
+    if (!haveServer())
+        return;
+    Env e;
+    // Undated drafts are plain drafts; sent or deleted ones may linger.
+    script(
+        "drafts.list",
+        R"([{"ok":true,"drafts":[
+            {"id":"Dr2","last_updated_ts":"1700000001.5","date_scheduled":1900000500,
+             "destinations":[{"channel_id":"D1"}],
+             "blocks":[{"type":"rich_text","elements":[{"type":"rich_text_section",
+               "elements":[{"type":"text","text":"later"}]}]}]},
+            {"id":"Dr1","last_updated_ts":"1700000000.123456","date_scheduled":"1900000000",
+             "destinations":[{"channel_id":"C1","thread_ts":"1700000000.000100"}],
+             "blocks":[{"type":"rich_text","elements":[{"type":"rich_text_section",
+               "elements":[{"type":"text","text":"in thread"}]}]}]},
+            {"id":"Dr3","last_updated_ts":"1","date_scheduled":0,
+             "destinations":[{"channel_id":"C1"}],"blocks":[]},
+            {"id":"Dr4","last_updated_ts":"1","date_scheduled":1900000000,"is_sent":true,
+             "destinations":[{"channel_id":"C1"}],"blocks":[]}
+        ]}])"
+    );
+    e.be->refreshScheduled();
+    REQUIRE(pumpUntil([&] { return e.store.hasScheduled(); }));
+    const auto &l = e.store.scheduled();
+    REQUIRE(l.size() == 2);
+    CHECK_STR(l[0].id, "Dr1"); // soonest first
+    CHECK(l[0].conv == e.general);
+    CHECK(l[0].thread == e.old);
+    CHECK(l[0].threadKnown);
+    CHECK(l[0].at == 1900000000);
+    CHECK_STR(l[0].text, "in thread");
+    CHECK_STR(l[1].id, "Dr2");
+    CHECK(l[1].conv == e.dm);
+    CHECK(l[1].thread == 0);
+    CHECK_STR(Log().get("drafts.list")["form"]["is_active"].str(), "true");
+
+    // Cancel: drafts.delete with the version padded to 7 decimals; the
+    // Store drops it.
+    Result r;
+    e.be->cancelScheduled("Dr1", r.cb());
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    CHECK(r.ok);
+    {
+        Log         log;
+        json::Value d = log.get("drafts.delete")["form"];
+        CHECK_STR(d["draft_id"].str(), "Dr1");
+        CHECK_STR(d["client_last_updated_ts"].str(), "1700000000.1234560");
+    }
+    CHECK(std::none_of(e.store.scheduled().begin(), e.store.scheduled().end(), [](const auto &s) {
+        return s.id == "Dr1";
+    }));
+
+    // Edited elsewhere meanwhile: once more with a newer version, then gone.
+    model::Store::ScheduledItem it;
+    it.id      = "Dr9";
+    it.version = "1700000000.5";
+    it.conv    = e.general;
+    it.at      = 1900000000;
+    REQUIRE(pumpUntil([&] { return Log().count("drafts.list") == 2; }));
+    pumpFor(50);
+    e.store.setScheduled({it});
+    script("drafts.delete", R"([{"ok":false,"error":"draft_has_conflict"}])");
+    Result c;
+    e.be->cancelScheduled("Dr9", c.cb());
+    REQUIRE(pumpUntil([&] { return c.called; }));
+    CHECK(c.ok);
+    {
+        Log log;
+        CHECK(log.count("drafts.delete") == 3);
+        const std::string v(log.get("drafts.delete", 2)["form"]["client_last_updated_ts"].str());
+        CHECK(v.size() == 18 && v[10] == '.' && v > "1700000000.5000000");
+    }
+    CHECK_FALSE(e.store.hasScheduled());
+
+    // A refusal says why and keeps it.
+    std::vector<std::string> errors;
+    e.be->onError = [&](const std::string &m) { errors.push_back(m); };
+    REQUIRE(pumpUntil([&] { return Log().count("drafts.list") == 3; }));
+    pumpFor(50);
+    e.store.setScheduled({it});
+    script("drafts.delete", R"([{"ok":false,"error":"ratelimited_custom"}])");
+    script("drafts.list", R"([{"ok":true,"drafts":[{"id":"Dr9","last_updated_ts":"1700000000.5",
+        "date_scheduled":1900000000,"destinations":[{"channel_id":"C1"}],"blocks":[]}]}])");
+    Result f;
+    e.be->cancelScheduled("Dr9", f.cb());
+    REQUIRE(pumpUntil([&] { return f.called; }));
+    CHECK_FALSE(f.ok);
+    CHECK(e.store.hasScheduled());
+    REQUIRE(errors.size() == 1);
+    CHECK_STR(errors[0], "Couldn't cancel the scheduled message: ratelimited_custom");
+}
+
+TEST("slack write: scheduled messages — a token lists and cancels Slack's scheduled messages") {
+    if (!haveServer())
+        return;
+    Env                e;
+    slack::Credentials cr;
+    cr.token  = "xoxp-test";
+    cr.teamId = "T1";
+    slack::SlackBackend tok(e.store, app(), e.client, cr);
+    script(
+        "chat.scheduledMessages.list",
+        R"([{"ok":true,"scheduled_messages":[
+            {"id":"Q1","channel_id":"C1","post_at":1900000000,"text":"*hi*"}]}])"
+    );
+    tok.refreshScheduled();
+    REQUIRE(pumpUntil([&] { return e.store.hasScheduled(); }));
+    const auto &l = e.store.scheduled();
+    REQUIRE(l.size() == 1);
+    CHECK_STR(l[0].id, "Q1");
+    CHECK(l[0].conv == e.general);
+    CHECK_FALSE(l[0].threadKnown); // the list doesn't say: no Send now
+    CHECK_STR(l[0].text, "*hi*");
+    // Gone already (sent meanwhile): dropped all the same.
+    script(
+        "chat.deleteScheduledMessage", R"([{"ok":false,"error":"invalid_scheduled_message_id"}])"
+    );
+    Result r;
+    tok.cancelScheduled("Q1", r.cb());
+    REQUIRE(pumpUntil([&] { return r.called; }));
+    Log         log;
+    json::Value d = log.get("chat.deleteScheduledMessage")["form"];
+    CHECK_STR(d["channel"].str(), "C1");
+    CHECK_STR(d["scheduled_message_id"].str(), "Q1");
+    CHECK_FALSE(e.store.hasScheduled());
+}
+
 TEST("slack write: pins, stars, leave, members, DMs") {
     if (!haveServer())
         return;

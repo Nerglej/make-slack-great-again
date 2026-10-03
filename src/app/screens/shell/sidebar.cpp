@@ -662,6 +662,9 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
                 r->unread = _ctx.store().unreadThreads() > 0;
                 r->refreshLook();
             }
+            // The scheduled list came or went: show or hide its entry.
+            if (ch.conv == model::kNoConv && _scheduledRow)
+                refreshSections();
             if (ch.conv >= _ctx.store().conversationCount())
                 break;
             const auto &cv = _ctx.store().conversation(ch.conv);
@@ -769,6 +772,7 @@ void Sidebar::rebuild() {
     _navTitles.clear();
     _savedRow         = nullptr;
     _threadsRow       = nullptr;
+    _scheduledRow     = nullptr;
     const auto &store = _ctx.store();
     const auto  caps  = _ctx.backend.capabilities();
 
@@ -799,6 +803,14 @@ void Sidebar::rebuild() {
         _savedRow = r;
     } else {
         _savedSelected = false;
+    }
+    if (caps.scheduledSend) {
+        auto *r = nav(Icon::Clock, tr("Scheduled messages"), &onScheduled);
+        r->setChecked(_scheduledSelected);
+        r->refreshLook();
+        _scheduledRow = r;
+    } else {
+        _scheduledSelected = false;
     }
 
     // Starred first (any kind), then channels, direct messages, agents &
@@ -1061,6 +1073,8 @@ void Sidebar::selectTeammate(const std::string &role) {
             selectThreads(false);
         if (_savedSelected)
             selectSaved(false);
+        if (_scheduledSelected)
+            selectScheduled(false);
     }
     _selectedTeammate = role;
     refreshTeammates();
@@ -1115,6 +1129,13 @@ void Sidebar::refreshSections() {
     // "Saved messages" shows while the saved list is not empty.
     if (_savedRow)
         _savedRow->setVisible(_ctx.store().hasSaved());
+    // "Scheduled messages" only while something waits to be posted.
+    if (_scheduledRow)
+        _scheduledRow->setVisible(_ctx.store().hasScheduled());
+}
+
+bool Sidebar::scheduledShown() const {
+    return _scheduledRow && _scheduledRow->visible();
 }
 
 const ui::View *Sidebar::rowView(ConvRef conv) const {
@@ -1135,6 +1156,8 @@ void Sidebar::selectThreads(bool on) {
         selectTeammate({});
         if (_savedSelected)
             selectSaved(false);
+        if (_scheduledSelected)
+            selectScheduled(false);
     }
     if (auto *r = static_cast<NavRow *>(_threadsRow)) {
         r->setChecked(_threadsSelected);
@@ -1149,9 +1172,27 @@ void Sidebar::selectSaved(bool on) {
         selectTeammate({});
         if (_threadsSelected)
             selectThreads(false);
+        if (_scheduledSelected)
+            selectScheduled(false);
     }
     if (auto *r = static_cast<NavRow *>(_savedRow)) {
         r->setChecked(_savedSelected);
+        r->refreshLook();
+    }
+}
+
+void Sidebar::selectScheduled(bool on) {
+    _scheduledSelected = on && _scheduledRow;
+    if (on) {
+        select(kNoConv);
+        selectTeammate({});
+        if (_threadsSelected)
+            selectThreads(false);
+        if (_savedSelected)
+            selectSaved(false);
+    }
+    if (auto *r = static_cast<NavRow *>(_scheduledRow)) {
+        r->setChecked(_scheduledSelected);
         r->refreshLook();
     }
 }
@@ -1162,7 +1203,9 @@ void Sidebar::select(ConvRef conv) {
     if (conv != kNoConv && _threadsSelected)
         selectThreads(false); // the Threads page is left
     if (conv != kNoConv && _savedSelected)
-        selectSaved(false);                              // the Saved messages page is left
+        selectSaved(false); // the Saved messages page is left
+    if (conv != kNoConv && _scheduledSelected)
+        selectScheduled(false);                          // the Scheduled messages page is left
     if (conv != kNoConv && !_selectedTeammate.empty()) { // the teammate's page is left
         _selectedTeammate.clear();
         refreshTeammates();

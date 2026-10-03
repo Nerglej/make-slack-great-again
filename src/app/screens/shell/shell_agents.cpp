@@ -154,6 +154,7 @@ void Shell::openTeammate(const std::string &role) {
         leaveTeammate(); // another teammate's: its draft is kept
     leaveThreads();
     leaveSaved();
+    leaveScheduled();
     _search->hideNow(); // the conversation's search goes with it
     // Unlike the other overview pages the composer stays: writing to a
     // teammate starts a session with it. The conversation's chrome goes.

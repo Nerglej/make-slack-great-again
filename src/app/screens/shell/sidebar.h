@@ -1,11 +1,11 @@
 // The conversation sidebar:
-// uniform 30 px rows under a 6 px top inset — the "Threads" and "Saved
-// messages" entries, then the Starred / Channels / Direct messages / Agents &
-// apps sections (a click on a header collapses it, hiding every row; hovering
-// shows the chevron that says what a click does; the Direct messages header
-// has a "+" on hover), "N more channels" for the ones outside the
-// relevant-days window, "Add channels", and the footer (avatar + menu,
-// presence toggle). Over the nav gradient.
+// uniform 30 px rows under a 6 px top inset — the "Threads", "Saved
+// messages" and "Scheduled messages" entries, then the Starred / Channels /
+// Direct messages / Agents & apps sections (a click on a header collapses
+// it, hiding every row; hovering shows the chevron that says what a click
+// does; the Direct messages header has a "+" on hover), "N more channels"
+// for the ones outside the relevant-days window, "Add channels", and the
+// footer (avatar + menu, presence toggle). Over the nav gradient.
 //
 // An agent workspace (Capabilities::agentSessions, Claude Code) calls the
 // direct messages "Sessions" and ends them with "Add sessions" (its "+" and
@@ -115,6 +115,7 @@ public:
 
     std::function<void()>                    onThreads;       // the Threads entry
     std::function<void()>                    onSavedMessages; // the Saved messages entry
+    std::function<void()>                    onScheduled;     // the Scheduled messages entry
     std::function<void()>                    onFindChannel;   // "Add channels" → Find a channel
     std::function<void()>                    onCreateChannel; // "Add channels" → Create a channel
     std::function<void()>                    onBrowsePeople;  // the Direct messages header's "+"
@@ -137,6 +138,11 @@ public:
     // The same for the Saved messages entry.
     void selectSaved(bool on);
     bool savedSelected() const { return _savedSelected; }
+    // The same for the Scheduled messages entry, shown while something is
+    // scheduled (Store::hasScheduled).
+    void selectScheduled(bool on);
+    bool scheduledSelected() const { return _scheduledSelected; }
+    bool scheduledShown() const; // tests
     // The Team section's rows, top to bottom (tests): role ids.
     std::vector<std::string> teammates() const;
     // A teammate row's look (tests): bold, selected, its avatar's presence.
@@ -187,24 +193,24 @@ private:
     std::vector<model::Backend::AgentRole> _team; // as last listed (rebuild)
     std::string                            _selectedTeammate;
     std::vector<SectionHeader *>           _sections;
-    std::vector<ui::View *>                _nav; // Threads, Saved messages
+    std::vector<ui::View *>                _nav; // Threads, Saved messages, Scheduled messages
     std::vector<const char *>              _navTitles;
-    ui::View                              *_savedRow = nullptr, *_threadsRow = nullptr;
-    bool                                   _threadsSelected = false, _savedSelected = false;
-    VisitStamps                            _visited; // opened here (visit stamps)
-    std::function<int64_t()>               _now;
-    Filters                                _filters;
-    model::ConvRef                         _selected        = model::kNoConv;
-    model::Store::ObserverId               _observer        = 0;
-    std::shared_ptr<int>                   _alive           = std::make_shared<int>(0);
-    plat::TimerId                          _rebuildTimer    = 0;
-    plat::TimerId                          _usersTimer      = 0;
-    uint64_t                               _userShape       = 0; // userShape() at the last rebuild
-    int                                    _rebuilds        = 0;
-    bool                                   _revealOnRebuild = false;
-    int                                    _hiddenChannels  = 0;
-    bool                                   _collapsed[5] = {}; // starred, channels, DMs, apps, team
-    bool                                   _showAllChannels = false;
+    ui::View   *_savedRow = nullptr, *_threadsRow = nullptr, *_scheduledRow = nullptr;
+    bool        _threadsSelected = false, _savedSelected = false, _scheduledSelected = false;
+    VisitStamps _visited; // opened here (visit stamps)
+    std::function<int64_t()> _now;
+    Filters                  _filters;
+    model::ConvRef           _selected        = model::kNoConv;
+    model::Store::ObserverId _observer        = 0;
+    std::shared_ptr<int>     _alive           = std::make_shared<int>(0);
+    plat::TimerId            _rebuildTimer    = 0;
+    plat::TimerId            _usersTimer      = 0;
+    uint64_t                 _userShape       = 0; // userShape() at the last rebuild
+    int                      _rebuilds        = 0;
+    bool                     _revealOnRebuild = false;
+    int                      _hiddenChannels  = 0;
+    bool                     _collapsed[5]    = {}; // starred, channels, DMs, apps, team
+    bool                     _showAllChannels = false;
 };
 
 } // namespace shell

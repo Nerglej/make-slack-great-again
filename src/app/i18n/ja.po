@@ -64,7 +64,7 @@ msgstr "表示"
 msgid "Hide"
 msgstr "非表示"
 
-#: src/ui/controls.cpp src/ui/filebrowser.cpp src/app/screens/messages/message_dialogs.cpp src/app/screens/settings/settings_pages.cpp src/app/screens/shell/composer.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/session_dialogs.cpp src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/signin_dialogs.cpp src/app/screens/shell/status_dialog.cpp
+#: src/ui/controls.cpp src/ui/filebrowser.cpp src/app/screens/messages/message_dialogs.cpp src/app/screens/settings/settings_pages.cpp src/app/screens/shell/composer.cpp src/app/screens/shell/composer_popups.cpp src/app/screens/shell/scheduled_page.cpp src/app/screens/shell/session_dialogs.cpp src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/signin_dialogs.cpp src/app/screens/shell/status_dialog.cpp
 msgid "Cancel"
 msgstr "キャンセル"
 
@@ -2772,7 +2772,7 @@ msgstr "%1 には一致する会話がありません。他のワークスペー
 msgid "Reminder set for %1"
 msgstr "リマインダー: %1"
 
-#: src/app/screens/shell/saved_page.cpp
+#: src/app/screens/shell/saved_page.cpp src/app/screens/shell/scheduled_page.cpp
 msgid "No preview available"
 msgstr "プレビューはありません"
 
@@ -2783,6 +2783,26 @@ msgstr "保存済みメッセージ"
 #: src/app/screens/shell/saved_page.cpp
 msgid "Messages you save for later or set reminders on will appear here."
 msgstr "後で見るために保存したメッセージやリマインダーを設定したメッセージがここに表示されます。"
+
+#: src/app/screens/shell/scheduled_page.cpp
+msgid "Sends %1"
+msgstr "%1 に送信"
+
+#: src/app/screens/shell/scheduled_page.cpp
+msgid "in a thread"
+msgstr "スレッド内"
+
+#: src/app/screens/shell/scheduled_page.cpp
+msgid "Send now"
+msgstr "今すぐ送信"
+
+#: src/app/screens/shell/scheduled_page.cpp src/app/screens/shell/sidebar.cpp
+msgid "Scheduled messages"
+msgstr "予約済みメッセージ"
+
+#: src/app/screens/shell/scheduled_page.cpp
+msgid "Messages you schedule will appear here until they're sent."
+msgstr "予約したメッセージは送信されるまでここに表示されます。"
 
 #: src/app/screens/shell/session_dialogs.cpp
 msgid "Search for sessions"
@@ -3675,6 +3695,10 @@ msgstr "保存済みメッセージを削除できませんでした: %1"
 #: src/app/slack/slack_actions.cpp
 msgid "Couldn't schedule message: %1"
 msgstr "メッセージを予約できませんでした: %1"
+
+#: src/app/slack/slack_actions.cpp
+msgid "Couldn't cancel the scheduled message: %1"
+msgstr "予約メッセージを取り消せませんでした: %1"
 
 #: src/app/slack/slack_actions.cpp
 msgid "Could not update profile: %1"
