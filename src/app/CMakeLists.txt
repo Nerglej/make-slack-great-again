@@ -18,6 +18,7 @@ add_library(msga_app_core STATIC
     i18n/languages.cpp
     i18n/languages_generated.cpp
     crash/crash_handler.cpp
+    diag/mem_stats.cpp
     media/sounds.cpp
     media/audio_errors.cpp
     media/audio_player.cpp

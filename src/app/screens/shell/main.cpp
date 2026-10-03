@@ -12,7 +12,12 @@
 //   --open <conv id>     open this conversation instead of the fixture's start
 //   --thread <text>      then open the thread whose root contains <text>
 //   --browse-all         visit every conversation once, then print RSS
+//   --soak <rounds>      the leak soak (demo/soak.h, scripts/soak.sh)
 //   --exit-after <ms>    quit after that long
+//
+// Leak hunting (Debug and demo builds): SIGUSR1 prints the memory numbers
+// (app/diag/mem_stats.h) and, in an ASan build, runs a LeakSanitizer pass;
+// MSGA_MEMSTATS=<seconds> prints them that often.
 #include "app/auth/workspaces.h"
 #include "app/cache/workspace_cache.h"
 #include "app/crash/crash_handler.h"
@@ -44,7 +49,11 @@
 
 #ifdef MSGA_DEMO
 #include "app/fake/fake_backend.h"
+#include "screens/shell/demo/soak.h"
 #include "screens/shell/demo/tour.h"
+#endif
+#ifdef MSGA_DEV_DIAG
+#include "app/diag/mem_stats.h"
 #endif
 #ifdef MSGA_HAVE_MESSAGES
 #include "screens/messages/debug_scroll.h"
@@ -66,7 +75,7 @@
 #include <ftw.h>
 #include <unistd.h>
 #endif
-#if defined(__SANITIZE_ADDRESS__) && !defined(_WIN32)
+#if (defined(__SANITIZE_ADDRESS__) || defined(MSGA_DEV_DIAG)) && !defined(_WIN32)
 #include <csignal>
 #endif
 
@@ -76,6 +85,10 @@ namespace {
 // ASan builds (scripts/run-asan.sh): Ctrl+C / SIGTERM quit the app normally,
 // so LeakSanitizer gets to print its report at exit.
 volatile std::sig_atomic_t gQuitSignal = 0;
+#endif
+#if defined(MSGA_DEV_DIAG) && !defined(_WIN32)
+// SIGUSR1: print the memory numbers (and run a LeakSanitizer pass) now.
+volatile std::sig_atomic_t gStatsSignal = 0;
 #endif
 
 [[maybe_unused]] long rssKb() {
@@ -173,6 +186,7 @@ int main(int argc, char **argv) {
     // far. debugScroll (hidden): scroll torture test with frame verification.
     [[maybe_unused]] std::string openId, threadText;
     [[maybe_unused]] int         debugScroll = 0;
+    [[maybe_unused]] int         soakRounds  = 0;
     [[maybe_unused]] bool        browseAll   = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a    = argv[i];
@@ -195,6 +209,8 @@ int main(int argc, char **argv) {
             browseAll = true;
         else if (a == "--debug-scroll")
             debugScroll = std::atoi(next().c_str());
+        else if (a == "--soak")
+            soakRounds = std::atoi(next().c_str());
         else if (str::startsWith(a, "msga://"))
             urls.push_back(a);
         // Anything else is ignored.
@@ -377,6 +393,37 @@ int main(int argc, char **argv) {
     };
     sh.onQuit = [&] { app->quit(); };
 
+#ifdef MSGA_DEV_DIAG
+    // The app's own holders of memory, next to the process numbers: a cache
+    // that grows past its budget, or a Store that keeps growing, shows here
+    // before it does in a profiler.
+    auto appStats = [&]() -> std::string {
+        const model::Store &st       = ctx.store;
+        size_t              messages = 0;
+        for (model::ConvRef c = 0; c < st.conversationCount(); ++c)
+            messages += st.conversation(c).messages.size();
+        char buf[256];
+        std::snprintf(
+            buf,
+            sizeof buf,
+            "images %zu KB in %zu, avatars %zu KB in %zu, convs %zu, messages %zu, users %zu",
+#ifdef MSGA_HAVE_MESSAGES
+            images.bytes() / 1024,
+            images.entryCount(),
+#else
+            size_t(0),
+            size_t(0),
+#endif
+            sh.avatars().bytes() / 1024,
+            sh.avatars().size(),
+            st.conversationCount(),
+            messages,
+            st.userCount()
+        );
+        return buf;
+    };
+#endif
+
     std::optional<shell::Accounts> accounts;
     app->onEvent = [&](const plat::Event &e) {
         // msga:// URLs (the OAuth callback): opened by the OS, or handed over
@@ -428,7 +475,8 @@ int main(int argc, char **argv) {
         fake::FakeBackend &fb = *demoBackend;
         const double       t0 = app->nowMs();
         sh.setSignedIn(true); // the workspace opening: the first-load state until connected
-        fb.connect([&](bool ok, const std::string &why) {
+        // t0 by value: connect answers after this block has ended.
+        fb.connect([&, t0](bool ok, const std::string &why) {
             if (!ok) {
                 std::fprintf(stderr, "msga: %s\n", why.c_str());
                 app->quit();
@@ -479,6 +527,9 @@ int main(int argc, char **argv) {
                 *step     = [&, step, start](model::ConvRef c) {
                     if (c >= store.conversationCount()) {
                         sh.open(start);
+                        // The function holds itself (step): let it go once
+                        // it has returned, or the cycle leaks.
+                        app->addTimer(0, false, [step] { *step = nullptr; });
                         app->addTimer(300, false, [] {
                             std::fprintf(
                                 stderr,
@@ -493,6 +544,10 @@ int main(int argc, char **argv) {
                 };
                 app->addTimer(500, false, [step] { (*step)(0); });
             }
+            if (soakRounds > 0)
+                app->addTimer(500, false, [&, start] {
+                    demo::runSoak(ctx, sh, start, soakRounds, appStats, [&] { sh.quit(); });
+                });
         });
     }
 #endif
@@ -509,6 +564,30 @@ int main(int argc, char **argv) {
         if (gQuitSignal)
             sh.quit();
     });
+#endif
+#ifdef MSGA_DEV_DIAG
+    auto printStats = [&](const char *why) {
+        std::fprintf(
+            stderr,
+            "msga memstats (%s): %s; %s\n",
+            why,
+            diag::formatMem(diag::sampleMem()).c_str(),
+            appStats().c_str()
+        );
+        std::fflush(stderr);
+    };
+#ifndef _WIN32
+    std::signal(SIGUSR1, [](int) { gStatsSignal = 1; });
+    app->addTimer(250, true, [&] {
+        if (!gStatsSignal)
+            return;
+        gStatsSignal = 0;
+        printStats("SIGUSR1");
+        diag::checkLeaksNow();
+    });
+#endif
+    if (const char *every = std::getenv("MSGA_MEMSTATS"); every && std::atoi(every) > 0)
+        app->addTimer(std::atoi(every) * 1000, true, [&] { printStats("periodic"); });
 #endif
     app->run();
     return exitCode;

@@ -74,9 +74,16 @@ target_compile_definitions(msga PRIVATE MSGA_VERSION=${MSGA_VERSION}) # the upda
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(msga PRIVATE ../../crash/terminate_handler.cpp)
 endif()
+# Leak-hunting diagnostics (app/diag/mem_stats.h): SIGUSR1 prints the memory
+# numbers (and runs a LeakSanitizer pass under ASan), MSGA_MEMSTATS=<s> logs
+# them every <s> seconds. Debug and demo builds only, never the release.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR MSGA_DEMO)
+    target_compile_definitions(msga PRIVATE MSGA_DEV_DIAG)
+endif()
 if(MSGA_DEMO)
-    # msga's scripted walkthrough (--demo-tour): demo builds only.
-    target_sources(msga PRIVATE demo/tour.cpp demo/tour_script.cpp)
+    # msga's scripted walkthrough (--demo-tour) and the leak soak (--soak):
+    # demo builds only.
+    target_sources(msga PRIVATE demo/tour.cpp demo/tour_script.cpp demo/soak.cpp)
     target_link_libraries(msga PRIVATE msga_app_fake)
     target_compile_definitions(msga PRIVATE MSGA_DEMO)
     # Demo mode's own checks (the tour parser, ../../../../demo's tour.json and
