@@ -252,6 +252,26 @@ TEST("textedit: caret blinks on the system period while focused") {
     CHECK(t.damageArea() < 20 * 40);
 }
 
+TEST("textedit: a popup that closes when its field loses focus survives deactivation") {
+    Win   w(400, 300);
+    auto  pop  = std::make_unique<ui::Popup>();
+    auto *edit = pop->add<ui::TextEdit>();
+    edit->style().size(200, 30);
+    pop->setAnchor({20, 20, 10, 10}, ui::Popup::Place::Below);
+    ui::Popup *p        = w.w->showPopup(std::move(pop));
+    edit->onFocusChange = [p](bool on) {
+        if (!on)
+            p->close();
+    };
+    w.frame();
+    edit->focus();
+    REQUIRE(w.w->focusView() == edit);
+    w.w->handle({.type = plat::EventType::FocusOut}); // the window loses the keyboard
+    w.frame();
+    CHECK(w.w->topPopup() == nullptr);
+    CHECK(w.w->focusView() == nullptr);
+}
+
 TEST("html: reader handles blocks, entities, links, whitespace") {
     std::string              text;
     std::vector<uint16_t>    fmt;

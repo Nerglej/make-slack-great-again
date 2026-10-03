@@ -764,7 +764,10 @@ void Window::handle(const plat::Event &e) {
             Event fe{_active ? EventType::FocusIn : EventType::FocusOut};
             fe.raw = &e;
             _focus->onEvent(fe);
-            _focus->update();
+            // The handler may have dropped the focus (a popup that closes
+            // itself when its field loses focus).
+            if (_focus)
+                _focus->update();
         }
         if (onEvent)
             onEvent(e); // the app's own activation handling (mark read, …)
