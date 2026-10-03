@@ -1,5 +1,8 @@
 #include "ui/widgets.h"
 
+#include "base/i18n.h"
+#include "base/str.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -48,7 +51,7 @@ int typeAheadMatch(int current, int n, char c, const void *ctx, TypeAheadLabel l
     for (int k = 1; k <= n; ++k) {
         const int              i = ((current < 0 ? -1 : current) + k + n) % n;
         const std::string_view l = label(ctx, i);
-        if (!l.empty() && (l[0] >= 'A' && l[0] <= 'Z' ? char(l[0] | 0x20) : l[0]) == c)
+        if (!l.empty() && str::asciiLower(l[0]) == c)
             return i;
     }
     return -1;
@@ -638,6 +641,10 @@ Badge::Badge(int count, C bg, C fg) : _count(count), _bg(bg), _fg(fg) {
 
 Badge::~Badge() = default;
 
+std::string Badge::accessibleName() const {
+    return str::number(_count);
+}
+
 void Badge::setCount(int n) {
     if (n == _count)
         return;
@@ -665,7 +672,7 @@ SizeF Badge::measureContent(float, float) {
         return {8, 8};
     if (!_layout)
         _layout = layoutPlain(
-            _count > 99 ? std::string("99+") : std::to_string(_count),
+            _count > 99 ? std::string("99+") : str::number(_count),
             font(Font::SmallBold, _fg),
             windowScale()
         );
@@ -864,6 +871,31 @@ void Image::paint(gfx::Painter &p) {
     }
     p.drawBitmap(src->view(), dst, gfx::Sampling::Smooth);
     p.restore();
+}
+
+// ── Table-driven menus ──────────────────────────────────────────────────────
+
+MenuItem &addMenuItem(
+    std::vector<MenuItem> &out, std::span<const MenuDef> defs, int id, bool alt, bool enabled
+) {
+    MenuItem m;
+    for (const MenuDef &d : defs)
+        if (d.id == id) {
+            m.label = i18n::tr(alt && d.alt ? d.alt : d.label);
+            m.icon  = d.icon;
+            if (d.hint)
+                m.hint = d.hint;
+            break;
+        }
+    m.id      = id;
+    m.enabled = enabled;
+    out.push_back(std::move(m));
+    return out.back();
+}
+
+void addMenuSeparator(std::vector<MenuItem> &out) {
+    if (!out.empty() && !out.back().separator)
+        out.push_back(MenuItem::separatorItem());
 }
 
 } // namespace ui

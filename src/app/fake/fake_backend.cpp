@@ -317,7 +317,7 @@ void FakeBackend::createChannel(std::string name, bool isPrivate, ConvDone done)
                 return;
             }
         model::Conversation c;
-        c.id            = "C0" + std::to_string(_store.conversationCount()) + "NEW";
+        c.id            = "C0" + str::number(_store.conversationCount()) + "NEW";
         c.name          = name;
         c.kind          = isPrivate ? model::ConvKind::Private : model::ConvKind::Channel;
         c.memberCount   = 1;
@@ -569,7 +569,7 @@ std::string inlineHtml(std::string_view t) {
 // with a section id as Slack's carry ("temp:C:f<n>", from *seq).
 std::string canvasMarkdownHtml(std::string_view md, uint32_t *seq) {
     std::string out;
-    auto id = [seq] { return str::concat({" id=\"temp:C:f", std::to_string(++*seq), "\""}); };
+    auto        id = [seq] { return str::concat({" id=\"temp:C:f", str::number(++*seq), "\""}); };
     std::string list; // the open list's tag
     auto        closeList = [&] {
         if (!list.empty())
@@ -728,7 +728,7 @@ void FakeBackend::createChannelCanvas(ConvRef conv, std::string markdown, Canvas
         conv < _store.conversationCount() && !_store.conversation(conv).canvasId.empty();
     std::string id;
     if (conv < _store.conversationCount() && !has) {
-        id = str::concat({"FNEW", std::to_string(++_canvasSeq)});
+        id = str::concat({"FNEW", str::number(++_canvasSeq)});
         _canvasEdits.push_back({id, canvasMarkdownHtml(markdown, &_canvasSeq)});
     }
     later(kReadLatencyMs, [this, conv, has, id, done = std::move(done)] {

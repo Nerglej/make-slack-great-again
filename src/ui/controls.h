@@ -190,6 +190,10 @@ public:
     void                  setMasked(bool on, bool reveal = false);
     // StyledLineEdit::setPrefix: a muted label inside the box before the text.
     void                  setPrefix(std::string text);
+    // The pickers' search look (the emoji and GIF pickers, the members
+    // popup, the link popup): the border stays 1 px with focus, the icon is
+    // faint, the text keeps the edit's own padding inside a 12-px inset.
+    void                  setQuiet();
     bool                  masked() const;
     IconButton           *eye() const { return _eye; }
     std::function<void()> onReturn; // Enter in a one-line field
@@ -206,6 +210,7 @@ private:
     int         _max     = 0;
     uint16_t    _icon    = 0xffff;
     bool        _multi;
+    bool        _quiet = false;
 };
 
 // ── SectionList ─────────────────────────────────────────────────────────────

@@ -348,22 +348,10 @@ EmojiPicker::EmojiPicker(Context &ctx, Pick onPick) : _ctx(ctx), _onPick(std::mo
     _catBar = add<View>();
     _catBar->style().row().noShrink();
     // "Search all emoji": a StyledLineEdit with its search icon.
-    auto *box = add<View>();
-    box->style()
-        .row()
-        .height(kFormNormalH)
-        .padding(12, 0)
-        .spacing(8)
-        .items(Align::Center)
-        .noShrink();
-    box->setBackground(C::FormBg, 6);
-    box->setBorder(C::FieldBorder);
-    box->add<IconView>(Icon::Search, 16, C::FormTextFaint);
-    _search = box->add<TextEdit>();
-    _search->style().flex(1);
-    _search->setMaxLines(1);
-    _search->setFont(Font::Field);
-    _search->setPlaceholder(tr("Search all emoji"));
+    auto *box =
+        add<TextField>(tr("Search all emoji"), TextField::Size::Normal, uint16_t(Icon::Search));
+    box->setQuiet();
+    _search           = &box->edit();
     _search->onChange = [this] { filter(str::trim(_search->text())); };
     _search->onKey    = [this](const Event &e) { return searchKey(e); };
     _scroll           = add<ScrollView>();

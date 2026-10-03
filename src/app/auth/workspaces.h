@@ -65,6 +65,11 @@ public:
 
 private:
     bool flush();
+    // Takes a record in, its auth from the keychain when the file has none;
+    // one without a service or id, or already there, is dropped.
+    void adopt(WorkspaceRecord r);
+    // `key` active, or the first record when it names none.
+    void setActiveOrFirst(std::string_view key);
 
     std::string                                  _path;
     std::vector<WorkspaceRecord>                 _records;

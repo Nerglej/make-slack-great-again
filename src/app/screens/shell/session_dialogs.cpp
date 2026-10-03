@@ -23,20 +23,30 @@ namespace shell {
 namespace {
 
 // The browse list's metrics.
-constexpr float kRowH = BrowseList::kRowH, kAvatar = 36, kRowPadH = 24;
+constexpr float kRowH = BrowseList::kRowH, kAvatar = 36;
 
 // One row: the picture (or a channel's icon), the title over its subtitle,
 // the badge. Recycled: bind() refills it for another item.
 class BrowseRow final : public Clickable {
 public:
     BrowseRow() {
-        // Keyboard selection reads stronger than hover.
-        setLook({C::None, C::FormHighlight, C::FormHighlight, C::FormHighlightStrong, 0});
         setRole(Role::ListItem);
-        setFocusable(false);
-        style().row().height(kRowH).padding(kRowPadH, 0).items(Align::Center).noShrink();
+        style().row().height(kRowH).items(Align::Center).noShrink();
     }
-    void bind(Avatars &avatars, const BrowseList::Item &it, bool onContent, float radius) {
+    void bind(
+        Avatars                   &avatars,
+        const BrowseList::Item    &it,
+        const BrowseList::Options &opt,
+        bool                       onContent,
+        float                      radius
+    ) {
+        // Keyboard selection reads stronger than hover; so does a press
+        // where the row waits for the click.
+        const C pressed = opt.onPress ? C::FormHighlight : C::FormHighlightStrong;
+        setLook({C::None, C::FormHighlight, pressed, C::FormHighlightStrong, 0});
+        setFocusable(!opt.onPress, false);
+        style().padding(opt.rowInset, 0);
+        _onPress = opt.onPress;
         clearChildren();
         const bool channel = it.titleIcon != 0xffff;
         if (!channel) {
@@ -47,7 +57,8 @@ public:
             else
                 av->setRadius(radius);
             av->setPlaceholder(C::PresenceAway);
-            av->setInitial(it.title);
+            if (opt.initials)
+                av->setInitial(it.title);
             av->setBitmap(avatars.get(it.avatar, int(kAvatar * 2)));
         }
         const C primary = onContent ? C::Text : C::FormText;
@@ -86,13 +97,16 @@ public:
         }
     }
     bool onEvent(Event &e) override {
-        // The list activates on press.
-        if (e.type == EventType::PointerDown && e.button == plat::Button::Left) {
+        // The list activates on press (unless it waits for the click).
+        if (_onPress && e.type == EventType::PointerDown && e.button == plat::Button::Left) {
             activate();
             return true;
         }
         return Clickable::onEvent(e);
     }
+
+private:
+    bool _onPress = true;
 };
 
 // A 32 px close button with a 14 px cross: flat, a round hover wash.
@@ -467,7 +481,7 @@ void BrowseList::applyFilter(std::string_view query) {
     const std::string q = utf8::foldCase(str::trim(query));
     shown.clear();
     for (size_t i = 0; i < items.size(); ++i)
-        if (q.empty() || items[i].searchKey.find(q) != std::string::npos)
+        if (utf8::containsPrefolded(items[i].searchKey, q))
             shown.push_back(i);
     _selected = -1; // a re-filtered list has a different nth row
     reset();
@@ -476,7 +490,7 @@ void BrowseList::applyFilter(std::string_view query) {
 
 void BrowseList::bindRow(View &v, int index) {
     auto &row = static_cast<BrowseRow &>(v);
-    row.bind(_avatars, items[shown[size_t(index)]], _onContent, _radius);
+    row.bind(_avatars, items[shown[size_t(index)]], _opt, _onContent, _radius);
     row.setChecked(index == _selected);
     row.onClick = [this, id = items[shown[size_t(index)]].id] {
         if (onActivated)
@@ -503,6 +517,10 @@ void BrowseList::moveSelection(int delta) {
     const int n = int(shown.size());
     if (n == 0 || delta == 0)
         return;
+    if (!_opt.wrap) { // none selected: either key picks the first
+        setSelectedRow(std::clamp(_selected + delta, 0, n - 1));
+        return;
+    }
     // Wrap, so Up from the top lands on the last match.
     const int from = _selected < 0 ? (delta > 0 ? -1 : 0) : _selected;
     setSelectedRow(((from + delta) % n + n) % n);
@@ -515,7 +533,8 @@ void BrowseList::activateSelected() {
 }
 
 void BrowseList::paint(gfx::Painter &p) {
-    p.fillRect(bounds(), color(_onContent ? C::Surface : C::FormBg));
+    if (_opt.fill)
+        p.fillRect(bounds(), color(_onContent ? C::Surface : C::FormBg));
     VirtualList::paint(p);
 }
 

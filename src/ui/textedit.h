@@ -265,6 +265,29 @@ void fromHtml(
     std::vector<uint16_t>    *fmt,
     std::vector<std::string> *links
 );
+
+// The forgiving tag scanner fromHtml reads with (the app's canvas reader
+// too). Not an HTML parser: a tag's name and attribute text, nothing more.
+struct Tag {
+    std::string_view name;
+    // The name and its attributes (after a closing '/'); empty: a comment,
+    // <!…>, <?…>, <> or </>.
+    std::string_view text;
+    bool             closing = false;
+};
+// Reads the tag at html[at] (a '<') into *tag; returns the offset past it,
+// or npos when it never closes (an unclosed comment runs to the end).
+size_t           readTag(std::string_view html, size_t at, Tag *tag);
+// True when the tag carries nothing to act on: a comment or declaration, or
+// script/style content (with `documentParts`, head and title too): its tags,
+// and every tag inside one (*depth counts them; the text between is skipped
+// while it is above 0).
+bool             skippedTag(const Tag &tag, int *depth, bool documentParts);
+// An attribute's raw value (entities not decoded) in a tag's text, "" if
+// absent. Forgiving: any case, spaces around '=', unquoted values, an
+// unclosed quote to the end. `strict` wants exactly name="…" or name='…',
+// closed.
+std::string_view tagAttr(std::string_view tag, std::string_view name, bool strict = false);
 } // namespace rich
 
 } // namespace ui

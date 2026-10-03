@@ -12,6 +12,7 @@
 #include "support/test.h"
 #include "base/time.h"
 #include "plat/testing.h"
+#include "screens/common/user_search.h"
 #include "screens/shell/canvas_page.h"
 #include "screens/shell/composer.h"
 #include "screens/shell/composer_popups.h"
@@ -740,6 +741,52 @@ TEST("header: the members popup grows to its list when the count was unknown") {
     CHECK(p->frame().y >= anchor.y + anchor.h);
     CHECK(p->frame().y + p->frame().h <= h.win->size().h);
     CHECK(p->frame().x + p->frame().w <= h.win->size().w);
+}
+
+TEST("header: the members popup matches titles; Up / Down stop at the ends, Enter opens") {
+    Harness        h;
+    model::UserRef opened = model::kNoUser;
+    h.ctx.messageUser     = [&](model::UserRef u) { opened = u; };
+    auto key              = [&](plat::Key k) {
+        app().platform().testHooks()->injectKey(h.win->native(), k, true);
+        app().platform().testHooks()->injectKey(h.win->native(), k, false);
+        pump(2);
+    };
+    // "lead": Alex (Product lead) and Mira (Design lead), by name; typing
+    // picks the first.
+    auto open = [&] {
+        h.sh->header().openMembers({900, 40, 40, 28});
+        pump();
+        REQUIRE(h.win->topPopup() != nullptr);
+        REQUIRE(until([&] { return hasText(h.win->topPopup(), "9 members"); }));
+        plat::Event te;
+        te.type   = plat::EventType::TextInput;
+        te.window = &h.win->native();
+        te.text   = "lead";
+        h.win->handle(te);
+        pump(2);
+        CHECK(hasText(h.win->topPopup(), "Mira Okafor"));
+        CHECK_FALSE(hasText(h.win->topPopup(), "Jonas Weber"));
+    };
+    open();
+    key(plat::Key::Up); // no wrap to the last match
+    key(plat::Key::Enter);
+    CHECK(opened == h.store.findUser("U0ALEX"));
+    CHECK(h.win->topPopup() == nullptr);
+    open();
+    key(plat::Key::Down);
+    key(plat::Key::Down); // stays on the last
+    key(plat::Key::Enter);
+    CHECK(opened == h.store.findUser("U0MIRA"));
+}
+
+TEST("people search key: label and handle, the title on request") {
+    model::User u;
+    u.id = "U1", u.name = "mira", u.displayName = "Mira Okafor", u.title = "Design Lead";
+    CHECK_STR(screens::userSearchKey(u), "mira okafor mira");
+    CHECK_STR(screens::userSearchKey(u, true), "mira okafor mira design lead");
+    u.displayName.clear();
+    CHECK_STR(screens::userSearchKey(u), "mira mira");
 }
 
 // ── Thread panel ────────────────────────────────────────────────────────────

@@ -31,6 +31,10 @@
 
 namespace shell {
 
+// The notification window: a message older than this never notifies, and a
+// conversation idle for longer neither badges nor counts.
+inline constexpr int64_t kMaxNotifyAgeSecs = 30 * 86400; // 30 days
+
 // A workspace's share of the tray dot, the launcher badge and its rail
 // tile's dot: `important` = unread direct
 // messages + mentions (an agent workspace: only what needs you, its

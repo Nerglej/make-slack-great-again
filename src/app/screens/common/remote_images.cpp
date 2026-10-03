@@ -6,14 +6,12 @@
 #include "base/file.h"
 #include "base/log.h"
 #include "base/str.h"
+#include "base/thread.h"
 #include "base/time.h"
 #include "gfx/gfx.h"
 #include "plat/plat.h"
 
 #include <algorithm>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
 #include <unordered_map>
 
 namespace screens {
@@ -108,36 +106,14 @@ struct RemoteImages::Impl {
     plat::TimerId                            firstSweep = 0, everySweep = 0;
     bool                                     alive = true; // UI thread; false once destroyed
 
-    // The worker: disk writes, mtime bumps, sweeps.
-    std::mutex                         m;
-    std::condition_variable            cv;
-    std::vector<std::function<void()>> jobs;
-    std::thread                        thread;
-    bool                               stop = false;
+    // The worker: disk writes, mtime bumps, sweeps, one at a time and in
+    // order; it ends when idle. Not the image decoder's: a sweep must not
+    // hold up a picture.
+    base::WorkerPool worker{{.maxWorkers = 1, .maxParked = 1}};
 
     Impl(plat::App &a, net::Client *c, std::string d) : app(a), client(c), dir(std::move(d)) {}
 
-    static void run(std::shared_ptr<Impl> self) {
-        for (;;) {
-            std::function<void()> job;
-            {
-                std::unique_lock lock(self->m);
-                self->cv.wait(lock, [&] { return self->stop || !self->jobs.empty(); });
-                if (self->stop)
-                    return;
-                job = std::move(self->jobs.front());
-                self->jobs.erase(self->jobs.begin());
-            }
-            job();
-        }
-    }
-    void work(std::function<void()> job) {
-        {
-            std::lock_guard lock(m);
-            jobs.push_back(std::move(job));
-        }
-        cv.notify_one();
-    }
+    void work(std::function<void()> job) { worker.post(std::move(job)); }
 
     std::string pathFor(const std::string &url) const {
         const auto digest = crypto::sha256(url);
@@ -263,7 +239,6 @@ RemoteImages::RemoteImages(plat::App &app, net::Client *client, std::string dir)
     if (d.dir.empty())
         return;
     file::makeDirs(d.dir);
-    d.thread = std::thread(Impl::run, _impl);
     // How much is there (Settings shows it) — no deleting this early.
     Impl::sweep(_impl, {}, INT64_MAX);
     std::weak_ptr<Impl> weak = _impl;
@@ -290,14 +265,7 @@ RemoteImages::~RemoteImages() {
         d.app.cancelTimer(d.firstSweep);
     if (d.everySweep)
         d.app.cancelTimer(d.everySweep);
-    {
-        std::lock_guard lock(d.m);
-        d.stop = true;
-        d.jobs.clear();
-    }
-    d.cv.notify_all();
-    if (d.thread.joinable())
-        d.thread.join();
+    d.worker.stop(); // drops the queued work, waits for the one under way
 }
 
 bool RemoteImages::isRemote(std::string_view path) {

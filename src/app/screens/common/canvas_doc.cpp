@@ -9,20 +9,10 @@ namespace screens::canvas {
 
 namespace {
 
-// An attribute's value in an opening tag ("" if absent).
+// An attribute's raw value in an opening tag ("" if absent): exactly
+// name="…", as canvases write them.
 std::string_view attr(std::string_view tag, std::string_view name) {
-    for (size_t at = tag.find(name); at != std::string_view::npos; at = tag.find(name, at + 1)) {
-        const size_t eq = at + name.size();
-        if ((at > 0 && tag[at - 1] != ' ') || eq + 1 >= tag.size() || tag[eq] != '=')
-            continue;
-        const char q = tag[eq + 1];
-        if (q != '"' && q != '\'')
-            continue;
-        const size_t end = tag.find(q, eq + 2);
-        return end == std::string_view::npos ? std::string_view()
-                                             : tag.substr(eq + 2, end - eq - 2);
-    }
-    return {};
+    return ui::rich::tagAttr(tag, name, true);
 }
 
 // Builds the editor's HTML: one <p> per line, its markdown prefix first.
@@ -132,25 +122,15 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
             i = e;
             continue;
         }
-        const size_t e = h.find('>', i);
+        ui::rich::Tag t;
+        const size_t  e = ui::rich::readTag(h, i, &t);
         if (e == std::string_view::npos)
             break;
-        std::string_view tag = h.substr(i + 1, e - i - 1);
-        i                    = e + 1;
-        const bool closing   = !tag.empty() && tag[0] == '/';
-        if (closing)
-            tag.remove_prefix(1);
-        size_t ne = 0;
-        while (ne < tag.size() && tag[ne] != ' ' && tag[ne] != '/' && tag[ne] != '\t')
-            ++ne;
-        const std::string_view name = tag.substr(0, ne);
-        if (str::iequals(name, "style") || str::iequals(name, "script")) {
-            skip += closing ? -1 : 1;
-            skip = std::max(skip, 0);
+        i = e;
+        if (ui::rich::skippedTag(t, &skip, false))
             continue;
-        }
-        if (skip)
-            continue;
+        const std::string_view tag = t.text, name = t.name;
+        const bool             closing = t.closing;
         if (str::iequals(name, "br")) {
             br = lines.hasText; // a break inside a block: the rest on its own line
             continue;
@@ -467,29 +447,20 @@ std::string_view bodyOf(std::string_view h, const std::vector<std::string> &titl
 // End (exclusive) of the element whose opening tag starts at `start`,
 // counting nested tags of the same name; npos when unbalanced.
 size_t elementEnd(std::string_view h, size_t start, std::string_view name) {
-    int    depth = 0;
-    size_t pos   = start;
-    while (pos < h.size()) {
+    int depth = 0;
+    for (size_t pos = start; pos < h.size();) {
         const size_t lt = h.find('<', pos);
         if (lt == std::string_view::npos)
             return std::string_view::npos;
-        const size_t gt = h.find('>', lt);
-        if (gt == std::string_view::npos)
-            return std::string_view::npos;
-        std::string_view tag     = h.substr(lt + 1, gt - lt - 1);
-        const bool       closing = !tag.empty() && tag[0] == '/';
-        if (closing)
-            tag.remove_prefix(1);
-        size_t ne = 0;
-        while (ne < tag.size() && tag[ne] != ' ' && tag[ne] != '/' && tag[ne] != '\t' &&
-               tag[ne] != '\n')
-            ++ne;
-        if (str::iequals(tag.substr(0, ne), name) && !(tag.size() && tag.back() == '/')) {
-            depth += closing ? -1 : 1;
+        ui::rich::Tag t;
+        pos = ui::rich::readTag(h, lt, &t);
+        if (pos == std::string_view::npos)
+            return pos;
+        if (str::iequals(t.name, name) && t.text.back() != '/') {
+            depth += t.closing ? -1 : 1;
             if (depth == 0)
-                return gt + 1;
+                return pos;
         }
-        pos = gt + 1;
     }
     return std::string_view::npos;
 }

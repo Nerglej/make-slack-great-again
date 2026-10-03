@@ -5,6 +5,7 @@ add_library(msga_app_core STATIC
     model/store.cpp
     model/store_slot.cpp
     model/image_size.cpp
+    model/backend.cpp
     model/backend_proxy.cpp
     model/jobs.cpp
     model/timers.cpp

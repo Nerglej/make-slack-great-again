@@ -361,18 +361,13 @@ void PickList::confirm() {
 namespace {
 
 // A StyledLineEdit: a bordered one-line field.
-TextEdit *field(View *parent, const char *placeholder, float minW, float h = kFormNormalH) {
-    auto *box = parent->add<View>();
-    box->style().row().height(h).padding(12, 0).items(Align::Center);
+TextEdit *field(View *parent, const char *placeholder, float minW, bool small = false) {
+    auto *box = parent->add<TextField>(
+        placeholder, small ? TextField::Size::Small : TextField::Size::Normal
+    );
+    box->setQuiet();
     box->style().minW = minW;
-    box->setBackground(C::FormBg, 6);
-    box->setBorder(C::FieldBorder);
-    auto *e = box->add<TextEdit>();
-    e->style().flex(1);
-    e->setMaxLines(1);
-    e->setFont(Font::Field);
-    e->setPlaceholder(placeholder);
-    return e;
+    return &box->edit();
 }
 
 Popup *framedPopup() {
@@ -605,7 +600,7 @@ private:
                 if (_h.openUrl)
                     _h.openUrl("https://developers.giphy.com/dashboard/");
             };
-            _key = field(page, tr("Paste your GIPHY API key"), 0, kFormSmallH);
+            _key = field(page, tr("Paste your GIPHY API key"), 0, true);
             _key->setMasked(true);
             // A key GIPHY refused comes back here with the reason.
             _error = page->add<Label>(_keyError, Font::Small, C::FormError);
@@ -623,17 +618,10 @@ private:
             return;
         }
         style().h = 460;
-        auto *box = add<View>();
-        box->style().row().height(kFormNormalH).padding(12, 0).spacing(8).items(Align::Center);
-        box->style().noShrink();
-        box->setBackground(C::FormBg, 6);
-        box->setBorder(C::FieldBorder);
-        box->add<IconView>(Icon::Search, 16, C::FormTextFaint);
-        _search = box->add<TextEdit>();
-        _search->style().flex(1);
-        _search->setMaxLines(1);
-        _search->setFont(Font::Field);
-        _search->setPlaceholder(tr("Search GIFs"));
+        auto *box =
+            add<TextField>(tr("Search GIFs"), TextField::Size::Normal, uint16_t(Icon::Search));
+        box->setQuiet();
+        _search           = &box->edit();
         _search->onChange = [this] { schedule(); };
         _search->onSubmit = [this] {
             // Enter with a selection sends it; otherwise search now.
@@ -998,10 +986,9 @@ void HistorySearch::refilter() {
     for (size_t r = _matches.size(); r-- > 0;) {
         std::string text = str::simplified(_entries[_matches[r]]);
         if (const auto m = historyMatches(text, q); !m.empty() && m.front().first > kLateMatch) {
-            size_t from = m.front().first - kLeadIn;
-            while (from > 0 && (uint8_t(text[from]) & 0xC0) == 0x80)
-                --from; // not inside a code point
-            text = str::concat({"\xE2\x80\xA6", std::string_view(text).substr(from)});
+            // Not inside a code point.
+            const size_t from = utf8::truncateAt(text, m.front().first - kLeadIn);
+            text              = str::concat({"\xE2\x80\xA6", std::string_view(text).substr(from)});
         }
         text::AttributedText t;
         const text::Style    plain = pxFont(14, text::Weight::Regular, themed(C::FormText));

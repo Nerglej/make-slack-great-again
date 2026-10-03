@@ -112,9 +112,8 @@ public:
         img->setPlaceholder(C::None);
         // text.onDarkDim, centred, until it loads.
         img->setLoadingText(tr("Loading image\xE2\x80\xA6"), C::OnDarkDim);
-        auto *name = add<ui::Label>(
-            std::string(path.substr(path.find_last_of('/') + 1)), Font::SmallBold, C::TooltipText
-        );
+        auto *name =
+            add<ui::Label>(std::string(file::baseName(path)), Font::SmallBold, C::TooltipText);
         name->style().alignSelf(ui::Align::End).margins(0, 0, 16, 14);
     }
     void paint(gfx::Painter &p) override {
@@ -1537,38 +1536,69 @@ void MessageList::openImage(const std::string &path, int w, int h) {
 
 namespace {
 
-struct ItemDef {
-    uint8_t     id;
-    gfx::Icon   icon;
-    const char *label;
-    const char *hint; // the shortcut (the key chooses it while the menu is open)
-};
-constexpr ItemDef kItemDefs[] = {
-    {MessageList::kReply, gfx::Icon::MessageSquareReply, N_("Reply in thread"), "T"},
-    {MessageList::kOpenThread, gfx::Icon::MessageSquareReply, N_("Open thread"), "T"},
-    {MessageList::kMuteThread, gfx::Icon::BellOff, N_("Mute thread"), nullptr},
-    {MessageList::kUnmuteThread, gfx::Icon::Bell, N_("Unmute thread"), nullptr},
-    {MessageList::kEdit, gfx::Icon::Edit3, N_("Edit message"), "E"},
-    {MessageList::kCopyLink, gfx::Icon::Link, N_("Copy link"), "L"},
-    {MessageList::kCopyLinkInText, gfx::Icon::Link, N_("Copy link from message"), nullptr},
-    {MessageList::kCopyText, gfx::Icon::Copy, N_("Copy message"), "Ctrl+C"},
-    {MessageList::kPin, gfx::Icon::Pin, N_("Pin to channel"), "P"},
-    {MessageList::kUnpin, gfx::Icon::PinOff, N_("Unpin from channel"), "P"},
-    {MessageList::kSave, gfx::Icon::Bookmark, N_("Save for later"), nullptr},
-    {MessageList::kUnsave, gfx::Icon::BookmarkMinus, N_("Remove from saved"), nullptr},
-    {MessageList::kRemind, gfx::Icon::AlarmClock, N_("Remind me"), nullptr},
-    {MessageList::kRemoveReminder, gfx::Icon::AlarmClock, N_("Remove reminder"), nullptr},
-    {MessageList::kForward, gfx::Icon::Share2, N_("Forward message"), nullptr},
-    {MessageList::kMoveToThread, gfx::Icon::CornerDownRight, N_("Move to thread…"), nullptr},
-    {MessageList::kSummarize, gfx::Icon::Sparkles, N_("Summarize down"), nullptr},
-    {MessageList::kDelete, gfx::Icon::Trash2, N_("Delete message…"), "Del"},
-    {MessageList::kOpenLink, gfx::Icon::ExternalLink, N_("Open link"), nullptr},
-    {MessageList::kCopyLinkUrl, gfx::Icon::Link, N_("Copy link"), nullptr},
-    {MessageList::kCopyImageLink, gfx::Icon::Link, N_("Copy link to image"), nullptr},
-    {MessageList::kCopyFileLink, gfx::Icon::Link, N_("Copy link to file"), nullptr},
-    {MessageList::kCopyImage, gfx::Icon::Copy, N_("Copy full image"), nullptr},
-    {MessageList::kPreview, gfx::Icon::Eye, N_("Preview"), nullptr},
-    {MessageList::kDeleteFile, gfx::Icon::Trash2, N_("Delete file…"), nullptr},
+// The hint is the shortcut (the key chooses it while the menu is open).
+constexpr ui::MenuDef kItemDefs[] = {
+    {MessageList::kReply,
+     uint16_t(gfx::Icon::MessageSquareReply),
+     N_("Reply in thread"),
+     nullptr,
+     "T"},
+    {MessageList::kOpenThread,
+     uint16_t(gfx::Icon::MessageSquareReply),
+     N_("Open thread"),
+     nullptr,
+     "T"},
+    {MessageList::kMuteThread, uint16_t(gfx::Icon::BellOff), N_("Mute thread"), nullptr, nullptr},
+    {MessageList::kUnmuteThread, uint16_t(gfx::Icon::Bell), N_("Unmute thread"), nullptr, nullptr},
+    {MessageList::kEdit, uint16_t(gfx::Icon::Edit3), N_("Edit message"), nullptr, "E"},
+    {MessageList::kCopyLink, uint16_t(gfx::Icon::Link), N_("Copy link"), nullptr, "L"},
+    {MessageList::kCopyLinkInText,
+     uint16_t(gfx::Icon::Link),
+     N_("Copy link from message"),
+     nullptr,
+     nullptr},
+    {MessageList::kCopyText, uint16_t(gfx::Icon::Copy), N_("Copy message"), nullptr, "Ctrl+C"},
+    {MessageList::kPin, uint16_t(gfx::Icon::Pin), N_("Pin to channel"), nullptr, "P"},
+    {MessageList::kUnpin, uint16_t(gfx::Icon::PinOff), N_("Unpin from channel"), nullptr, "P"},
+    {MessageList::kSave, uint16_t(gfx::Icon::Bookmark), N_("Save for later"), nullptr, nullptr},
+    {MessageList::kUnsave,
+     uint16_t(gfx::Icon::BookmarkMinus),
+     N_("Remove from saved"),
+     nullptr,
+     nullptr},
+    {MessageList::kRemind, uint16_t(gfx::Icon::AlarmClock), N_("Remind me"), nullptr, nullptr},
+    {MessageList::kRemoveReminder,
+     uint16_t(gfx::Icon::AlarmClock),
+     N_("Remove reminder"),
+     nullptr,
+     nullptr},
+    {MessageList::kForward, uint16_t(gfx::Icon::Share2), N_("Forward message"), nullptr, nullptr},
+    {MessageList::kMoveToThread,
+     uint16_t(gfx::Icon::CornerDownRight),
+     N_("Move to thread…"),
+     nullptr,
+     nullptr},
+    {MessageList::kSummarize,
+     uint16_t(gfx::Icon::Sparkles),
+     N_("Summarize down"),
+     nullptr,
+     nullptr},
+    {MessageList::kDelete, uint16_t(gfx::Icon::Trash2), N_("Delete message…"), nullptr, "Del"},
+    {MessageList::kOpenLink, uint16_t(gfx::Icon::ExternalLink), N_("Open link"), nullptr, nullptr},
+    {MessageList::kCopyLinkUrl, uint16_t(gfx::Icon::Link), N_("Copy link"), nullptr, nullptr},
+    {MessageList::kCopyImageLink,
+     uint16_t(gfx::Icon::Link),
+     N_("Copy link to image"),
+     nullptr,
+     nullptr},
+    {MessageList::kCopyFileLink,
+     uint16_t(gfx::Icon::Link),
+     N_("Copy link to file"),
+     nullptr,
+     nullptr},
+    {MessageList::kCopyImage, uint16_t(gfx::Icon::Copy), N_("Copy full image"), nullptr, nullptr},
+    {MessageList::kPreview, uint16_t(gfx::Icon::Eye), N_("Preview"), nullptr, nullptr},
+    {MessageList::kDeleteFile, uint16_t(gfx::Icon::Trash2), N_("Delete file…"), nullptr, nullptr},
 };
 
 // Reminder presets, no icons.
@@ -1577,26 +1607,9 @@ constexpr const char *kRemindLabels[] = {
 };
 
 ui::MenuItem &addItem(std::vector<ui::MenuItem> &out, int id, bool enabled = true) {
-    ui::MenuItem m;
-    for (const ItemDef &d : kItemDefs)
-        if (d.id == id) {
-            m.label = tr(d.label);
-            m.icon  = uint16_t(d.icon);
-            if (d.hint)
-                m.hint = d.hint;
-            break;
-        }
-    m.id      = id;
-    m.enabled = enabled;
-    m.danger  = id == MessageList::kDelete || id == MessageList::kDeleteFile;
-    out.push_back(std::move(m));
-    return out.back();
-}
-
-void addSeparator(std::vector<ui::MenuItem> &out) {
-    // Separators: never leading or doubled.
-    if (!out.empty() && !out.back().separator)
-        out.push_back(ui::MenuItem::separatorItem());
+    ui::MenuItem &m = ui::addMenuItem(out, kItemDefs, id, false, enabled);
+    m.danger        = id == MessageList::kDelete || id == MessageList::kDeleteFile;
+    return m;
 }
 
 // An image's type by its name: the known ones, else "image/<ext>", else PNG.
@@ -1660,17 +1673,17 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
         const Ts root = m->isReply() ? m->threadTs : m->ts;
         addItem(items, st.threadMuted(_conv, root) ? kUnmuteThread : kMuteThread);
     }
-    addSeparator(items);
+    ui::addMenuSeparator(items);
     if (mine && onEdit && !agent) {
         addItem(items, kEdit);
-        addSeparator(items);
+        ui::addMenuSeparator(items);
     }
     if (!agent)
         addItem(items, kCopyLink);
     if (!firstLink(m->text).empty())
         addItem(items, kCopyLinkInText);
     addItem(items, kCopyText);
-    addSeparator(items);
+    ui::addMenuSeparator(items);
     if (!agent)
         addItem(items, m->pinned ? kUnpin : kPin);
     // Slack's Later list: session-token workspaces only (saved.*).
@@ -1682,7 +1695,7 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
             addItem(items, kSave);
         addItem(items, reminded ? kRemoveReminder : kRemind).hint = reminded ? "" : "\xE2\x80\xBA";
     }
-    addSeparator(items);
+    ui::addMenuSeparator(items);
     addItem(items, kForward, bool(_ctx.forwardMessage));
     // "Move to thread…": a top-level message without replies of its own, and
     // only where the original can be deleted afterwards.
@@ -1692,7 +1705,7 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     // links to Settings → AI assistance).
     addItem(items, kSummarize, _ctx.ai != nullptr);
     if (canDelete) {
-        addSeparator(items);
+        ui::addMenuSeparator(items);
         addItem(items, kDelete);
     }
     if (!items.empty() && items.back().separator)
@@ -1714,7 +1727,7 @@ std::vector<ui::MenuItem> MessageList::fileMenuItems(Ts ts, const std::string &p
     const bool   canDelete =
         m && (m->user == st.me || (st.me != model::kNoUser && st.user(st.me).admin));
     if (f && canDelete && !f->id.empty()) {
-        addSeparator(items);
+        ui::addMenuSeparator(items);
         addItem(items, kDeleteFile).label = image ? tr("Delete image…") : tr("Delete file…");
     }
     return items;
@@ -1729,7 +1742,7 @@ std::vector<ui::MenuItem> MessageList::remindItems() {
         m.label = tr(kRemindLabels[i]);
         items.push_back(std::move(m));
     }
-    addSeparator(items);
+    ui::addMenuSeparator(items);
     ui::MenuItem custom; // the reminder dialog
     custom.id    = kRemindCustom;
     custom.label = tr("Custom…");

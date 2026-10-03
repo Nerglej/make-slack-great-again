@@ -582,7 +582,7 @@ void walkBody(
             if (parent) {
                 auto *row = parent->add<ui::View>();
                 row->style().row().margins(float(bl.indent) * 22, 0, 0, 0);
-                std::string marker = bl.ordinal ? std::to_string(bl.ordinal) + "." : "•";
+                std::string marker = bl.ordinal ? str::number(bl.ordinal) + "." : "•";
                 auto       *m      = row->add<ui::Label>(std::move(marker), o.font, o.color);
                 m->style().width(22).noShrink();
                 l = label(row);

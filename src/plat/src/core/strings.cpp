@@ -12,48 +12,6 @@ bool isAlpha(char c) {
 
 } // namespace
 
-char asciiLower(char c) {
-    return c >= 'A' && c <= 'Z' ? char(c | 0x20) : c;
-}
-
-std::string asciiLower(std::string_view s) {
-    std::string out(s);
-    for (char &c : out)
-        c = asciiLower(c);
-    return out;
-}
-
-std::string_view trim(std::string_view s, std::string_view chars) {
-    const size_t b = s.find_first_not_of(chars);
-    if (b == std::string_view::npos)
-        return {};
-    return s.substr(b, s.find_last_not_of(chars) - b + 1);
-}
-
-std::string escapeMarkup(std::string_view s, bool quotes) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        switch (c) {
-        case '&':
-            out += "&amp;";
-            break;
-        case '<':
-            out += "&lt;";
-            break;
-        case '>':
-            out += "&gt;";
-            break;
-        case '"':
-            out += quotes ? "&quot;" : "\"";
-            break;
-        default:
-            out += c;
-        }
-    }
-    return out;
-}
-
 bool validScheme(std::string_view s) {
     if (s.empty() || !isAlpha(s[0]))
         return false;

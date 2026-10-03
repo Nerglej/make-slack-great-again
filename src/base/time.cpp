@@ -200,7 +200,7 @@ DateNames &names() {
 
 void setJapanese(DateNames &n) {
     for (int i = 0; i < 12; ++i)
-        n.month[i] = n.monthShort[i] = std::to_string(i + 1) + "\xE6\x9C\x88";
+        n.month[i] = n.monthShort[i] = str::number(i + 1) + "\xE6\x9C\x88";
     for (int i = 0; i < 7; ++i) {
         n.weekday[i]      = kJaWeekdays[i];
         n.weekdayShort[i] = n.weekday[i].substr(0, 3); // the first character

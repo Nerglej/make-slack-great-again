@@ -3,6 +3,7 @@
 #include "screens/settings/settings_parts.h"
 
 #include "app/cache/workspace_cache.h"
+#include "app/diag/mem_stats.h"
 #include "app/llm/service.h"
 #include "app/llm/wire.h"
 #include "app/screens/common/remote_images.h"
@@ -134,16 +135,8 @@ uint64_t privateBytes() {
         if (clean + dirty)
             return (clean + dirty) * 1024;
     }
-    if (FILE *f = std::fopen("/proc/self/status", "r")) { // kernels < 4.14
-        char               line[256];
-        unsigned long long kb = 0;
-        while (std::fgets(line, sizeof line, f))
-            if (std::sscanf(line, "VmRSS: %llu", &kb) == 1)
-                break;
-        std::fclose(f);
-        return kb * 1024;
-    }
-    return 0;
+    const long kb = diag::rssKb(); // kernels < 4.14
+    return kb > 0 ? uint64_t(kb) * 1024 : 0;
 #elif defined(__APPLE__)
     task_vm_info_data_t    info;
     mach_msg_type_number_t n = TASK_VM_INFO_COUNT;

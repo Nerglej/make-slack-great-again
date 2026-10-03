@@ -25,7 +25,5 @@ bool                         hasGlyph(std::string_view id);
 // A 128-unit tile of `color` (0xRRGGBB) with glyph `id` on it; the first glyph
 // for an unknown id.
 std::string svg(std::string_view id, uint32_t color);
-// "#rrggbb", as the tiles and the teammate files write a colour.
-std::string colorName(uint32_t color);
 
 } // namespace claude::avatar_glyphs

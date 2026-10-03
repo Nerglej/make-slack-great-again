@@ -1,29 +1,10 @@
-// Pure helpers of the Win32 backend: UTF-8 ↔ UTF-16, virtual-key ↔ Key,
+// Pure helpers of the Win32 backend: UTF-16 offsets, virtual-key ↔ Key,
 // modifier state, file URIs.
 #include "win32/win32.h"
 
 #include <cctype>
 
 namespace plat::win32 {
-
-std::wstring toWide(std::string_view s) {
-    if (s.empty())
-        return {};
-    const int    n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    std::wstring w(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    return w;
-}
-
-std::string toUtf8(std::wstring_view w) {
-    if (w.empty())
-        return {};
-    const int n =
-        WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), n, nullptr, nullptr);
-    return s;
-}
 
 int utf8Length(std::wstring_view w, size_t units) {
     int bytes = 0;

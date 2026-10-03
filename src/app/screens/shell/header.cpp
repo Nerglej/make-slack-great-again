@@ -4,7 +4,9 @@
 #include "base/str.h"
 #include "base/utf8.h"
 #include "gfx/icons_generated.h"
+#include "screens/common/user_search.h"
 #include "screens/shell/nav_chrome.h"
+#include "screens/shell/session_dialogs.h"
 #include "screens/shell/shell_text.h"
 
 #include <algorithm>
@@ -137,26 +139,24 @@ namespace {
 
 class MembersPopup final : public Popup {
 public:
-    MembersPopup(screens::Context &ctx, Avatars &avatars, uint32_t expected)
-        : _ctx(ctx), _avatars(avatars), _rows(*this) {
+    MembersPopup(screens::Context &ctx, Avatars &avatars, uint32_t expected) : _ctx(ctx) {
         style().width(340).padding(8, 12, 8, 8).spacing(8);
         _title = add<Label>(tr("Members"), Font::SmallBold, C::TextMuted);
         _title->style().margins(4, 0, 4, 0);
-        auto *box = add<View>();
-        box->style().row().height(kFormNormalH).padding(12, 0).spacing(8).items(Align::Center);
-        box->setBackground(C::FormBg, 6);
-        box->setBorder(C::FieldBorder);
-        box->add<IconView>(Icon::Search, 16, C::FormTextFaint);
-        _search = box->add<TextEdit>();
-        _search->style().flex(1);
-        _search->setMaxLines(1);
-        _search->setFont(Font::Field);
-        _search->setPlaceholder(tr("Find members"));
+        auto *box =
+            add<TextField>(tr("Find members"), TextField::Size::Normal, uint16_t(Icon::Search));
+        box->setQuiet();
+        _search           = &box->edit();
         _search->onChange = [this] { filter(); };
         _search->onKey    = [this](const Event &e) { return key(e); };
         // Virtual: a large channel has thousands of members, and only the
-        // rows in sight are built (and fetch their pictures).
-        _list             = add<VirtualList>(&_rows);
+        // rows in sight are built (and fetch their pictures). On the popup's
+        // own background, 8 px in, stopping at the ends; a row opens on click.
+        _list             = add<BrowseList>(avatars);
+        _list->style().flex(0);
+        _list->setOnContentSurface(true);
+        _list->setOptions({8, false, false, false, false});
+        _list->onActivated = [this](const std::string &id) { activate(_ctx.store().findUser(id)); };
         _message = add<Label>(tr("Loading members\xE2\x80\xA6"), Font::Control, C::TextMuted);
         _message->setAlign(text::LayoutOptions::Align::Center);
         fitRows(expected);
@@ -165,8 +165,7 @@ public:
     void setMembers(std::vector<model::UserRef> ids) {
         const auto &st = _ctx.store();
         std::erase_if(ids, [&](model::UserRef u) { return u >= st.userCount(); });
-        // Folded once: the sort order, and what the search matches (the
-        // label, the handle and the title).
+        // Sorted by the folded label.
         std::vector<std::pair<std::string, model::UserRef>> byName;
         byName.reserve(ids.size());
         for (model::UserRef u : ids)
@@ -174,19 +173,28 @@ public:
         std::sort(byName.begin(), byName.end(), [](const auto &a, const auto &b) {
             return a.first < b.first;
         });
-        _ids.clear();
-        _keys.clear();
+        // A member: the name ("(you)" for me) over the handle and title.
+        std::vector<BrowseList::Item> items;
+        items.reserve(byName.size());
         for (const auto &[name, u] : byName) {
             const model::User &user = st.user(u);
-            _ids.push_back(u);
-            _keys.push_back(
-                utf8::foldCase(str::concat({user.label(), " ", user.name, " ", user.title}))
-            );
+            const std::string  label(user.label());
+            BrowseList::Item   it;
+            it.id     = user.id;
+            it.avatar = user.avatar;
+            it.title  = u == st.me ? i18n::arg(tr("%1 (you)"), label) : label;
+            if (!user.name.empty() && user.name != label)
+                it.subtitle = "@" + user.name;
+            if (!user.title.empty())
+                it.subtitle += (it.subtitle.empty() ? "" : " \xC2\xB7 ") + user.title;
+            it.searchKey = screens::userSearchKey(user, true);
+            items.push_back(std::move(it));
         }
         // The expected count may be missing or stale: the list itself sizes
         // the popup (the overlay re-places it under its anchor).
-        fitRows(_ids.size());
-        _title->setText(i18n::trn("%n member", "%n members", int64_t(_ids.size())));
+        fitRows(items.size());
+        _title->setText(i18n::trn("%n member", "%n members", int64_t(items.size())));
+        _list->setItems(std::move(items));
         _loaded = true;
         filter();
     }
@@ -197,69 +205,12 @@ public:
         _message->setText(i18n::arg(tr("Couldn't load the members (%1)."), err));
     }
     ui::TextEdit &search() { return *_search; }
-    size_t        shown() const { return _shown.size(); }
+    size_t        shown() const { return _list->visibleCount(); }
 
 private:
-    static constexpr float kRowH = 60;
-
-    // A member: the round avatar, the name ("(you)" for me) over the handle
-    // and title.
-    class Row final : public Clickable {
-    public:
-        Row() {
-            setLook({C::None, C::FormHighlight, C::FormHighlightStrong, C::FormHighlightStrong, 0});
-            style().row().height(kRowH).padding(8, 0).spacing(12).items(Align::Center);
-            avatar = add<Avatar>();
-            avatar->style().size(36, 36).noShrink();
-            avatar->setCircle(true);
-            avatar->setPlaceholder(C::PresenceAway);
-            auto *txt = add<View>();
-            txt->style().flex(1).spacing(1);
-            name = txt->add<Label>("", Font::BodyBold, C::Text);
-            name->setMaxLines(1);
-            sub = txt->add<Label>("", Font::YouLabel, C::TextMuted);
-            sub->setMaxLines(1);
-        }
-        Avatar        *avatar = nullptr;
-        Label         *name = nullptr, *sub = nullptr;
-        model::UserRef user = model::kNoUser;
-    };
-    class Rows final : public VirtualList::Adapter {
-    public:
-        explicit Rows(MembersPopup &p) : _p(p) {}
-        int                   count() const override { return int(_p._shown.size()); }
-        std::unique_ptr<View> create(int) override {
-            auto r     = std::make_unique<Row>();
-            Row *raw   = r.get();
-            r->onClick = [this, raw] { _p.activate(raw->user); };
-            return r;
-        }
-        void bind(View &v, int i) override {
-            Row               &r    = static_cast<Row &>(v);
-            const auto        &st   = _p._ctx.store();
-            const model::User &user = st.user(_p._ids[_p._shown[size_t(i)]]);
-            r.user                  = _p._ids[_p._shown[size_t(i)]];
-            r.avatar->setBitmap(_p._avatars.get(user.avatar, 72));
-            const std::string label(user.label());
-            r.name->setText(r.user == st.me ? i18n::arg(tr("%1 (you)"), label) : label);
-            std::string sub;
-            if (!user.name.empty() && user.name != label)
-                sub = "@" + user.name;
-            if (!user.title.empty())
-                sub += (sub.empty() ? "" : " \xC2\xB7 ") + user.title;
-            r.sub->setText(sub);
-            r.sub->setVisible(!sub.empty());
-            r.setChecked(i == _p._sel);
-        }
-        float estimateHeight(int) const override { return kRowH; }
-
-    private:
-        MembersPopup &_p;
-    };
-
     // Whole rows, at most six; the message takes the list's place.
     void fitRows(size_t n) {
-        const float h = float(std::clamp<size_t>(n, 1, 6)) * kRowH;
+        const float h = float(std::clamp<size_t>(n, 1, 6)) * BrowseList::kRowH;
         if (_list->currentStyle().h == h)
             return;
         _list->style().height(h);
@@ -269,16 +220,10 @@ private:
         if (!_loaded)
             return;
         const std::string q(str::trim(_search->text()));
-        const std::string fq = utf8::foldCase(q);
-        _shown.clear();
-        for (size_t i = 0; i < _ids.size(); ++i)
-            if (fq.empty() || utf8::containsPrefolded(_keys[i], fq))
-                _shown.push_back(i);
+        _list->applyFilter(q);
+        const bool none = _list->visibleCount() == 0;
         // Typing picks the first match for Enter.
-        _sel = q.empty() || _shown.empty() ? -1 : 0;
-        _list->reset();
-        _list->scrollTo(0);
-        const bool none = _shown.empty();
+        _list->setSelectedRow(q.empty() || none ? -1 : 0);
         _list->setVisible(!none);
         _message->setVisible(none);
         if (none)
@@ -291,39 +236,26 @@ private:
         if (e.type != EventType::KeyDown)
             return false;
         if (e.key == plat::Key::Down || e.key == plat::Key::Up) {
-            if (_shown.empty())
-                return true;
-            const int n    = int(_shown.size());
-            const int prev = _sel;
-            _sel           = std::clamp(_sel + (e.key == plat::Key::Down ? 1 : -1), 0, n - 1);
-            if (prev >= 0)
-                _list->itemsChanged(prev, 1); // rebinds its checked state
-            _list->itemsChanged(_sel, 1);
-            _list->scrollToItem(_sel, VirtualList::ItemAlign::Nearest, false);
+            _list->moveSelection(e.key == plat::Key::Down ? 1 : -1);
             return true;
         }
-        if ((e.key == plat::Key::Enter || e.key == plat::Key::KpEnter) && _sel >= 0) {
-            activate(_ids[_shown[size_t(_sel)]]);
+        if ((e.key == plat::Key::Enter || e.key == plat::Key::KpEnter) &&
+            _list->selectedRow() >= 0) {
+            _list->activateSelected();
             return true;
         }
         return false;
     }
     void activate(model::UserRef u) {
         close();
-        if (_ctx.messageUser) // the DM, or a teammate's page
+        if (_ctx.messageUser && u != model::kNoUser) // the DM, or a teammate's page
             _ctx.messageUser(u);
     }
-    screens::Context           &_ctx;
-    Avatars                    &_avatars;
-    Rows                        _rows;
-    Label                      *_title = nullptr, *_message = nullptr;
-    TextEdit                   *_search = nullptr;
-    VirtualList                *_list   = nullptr;
-    std::vector<model::UserRef> _ids;   // sorted by name
-    std::vector<std::string>    _keys;  // per id: what the search matches, folded
-    std::vector<size_t>         _shown; // the matching ids' indices, in order
-    int                         _sel    = -1;
-    bool                        _loaded = false;
+    screens::Context &_ctx;
+    Label            *_title = nullptr, *_message = nullptr;
+    TextEdit         *_search = nullptr;
+    BrowseList       *_list   = nullptr;
+    bool              _loaded = false;
 };
 
 } // namespace

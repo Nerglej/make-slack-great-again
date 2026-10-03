@@ -297,10 +297,23 @@ std::string hex(std::string_view data) {
     return out;
 }
 
-uint64_t fnv1a(std::string_view data, uint64_t h) {
-    for (unsigned char c : data)
-        h = (h ^ c) * 1099511628211ull;
-    return h;
+std::string randomHex(size_t n) {
+    uint8_t b[64];
+    if (n > sizeof b || !randomBytes(b, n))
+        return {};
+    return hex({reinterpret_cast<const char *>(b), n});
+}
+
+std::string uuid4() {
+    uint8_t b[16];
+    if (!randomBytes(b, sizeof b))
+        return {};
+    b[6]          = uint8_t((b[6] & 0x0F) | 0x40); // version 4
+    b[8]          = uint8_t((b[8] & 0x3F) | 0x80); // variant 10
+    std::string s = hex({reinterpret_cast<const char *>(b), sizeof b});
+    for (size_t at : {8, 13, 18, 23})
+        s.insert(at, 1, '-');
+    return s;
 }
 
 } // namespace crypto

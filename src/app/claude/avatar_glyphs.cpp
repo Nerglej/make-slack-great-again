@@ -1,6 +1,7 @@
 #include "app/claude/avatar_glyphs.h"
 
 #include "base/str.h"
+#include "gfx/gfx.h"
 
 #include <iterator>
 
@@ -97,14 +98,6 @@ bool hasGlyph(std::string_view id) {
     return false;
 }
 
-std::string colorName(uint32_t color) {
-    static const char kHex[] = "0123456789abcdef";
-    std::string       out    = "#000000";
-    for (int i = 0; i < 6; ++i)
-        out[size_t(6 - i)] = kHex[(color >> (4 * i)) & 0xF];
-    return out;
-}
-
 std::string svg(std::string_view id, uint32_t color) {
     const char *elements = kGlyphs[0].elements;
     for (const Glyph &g : kGlyphs)
@@ -113,7 +106,7 @@ std::string svg(std::string_view id, uint32_t color) {
     return str::concat({
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 128 128\" width=\"128\" "
         "height=\"128\"><rect width=\"128\" height=\"128\" rx=\"28\" fill=\"",
-        colorName(color),
+        gfx::hexColor(color),
         "\"/><g transform=\"translate(26 26) scale(3.1667)\" fill=\"none\" stroke=\"#fff\" "
         "stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\">",
         elements,

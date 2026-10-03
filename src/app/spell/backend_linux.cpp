@@ -9,6 +9,7 @@
 #include "app/identity.h"
 
 #include "base/file.h"
+#include "base/process.h"
 #include "base/str.h"
 #include "base/utf8.h"
 #include "plat/plat.h"
@@ -64,27 +65,18 @@ struct DictionaryFiles {
     std::string code, aff, dic;
 };
 
-std::string env(const char *name) {
-    const char *v = std::getenv(name);
-    return v ? std::string(v) : std::string();
-}
-
 // Hunspell's own search order, less the office-suite folders: $DICPATH, the
 // user's data dir, then the system's.
 std::vector<std::string> dictionaryDirs() {
     std::vector<std::string> dirs;
-    const std::string        dicpath = env("DICPATH");
-    for (size_t a = 0; a < dicpath.size();) {
-        size_t b = dicpath.find(':', a);
-        if (b == std::string::npos)
-            b = dicpath.size();
-        if (b > a)
-            dirs.push_back(dicpath.substr(a, b - a));
-        a = b + 1;
-    }
-    std::string data = env("XDG_DATA_HOME");
-    if (data.empty() && !env("HOME").empty())
-        data = env("HOME") + "/.local/share";
+    const std::string        dicpath = base::env("DICPATH");
+    str::Splitter            parts(dicpath, ':');
+    for (std::string_view d; parts.next(&d);)
+        if (!d.empty())
+            dirs.emplace_back(d);
+    std::string data = base::env("XDG_DATA_HOME");
+    if (const std::string home = base::homeDir(); data.empty() && !home.empty())
+        data = home + "/.local/share";
     if (!data.empty())
         dirs.push_back(data + "/hunspell");
     for (const char *d :
@@ -219,16 +211,12 @@ public:
         if (_dicts.empty())
             return false;
         std::string words;
-        if (file::readAll(_wordsPath, &words))
-            for (size_t a = 0; a < words.size();) {
-                size_t b = words.find('\n', a);
-                if (b == std::string::npos)
-                    b = words.size();
-                const std::string_view w = str::trim(std::string_view(words).substr(a, b - a));
-                if (!w.empty())
+        if (file::readAll(_wordsPath, &words)) {
+            str::Splitter lines(words, '\n');
+            for (std::string_view line; lines.next(&line);)
+                if (const std::string_view w = str::trim(line); !w.empty())
                     addToAll(w);
-                a = b + 1;
-            }
+        }
         return true;
     }
 
@@ -287,19 +275,14 @@ std::string osFamily() {
     std::string text, ids;
     if (!file::readAll("/etc/os-release", &text))
         return ids;
-    for (size_t a = 0; a < text.size();) {
-        size_t b = text.find('\n', a);
-        if (b == std::string::npos)
-            b = text.size();
-        const std::string_view line = std::string_view(text).substr(a, b - a);
+    str::Splitter lines(text, '\n');
+    for (std::string_view line; lines.next(&line);)
         if (str::startsWith(line, "ID=") || str::startsWith(line, "ID_LIKE=")) {
             ids += ' ';
             for (char c : line.substr(line.find('=') + 1))
                 if (c != '"')
                     ids += char(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
         }
-        a = b + 1;
-    }
     return ids;
 }
 

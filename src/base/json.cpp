@@ -1,5 +1,6 @@
 #include "base/json.h"
 
+#include "base/file.h"
 #include "base/str.h"
 #include "base/utf8.h"
 
@@ -445,6 +446,17 @@ bool Document::parse(std::string text, std::string *error) {
     }
     _nodes.shrink_to_fit();
     return true;
+}
+
+bool Document::parseFile(std::string_view path, std::string *error) {
+    if (error)
+        error->clear();
+    std::string text;
+    if (!file::readAll(path, &text)) {
+        _nodes.clear();
+        return false;
+    }
+    return parse(std::move(text), error);
 }
 
 // ── Writer ──────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ layer) and `docs/` here as modules land.
 | `app/`  | model, fake (fixture) backend, mrkdwn, the screens                    |
 | `tools/`| build-time generators (icons) and the size report                     |
 | `plat/` | the thin OS layer: windows, input, loop, desktop services             |
+| `prim/` | string, UTF-8 and hash primitives shared by plat and base           |
 
 Each module is a static library with its own `CMakeLists.txt`; the top-level
 `../CMakeLists.txt` includes the ones that exist. Dependencies only go downwards:

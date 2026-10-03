@@ -242,13 +242,13 @@ bool loadFixture(
     std::string jsonPath = file::absolute(path);
     if (file::isDir(jsonPath))
         jsonPath = file::join(jsonPath, "fixture.json");
-    std::string text;
-    if (!file::readAll(jsonPath, &text))
-        return fail(str::concat({"cannot open ", jsonPath}));
     json::Document doc;
     std::string    perr;
-    if (!doc.parse(std::move(text), &perr))
-        return fail(str::concat({file::baseName(jsonPath), ": ", perr}));
+    if (!doc.parseFile(jsonPath, &perr))
+        return fail(
+            perr.empty() ? str::concat({"cannot open ", jsonPath})
+                         : str::concat({file::baseName(jsonPath), ": ", perr})
+        );
     const json::Value root = doc.root();
     if (!root.isObject())
         return fail(str::concat({file::baseName(jsonPath), ": not a JSON object"}));

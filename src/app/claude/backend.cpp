@@ -187,11 +187,8 @@ Backend::Capabilities Backend::capabilities() const {
 // each one once Claude Code has dropped it.
 
 void Backend::loadKnown() {
-    std::string data;
-    if (!file::readAll(knownSessionsPath(), &data))
-        return;
     json::Document doc;
-    if (!doc.parse(std::move(data)))
+    if (!doc.parseFile(knownSessionsPath()))
         return;
     const json::Value root = doc.root();
     for (const json::Value o : root["sessions"]) {

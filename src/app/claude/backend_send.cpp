@@ -12,9 +12,9 @@
 #include "base/i18n.h"
 #include "base/log.h"
 #include "base/str.h"
+#include "base/time.h"
 
 #include <algorithm>
-#include <array>
 #include <utility>
 
 namespace claude {
@@ -832,15 +832,13 @@ Backend::Tracked &
 Backend::createSession(const std::string &dir, bool skipPermissionChecks, const std::string &role) {
     // The session itself starts with the first message (Claude Code picks its
     // id then); until then it is a conversation of its own.
-    std::array<uint8_t, 16> rnd{};
-    crypto::randomBytes(rnd.data(), rnd.size());
-    std::string uuid =
-        crypto::hex(std::string_view(reinterpret_cast<const char *>(rnd.data()), rnd.size()));
-    uuid.insert(8, "-");
-    uuid.insert(13, "-");
-    uuid.insert(18, "-");
-    uuid.insert(23, "-");
-    Tracked &t             = ensureTracked(kNewPrefix + uuid);
+    std::string    id  = crypto::uuid4();
+    // No OS randomness: the clock and a counter still keep it apart from
+    // every other "+" session (the ids are saved, so across runs too).
+    static int64_t seq = 0;
+    while (id.empty() || find(kNewPrefix + id))
+        id = str::concat({"t", str::number(base::nowMicros()), "-", str::number(++seq)});
+    Tracked &t             = ensureTracked(kNewPrefix + id);
     t.info.cwd             = dir;
     t.info.kind            = SessionInfo::Kind::Background;
     t.skipPermissionChecks = skipPermissionChecks;

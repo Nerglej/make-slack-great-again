@@ -1,6 +1,7 @@
 // Sockets for the POSIX transport: name lookup, non-blocking connect and the
 // Stream every exchange runs over (see posix.h).
 #include "base/str.h"
+#include "base/thread.h"
 #include "net/posix/posix.h"
 #include "net/transport.h"
 
@@ -16,7 +17,6 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
-#include <pthread.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -203,8 +203,7 @@ struct Lookup {
     }
 };
 
-void *lookupThread(void *p) {
-    auto    *lk = static_cast<Lookup *>(p);
+void lookupThread(Lookup *lk) {
     addrinfo hints{};
     hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -218,7 +217,6 @@ void *lookupThread(void *p) {
     const uint64_t                 one = 1;
     [[maybe_unused]] const ssize_t r   = ::write(lk->fd, &one, sizeof one);
     lk->release();
-    return nullptr;
 }
 
 // False with *error ("dns: …", "cancelled", "timeout") when there is none.
@@ -247,20 +245,14 @@ bool resolve(const Url &url, const Waiter &w, std::vector<Addr> *out, std::strin
         delete lk;
         return false;
     }
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    // glibc's NSS modules want more than musl's default 128 KiB.
-    pthread_attr_setstacksize(&attr, 256 * 1024);
-    pthread_t t;
-    const int started = pthread_create(&t, &attr, lookupThread, lk);
-    pthread_attr_destroy(&attr);
-    if (started != 0) {
+    base::Thread thread;
+    if (!thread.start([lk] { lookupThread(lk); }, kThreadStack)) {
         ::close(lk->fd);
         delete lk;
         *error = "dns: no thread";
         return false;
     }
+    thread.detach(); // a lookup that outlives the wait ends on its own
     g_dnsLookups.fetch_add(1, std::memory_order_relaxed);
     const Wait r  = waitFd(lk->fd, POLLIN, w);
     int        rc = 0;

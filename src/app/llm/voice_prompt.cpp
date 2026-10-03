@@ -25,13 +25,6 @@ constexpr size_t kMinUsefulClipChars = 40;
 
 using Cps = std::vector<uint32_t>;
 
-Cps codePoints(std::string_view s) {
-    Cps out;
-    for (size_t i = 0; i < s.size();)
-        out.push_back(utf8::decode(s, i));
-    return out;
-}
-
 std::string encode(const Cps &cps, size_t from = 0, size_t to = SIZE_MAX) {
     std::string out;
     for (size_t i = from; i < std::min(to, cps.size()); ++i)
@@ -47,12 +40,9 @@ bool isLetterOrNumber(uint32_t c) {
 bool isLetter(uint32_t c) {
     return isLetterOrNumber(c) && !utf8::isDigit(c);
 }
-bool isUpper(uint32_t c) {
-    return utf8::foldCase(c) != c;
-}
 // A lower-case letter of a cased script (an uncased one, CJK, is neither).
 bool isLower(uint32_t c) {
-    if (!isLetter(c) || isUpper(c))
+    if (!isLetter(c) || utf8::isUpper(c))
         return false;
     if (c < 0x80)
         return c >= 'a' && c <= 'z';
@@ -64,7 +54,7 @@ std::string clip(std::string_view text, size_t max) {
     std::string s = str::simplified(text);
     if (utf8::countCodePoints(s) <= max)
         return s;
-    const Cps cps = codePoints(s);
+    const Cps cps = utf8::codePoints(s);
     return std::string(str::trim(encode(cps, 0, max - 1))) + "\xE2\x80\xA6";
 }
 
@@ -87,7 +77,7 @@ bool isAcronym(const Cps &t) {
     if (n > 0 && t[n - 1] == 's')
         --n;
     for (size_t i = 0; i < n; ++i) {
-        if (isUpper(t[i]) && isLetter(t[i]))
+        if (utf8::isUpper(t[i]) && isLetter(t[i]))
             ++upper;
         else if (!utf8::isDigit(t[i]))
             return false;
@@ -172,7 +162,7 @@ bool looksTechnical(const Cps &t) {
     for (size_t i = 1; i < t.size(); ++i) {
         const uint32_t a = t[i - 1], b = t[i];
         // camelCase / CamelCase
-        if (hasLower && (isLower(a) || utf8::isDigit(a)) && isUpper(b) && isLetter(b))
+        if (hasLower && (isLower(a) || utf8::isDigit(a)) && utf8::isUpper(b) && isLetter(b))
             return true;
         // snake_case
         if (b == '_' && i + 1 < t.size() && isLetterOrNumber(a) && isLetterOrNumber(t[i + 1]))
@@ -226,7 +216,7 @@ std::string dropUrls(std::string_view s) {
 // an identifier, then trim sentence punctuation and _italic_ markers off the
 // ends.
 std::vector<Cps> messageTokens(std::string_view message) {
-    const Cps        cps = codePoints(dropUrls(stripSlackMarkup(message)));
+    const Cps        cps = utf8::codePoints(dropUrls(stripSlackMarkup(message)));
     std::vector<Cps> out;
     Cps              cur;
     const auto       flush = [&] {

@@ -412,3 +412,49 @@ TEST("html: Google Docs' normal-weight <b> wrapper is not bold; writer escapes")
     const std::vector<uint16_t> f(5, 0);
     CHECK_STR(ui::rich::toHtml("a<b&\n", f.data(), {}), "a&lt;b&amp;<br>");
 }
+
+TEST("html: the tag scanner and attribute reader, forgiving and strict") {
+    using ui::rich::Tag;
+    Tag                    t;
+    const std::string_view h = "<A\nHREF = x.io/?a&amp;b>";
+    CHECK(ui::rich::readTag(h, 0, &t) == h.size());
+    CHECK_STR(std::string(t.name), "A");
+    CHECK_FALSE(t.closing);
+    CHECK_STR(std::string(ui::rich::tagAttr(t.text, "href")), "x.io/?a&amp;b"); // raw
+    CHECK(ui::rich::tagAttr(t.text, "href", true).empty());
+    CHECK(ui::rich::readTag("</b >", 0, &t) == 5);
+    CHECK(t.closing);
+    CHECK_STR(std::string(t.name), "b");
+    // Comments (to their end, '>' inside), declarations: nothing to act on.
+    const std::string_view c = "<!-- a > b -->x";
+    CHECK(ui::rich::readTag(c, 0, &t) == c.size() - 1);
+    CHECK(t.text.empty());
+    CHECK(ui::rich::readTag("<!-- open", 0, &t) == 9);
+    CHECK(ui::rich::readTag("<!DOCTYPE html>", 0, &t) == 15);
+    CHECK(t.text.empty());
+    CHECK(ui::rich::readTag("<a href", 0, &t) == std::string_view::npos);
+    // Strict: exactly name="…", case and all.
+    const std::string_view a = "div class=\"x y\" data-id='7' ID=\"u\" open=\"z";
+    CHECK_STR(std::string(ui::rich::tagAttr(a, "class", true)), "x y");
+    CHECK_STR(std::string(ui::rich::tagAttr(a, "data-id", true)), "7");
+    CHECK(ui::rich::tagAttr(a, "id", true).empty()); // not "data-id", not "ID"
+    CHECK_STR(std::string(ui::rich::tagAttr(a, "id")), "u");
+    CHECK(ui::rich::tagAttr(a, "open", true).empty()); // never closed
+    CHECK_STR(std::string(ui::rich::tagAttr(a, "open")), "z");
+    // Skipped content: script/style always, head/title as asked.
+    int depth = 0;
+    ui::rich::readTag("<title>", 0, &t);
+    CHECK_FALSE(ui::rich::skippedTag(t, &depth, false));
+    CHECK(ui::rich::skippedTag(t, &depth, true));
+    CHECK(depth == 1);
+    ui::rich::readTag("<b>", 0, &t);
+    CHECK(ui::rich::skippedTag(t, &depth, true)); // inside the title
+    ui::rich::readTag("</TITLE>", 0, &t);
+    CHECK(ui::rich::skippedTag(t, &depth, true));
+    CHECK(depth == 0);
+    ui::rich::readTag("</style>", 0, &t);
+    CHECK(ui::rich::skippedTag(t, &depth, false));
+    CHECK(depth == 0); // never below
+    ui::rich::readTag("<b>", 0, &t);
+    CHECK_FALSE(ui::rich::skippedTag(t, &depth, false));
+}

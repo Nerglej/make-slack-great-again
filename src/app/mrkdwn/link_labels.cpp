@@ -27,13 +27,7 @@ std::string_view schemeless(std::string_view url) {
 }
 
 bool endsWithNoCase(std::string_view s, std::string_view suffix) {
-    if (s.size() < suffix.size())
-        return false;
-    s = s.substr(s.size() - suffix.size());
-    for (size_t i = 0; i < s.size(); ++i)
-        if ((s[i] | 0x20) != suffix[i])
-            return false;
-    return true;
+    return s.size() >= suffix.size() && str::iequals(s.substr(s.size() - suffix.size()), suffix);
 }
 
 } // namespace

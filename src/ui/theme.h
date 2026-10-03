@@ -242,8 +242,10 @@ Palette              palette(bool dark);
 void                 setCustomPalette(const CustomPalette &c);
 const CustomPalette &customPalette();
 PaletteColors        paletteColors(Palette p, bool dark);
-// "#3f0e40" ↔ Color (for settings files); false/0 on garbage.
-std::string          hexColor(Color c);
+// "#3f0e40" ↔ Color (for settings files); false/0 on garbage. hexColor is
+// gfx's.
 bool                 parseHexColor(std::string_view s, Color *out);
+
+using gfx::hexColor;
 
 } // namespace ui

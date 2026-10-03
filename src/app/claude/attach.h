@@ -52,7 +52,49 @@ namespace claude {
 
 class Pty;
 
-class AttachInput {
+// What AttachInput and AttachAnswer share: `attach` run in a hidden terminal
+// whose screen is looked at a moment after output (settle), a deadline per
+// phase (onLimit), and the way it ends (end). Not used on its own.
+class AttachSession {
+public:
+    virtual ~AttachSession();
+    AttachSession(const AttachSession &)            = delete;
+    AttachSession &operator=(const AttachSession &) = delete;
+
+protected:
+    explicit AttachSession(plat::App &app);
+    virtual void settle()  = 0; // look at the screen
+    virtual void onLimit() = 0; // the current phase's deadline passed
+    virtual void exited()  = 0; // `attach` ended on its own
+    // Starts `attach` and its first deadline; false (nothing armed) if it didn't start.
+    bool
+    start(const std::string &program, const std::vector<std::string> &args, const std::string &cwd);
+    void        look();           // settle() soon, output or not
+    void        armLimit(int ms); // onLimit() then
+    void        submit();         // Enter, with the submit deadline
+    // How it ends: the deadline and the pending look stop, the terminal goes
+    // (once `attach` has exited, or been made to; the session goes on),
+    // `report` tells the caller, and the hold on itself goes once `attach`
+    // is gone, or after a while.
+    void        end(const std::function<void()> &report);
+    std::string ptyError() const;
+
+    plat::App                     &_app;
+    std::shared_ptr<AttachSession> _self; // alive until over
+    std::unique_ptr<Pty>           _pty;
+    VtScreen                       _screen;
+    uint64_t                       _quiet     = 0; // a look at the screen, soon after output
+    uint64_t                       _limit     = 0; // the current phase's deadline
+    bool                           _gotOutput = false;
+
+private:
+    void onOutput(std::string_view bytes);
+    void release(); // drops the hold it has on itself (deferred)
+
+    uint64_t _linger = 0; // `attach` given time to exit
+};
+
+class AttachInput : public AttachSession {
 public:
     enum class Outcome : uint8_t {
         Sent,     // typed and taken: the prompt box let go of it after Enter
@@ -75,9 +117,7 @@ public:
         const std::string              &text,
         Done                            done
     );
-    ~AttachInput();
-    AttachInput(const AttachInput &)            = delete;
-    AttachInput &operator=(const AttachInput &) = delete;
+    ~AttachInput() override;
 
     // Give up before anything is typed: `done` gets NotReady ("cancelled") at
     // once. False when typing has begun — it then goes on to the end.
@@ -92,32 +132,23 @@ public:
 
 private:
     AttachInput(plat::App &app, std::string text, Done done);
-    void onOutput(std::string_view bytes);
-    void onLimit();
-    void settle(); // look at the screen
+    void settle() override;
+    void onLimit() override;
+    void exited() override;
     void typeNext();
     void finish(Outcome outcome, std::string_view detail);
-    void release(); // drops the hold it has on itself (deferred)
 
     enum class Phase : uint8_t { Attaching, Typing, Echoing, Submitting, Done };
 
-    plat::App                   &_app;
-    std::shared_ptr<AttachInput> _self; // alive until over
-    std::string                  _text;
-    Done                         _done;
-    std::unique_ptr<Pty>         _pty;
-    VtScreen                     _screen;
-    uint64_t                     _quiet     = 0; // a look at the screen, soon after output
-    uint64_t                     _limit     = 0; // the current phase's deadline
-    uint64_t                     _nothing   = 0; // "attach showed nothing"
-    uint64_t                     _gap       = 0; // between writes
-    uint64_t                     _linger    = 0; // `attach` given time to exit
-    bool                         _readySeen = false;
-    bool                         _gotOutput = false;
-    Phase                        _phase     = Phase::Attaching;
-    std::vector<std::string>     _writes;
-    size_t                       _nextWrite = 0;
-    std::string                  _echo; // the start of the message, as the prompt box shows it
+    std::string              _text;
+    Done                     _done;
+    uint64_t                 _nothing   = 0; // "attach showed nothing"
+    uint64_t                 _gap       = 0; // between writes
+    bool                     _readySeen = false;
+    Phase                    _phase     = Phase::Attaching;
+    std::vector<std::string> _writes;
+    size_t                   _nextWrite = 0;
+    std::string              _echo; // the start of the message, as the prompt box shows it
 };
 
 // Answers a background session's permission question the way a person at its
@@ -129,7 +160,7 @@ private:
 // with that option: "❯" is moved onto it with the arrow keys, and Enter goes
 // only once "❯" is seen there — never a key that could pick something else.
 // Lifetime as AttachInput's.
-class AttachAnswer {
+class AttachAnswer : public AttachSession {
 public:
     enum class Outcome : uint8_t {
         Done,     // number 0: the question is passed on; else answered, the question went
@@ -153,34 +184,23 @@ public:
         const std::string              &label,
         Result                          done
     );
-    ~AttachAnswer();
-    AttachAnswer(const AttachAnswer &)            = delete;
-    AttachAnswer &operator=(const AttachAnswer &) = delete;
+    ~AttachAnswer() override;
 
 private:
     AttachAnswer(plat::App &app, Match match, int number, std::string label, Result done);
-    void
-    start(const std::string &program, const std::vector<std::string> &args, const std::string &cwd);
-    void onLimit();
-    void settle();
+    void settle() override;
+    void onLimit() override;
+    void exited() override;
     void step(); // one arrow key towards the option
     void finish(Outcome outcome, std::string_view detail);
-    void release();
 
     enum class Phase : uint8_t { Reading, Moving, Submitting, Done };
 
-    plat::App                        &_app;
-    std::shared_ptr<AttachAnswer>     _self;
     Match                             _match;
     int                               _number = 0; // 0: read only
     std::string                       _label;
     Result                            _done;
-    std::unique_ptr<Pty>              _pty;
-    VtScreen                          _screen;
-    uint64_t                          _quiet     = 0;
-    uint64_t                          _limit     = 0;
     uint64_t                          _step      = 0;
-    uint64_t                          _linger    = 0;
     int                               _stepsLeft = 0;
     std::string                       _key; // ↓ or ↑
     Phase                             _phase = Phase::Reading;

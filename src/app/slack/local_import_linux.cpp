@@ -14,6 +14,7 @@
 #include "app/slack/sqlite_reader.h"
 #include "base/crypto.h"
 #include "base/file.h"
+#include "base/process.h"
 #include "base/str.h"
 #include "net/aes.h"
 
@@ -29,20 +30,16 @@ namespace slack {
 
 namespace {
 
-std::string home() {
-    const char *h = std::getenv("HOME");
-    return h ? h : "";
-}
-
 // Where the Slack desktop app may keep its Chromium profile, most common
 // first: native, Flatpak, Snap.
 std::vector<std::string> slackConfigDirs() {
     const char       *xdg    = std::getenv("XDG_CONFIG_HOME");
-    const std::string config = xdg && *xdg ? xdg : str::concat({home(), "/.config"});
+    const std::string home   = base::homeDir();
+    const std::string config = xdg && *xdg ? xdg : str::concat({home, "/.config"});
     return {
         str::concat({config, "/Slack"}),
-        str::concat({home(), "/.var/app/com.slack.Slack/config/Slack"}), // Flatpak
-        str::concat({home(), "/snap/slack/current/.config/Slack"}),      // Snap
+        str::concat({home, "/.var/app/com.slack.Slack/config/Slack"}), // Flatpak
+        str::concat({home, "/snap/slack/current/.config/Slack"}),      // Snap
     };
 }
 

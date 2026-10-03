@@ -2,12 +2,14 @@
 # the file/folder choosers (OS dialog, else the in-app ui::FileBrowser) and
 # the disk cache of downloaded pictures (remote_images.h), the loading
 # ring, the avatar placeholder letter, the icon button, the message rules
-# (system lines, grouping, authors) and the custom theme's JSON.
+# (system lines, grouping, authors), the custom theme's JSON and the people
+# search key.
 add_library(msga_screens_common STATIC
     avatar_initial.cpp
     canvas_doc.cpp
     custom_theme.cpp
     tag_badge.cpp
+    user_search.cpp
     downloads.cpp
     file_dialogs.cpp
     icon_button.cpp

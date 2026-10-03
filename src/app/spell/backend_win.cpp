@@ -6,6 +6,7 @@
 // and drop), and every call here happens there.
 #include "app/spell/spell.h"
 #include "app/spell/spell_internal.h"
+#include "base/winstr.h"
 
 #include <windows.h>
 
@@ -19,24 +20,6 @@
 namespace spell {
 
 namespace {
-
-std::wstring wide(std::string_view s) {
-    if (s.empty())
-        return {};
-    const int    n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    std::wstring w(size_t(std::max(0, n)), L'\0');
-    if (n > 0)
-        MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    return w;
-}
-
-std::string narrow(const wchar_t *w) {
-    const int   n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(std::max(1, n)) - 1, '\0');
-    if (n > 1)
-        WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
-    return s;
-}
 
 #if defined(MSGA_WIN_SPELLCHECK)
 
@@ -78,7 +61,7 @@ std::vector<std::string> strings(IEnumString *e, int max = -1) {
     std::vector<std::string> out;
     LPOLESTR                 s = nullptr;
     while ((max < 0 || int(out.size()) < max) && e->Next(1, &s, nullptr) == S_OK) {
-        out.push_back(narrow(s));
+        out.push_back(base::narrow(s));
         CoTaskMemFree(s);
     }
     return out;
@@ -91,7 +74,7 @@ public:
         if (!f)
             return false;
         for (const std::string &code : codes) {
-            const std::wstring tag = wide(code);
+            const std::wstring tag = base::wide(code);
             BOOL               ok  = FALSE;
             if (FAILED(f->IsSupported(tag.c_str(), &ok)) || !ok)
                 continue;
@@ -103,7 +86,7 @@ public:
     }
 
     bool check(std::string_view word) override {
-        const std::wstring w = wide(word);
+        const std::wstring w = base::wide(word);
         for (const auto &c : _checkers) {
             Com<IEnumSpellingError> errors;
             if (FAILED(c->Check(w.c_str(), errors.put())) || !errors)
@@ -117,7 +100,7 @@ public:
 
     std::vector<std::string> suggest(std::string_view word, int max) override {
         std::vector<std::string> out;
-        const std::wstring       w = wide(word);
+        const std::wstring       w = base::wide(word);
         for (const auto &c : _checkers) {
             Com<IEnumString> e;
             if (FAILED(c->Suggest(w.c_str(), e.put())) || !e)
@@ -130,7 +113,7 @@ public:
     }
 
     void addToDictionary(std::string_view word) override {
-        const std::wstring w = wide(word);
+        const std::wstring w = base::wide(word);
         for (const auto &c : _checkers)
             c->Add(w.c_str());
     }

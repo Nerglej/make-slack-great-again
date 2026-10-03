@@ -1,6 +1,7 @@
 // Process memory numbers for leak hunting (dev builds: SIGUSR1,
 // MSGA_MEMSTATS=<s>, msga --soak; see scripts/soak.sh and
-// scripts/run-heaptrack.sh). Not linked into release builds.
+// scripts/run-heaptrack.sh). Not linked into release builds, but for rssKb
+// (the Settings memory figure's fallback on old kernels).
 //
 //   heap     bytes malloc'd and not freed yet: the number a leak grows. glibc
 //            mallinfo2, ASan's allocator, macOS malloc zones; -1 elsewhere
@@ -21,6 +22,8 @@ struct MemStats {
 };
 
 MemStats    sampleMem();
+// Resident memory in KB (Linux VmRSS, macOS resident size); -1 elsewhere.
+long        rssKb();
 // "heap 41234 KB, rss 98765 KB, fds 37, threads 14" (unknown fields left out).
 std::string formatMem(const MemStats &m);
 

@@ -59,12 +59,8 @@ bool isSeparator(uint32_t c) {
     }
 }
 
-bool isUpper(uint32_t c) {
-    return utf8::foldCase(c) != c;
-}
-
 bool isLower(uint32_t c) {
-    return !isUpper(c) && utf8::isWordChar(c) && !utf8::isDigit(c);
+    return !utf8::isUpper(c) && utf8::isWordChar(c) && !utf8::isDigit(c);
 }
 
 // Bonus kinds, so a prepared name keeps a byte per character.
@@ -74,10 +70,7 @@ constexpr double kBonus[] = {0.0, kMatchStart, kMatchWord, kMatchCamel, kMatchDo
 } // namespace
 
 FuzzyText::FuzzyText(std::string_view haystack) {
-    std::vector<uint32_t> orig;
-    orig.reserve(haystack.size());
-    for (size_t i = 0; i < haystack.size();)
-        orig.push_back(utf8::decode(haystack, i));
+    const std::vector<uint32_t> orig = utf8::codePoints(haystack);
     folded.resize(orig.size());
     for (size_t j = 0; j < orig.size(); ++j)
         folded[j] = utf8::foldCase(orig[j]);
@@ -90,19 +83,15 @@ FuzzyText::FuzzyText(std::string_view haystack) {
             continue;
         }
         const uint32_t prev = orig[j - 1], cur = orig[j];
-        bonus[j] = prev == '.'                     ? kDot
-                   : isSeparator(prev)             ? kWord
-                   : isLower(prev) && isUpper(cur) ? kCamel
-                                                   : kNone;
+        bonus[j] = prev == '.'                           ? kDot
+                   : isSeparator(prev)                   ? kWord
+                   : isLower(prev) && utf8::isUpper(cur) ? kCamel
+                                                         : kNone;
     }
 }
 
 std::vector<uint32_t> fuzzyQuery(std::string_view query) {
-    std::vector<uint32_t> q;
-    q.reserve(query.size());
-    for (size_t i = 0; i < query.size();)
-        q.push_back(utf8::foldCase(utf8::decode(query, i)));
-    return q;
+    return utf8::codePoints(query, true);
 }
 
 std::optional<double> fuzzyScore(std::string_view query, std::string_view haystack) {

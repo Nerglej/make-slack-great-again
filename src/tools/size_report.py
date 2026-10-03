@@ -25,7 +25,7 @@ LINE = re.compile(r'^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s(.*)$')
 def module_of(path: str) -> str:
     """Group an input file into a module name."""
     base = os.path.basename(path.split('(')[0])
-    m = re.match(r'lib(msga_\w+|plat)\.a$', base)
+    m = re.match(r'lib(msga_\w+|plat|prim)\.a$', base)
     if m:
         return m.group(1)
     if 'third_party' in path:

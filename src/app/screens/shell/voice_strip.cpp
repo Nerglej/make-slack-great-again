@@ -5,6 +5,7 @@
 #include "base/utf8.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
+#include "screens/common/message_rules.h"
 #include "screens/common/message_text.h"
 #include "screens/shell/nav_chrome.h"
 
@@ -244,8 +245,7 @@ buildVoiceContext(screens::Context &ctx, model::ConvRef conv, model::Ts thread, 
                 continue;
             if (utf8::countCodePoints(text) > kMaxMessageChars)
                 text = text.substr(0, utf8::truncateAt(text, kMaxMessageChars)) + "\xE2\x80\xA6";
-            const std::string who =
-                m.extra && !m.extra->botName.empty() ? m.extra->botName : label(m.user);
+            const std::string who(screens::authorName(st, m));
             lines.insert(lines.begin(), who.empty() ? text : who + ": " + text);
             addUnique(authors, who);
         }

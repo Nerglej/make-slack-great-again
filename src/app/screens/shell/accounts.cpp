@@ -107,17 +107,8 @@ Accounts::~Accounts() {
     _proxy.setTarget(_none);
     _ctx.store.setTarget(_blank);
     _active = nullptr;
-    for (const auto &r : _running) {
-        _shell.detachWorkspace(r->key);
-        if (r->retryTimer)
-            pa.cancelTimer(r->retryTimer);
-        if (r->iconReq)
-            _client.cancel(r->iconReq);
-        if (r->slack)
-            r->slack->closeCache(true); // quitting: what changed in the last second too
-        if (r->claude)
-            r->claude->close();
-    }
+    for (const auto &r : _running)
+        shutdown(*r, true);  // quitting: what changed in the last second too
     model::stopBackground(); // the work still under way reports to nobody
     if (_staggerTimer)
         pa.cancelTimer(_staggerTimer);
@@ -182,12 +173,7 @@ void Accounts::connectClaudeCode() {
             showMessage(_win, tr("Login failed"), error);
             return;
         }
-        auth::WorkspaceRecord rec = claude::toRecord(creds);
-        const std::string     key = rec.key();
-        _store.save(std::move(rec));
-        _store.setActive(key);
-        restart(key);
-        activate(key);
+        adoptRecord(claude::toRecord(creds));
     });
 }
 
@@ -284,13 +270,16 @@ void Accounts::loginWithAppKeys() {
             if (_saveSettings)
                 _saveSettings();
         }
-        auth::WorkspaceRecord rec = slack::toRecord(c);
-        const std::string     key = rec.key();
-        _store.save(std::move(rec));
-        _store.setActive(key);
-        restart(key);
-        activate(key);
+        adoptRecord(slack::toRecord(c));
     });
+}
+
+void Accounts::adoptRecord(auth::WorkspaceRecord rec) {
+    const std::string key = rec.key();
+    _store.save(std::move(rec));
+    _store.setActive(key);
+    restart(key);
+    activate(key);
 }
 
 void Accounts::networkChanged(bool online) {
@@ -341,24 +330,25 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
     const auth::WorkspaceRecord *rec = _store.find(key);
     if (!rec || (rec->service != slack::kService && rec->service != claude::kService))
         return nullptr;
-    plat::App &pa         = _ctx.app.platform();
-    auto       r          = std::make_unique<Running>();
-    r->serial             = ++_serial;
-    r->key                = key;
-    model::Store &st      = r->store;
+    plat::App &pa          = _ctx.app.platform();
+    auto       r           = std::make_unique<Running>();
+    r->serial              = ++_serial;
+    r->key                 = key;
+    model::Store &st       = r->store;
     // What the record knows shows at once; connect() fills in the rest.
-    st.workspaceId        = rec->id;
-    st.workspaceName      = rec->displayName;
-    st.workspaceMuted     = rec->muted;
-    const uint64_t serial = r->serial;
+    st.workspaceId         = rec->id;
+    st.workspaceName       = rec->displayName;
+    st.workspaceMuted      = rec->muted;
+    const uint64_t serial  = r->serial;
+    // The error banner shows for the active workspace only.
+    auto           onError = [this, serial](const std::string &message) {
+        if (Running *x = bySerial(serial); x && x == _active)
+            _shell.showError(message);
+    };
     if (rec->service == claude::kService) {
         setClaudeDirs(pa);
         auto backend     = std::make_unique<claude::Backend>(st, pa, claude::fromRecord(*rec));
-        // The error banner shows for the active workspace only.
-        backend->onError = [this, serial](const std::string &message) {
-            if (Running *x = bySerial(serial); x && x == _active)
-                _shell.showError(message);
-        };
+        backend->onError = onError;
         backend->setZenMode(_settings.zenMode(key));
         r->claude  = backend.get();
         r->backend = std::move(backend);
@@ -387,11 +377,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
             if (Running *x = bySerial(serial); x && x == _active)
                 _shell.showParallelUsage();
         };
-        // The error banner shows for the active workspace only.
-        backend->onError = [this, serial](const std::string &message) {
-            if (Running *x = bySerial(serial); x && x == _active)
-                _shell.showError(message);
-        };
+        backend->onError       = onError;
         backend->onReminderDue = [this, serial](model::ConvRef conv, model::Ts ts) {
             if (Running *x = bySerial(serial))
                 _shell.notifyReminderDue(x->key, x->store, conv, ts);
@@ -441,21 +427,25 @@ std::shared_ptr<slack::SocketMode> Accounts::socketMode() {
     return sock;
 }
 
+void Accounts::shutdown(Running &r, bool keepCache) {
+    _shell.detachWorkspace(r.key);
+    if (r.retryTimer)
+        _ctx.app.platform().cancelTimer(r.retryTimer);
+    if (r.iconReq)
+        _client.cancel(r.iconReq);
+    if (r.slack)
+        r.slack->closeCache(keepCache);
+    if (r.claude)
+        r.claude->close(); // nothing more goes into the Store it is about to lose
+}
+
 void Accounts::drop(Running *r, bool keepCache) {
     if (!r)
         return;
     if (r == _active)
         showSignedOut(); // the screens let go of it first
+    shutdown(*r, keepCache);
     plat::App &pa = _ctx.app.platform();
-    _shell.detachWorkspace(r->key);
-    if (r->retryTimer)
-        pa.cancelTimer(r->retryTimer);
-    if (r->iconReq)
-        _client.cancel(r->iconReq);
-    if (r->slack)
-        r->slack->closeCache(keepCache);
-    if (r->claude)
-        r->claude->close(); // nothing more goes into the Store it is about to lose
     for (auto it = _running.begin(); it != _running.end(); ++it)
         if (it->get() == r) {
             std::unique_ptr<Running> dying = std::move(*it);

@@ -18,13 +18,11 @@ std::string secretKey(const WorkspaceRecord &r) {
 } // namespace
 
 WorkspaceStore::WorkspaceStore(std::string path) : _path(std::move(path)) {
-    std::string text;
-    if (_path.empty() || !file::readAll(_path, &text))
-        return;
     json::Document doc;
     std::string    err;
-    if (!doc.parse(std::move(text), &err)) {
-        LOG_WARN("auth", "%s: %s", _path.c_str(), err.c_str());
+    if (_path.empty() || !doc.parseFile(_path, &err)) {
+        if (!err.empty())
+            LOG_WARN("auth", "%s: %s", _path.c_str(), err.c_str());
         return;
     }
     const json::Value root = doc.root();
@@ -36,15 +34,23 @@ WorkspaceStore::WorkspaceStore(std::string path) : _path(std::move(path)) {
         r.iconUrl     = std::string(w["iconUrl"].str());
         r.auth        = std::string(w["auth"].str());
         r.muted       = w["muted"].boolean();
-        if (r.service.empty() || r.id.empty() || find(r.key()))
-            continue;
-        if (r.auth.empty() && secret::available()) {
-            r.auth               = secret::read(secretKey(r));
-            _inKeychain[r.key()] = r.auth;
-        }
-        _records.push_back(std::move(r));
+        adopt(std::move(r));
     }
-    _active = std::string(root["active"].str());
+    setActiveOrFirst(root["active"].str());
+}
+
+void WorkspaceStore::adopt(WorkspaceRecord r) {
+    if (r.service.empty() || r.id.empty() || find(r.key()))
+        return;
+    if (r.auth.empty() && secret::available()) {
+        r.auth               = secret::read(secretKey(r));
+        _inKeychain[r.key()] = r.auth;
+    }
+    _records.push_back(std::move(r));
+}
+
+void WorkspaceStore::setActiveOrFirst(std::string_view key) {
+    _active = std::string(key);
     if (!find(_active))
         _active = _records.empty() ? std::string() : _records.front().key();
 }
@@ -80,8 +86,7 @@ void WorkspaceStore::remove(std::string_view key) {
             _records.erase(_records.begin() + i);
             break;
         }
-    if (!find(_active))
-        _active = _records.empty() ? std::string() : _records.front().key();
+    setActiveOrFirst(_active);
     flush();
 }
 
@@ -113,18 +118,9 @@ void WorkspaceStore::setOrder(const std::vector<std::string> &keys) {
 void WorkspaceStore::importRecords(std::vector<WorkspaceRecord> records, std::string_view active) {
     _records.clear();
     _inKeychain.clear();
-    for (WorkspaceRecord &r : records) {
-        if (r.service.empty() || r.id.empty() || find(r.key()))
-            continue;
-        if (r.auth.empty() && secret::available()) {
-            r.auth               = secret::read(secretKey(r));
-            _inKeychain[r.key()] = r.auth;
-        }
-        _records.push_back(std::move(r));
-    }
-    _active = std::string(active);
-    if (!find(_active))
-        _active = _records.empty() ? std::string() : _records.front().key();
+    for (WorkspaceRecord &r : records)
+        adopt(std::move(r));
+    setActiveOrFirst(active);
     flush();
 }
 

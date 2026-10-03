@@ -1,6 +1,7 @@
 #include "app/claude/pty.h"
 
 #include "base/process.h"
+#include "base/str.h"
 #include "plat/plat.h"
 
 #include <algorithm>
@@ -154,7 +155,7 @@ bool Pty::start(
     );
     DeleteProcThreadAttributeList(si.lpAttributeList);
     if (!ok) {
-        _error = "CreateProcess failed (" + std::to_string(GetLastError()) + ")";
+        _error = "CreateProcess failed (" + str::number(GetLastError()) + ")";
         return false;
     }
     d->running = true;

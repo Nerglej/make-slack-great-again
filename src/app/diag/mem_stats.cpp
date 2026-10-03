@@ -21,6 +21,44 @@ extern "C" size_t __sanitizer_get_current_allocated_bytes();
 
 namespace diag {
 
+namespace {
+
+#if defined(__linux__)
+// A "Key:  123 kB" line of /proc/self/status (`key` with its colon); -1
+// when absent.
+long procStatus(const char *key) {
+    long value = -1;
+    if (FILE *f = std::fopen("/proc/self/status", "r")) {
+        const size_t n = std::strlen(key);
+        char         line[256];
+        while (std::fgets(line, sizeof line, f))
+            if (std::strncmp(line, key, n) == 0) {
+                value = std::atol(line + n);
+                break;
+            }
+        std::fclose(f);
+    }
+    return value;
+}
+#endif
+
+} // namespace
+
+long rssKb() {
+#if defined(__linux__)
+    return procStatus("VmRSS:");
+#elif defined(__APPLE__)
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t      count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, task_info_t(&info), &count) ==
+        KERN_SUCCESS)
+        return long(info.resident_size / 1024);
+    return -1;
+#else
+    return -1;
+#endif
+}
+
 MemStats sampleMem() {
     MemStats m;
 #if defined(__SANITIZE_ADDRESS__)
@@ -34,17 +72,9 @@ MemStats sampleMem() {
     malloc_zone_statistics(nullptr, &st); // null: every zone
     m.heapKb = long(st.size_in_use / 1024);
 #endif
+    m.rssKb = rssKb();
 #if defined(__linux__)
-    if (FILE *f = std::fopen("/proc/self/status", "r")) {
-        char line[256];
-        while (std::fgets(line, sizeof line, f)) {
-            if (std::strncmp(line, "VmRSS:", 6) == 0)
-                m.rssKb = std::atol(line + 6);
-            else if (std::strncmp(line, "Threads:", 8) == 0)
-                m.threads = std::atol(line + 8);
-        }
-        std::fclose(f);
-    }
+    m.threads = procStatus("Threads:");
     if (DIR *d = opendir("/proc/self/fd")) {
         long n = 0;
         while (const dirent *e = readdir(d))
@@ -53,12 +83,6 @@ MemStats sampleMem() {
         closedir(d);
         m.fds = n - 1; // the one opendir holds
     }
-#elif defined(__APPLE__)
-    mach_task_basic_info_data_t info{};
-    mach_msg_type_number_t      count = MACH_TASK_BASIC_INFO_COUNT;
-    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, task_info_t(&info), &count) ==
-        KERN_SUCCESS)
-        m.rssKb = long(info.resident_size / 1024);
 #endif
     return m;
 }

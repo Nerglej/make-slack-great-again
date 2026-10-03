@@ -49,25 +49,27 @@ public:
     ) {
         send(conv, std::move(text), threadTs, std::move(done));
     }
-    virtual void edit(ConvRef conv, Ts ts, std::string text)                 = 0;
-    virtual void remove(ConvRef conv, Ts ts)                                 = 0;
-    virtual void react(ConvRef conv, Ts ts, std::string_view name, bool add) = 0;
-    virtual void markRead(ConvRef conv, Ts ts)                               = 0;
+    virtual void markRead(ConvRef conv, Ts ts) = 0;
+    // What follows, down to search(), defaults to nothing for a backend
+    // without it: no-ops; openDm gives kNoConv, search finds nothing.
+    virtual void edit(ConvRef conv, Ts ts, std::string text);
+    virtual void remove(ConvRef conv, Ts ts);
+    virtual void react(ConvRef conv, Ts ts, std::string_view name, bool add);
     // "Mark unread": the read cursor moves back to just before ts.
-    virtual void markUnread(ConvRef conv, Ts ts)                             = 0;
-    virtual void setStarred(ConvRef conv, bool starred)                      = 0;
+    virtual void markUnread(ConvRef conv, Ts ts);
+    virtual void setStarred(ConvRef conv, bool starred);
     // Muting silences a conversation (no notifications, no badge).
-    virtual void setMuted(ConvRef conv, bool muted)                          = 0;
-    virtual void setNotifyLevel(ConvRef conv, NotifyLevel level)             = 0;
+    virtual void setMuted(ConvRef conv, bool muted);
+    virtual void setNotifyLevel(ConvRef conv, NotifyLevel level);
     // Leaves a channel, closes a DM (it comes back with the next message or
     // openDm), removes an agent session from the list. member = false.
-    virtual void leave(ConvRef conv)                                         = 0;
+    virtual void leave(ConvRef conv);
     // The DM with `user` (opened or created); done gets kNoConv on failure.
-    virtual void openDm(UserRef user, std::function<void(ConvRef)> done)     = 0;
-    virtual void setPinned(ConvRef conv, Ts ts, bool pinned)                 = 0;
-    virtual void setSaved(ConvRef conv, Ts ts, bool saved)                   = 0;
+    virtual void openDm(UserRef user, std::function<void(ConvRef)> done);
+    virtual void setPinned(ConvRef conv, Ts ts, bool pinned);
+    virtual void setSaved(ConvRef conv, Ts ts, bool saved);
     // Deletes a file from a message (own or as an admin).
-    virtual void deleteFile(ConvRef conv, Ts ts, const std::string &fileId)  = 0;
+    virtual void deleteFile(ConvRef conv, Ts ts, const std::string &fileId);
     // "Remove preview" on an own message (Capabilities::removePreview):
     // strips attachment `attachmentId` (Slack's positional id, 1-based) for
     // everyone; on success the Store's message loses it. Default: fails.
@@ -87,7 +89,7 @@ public:
             done(false, "not supported");
     }
     // "Remind me": a saved item with a due time (epoch secs); 0 removes it.
-    virtual void setReminder(ConvRef conv, Ts ts, int64_t dueSecs) = 0;
+    virtual void setReminder(ConvRef conv, Ts ts, int64_t dueSecs);
 
     // "Find a channel" / "Create a channel": joins a listed channel, or
     // creates one (name already lower-cased and dashed). done(conv, "") once
@@ -226,7 +228,7 @@ public:
     }
     // The signed-in user is typing in conv (thread 0 = the channel). Call
     // repeatedly while typing; backends rate-limit the outgoing event.
-    virtual void userTyping(ConvRef conv, Ts threadTs) = 0;
+    virtual void userTyping(ConvRef conv, Ts threadTs);
 
     // What the service can do: the UI shows a control only where it works
     // (the fields the shell gates on).
@@ -469,7 +471,7 @@ public:
         std::string text;       // the message's mrkdwn (it may not be loaded)
     };
     // Messages containing `query` (case-insensitive), newest first.
-    virtual void search(std::string query, std::function<void(std::vector<SearchHit>)> done) = 0;
+    virtual void search(std::string query, std::function<void(std::vector<SearchHit>)> done);
 
     // The sidebar's "Threads" page (Capabilities::threadsView):
     // the threads I follow, newest activity first. Copies,

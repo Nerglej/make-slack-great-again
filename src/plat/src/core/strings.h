@@ -1,8 +1,11 @@
 // Small string helpers every backend shares: ASCII case folding and trimming,
 // markup escaping for notification text, and URL-scheme bookkeeping (which
 // schemes this process registered, which launch arguments are URLs of them).
-// Pure string code, no OS calls.
+// Pure string code, no OS calls. Folding, trimming and escaping are prim's
+// (src/prim), shared with the app's base library.
 #pragma once
+
+#include "prim/str.h"
 
 #include <string>
 #include <string_view>
@@ -11,15 +14,18 @@
 namespace plat::core {
 
 // A–Z folded to a–z; every other byte (UTF-8 included) is left alone.
-char        asciiLower(char c);
-std::string asciiLower(std::string_view s);
+using prim::asciiLower; // a char or a string
 
 // `s` without leading and trailing bytes from `chars`.
-std::string_view trim(std::string_view s, std::string_view chars = " \t");
+inline std::string_view trim(std::string_view s, std::string_view chars = " \t") {
+    return prim::trim(s, chars);
+}
 
 // &, < and > as entities (and " too when `quotes`): text placed inside
 // notification-body markup or an XML element or attribute.
-std::string escapeMarkup(std::string_view s, bool quotes = false);
+inline std::string escapeMarkup(std::string_view s, bool quotes = false) {
+    return prim::escapeHtml(s, quotes);
+}
 
 // RFC 3986 scheme syntax: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
 bool validScheme(std::string_view s);

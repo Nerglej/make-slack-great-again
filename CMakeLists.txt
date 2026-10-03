@@ -162,6 +162,10 @@ if(MSGA_BUILD_TESTS OR MSGA_DEMO)
 else()
     set(PLAT_TEST_HOOKS OFF CACHE BOOL "" FORCE)
 endif()
+# prim: the primitives plat and base share (plat can't link base). Added
+# here, before plat, so it builds with msga's flags.
+add_subdirectory(src/prim prim EXCLUDE_FROM_ALL)
+target_link_libraries(prim PRIVATE msga_flags)
 add_subdirectory(src/plat plat EXCLUDE_FROM_ALL)
 if(MSGA_COVERAGE)
     # plat has its own flags, not msga_flags. Its generated Wayland protocol

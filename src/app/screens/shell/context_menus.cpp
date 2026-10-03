@@ -20,58 +20,37 @@ namespace shell {
 namespace {
 
 // One row per item: its label in a channel's menu and, where different, in
-// a direct conversation's, and its icon (icons show only on the
-// notification levels).
-struct Def {
-    uint8_t     id;
-    uint16_t    icon;
-    const char *label;
-    const char *direct; // null: same as label
-};
-constexpr uint16_t kNone   = ui::Button::kNoIcon;
-constexpr Def      kDefs[] = {
-    {Menus::kStar, kNone, N_("Star channel"), N_("Star conversation")},
-    {Menus::kUnstar, kNone, N_("Unstar channel"), N_("Unstar conversation")},
-    {Menus::kNotifyAll, uint16_t(Icon::Bell), N_("All new posts"), nullptr},
-    {Menus::kNotifyMentions, uint16_t(Icon::Bell), N_("Just mentions"), nullptr},
-    {Menus::kNotifyMute, uint16_t(Icon::BellOff), N_("Mute and hide"), nullptr},
-    {Menus::kMute, kNone, N_("Mute"), nullptr},
-    {Menus::kUnmute, kNone, N_("Unmute"), nullptr},
-    {Menus::kRename, kNone, N_("Name conversation…"), nullptr},
-    {Menus::kLeave, kNone, N_("Leave channel"), N_("Leave conversation")},
-    {Menus::kStopSession, kNone, N_("Stop"), nullptr},
-    {Menus::kWorkspaceAdmin, kNone, N_("Workspace admin"), nullptr},
-    {Menus::kChangeIcon, kNone, N_("Change icon…"), nullptr},
-    {Menus::kMuteWorkspace, kNone, N_("Mute"), nullptr},
-    {Menus::kUnmuteWorkspace, kNone, N_("Unmute"), nullptr},
-    {Menus::kSignOut, kNone, N_("Log out"), nullptr},
-    {Menus::kFindSession, kNone, N_("Find a session"), nullptr},
-    {Menus::kCreateSession, kNone, N_("Create a session"), nullptr},
-    {Menus::kCreateUnsafeSession, kNone, N_("Create an unsafe session"), nullptr},
-    {Menus::kEditTeammate, kNone, N_("Edit teammate…"), nullptr},
-    {Menus::kRestoreTeammate, kNone, N_("Restore default"), nullptr},
-    {Menus::kRemoveTeammate, kNone, N_("Remove teammate…"), nullptr},
+// a direct conversation's (the alt label), and its icon (icons show only on
+// the notification levels).
+constexpr uint16_t    kNone   = ui::Button::kNoIcon;
+constexpr ui::MenuDef kDefs[] = {
+    {Menus::kStar, kNone, N_("Star channel"), N_("Star conversation"), nullptr},
+    {Menus::kUnstar, kNone, N_("Unstar channel"), N_("Unstar conversation"), nullptr},
+    {Menus::kNotifyAll, uint16_t(Icon::Bell), N_("All new posts"), nullptr, nullptr},
+    {Menus::kNotifyMentions, uint16_t(Icon::Bell), N_("Just mentions"), nullptr, nullptr},
+    {Menus::kNotifyMute, uint16_t(Icon::BellOff), N_("Mute and hide"), nullptr, nullptr},
+    {Menus::kMute, kNone, N_("Mute"), nullptr, nullptr},
+    {Menus::kUnmute, kNone, N_("Unmute"), nullptr, nullptr},
+    {Menus::kRename, kNone, N_("Name conversation…"), nullptr, nullptr},
+    {Menus::kLeave, kNone, N_("Leave channel"), N_("Leave conversation"), nullptr},
+    {Menus::kStopSession, kNone, N_("Stop"), nullptr, nullptr},
+    {Menus::kWorkspaceAdmin, kNone, N_("Workspace admin"), nullptr, nullptr},
+    {Menus::kChangeIcon, kNone, N_("Change icon…"), nullptr, nullptr},
+    {Menus::kMuteWorkspace, kNone, N_("Mute"), nullptr, nullptr},
+    {Menus::kUnmuteWorkspace, kNone, N_("Unmute"), nullptr, nullptr},
+    {Menus::kSignOut, kNone, N_("Log out"), nullptr, nullptr},
+    {Menus::kFindSession, kNone, N_("Find a session"), nullptr, nullptr},
+    {Menus::kCreateSession, kNone, N_("Create a session"), nullptr, nullptr},
+    {Menus::kCreateUnsafeSession, kNone, N_("Create an unsafe session"), nullptr, nullptr},
+    {Menus::kEditTeammate, kNone, N_("Edit teammate…"), nullptr, nullptr},
+    {Menus::kRestoreTeammate, kNone, N_("Restore default"), nullptr, nullptr},
+    {Menus::kRemoveTeammate, kNone, N_("Remove teammate…"), nullptr, nullptr},
 };
 
 ui::MenuItem &add(std::vector<ui::MenuItem> &out, int id, bool direct = false, bool on = true) {
-    ui::MenuItem m;
-    for (const Def &d : kDefs)
-        if (d.id == id) {
-            m.label = tr(direct && d.direct ? d.direct : d.label);
-            m.icon  = d.icon;
-            break;
-        }
-    m.id      = id;
-    m.enabled = on;
-    m.danger  = id == Menus::kLeave || id == Menus::kSignOut || id == Menus::kRemoveTeammate;
-    out.push_back(std::move(m));
-    return out.back();
-}
-
-void separator(std::vector<ui::MenuItem> &out) {
-    // Separators are never leading or doubled.
-    if (!out.empty() && !out.back().separator)
-        out.push_back(ui::MenuItem::separatorItem());
+    ui::MenuItem &m = ui::addMenuItem(out, kDefs, id, direct, on);
+    m.danger        = id == Menus::kLeave || id == Menus::kSignOut || id == Menus::kRemoveTeammate;
+    return m;
 }
 
 // The notification section: a header and the three levels, the effective
@@ -100,9 +79,9 @@ std::vector<ui::MenuItem> Menus::chatItems(ConvRef c) const {
     if (cv.kind == ConvKind::Group) // showMpdmContextMenu
         add(items, kRename).label =
             cv.localName.empty() ? tr("Name conversation…") : tr("Rename conversation…");
-    separator(items);
+    ui::addMenuSeparator(items);
     add(items, cv.starred ? kUnstar : kStar, direct);
-    separator(items);
+    ui::addMenuSeparator(items);
     if (cv.kind == ConvKind::Dm) { // showDmContextMenu
         add(items, cv.muted ? kUnmute : kMute);
         if (_ctx.backend.isAgentSession(c)) {
@@ -111,13 +90,13 @@ std::vector<ui::MenuItem> Menus::chatItems(ConvRef c) const {
             if (_ctx.backend.canStopSession(c))
                 add(items, kStopSession);
             add(items, kRename).label = tr("Rename session…");
-            separator(items);
+            ui::addMenuSeparator(items);
             add(items, kLeave).label = tr("Remove from msga");
         }
         return items;
     }
     notifySection(items, _shell.sidebar().level(cv));
-    separator(items);
+    ui::addMenuSeparator(items);
     add(items, kLeave, direct);
     return items;
 }
@@ -158,7 +137,7 @@ std::vector<ui::MenuItem> Menus::teammateItems(const model::Backend::AgentRole &
     if (mate.builtIn && mate.edited)
         add(items, kRestoreTeammate);
     if (!mate.builtIn) {
-        separator(items);
+        ui::addMenuSeparator(items);
         add(items, kRemoveTeammate);
     }
     return items;

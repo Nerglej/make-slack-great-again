@@ -419,23 +419,18 @@ model::Conversation toConversation(const json::Value &o, model::Store &store) {
 
 namespace {
 
-// A room's time: seconds as a number or a string ("1758445200").
-int64_t roomSeconds(const Value &v) {
-    return v.isNumber() ? int64_t(v.number()) : int64_t(std::atof(std::string(v.str()).c_str()));
-}
-
 // has_ended, or a date_end (a string read as a number would be 0 and the
 // huddle live forever).
 bool roomEnded(const Value &room) {
-    return room["has_ended"].boolean() || roomSeconds(room["date_end"]) != 0;
+    return room["has_ended"].boolean() || epochSecs(room["date_end"]) != 0;
 }
 
 // A huddle_thread message's attendees and times.
 model::Huddle huddleSummary(const Value &room, model::Store &store) {
     model::Huddle h;
     h.ended    = roomEnded(room);
-    h.startSec = roomSeconds(room["date_start"]);
-    h.endSec   = h.ended ? roomSeconds(room["date_end"]) : 0;
+    h.startSec = epochSecs(room["date_start"]);
+    h.endSec   = h.ended ? epochSecs(room["date_end"]) : 0;
     for (const Value u : room[h.ended ? "participant_history" : "participants"])
         if (!u.str().empty())
             h.attendees.push_back(store.internUser(u.str()));
@@ -786,7 +781,10 @@ std::string firstIcon(const Value &icons) {
 }
 
 int64_t epochSecs(const Value &v) {
-    return v.isString() ? std::strtoll(std::string(v.str()).c_str(), nullptr, 10) : v.integer();
+    if (v.isString())
+        return std::strtoll(std::string(v.str()).c_str(), nullptr, 10);
+    const double d = v.number(); // a fraction cut off, as a string's is
+    return d > -9.2e18 && d < 9.2e18 ? int64_t(d) : 0;
 }
 
 bool toFeedThread(const Value &t, model::Store &store, FeedThread &out) {

@@ -4,6 +4,7 @@
 #include "x11/x11_internal.h"
 #include "core/pacing.h"
 #include "linux/cursor_names.h"
+#include "prim/utf8.h"
 
 #include <xcb/randr.h>
 #include <xcb/shm.h>
@@ -1278,25 +1279,9 @@ std::string latin1ToUtf8(std::string_view s) {
 std::string utf8ToLatin1(std::string_view s) {
     std::string out;
     for (size_t i = 0; i < s.size();) {
-        const auto c = (unsigned char)s[i];
-        uint32_t   cp;
-        size_t     n;
-        if (c < 0x80) {
-            cp = c;
-            n  = 1;
-        } else if ((c & 0xe0) == 0xc0) {
-            cp = c & 0x1f;
-            n  = 2;
-        } else if ((c & 0xf0) == 0xe0) {
-            cp = c & 0x0f;
-            n  = 3;
-        } else {
-            cp = c & 0x07;
-            n  = 4;
-        }
-        for (size_t k = 1; k < n && i + k < s.size(); ++k)
-            cp = (cp << 6) | ((unsigned char)s[i + k] & 0x3f);
-        i += n;
+        // Invalid UTF-8 decodes as U+FFFD, so it becomes '?' like any other
+        // character Latin-1 has no room for.
+        const uint32_t cp = prim::utf8::decode(s, i);
         out += cp <= 0xff ? char(cp) : '?';
     }
     return out;

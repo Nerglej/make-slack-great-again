@@ -2,15 +2,13 @@
 // exchanges, plus what every OS stack is told not to do itself — following
 // redirects and carrying cookies along them (see net.h).
 #include "base/str.h"
+#include "base/thread.h"
 #include "net/net.h"
 #include "net/transport.h"
-#include "net/worker.h"
 #include "plat/plat.h"
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <unordered_map>
@@ -141,15 +139,20 @@ struct Job {
     bool                            progress = false; // the caller set onProgress
 };
 
-struct Worker {
-    detail::Thread thread;
-    bool           retired = false; // under Impl::mutex: it has left workerLoop
-};
+// Every worker may park: a burst's threads wait for the next one.
+base::WorkerPool::Options poolOptions() {
+    return {
+        .maxWorkers = kMaxWorkers,
+        .maxParked  = kMaxWorkers,
+        .idleMs     = g_workerIdleMs.load(),
+        .stackBytes = detail::kThreadStack
+    };
+}
 
 } // namespace
 
 struct Client::Impl : std::enable_shared_from_this<Client::Impl> {
-    explicit Impl(plat::App &a) : app(a) {}
+    explicit Impl(plat::App &a) : app(a), pool(poolOptions()) {}
 
     plat::App                                                           &app;
     // UI thread only.
@@ -158,15 +161,14 @@ struct Client::Impl : std::enable_shared_from_this<Client::Impl> {
     std::unordered_map<RequestId, std::shared_ptr<detail::Cancel>>       flags;
     std::unordered_map<RequestId, std::function<void(int64_t, int64_t)>> progress;
 
-    // Shared with the workers.
-    std::mutex                           mutex;
-    std::condition_variable              wake;
-    std::deque<Job>                      queue;
-    bool                                 stopping = false;
-    int                                  idle     = 0;
-    std::vector<std::unique_ptr<Worker>> workers; // retired ones are joined by send()
+    // Shared with the workers. The queue is ours, not the pool's, so that
+    // cancel() can take a request out: a worker takes the oldest per task.
+    std::mutex       mutex;
+    std::deque<Job>  queue;
+    bool             stopping = false;
+    base::WorkerPool pool;
 
-    void workerLoop(Worker *self);
+    void runNext();
     void run(Job &job);
     void deliver(RequestId id, Response resp);
     void report(RequestId id, int64_t received, int64_t total);
@@ -234,27 +236,16 @@ std::string_view Response::header(std::string_view name) const {
     return detail::headerValue(headers, name);
 }
 
-void Client::Impl::workerLoop(Worker *self) {
-    for (;;) {
-        Job job;
-        {
-            std::unique_lock<std::mutex> lock(mutex);
-            ++idle;
-            const auto idleFor = std::chrono::milliseconds(g_workerIdleMs.load());
-            const bool work =
-                wake.wait_for(lock, idleFor, [this] { return stopping || !queue.empty(); });
-            --idle;
-            if (stopping)
-                return;
-            if (!work) {
-                self->retired = true;
-                return;
-            }
-            job = std::move(queue.front());
-            queue.pop_front();
-        }
-        run(job);
+void Client::Impl::runNext() {
+    Job job;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (stopping || queue.empty())
+            return; // cancelled meanwhile: its task has nothing to do
+        job = std::move(queue.front());
+        queue.pop_front();
     }
+    run(job);
 }
 
 void Client::Impl::run(Job &job) {
@@ -413,9 +404,7 @@ Client::~Client() {
             flag->set();
         _impl->queue.clear();
     }
-    _impl->wake.notify_all();
-    for (auto &w : _impl->workers)
-        w->thread.join();
+    _impl->pool.stop(); // joins the workers
     _impl->done.clear();
     _impl->progress.clear();
     if (g_liveClients.fetch_sub(1, std::memory_order_acq_rel) == 1)
@@ -433,27 +422,13 @@ RequestId Client::send(Request req, std::function<void(Response)> done) {
     if (progress)
         d.progress.emplace(id, std::move(req.onProgress));
     req.onProgress = nullptr;
-    std::vector<std::unique_ptr<Worker>> retired; // joined on return, outside the lock
     {
         std::lock_guard<std::mutex> lock(d.mutex);
         d.queue.push_back({id, std::move(req), flag, progress});
-        for (size_t i = 0; i < d.workers.size();)
-            if (d.workers[i]->retired) {
-                retired.push_back(std::move(d.workers[i]));
-                d.workers.erase(d.workers.begin() + ptrdiff_t(i));
-            } else {
-                ++i;
-            }
-        if (d.idle < int(d.queue.size()) && int(d.workers.size()) < kMaxWorkers) {
-            auto    w   = std::make_unique<Worker>();
-            Impl   *raw = &d; // the destructor joins every worker before Impl goes
-            Worker *me  = w.get();
-            if (w->thread.start([raw, me] { raw->workerLoop(me); }))
-                d.workers.push_back(std::move(w));
-        }
     }
-    d.wake.notify_one();
-    return id; // a retired thread has left its loop: joining it is quick
+    Impl *raw = &d; // the destructor joins every worker before Impl goes
+    d.pool.post([raw] { raw->runNext(); });
+    return id;
 }
 
 void Client::cancel(RequestId id) {

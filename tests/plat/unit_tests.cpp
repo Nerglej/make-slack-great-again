@@ -1,5 +1,6 @@
 // Backend-independent tests: the loop core (timers, posting) and the event
 // contract, driven through the headless backend.
+#include "core/hash.h"
 #include "core/loop_core.h"
 #include "core/image_util.h"
 #include "core/input.h"
@@ -374,6 +375,7 @@ void testPercentAndFileUris() {
     CHECK(core::percentDecode("%2") == "%2");
     CHECK(core::percentDecode("%zz%4") == "%zz%4");
     CHECK(core::percentDecode("%41") == "A");
+    CHECK(core::percentDecode("a+b") == "a+b"); // '+' is not a space here
     CHECK(core::fileUri("/tmp/a b/ü#1.txt") == "file:///tmp/a%20b/%C3%BC%231.txt");
     CHECK(core::pathFromFileUri("file:///tmp/a%20b/%C3%BC%231.txt") == "/tmp/a b/\xC3\xBC#1.txt");
     CHECK(core::pathFromFileUri("file://localhost/tmp/x") == "/tmp/x");
@@ -502,6 +504,12 @@ void testStrings() {
     CHECK(core::trim("\r x\r", " \r") == "x");
     CHECK(core::escapeMarkup("a<b>&\"c\"") == "a&lt;b&gt;&amp;\"c\"");
     CHECK(core::escapeMarkup("\"", true) == "&quot;");
+
+    // The instance socket and pipe names hash with this exact basis; both
+    // overloads agree.
+    CHECK(core::fnv1a("") == 1469598103934665603ull);
+    CHECK(core::fnv1a("a") == 0x44bd8ad473cd9906ull);
+    CHECK(core::fnv1a("foobar", 6) == core::fnv1a(std::string_view("foobar")));
 
     CHECK(core::validScheme("msga") && core::validScheme("x-plat+1.2") && core::validScheme("c"));
     CHECK(!core::validScheme("") && !core::validScheme("1abc") && !core::validScheme("a b"));

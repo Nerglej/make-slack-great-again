@@ -494,13 +494,8 @@ scanSessions(const Paths &paths, std::vector<SessionInfo> *live, JobStateCache *
 
 bool isFolderTrusted(std::string_view dir) {
     const std::string env = base::env("CLAUDE_CONFIG_DIR");
-    std::string       data;
-    if (!file::readAll(
-            env.empty() ? base::homeDir() + "/.claude.json" : env + "/.claude.json", &data
-        ))
-        return false;
-    json::Document doc;
-    if (!doc.parse(std::move(data), nullptr))
+    json::Document    doc;
+    if (!doc.parseFile(env.empty() ? base::homeDir() + "/.claude.json" : env + "/.claude.json"))
         return false;
     const json::Value projects = doc.root()["projects"];
     // Trust is inherited: the folder itself or any parent counts.

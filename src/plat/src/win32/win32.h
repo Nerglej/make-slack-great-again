@@ -32,6 +32,7 @@
 #include "core/strings.h"
 #include "core/transfer.h"
 #include "plat/testing.h"
+#include "prim/winstr.h"
 
 #include <atomic>
 #include <climits>
@@ -47,13 +48,18 @@ struct IPropertyStore;
 namespace plat::win32 {
 
 // ── Text, keys, URIs (win32_keys.cpp) ───────────────────────────────────────
-std::wstring toWide(std::string_view utf8);
-std::string  toUtf8(std::wstring_view wide);
+// UTF-8 ↔ UTF-16: prim's (src/prim), shared with the app's base library.
+inline std::wstring toWide(std::string_view utf8) {
+    return prim::wide(utf8);
+}
+inline std::string toUtf8(std::wstring_view wide) {
+    return prim::narrow(wide);
+}
 // Byte length of the UTF-8 encoding of the first `units` UTF-16 code units —
 // IME cursor positions arrive in UTF-16 units, Event offsets are UTF-8 bytes.
-int          utf8Length(std::wstring_view wide, size_t units);
+int         utf8Length(std::wstring_view wide, size_t units);
 // "C:\a b\ü.txt" → "file:///C:/a%20b/%C3%BC.txt"; UNC → "file://server/share/…".
-std::string  fileUri(std::wstring_view path);
+std::string fileUri(std::wstring_view path);
 
 // "file:///C:/a%20b" → "C:\a b", "file://srv/s/x" → "\\srv\s\x"; nullopt
 // for anything that is not a local or UNC file (other schemes, /tmp/x).

@@ -317,6 +317,12 @@ private:
     uint64_t           post(const plat::Notification &n);
     model::NotifyLevel defaultLevel() const; // Settings → Notifications: All or Mentions
     model::NotifyLevel effectiveLevel(const model::Conversation &c) const;
+
+    struct Notified;
+    // `n` with the first of `pics` there is, timed out and silent (the
+    // chosen sound is played here), its click opening `where`.
+    void postNotification(plat::Notification n, std::vector<std::string> pics, Notified where);
+
     struct Running; // an attached workspace
     Running   *findRunning(const std::string &key);
     void       refreshTrayIcon(int mentions, bool unread);

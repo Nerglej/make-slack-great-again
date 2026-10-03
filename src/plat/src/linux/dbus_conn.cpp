@@ -1,5 +1,7 @@
 #include "linux/dbus_conn.h"
 
+#include "prim/utf8.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <set>
@@ -29,47 +31,8 @@ void freePending(void *p) {
 } // namespace
 
 std::string sanitizeUtf8(std::string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    const auto  *p     = reinterpret_cast<const unsigned char *>(s.data());
-    const size_t n     = s.size();
-    const char   bad[] = "\xEF\xBF\xBD"; // U+FFFD
-    for (size_t i = 0; i < n;) {
-        const unsigned char c = p[i];
-        if (c == 0) { // D-Bus strings cannot carry NUL
-            ++i;
-            continue;
-        }
-        if (c < 0x80) {
-            out += char(c);
-            ++i;
-            continue;
-        }
-        int      len = 0;
-        uint32_t cp = 0, min = 0;
-        if ((c & 0xE0) == 0xC0) {
-            len = 2, cp = c & 0x1F, min = 0x80;
-        } else if ((c & 0xF0) == 0xE0) {
-            len = 3, cp = c & 0x0F, min = 0x800;
-        } else if ((c & 0xF8) == 0xF0) {
-            len = 4, cp = c & 0x07, min = 0x10000;
-        }
-        bool ok = len > 0 && i + len <= n;
-        for (int k = 1; ok && k < len; ++k) {
-            if ((p[i + k] & 0xC0) != 0x80)
-                ok = false;
-            else
-                cp = (cp << 6) | (p[i + k] & 0x3F);
-        }
-        ok = ok && cp >= min && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
-        if (ok) {
-            out.append(s.data() + i, len);
-            i += len;
-        } else {
-            out += bad;
-            ++i;
-        }
-    }
+    std::string out = prim::utf8::sanitize(s);
+    std::erase(out, '\0'); // D-Bus strings cannot carry NUL
     return out;
 }
 

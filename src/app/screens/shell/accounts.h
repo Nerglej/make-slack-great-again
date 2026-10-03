@@ -97,6 +97,11 @@ private:
     Running *ensure(const std::string &key);
     // Stops one (the open one leaves the screens first) and forgets it.
     void     drop(Running *r, bool keepCache);
+    // Detaches a running workspace and stops its work: timers, requests,
+    // its cache (written first with keepCache), its backend.
+    void     shutdown(Running &r, bool keepCache);
+    // A newly signed-in workspace: saved, made active, (re)started, opened.
+    void     adoptRecord(auth::WorkspaceRecord rec);
     void     restart(const std::string &key); // new credentials: a fresh backend
     void     startNext();                     // the background ones, one at a time
     void     connect(uint64_t serial);

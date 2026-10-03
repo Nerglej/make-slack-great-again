@@ -8,6 +8,7 @@
 #include "base/str.h"
 #include "base/time.h"
 #include "base/utf8.h"
+#include "gfx/gfx.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -183,16 +184,6 @@ bool isWordCp(uint32_t cp) {
     return cp == '_' || utf8::isWordChar(cp);
 }
 
-std::vector<uint32_t> codePoints(std::string_view s, bool fold) {
-    std::vector<uint32_t> out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size();) {
-        const uint32_t cp = utf8::decode(s, i);
-        out.push_back(fold ? utf8::foldCase(cp) : cp);
-    }
-    return out;
-}
-
 // The header line's name and id: "Data analyst (msga: data-analyst)" — or, as
 // sessions started before ids were written have it, a built-in's English
 // name alone ("Engineer"). Reads only the built-ins' table: the catalog calls
@@ -242,18 +233,10 @@ std::string field(
 
 // "#rrggbb" (or "rrggbb") → 0xRRGGBB; false when it isn't one.
 bool parseColor(std::string_view s, uint32_t *out) {
-    if (!s.empty() && s[0] == '#')
-        s.remove_prefix(1);
-    if (s.size() != 6)
+    gfx::Color c = 0;
+    if (s.size() - (!s.empty() && s[0] == '#') != 6 || !gfx::parseHexColor(s, &c))
         return false;
-    uint32_t v = 0;
-    for (char c : s) {
-        const int d = str::hexDigit(c);
-        if (d < 0)
-            return false;
-        v = v << 4 | uint32_t(d);
-    }
-    *out = v;
+    *out = c & 0xffffff;
     return true;
 }
 
@@ -265,7 +248,7 @@ bool separatorCp(uint32_t cp) {
 std::vector<std::vector<uint32_t>> wordsOf(std::string_view name) {
     std::vector<std::vector<uint32_t>> out;
     std::vector<uint32_t>              word;
-    for (uint32_t cp : codePoints(name, true)) {
+    for (uint32_t cp : utf8::codePoints(name, true)) {
         if (separatorCp(cp)) {
             if (!word.empty())
                 out.push_back(std::move(word));
@@ -315,7 +298,7 @@ bool namedIn(std::string_view prompt, const Role &role) {
             alternatives.push_back(std::move(words));
     if (alternatives.empty())
         return false;
-    const std::vector<uint32_t> p = codePoints(prompt, true);
+    const std::vector<uint32_t> p = utf8::codePoints(prompt, true);
     for (size_t i = 0; i < p.size(); ++i) {
         if (i > 0) {
             const uint32_t b = p[i - 1];
@@ -733,9 +716,8 @@ std::string Team::avatarFor(const Role &role) const {
     // Others are drawn once into a file named after what it shows.
     const std::string glyph =
         avatar_glyphs::hasGlyph(role.glyph) ? role.glyph : avatar_glyphs::glyphs().front().id;
-    const std::string name =
-        str::concat({glyph, "-", avatar_glyphs::colorName(role.color).substr(1), ".svg"});
-    std::string dir = avatarsDir();
+    const std::string name = str::concat({glyph, "-", gfx::hexColor(role.color).substr(1), ".svg"});
+    std::string       dir  = avatarsDir();
     if (dir.empty())
         dir = file::join(_dir, "avatars");
     return pictureFile(dir, name, avatar_glyphs::svg(role.glyph, role.color));
@@ -743,9 +725,7 @@ std::string Team::avatarFor(const Role &role) const {
 
 std::string Team::newId(std::string_view name) const {
     std::string base;
-    for (char c : name) {
-        if (c >= 'A' && c <= 'Z')
-            c = char(c + 32);
+    for (char c : str::asciiLower(name)) {
         if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
             base += c;
         else if (!base.empty() && base.back() != '-')
@@ -770,7 +750,7 @@ bool Team::write(const Role &r, std::string *error) {
     text += str::concat({"name: ", str::simplified(r.name), "\n"});
     text += str::concat({"description: ", str::simplified(r.description), "\n"});
     text += str::concat({"glyph: ", r.glyph, "\n"});
-    text += str::concat({"color: ", avatar_glyphs::colorName(r.color), "\n"});
+    text += str::concat({"color: ", gfx::hexColor(r.color), "\n"});
     if (r.created > 0)
         text += str::concat({"created: ", str::number(r.created), "\n"});
     if (r.removed)

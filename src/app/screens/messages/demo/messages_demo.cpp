@@ -3,6 +3,7 @@
 //
 //   messages_demo [--conv NAME] [--thread] [--dark] [--send TEXT] [--hover X Y]
 //                 [--context] [--viewer] [--exit-after MS]
+#include "app/diag/mem_stats.h"
 #include "app/fake/fake_backend.h"
 #include "app/screens/messages/image_cache.h"
 #include "app/screens/messages/message_list.h"
@@ -17,19 +18,6 @@
 using namespace screens;
 
 namespace {
-
-long rssKb() {
-    long  kb = -1;
-    FILE *f  = std::fopen("/proc/self/status", "r");
-    if (!f)
-        return kb;
-    char line[256];
-    while (std::fgets(line, sizeof line, f))
-        if (std::strncmp(line, "VmRSS:", 6) == 0)
-            kb = std::atol(line + 6);
-    std::fclose(f);
-    return kb;
-}
 
 // A bare composer: a bordered TextEdit that sends on Enter.
 std::unique_ptr<ui::View> composer(
@@ -197,7 +185,7 @@ int main(int argc, char **argv) {
             std::fprintf(
                 stderr,
                 "rss %ld KB, images %zu KB in %zu entries\n",
-                rssKb(),
+                diag::rssKb(),
                 images.bytes() / 1024,
                 images.entryCount()
             );

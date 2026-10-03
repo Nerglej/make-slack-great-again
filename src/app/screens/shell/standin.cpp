@@ -1,5 +1,6 @@
 #include "screens/shell/standin.h"
 
+#include "app/screens/common/message_rules.h"
 #include "app/screens/common/message_text.h"
 #include "base/i18n.h"
 #include "base/str.h"
@@ -55,18 +56,12 @@ void MessageStandIn::rebuild() {
         auto *img = row->add<Avatar>();
         img->style().size(36, 36);
         img->setRadius(6);
-        const auto &u = store.user(m->user);
-        img->setBitmap(_avatars.get(
-            m->extra && !m->extra->botAvatar.empty() ? m->extra->botAvatar : u.avatar, 72
-        ));
+        img->setBitmap(_avatars.get(screens::authorAvatar(store, *m), 72));
         auto *col = row->add<View>();
         col->style().flex(1).spacing(2);
         auto *head = col->add<View>();
         head->style().row().spacing(8).items(Align::Center);
-        head->add<Label>(
-            m->extra && !m->extra->botName.empty() ? m->extra->botName : std::string(u.label()),
-            Font::BodyBold
-        );
+        head->add<Label>(std::string(screens::authorName(store, *m)), Font::BodyBold);
         head->add<Label>(base::dateTimeLabel(model::tsSecs(m->ts), now), Font::Small, C::TextFaint);
         std::string body = screens::plainText(store, m->text);
         for (const auto &a : m->attachments())

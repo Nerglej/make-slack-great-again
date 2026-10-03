@@ -1,4 +1,4 @@
-# msga_base: UTF-8, JSON, files, time, i18n, the keychain, the settings of earlier versions.
+# msga_base: UTF-8, JSON, files, time, i18n, the keychain, the settings of earlier versions, threads.
 add_executable(msga_base_tests
     test_utf8.cpp
     test_str.cpp
@@ -12,6 +12,7 @@ add_executable(msga_base_tests
     test_crypto.cpp
     test_process.cpp
     test_observers.cpp
+    test_thread.cpp
     main.cpp
 )
 target_link_libraries(msga_base_tests PRIVATE msga_base msga_test)

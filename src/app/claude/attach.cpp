@@ -50,31 +50,6 @@ void arm(plat::App &app, uint64_t &slot, int ms, std::function<void()> fn) {
     });
 }
 
-// How AttachInput and AttachAnswer end. detach(): the terminal goes once
-// `attach` has exited (or been made to), the session goes on. Then, after
-// `done`, lingerOrRelease(): released now if `attach` is already gone, else
-// when it exits or after kLingerMs. dropSelf(): the last hold goes on the
-// loop's next turn, not in mid-call.
-void detach(Pty &pty, std::function<void()> release) {
-    pty.onOutput   = nullptr;
-    pty.onFinished = std::move(release);
-    pty.terminate();
-}
-
-void lingerOrRelease(plat::App &app, Pty &pty, uint64_t &linger, std::function<void()> release) {
-    if (!pty.isRunning())
-        release();
-    else
-        arm(app, linger, kLingerMs, std::move(release));
-}
-
-template <class T>
-void dropSelf(plat::App &app, uint64_t &linger, std::shared_ptr<T> &self) {
-    disarm(app, linger);
-    if (self)
-        app.post([self = std::move(self)] {});
-}
-
 std::string plainLines(std::string_view in) {
     std::string text;
     text.reserve(in.size());
@@ -149,6 +124,81 @@ void AttachInput::setSubmitTimeoutMs(int ms) {
     submitMs = ms;
 }
 
+// ── AttachSession ───────────────────────────────────────────────────────────
+
+AttachSession::AttachSession(plat::App &app)
+    : _app(app), _pty(std::make_unique<Pty>(app)), _screen(kRows, kCols) {
+    _pty->onOutput   = [this](std::string_view bytes) { onOutput(bytes); };
+    _pty->onFinished = [this] { exited(); };
+}
+
+AttachSession::~AttachSession() {
+    disarm(_app, _quiet);
+    disarm(_app, _limit);
+    disarm(_app, _linger);
+}
+
+bool AttachSession::start(
+    const std::string &program, const std::vector<std::string> &args, const std::string &cwd
+) {
+    if (!_pty->start(program, args, cwd, kRows, kCols))
+        return false;
+    armLimit(attachMs);
+    return true;
+}
+
+std::string AttachSession::ptyError() const {
+    return _pty->errorString();
+}
+
+void AttachSession::onOutput(std::string_view bytes) {
+    _gotOutput = true;
+    _screen.feed(bytes);
+    // Looked at a moment after output starts, not once it stops: a turn's
+    // spinner redraws for as long as the turn runs.
+    if (!_quiet)
+        look();
+}
+
+void AttachSession::look() {
+    arm(_app, _quiet, kLookMs, [this] { settle(); });
+}
+
+void AttachSession::armLimit(int ms) {
+    arm(_app, _limit, ms, [this] { onLimit(); });
+}
+
+void AttachSession::submit() {
+    armLimit(submitMs);
+    _pty->write("\r");
+}
+
+void AttachSession::end(const std::function<void()> &report) {
+    disarm(_app, _quiet);
+    disarm(_app, _limit);
+    // The terminal goes once `attach` has exited (or been made to); the
+    // session goes on.
+    _pty->onOutput   = nullptr;
+    _pty->onFinished = [this] { release(); };
+    _pty->terminate();
+    report();
+    // Released now if `attach` is already gone, else when it exits or after
+    // kLingerMs.
+    if (!_pty->isRunning())
+        release();
+    else
+        arm(_app, _linger, kLingerMs, [this] { release(); });
+}
+
+// The last hold goes on the loop's next turn, not in mid-call.
+void AttachSession::release() {
+    disarm(_app, _linger);
+    if (_self)
+        _app.post([self = std::move(_self)] {});
+}
+
+// ── AttachInput ─────────────────────────────────────────────────────────────
+
 std::shared_ptr<AttachInput> AttachInput::send(
     plat::App                      &app,
     const std::string              &program,
@@ -163,12 +213,11 @@ std::shared_ptr<AttachInput> AttachInput::send(
         self->finish(Outcome::NotReady, "nothing to type");
         return self;
     }
-    if (!self->_pty->start(program, args, cwd, kRows, kCols)) {
-        self->finish(Outcome::NotReady, self->_pty->errorString());
+    if (!self->start(program, args, cwd)) {
+        self->finish(Outcome::NotReady, self->ptyError());
         return self;
     }
     AttachInput *p = self.get();
-    arm(app, p->_limit, attachMs, [p] { p->onLimit(); });
     // `attach` draws within a moment ("Attaching…"); a terminal that shows
     // nothing at all isn't going to (a pseudo-terminal not wired up).
     arm(app, p->_nothing, std::min(attachMs, 5000), [p] {
@@ -188,27 +237,23 @@ bool AttachInput::cancel() {
 }
 
 AttachInput::AttachInput(plat::App &app, std::string text, Done done)
-    : _app(app), _text(std::move(text)), _done(std::move(done)), _pty(std::make_unique<Pty>(app)),
-      _screen(kRows, kCols) {
+    : AttachSession(app), _text(std::move(text)), _done(std::move(done)) {
     const std::string plain = plainLines(_text);
     const auto        first = str::split(plain, '\n').front();
     _echo                   = std::string(str::trimSpace(first.substr(0, prefixUnits(first, 24))));
     _writes                 = keystrokes(_text);
-    _pty->onOutput          = [this](std::string_view bytes) { onOutput(bytes); };
-    _pty->onFinished        = [this] {
-        // `attach` ended on its own: no such session, or it went away.
-        finish(
-            _phase == Phase::Attaching ? Outcome::NotReady : Outcome::Failed, "claude attach exited"
-        );
-    };
 }
 
 AttachInput::~AttachInput() {
-    disarm(_app, _quiet);
-    disarm(_app, _limit);
     disarm(_app, _nothing);
     disarm(_app, _gap);
-    disarm(_app, _linger);
+}
+
+void AttachInput::exited() {
+    // `attach` ended on its own: no such session, or it went away.
+    finish(
+        _phase == Phase::Attaching ? Outcome::NotReady : Outcome::Failed, "claude attach exited"
+    );
 }
 
 void AttachInput::onLimit() {
@@ -231,15 +276,6 @@ void AttachInput::onLimit() {
     }
 }
 
-void AttachInput::onOutput(std::string_view bytes) {
-    _gotOutput = true;
-    _screen.feed(bytes);
-    // Looked at a moment after output starts, not once it stops: a turn's
-    // spinner redraws for as long as the turn runs.
-    if (!_quiet)
-        arm(_app, _quiet, kLookMs, [this] { settle(); });
-}
-
 void AttachInput::settle() {
     switch (_phase) {
     case Phase::Attaching:
@@ -249,7 +285,7 @@ void AttachInput::settle() {
             return; // not yet (still drawing, or a question on screen): the deadline decides
         }
         if (!std::exchange(_readySeen, true)) {
-            arm(_app, _quiet, kLookMs, [this] { settle(); }); // the second look, output or not
+            look(); // the second look, output or not
             return;
         }
         _phase = Phase::Typing;
@@ -262,8 +298,7 @@ void AttachInput::settle() {
             !str::startsWith(str::trimSpace(box->lines.front()), _echo))
             return;
         _phase = Phase::Submitting;
-        arm(_app, _limit, submitMs, [this] { onLimit(); });
-        _pty->write("\r");
+        submit();
         break;
     }
     case Phase::Submitting: {
@@ -287,10 +322,8 @@ void AttachInput::typeNext() {
         return;
     if (_nextWrite >= _writes.size()) {
         _phase = Phase::Echoing;
-        arm(_app, _limit, kEchoMs, [this] { onLimit(); });
-        arm(_app, _quiet, kLookMs, [this] {
-            settle();
-        }); // looked at even if typing drew nothing more
+        armLimit(kEchoMs);
+        look(); // looked at even if typing drew nothing more
         return;
     }
     _pty->write(_writes[_nextWrite++]);
@@ -301,18 +334,12 @@ void AttachInput::finish(Outcome outcome, std::string_view detail) {
     if (_phase == Phase::Done)
         return;
     _phase = Phase::Done;
-    disarm(_app, _quiet);
-    disarm(_app, _limit);
     disarm(_app, _nothing);
     disarm(_app, _gap);
-    detach(*_pty, [this] { release(); });
-    if (auto done = std::exchange(_done, {}))
-        done(outcome, std::string(detail));
-    lingerOrRelease(_app, *_pty, _linger, [this] { release(); });
-}
-
-void AttachInput::release() {
-    dropSelf(_app, _linger, _self);
+    end([&] {
+        if (auto done = std::exchange(_done, {}))
+            done(outcome, std::string(detail));
+    });
 }
 
 // ── AttachAnswer ────────────────────────────────────────────────────────────
@@ -347,41 +374,23 @@ std::shared_ptr<AttachAnswer> AttachAnswer::choose(
         new AttachAnswer(app, std::move(match), number, label, std::move(done))
     );
     self->_self = self;
-    self->start(program, args, cwd);
+    if (!self->start(program, args, cwd))
+        self->finish(Outcome::NotReady, self->ptyError());
     return self;
 }
 
 AttachAnswer::AttachAnswer(plat::App &app, Match match, int number, std::string label, Result done)
-    : _app(app), _match(std::move(match)), _number(number), _label(std::move(label)),
-      _done(std::move(done)), _pty(std::make_unique<Pty>(app)), _screen(kRows, kCols) {
-    _pty->onOutput = [this](std::string_view bytes) {
-        _screen.feed(bytes);
-        if (!_quiet)
-            arm(_app, _quiet, kLookMs, [this] { settle(); });
-    };
-    _pty->onFinished = [this] {
-        finish(
-            _phase == Phase::Submitting ? Outcome::Failed : Outcome::NotReady,
-            "claude attach exited"
-        );
-    };
-}
+    : AttachSession(app), _match(std::move(match)), _number(number), _label(std::move(label)),
+      _done(std::move(done)) {}
 
 AttachAnswer::~AttachAnswer() {
-    disarm(_app, _quiet);
-    disarm(_app, _limit);
     disarm(_app, _step);
-    disarm(_app, _linger);
 }
 
-void AttachAnswer::start(
-    const std::string &program, const std::vector<std::string> &args, const std::string &cwd
-) {
-    if (!_pty->start(program, args, cwd, kRows, kCols)) {
-        finish(Outcome::NotReady, _pty->errorString());
-        return;
-    }
-    arm(_app, _limit, attachMs, [this] { onLimit(); });
+void AttachAnswer::exited() {
+    finish(
+        _phase == Phase::Submitting ? Outcome::Failed : Outcome::NotReady, "claude attach exited"
+    );
 }
 
 void AttachAnswer::onLimit() {
@@ -421,7 +430,7 @@ void AttachAnswer::settle() {
         if (!q)
             return; // not (yet): the deadline decides
         if (!twice) {
-            arm(_app, _quiet, kLookMs, [this] { settle(); });
+            look();
             return;
         }
         if (!_number) {
@@ -433,16 +442,14 @@ void AttachAnswer::settle() {
             return;
         }
         _phase = Phase::Moving;
-        arm(_app, _limit, kMoveMs, [this] { onLimit(); });
+        armLimit(kMoveMs);
         const int steps = _number - q->selected;
         _key            = steps > 0 ? "\x1b[B" : "\x1b[A"; // ↓ / ↑
         _stepsLeft      = std::abs(steps);
         if (_stepsLeft > 0)
             arm(_app, _step, 0, [this] { step(); });
         _seen.reset();
-        arm(_app, _quiet, kLookMs, [this] {
-            settle();
-        }); // looked at even when nothing needed moving
+        look(); // looked at even when nothing needed moving
         break;
     }
     case Phase::Moving: {
@@ -453,12 +460,11 @@ void AttachAnswer::settle() {
         if (!on)
             return;
         if (!twice) {
-            arm(_app, _quiet, kLookMs, [this] { settle(); });
+            look();
             return;
         }
         _phase = Phase::Submitting;
-        arm(_app, _limit, submitMs, [this] { onLimit(); });
-        _pty->write("\r");
+        submit();
         break;
     }
     case Phase::Submitting:
@@ -475,17 +481,15 @@ void AttachAnswer::finish(Outcome outcome, std::string_view detail) {
         return;
     const bool read = _phase == Phase::Reading;
     _phase          = Phase::Done;
-    disarm(_app, _quiet);
-    disarm(_app, _limit);
     disarm(_app, _step);
-    detach(*_pty, [this] { release(); });
-    if (auto done = std::exchange(_done, {}))
-        done(outcome, read && outcome == Outcome::Done ? _seen : std::nullopt, std::string(detail));
-    lingerOrRelease(_app, *_pty, _linger, [this] { release(); });
-}
-
-void AttachAnswer::release() {
-    dropSelf(_app, _linger, _self);
+    end([&] {
+        if (auto done = std::exchange(_done, {}))
+            done(
+                outcome,
+                read && outcome == Outcome::Done ? _seen : std::nullopt,
+                std::string(detail)
+            );
+    });
 }
 
 // ── Matching a question to a job's needs ────────────────────────────────────

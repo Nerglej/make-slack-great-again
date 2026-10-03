@@ -6,6 +6,7 @@
 
 #include "base/str.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace ui::rich {
@@ -44,36 +45,9 @@ std::string decode(std::string_view s) {
     return str::decodeEntities(s, true);
 }
 
-// Value of attribute `name` inside a tag's attribute text.
+// Value of attribute `name` inside a tag's attribute text, decoded.
 std::string attr(std::string_view tag, const char *name) {
-    const size_t n = std::strlen(name);
-    for (size_t i = 0; i + n < tag.size(); ++i) {
-        if ((i > 0 && tag[i - 1] != ' ' && tag[i - 1] != '\t' && tag[i - 1] != '\n') ||
-            !str::iequals(tag.substr(i, n), name))
-            continue;
-        size_t k = i + n;
-        while (k < tag.size() && tag[k] == ' ')
-            ++k;
-        if (k >= tag.size() || tag[k] != '=')
-            continue;
-        ++k;
-        while (k < tag.size() && tag[k] == ' ')
-            ++k;
-        if (k >= tag.size())
-            return {};
-        const char q = tag[k];
-        if (q == '"' || q == '\'') {
-            const size_t e = tag.find(q, k + 1);
-            return decode(
-                tag.substr(k + 1, (e == std::string_view::npos ? tag.size() : e) - k - 1)
-            );
-        }
-        size_t e = k;
-        while (e < tag.size() && tag[e] != ' ' && tag[e] != '>')
-            ++e;
-        return decode(tag.substr(k, e - k));
-    }
-    return {};
+    return decode(tagAttr(tag, name));
 }
 
 bool isBlock(std::string_view n) {
@@ -101,6 +75,72 @@ bool isBlock(std::string_view n) {
 }
 
 } // namespace
+
+size_t readTag(std::string_view h, size_t at, Tag *tag) {
+    *tag = {};
+    if (h.substr(at, 4) == "<!--") {
+        const size_t e = h.find("-->", at + 4);
+        return e == std::string_view::npos ? h.size() : e + 3;
+    }
+    const size_t e = h.find('>', at);
+    if (e == std::string_view::npos)
+        return e;
+    std::string_view t = h.substr(at + 1, e - at - 1);
+    if (t.empty() || t[0] == '!' || t[0] == '?')
+        return e + 1;
+    tag->closing = t[0] == '/';
+    if (tag->closing)
+        t.remove_prefix(1);
+    size_t ne = 0;
+    while (ne < t.size() && t[ne] != ' ' && t[ne] != '/' && t[ne] != '\t' && t[ne] != '\n')
+        ++ne;
+    tag->name = t.substr(0, ne);
+    tag->text = t;
+    return e + 1;
+}
+
+bool skippedTag(const Tag &tag, int *depth, bool documentParts) {
+    const std::string_view n = tag.name;
+    if (str::iequals(n, "script") || str::iequals(n, "style") ||
+        (documentParts && (str::iequals(n, "head") || str::iequals(n, "title")))) {
+        *depth = std::max(*depth + (tag.closing ? -1 : 1), 0);
+        return true;
+    }
+    return tag.text.empty() || *depth > 0;
+}
+
+std::string_view tagAttr(std::string_view tag, std::string_view name, bool strict) {
+    const size_t n = name.size();
+    for (size_t i = 0; i + n < tag.size(); ++i) {
+        if ((i > 0 && tag[i - 1] != ' ' && tag[i - 1] != '\t' && tag[i - 1] != '\n') ||
+            !(strict ? tag.substr(i, n) == name : str::iequals(tag.substr(i, n), name)))
+            continue;
+        size_t k = i + n;
+        while (!strict && k < tag.size() && tag[k] == ' ')
+            ++k;
+        if (k >= tag.size() || tag[k] != '=')
+            continue;
+        ++k;
+        while (!strict && k < tag.size() && tag[k] == ' ')
+            ++k;
+        if (k >= tag.size())
+            return {};
+        const char q = tag[k];
+        if (q == '"' || q == '\'') {
+            const size_t e = tag.find(q, k + 1);
+            if (e == std::string_view::npos)
+                return strict ? std::string_view() : tag.substr(k + 1);
+            return tag.substr(k + 1, e - k - 1);
+        }
+        if (strict)
+            continue;
+        size_t e = k;
+        while (e < tag.size() && tag[e] != ' ' && tag[e] != '>')
+            ++e;
+        return tag.substr(k, e - k);
+    }
+    return {};
+}
 
 std::string
 toHtml(std::string_view text, const uint16_t *fmt, const std::vector<std::string> &links) {
@@ -190,36 +230,15 @@ void fromHtml(
     size_t i = 0;
     while (i < h.size()) {
         if (h[i] == '<') {
-            if (h.substr(i, 4) == "<!--") {
-                const size_t e = h.find("-->", i + 4);
-                i              = e == std::string_view::npos ? h.size() : e + 3;
-                continue;
-            }
-            const size_t e = h.find('>', i);
+            Tag          t;
+            const size_t e = readTag(h, i, &t);
             if (e == std::string_view::npos)
                 break;
-            std::string_view tag = h.substr(i + 1, e - i - 1);
-            i                    = e + 1;
-            if (tag.empty() || tag[0] == '!' || tag[0] == '?')
+            i = e;
+            if (skippedTag(t, &skip, true))
                 continue;
-            const bool closing = tag[0] == '/';
-            if (closing)
-                tag.remove_prefix(1);
-            size_t ne = 0;
-            while (ne < tag.size() && tag[ne] != ' ' && tag[ne] != '/' && tag[ne] != '\t' &&
-                   tag[ne] != '\n')
-                ++ne;
-            const std::string_view name = tag.substr(0, ne);
-            const bool skipper = str::iequals(name, "script") || str::iequals(name, "style") ||
-                                 str::iequals(name, "head") || str::iequals(name, "title");
-            if (skipper) {
-                skip += closing ? -1 : 1;
-                if (skip < 0)
-                    skip = 0;
-                continue;
-            }
-            if (skip)
-                continue;
+            const std::string_view tag = t.text, name = t.name;
+            const bool             closing = t.closing;
             if (str::iequals(name, "br")) {
                 emit("\n", 0);
                 pendingSpace = false;

@@ -4,6 +4,7 @@
 #include "base/str.h"
 #include "base/utf8.h"
 #include "gfx/icons_generated.h"
+#include "screens/common/user_search.h"
 #include "screens/shell/shell_text.h"
 #include "ui/controls.h"
 
@@ -354,7 +355,7 @@ std::vector<BrowseList::Item> peopleItems(const model::Store &store) {
         it.avatar = u.avatar;
         if (!u.name.empty() && u.name != name)
             it.subtitle = "@" + u.name;
-        it.searchKey = utf8::foldCase(str::concat({name, " ", u.name}));
+        it.searchKey = screens::userSearchKey(u);
         items.push_back(std::move(it));
     }
     return items;

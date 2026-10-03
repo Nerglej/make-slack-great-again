@@ -150,18 +150,6 @@ public:
     void updateProfile(std::string name, std::string email, std::string phone, Done done) override;
     void setPhoto(std::string path, Done done) override;
 
-    // Nothing of these exists for a Claude Code session.
-    void edit(model::ConvRef, model::Ts, std::string) override {}
-    void openDm(model::UserRef, std::function<void(model::ConvRef)> done) override {
-        if (done)
-            done(model::kNoConv);
-    }
-    void setPinned(model::ConvRef, model::Ts, bool) override {}
-    void setSaved(model::ConvRef, model::Ts, bool) override {}
-    void deleteFile(model::ConvRef, model::Ts, const std::string &) override {}
-    void setReminder(model::ConvRef, model::Ts, int64_t) override {}
-    void userTyping(model::ConvRef, model::Ts) override {}
-
     // What the reading side did so far, for tests and profiling: transcript
     // bytes read on the UI thread (sessions' and subagents'; not those read
     // on a worker), items rendered into messages, messages copied out of the
@@ -357,6 +345,8 @@ private:
         const std::shared_ptr<Cleanup> &cleanup
     );
     void release(const std::shared_ptr<Cleanup> &cleanup);
+    // done(ok, error) later, as post().
+    void postDone(Done done, bool ok, std::string error = {});
     // removeOwned, when msga started the session — or a session of msga's
     // did (looked for on a worker: that reads transcripts); else `otherwise`.
     void removeIfOwned(
@@ -400,6 +390,11 @@ private:
         bool        stopping = false; // its worker is being stopped (stopRemoved)
     };
     std::unordered_map<std::string, Hidden> _hidden;
+    // Its entry, made now (with the transcript as it stands) if there's none.
+    Hidden                                 &hide(const std::string &sessionId);
+    // Its worker stopped: what it wrote as it exited is no new activity.
+    // Returns its transcript ("" when it isn't hidden).
+    std::string                             noteStopped(const std::string &sessionId);
     // Sessions msga started ("+" sessions, /btw branches), by session id —
     // Claude Code records no such thing. Closing msga leaves their workers be;
     // "Remove from msga" deletes them. Forgotten once Claude Code drops the job.

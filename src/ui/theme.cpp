@@ -482,14 +482,6 @@ const CustomPalette &customPalette() {
     return g_custom;
 }
 
-std::string hexColor(Color c) {
-    static const char kHex[] = "0123456789abcdef";
-    std::string       s      = "#";
-    for (int shift = 20; shift >= 0; shift -= 4)
-        s += kHex[(c >> shift) & 0xf];
-    return s;
-}
-
 bool parseHexColor(std::string_view s, Color *out) {
     // Settings files hold opaque RGB: 3 or 6 digits only.
     const size_t n = s.size() - (!s.empty() && s[0] == '#');

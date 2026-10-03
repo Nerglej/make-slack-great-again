@@ -852,7 +852,7 @@ public:
                 .size(kThreadAv, kThreadAv);
         add<ui::Label>(
             m.replyCount == 1 ? std::string(tr("1 reply"))
-                              : arg(tr("%1 replies"), std::to_string(m.replyCount)),
+                              : arg(tr("%1 replies"), str::number(m.replyCount)),
             Font::SmallBold,
             C::ReplyLink
         );
@@ -1603,7 +1603,7 @@ void MessageRow::buildReactions(ui::View *col, const model::Message &m) {
             pill->add<ui::Label>(g.unicode.empty() ? ":" + r.name + ":" : g.unicode, Font::Body);
         }
         pill->add<ui::Label>(
-            std::to_string(r.count), Font::SmallBold, mine ? C::MentionText : C::TextMuted
+            str::number(r.count), Font::SmallBold, mine ? C::MentionText : C::TextMuted
         );
         std::string who;
         for (size_t i = 0; i < r.users.size() && i < 5; ++i) {

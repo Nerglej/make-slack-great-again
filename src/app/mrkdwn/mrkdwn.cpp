@@ -762,10 +762,8 @@ MessageRef parseMessageLink(std::string_view url) {
     size_t schemeEnd = url.find("://");
     if (schemeEnd == std::string_view::npos)
         return {};
-    std::string scheme(url.substr(0, schemeEnd));
-    for (auto &ch : scheme)
-        ch = char(ch | 0x20);
-    if (scheme != "https" && scheme != "http")
+    const std::string_view scheme = url.substr(0, schemeEnd);
+    if (!str::iequals(scheme, "https") && !str::iequals(scheme, "http"))
         return {};
     std::string_view rest    = url.substr(schemeEnd + 3);
     const size_t     authEnd = rest.find_first_of("/?#");
@@ -775,10 +773,7 @@ MessageRef parseMessageLink(std::string_view url) {
         auth.remove_prefix(at + 1);
     if (const size_t colon = auth.find(':'); colon != std::string_view::npos)
         auth = auth.substr(0, colon);
-    std::string host(auth);
-    for (auto &ch : host)
-        if (ch >= 'A' && ch <= 'Z')
-            ch = char(ch + 32);
+    const std::string host = str::asciiLower(auth);
     if (host != "slack.com" && !endsWith(host, ".slack.com"))
         return {};
 

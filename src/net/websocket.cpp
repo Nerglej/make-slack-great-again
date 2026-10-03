@@ -1,8 +1,8 @@
 // net::WebSocket: one reader thread per socket runs the transport's
 // blocking connect/recv and posts every event to the UI thread.
+#include "base/thread.h"
 #include "net/net.h"
 #include "net/transport.h"
-#include "net/worker.h"
 #include "plat/plat.h"
 
 #include <mutex>
@@ -19,7 +19,7 @@ struct WebSocket::Impl : std::enable_shared_from_this<WebSocket::Impl> {
 
     std::mutex                      mutex; // guards conn against the destructor
     std::unique_ptr<detail::WsConn> conn;
-    detail::Thread                  reader;
+    base::Thread                    reader;
 
     void post(uint64_t ep, std::function<void(WebSocket &)> fn) {
         std::weak_ptr<Impl> weak = weak_from_this();
@@ -69,7 +69,7 @@ void WebSocket::open(std::string url, std::vector<Header> headers, int timeoutMs
     }
     detail::WsConn *conn = d.conn.get();
     Impl           *raw  = &d; // stop() joins the reader before Impl or conn go
-    d.reader.start([raw, conn, ep, u = std::move(u), headers = std::move(headers), timeoutMs] {
+    auto read = [raw, conn, ep, u = std::move(u), headers = std::move(headers), timeoutMs] {
         std::string err;
         if (!conn->connect(u, headers, timeoutMs, &err)) {
             raw->post(ep, [err](WebSocket &ws) {
@@ -105,7 +105,8 @@ void WebSocket::open(std::string url, std::vector<Header> headers, int timeoutMs
                     f(code, reason);
             }
         );
-    });
+    };
+    d.reader.start(std::move(read), detail::kThreadStack);
 }
 
 bool WebSocket::isOpen() const {

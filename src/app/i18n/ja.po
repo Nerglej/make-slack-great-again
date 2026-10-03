@@ -2656,6 +2656,10 @@ msgid "Loading members…"
 msgstr "メンバーを読み込み中…"
 
 #: src/app/screens/shell/header.cpp
+msgid "%1 (you)"
+msgstr "%1（あなた）"
+
+#: src/app/screens/shell/header.cpp
 msgid "%n member"
 msgid_plural "%n members"
 msgstr[0] "%n人のメンバー"
@@ -2663,10 +2667,6 @@ msgstr[0] "%n人のメンバー"
 #: src/app/screens/shell/header.cpp
 msgid "Couldn't load the members (%1)."
 msgstr "メンバーを読み込めませんでした（%1）。"
-
-#: src/app/screens/shell/header.cpp
-msgid "%1 (you)"
-msgstr "%1（あなた）"
 
 #: src/app/screens/shell/header.cpp
 msgid "No members to show."

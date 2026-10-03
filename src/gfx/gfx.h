@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -31,6 +32,9 @@ Color withAlpha(Color c, float opacity); // multiplies the alpha
 // "#rgb", "#rgba", "#rrggbb" or "#rrggbbaa" (the '#' optional, either case;
 // a short form doubles each digit). False, *out untouched, for anything else.
 bool  parseHexColor(std::string_view s, Color *out);
+
+// "#rrggbb", lower case; the alpha dropped.
+std::string hexColor(Color c);
 
 struct PointF {
     float x = 0, y = 0;

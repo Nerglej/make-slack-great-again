@@ -22,6 +22,12 @@ namespace net::detail {
 // same on every OS, and the one msga has always sent.
 inline constexpr const char *kUserAgent = "Mozilla/5.0";
 
+// The stack of every thread the module starts (Client workers, WebSocket
+// readers, DNS lookups): a TLS handshake plus certificate parsing, or
+// glibc's NSS modules, fit with room; base::kThreadStack is more than they
+// need, and a burst of requests starts several.
+inline constexpr size_t kThreadStack = 256 * 1024;
+
 // A request's cancel flag plus an OS object that set() signals, so a
 // transport blocked on the request wakes at once instead of polling the
 // flag: an eventfd (POSIX), a manual-reset event (Windows), a dispatch
@@ -79,8 +85,8 @@ std::string_view headerValue(const std::vector<Header> &headers, std::string_vie
 // for a line that is not a header; *out then holds those before it.
 bool             parseHeaderLines(std::string_view lines, std::vector<Header> *out);
 
-// For tests: how long an idle Client worker thread waits for work before it
-// ends (30 s).
+// For tests: how long an idle worker thread of a Client made after the call
+// waits for work before it ends (30 s).
 void setWorkerIdleMs(int ms);
 
 // Drops idle kept-alive connections (Client destructor of the last client).

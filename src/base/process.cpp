@@ -378,7 +378,7 @@ RunResult run(const std::string &exe, const std::vector<std::string> &args, cons
     closeHandle(inRead);
     closeHandle(errNul);
     if (!ok) {
-        r.output = "CreateProcess failed (error " + std::to_string(startError) + ")";
+        r.output = "CreateProcess failed (error " + str::number(startError) + ")";
         cleanup();
         return r;
     }

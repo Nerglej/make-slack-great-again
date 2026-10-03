@@ -431,8 +431,7 @@ std::vector<std::string> fontRoots() {
         roots.push_back(l + "/Microsoft/Windows/Fonts");
     return roots;
 #endif
-    const char       *home = std::getenv("HOME");
-    const std::string h    = home ? home : "";
+    const std::string h = base::homeDir();
 #ifdef __APPLE__
     if (!h.empty())
         roots.push_back(h + "/Library/Fonts");
@@ -514,12 +513,12 @@ std::string cachePath() {
     const std::string l = base::env("LOCALAPPDATA");
     return (l.empty() ? base::env("TEMP") : l) + "/msga/MSGA/cache/fonts.idx";
 #elif defined(__APPLE__)
-    return base::env("HOME") + "/Library/Caches/msga/MSGA/fonts.idx";
+    return base::homeDir() + "/Library/Caches/msga/MSGA/fonts.idx";
 #endif
     if (const char *x = std::getenv("XDG_CACHE_HOME"); x && *x)
         return std::string(x) + "/msga/MSGA/fonts.idx";
-    const char *home = std::getenv("HOME");
-    return std::string(home ? home : "/tmp") + "/.cache/msga/MSGA/fonts.idx";
+    const std::string home = base::homeDir();
+    return (home.empty() ? std::string("/tmp") : home) + "/.cache/msga/MSGA/fonts.idx";
 }
 
 template <class T>

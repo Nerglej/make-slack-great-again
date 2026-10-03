@@ -93,18 +93,6 @@ volatile std::sig_atomic_t gQuitSignal = 0;
 volatile std::sig_atomic_t gStatsSignal = 0;
 #endif
 
-[[maybe_unused]] long rssKb() {
-    long kb = -1;
-    if (FILE *f = std::fopen("/proc/self/status", "r")) {
-        char line[256];
-        while (std::fgets(line, sizeof line, f))
-            if (std::strncmp(line, "VmRSS:", 6) == 0)
-                kb = std::atol(line + 6);
-        std::fclose(f);
-    }
-    return kb;
-}
-
 #ifdef MSGA_DEMO
 // A demo run keeps nothing of the user's — its
 // HOME and XDG dirs point at a fresh <tmp>/msga-demo-state-<pid>, so the
@@ -144,7 +132,7 @@ bool isolateDemoState(std::string *error) {
         }
         closedir(d);
     }
-    const std::string state = file::join(tmp, str::concat({prefix, std::to_string(getpid())}));
+    const std::string state = file::join(tmp, str::concat({prefix, str::number(getpid())}));
     if (file::exists(state) && !wipeDir(state)) {
         *error = "cannot wipe " + state;
         return false;
@@ -165,7 +153,7 @@ bool isolateDemoState(std::string *error) {
 
 std::string demoInstanceKey() {
 #ifdef __linux__
-    return str::concat({identity::instanceKey(), "-demo-", std::to_string(getpid())});
+    return str::concat({identity::instanceKey(), "-demo-", str::number(getpid())});
 #else
     return str::concat({identity::instanceKey(), "-demo"});
 #endif
@@ -499,7 +487,7 @@ int main(int argc, char **argv) {
                     sh.openThread(start, root);
             sh.setLive(true);
             std::fprintf(
-                stderr, "msga: connected in %.0f ms, rss %ld KB\n", app->nowMs() - t0, rssKb()
+                stderr, "msga: connected in %.0f ms, rss %ld KB\n", app->nowMs() - t0, diag::rssKb()
             );
             if (!tourPath.empty()) {
                 demo::TourScript script;
@@ -541,7 +529,7 @@ int main(int argc, char **argv) {
                             std::fprintf(
                                 stderr,
                                 "msga: after browsing all conversations, rss %ld KB\n",
-                                rssKb()
+                                diag::rssKb()
                             );
                         });
                         return;

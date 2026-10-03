@@ -3,6 +3,8 @@
 // and error-message building repeats that dozens of times per file.
 #pragma once
 
+#include "prim/str.h"
+
 #include <cstdint>
 #include <initializer_list>
 #include <string>
@@ -26,19 +28,17 @@ std::string_view trim(std::string_view s);
 // Unicode whitespace (utf8::isSpace: NBSP, the em space …) off both ends.
 std::string_view trimSpace(std::string_view s);
 // ASCII-only case changes (identifiers, extensions, hosts); for user text
-// see utf8::foldCase.
-std::string      asciiLower(std::string_view s);
-std::string      asciiUpper(std::string_view s);
-inline char      asciiLower(char c) {
-    return c >= 'A' && c <= 'Z' ? char(c + 32) : c;
-}
+// see utf8::foldCase. asciiLower (a char or a string) is prim's, shared with
+// plat.
+using prim::asciiLower;
+std::string asciiUpper(std::string_view s);
 // ASCII case-insensitive equality (header names, tokens).
 bool        iequals(std::string_view a, std::string_view b);
 // Every run of Unicode whitespace (utf8::isSpace) becomes
 // one space, none at the ends.
 std::string simplified(std::string_view s);
 // A hex digit's value (either case); -1 for any other character.
-int         hexDigit(char c);
+using prim::hexDigit;
 
 // The parts of `s` between `sep`s, empty ones included: "a,,b" → "a", "",
 // "b"; "a\n" → "a", ""; "" → one empty part.
@@ -64,14 +64,16 @@ private:
 std::string decodeEntities(std::string_view s, bool nbspAsSpace = false);
 // '&', '<' and '>' as &amp; &lt; &gt; (and '"' as &quot; with `quotes`, for
 // an attribute value) appended to *out; every other byte as it is.
-void        appendEscapedHtml(std::string *out, std::string_view s, bool quotes = false);
-std::string escapeHtml(std::string_view s, bool quotes = false);
+// Both are prim's, shared with plat.
+using prim::appendEscapedHtml;
+using prim::escapeHtml;
 
 // Every byte but the RFC 3986 unreserved characters (A-Z a-z 0-9 - . _ ~)
-// and those in `keep` as %XX (upper-case hex): a query value, a path.
-std::string percentEncode(std::string_view s, std::string_view keep = {});
+// and those in `keep` as %XX (upper-case hex): a query value, a path. Both
+// are prim's, shared with plat.
+using prim::percentEncode;
 // %XX sequences back to bytes; a malformed '%' and '+' stay as they are.
-std::string percentDecode(std::string_view s);
+using prim::percentDecode;
 
 // File sizes in binary units (1 KB = 1024 B), in one of these styles.
 enum class ByteSize : uint8_t {

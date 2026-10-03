@@ -1,4 +1,5 @@
 #include "base/json.h"
+#include "base/file.h"
 #include "support/test.h"
 
 #include <cmath>
@@ -152,4 +153,34 @@ TEST("json: writer escapes and numbers") {
     REQUIRE(d.parse(w.str(), nullptr));
     CHECK(d.root()["i"].integer() == -9007199254740993);
     CHECK(d.root()["d"].number() == 0.1);
+}
+
+TEST("json: parse a file; a missing file and invalid JSON fail") {
+    const std::string tmp  = base::test::makeTempDir("msga_json_test_");
+    const std::string dir  = tmp.empty() ? "/tmp" : tmp;
+    const std::string good = file::join(dir, "good.json");
+    json::Document    d;
+    std::string       err = "stale";
+    REQUIRE(file::writeAtomic(good, R"({"a": [1, 2]})"));
+    REQUIRE(d.parseFile(good, &err));
+    CHECK(d.root()["a"][1].integer() == 2);
+    CHECK(err.empty());
+    // Missing: false and no error text (callers tell it from bad JSON so).
+    err = "stale";
+    CHECK_FALSE(d.parseFile(file::join(dir, "missing.json"), &err));
+    CHECK(err.empty());
+    CHECK_FALSE(d.root().exists());
+    const std::string bad = file::join(dir, "bad.json");
+    REQUIRE(file::writeAtomic(bad, "{\"a\": "));
+    REQUIRE(d.parseFile(good));
+    CHECK_FALSE(d.parseFile(bad, &err));
+    CHECK_FALSE(err.empty());
+    CHECK_FALSE(d.root().exists());
+    // An empty file is no JSON either.
+    const std::string empty = file::join(dir, "empty.json");
+    REQUIRE(file::writeAtomic(empty, ""));
+    CHECK_FALSE(d.parseFile(empty));
+    file::remove(good);
+    file::remove(bad);
+    file::remove(empty);
 }

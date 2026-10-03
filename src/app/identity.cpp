@@ -6,6 +6,8 @@
 #include "plat/plat.h"
 
 #ifdef _WIN32
+#include "base/winstr.h"
+
 #include <windows.h>
 #else
 #include <cstring>
@@ -90,11 +92,7 @@ std::string utf16BeString(const std::string &s) {
 
 // The home folder's name (its last path component).
 std::string homeName() {
-#ifdef _WIN32
-    std::string home = base::env("USERPROFILE");
-#else
-    std::string home = base::env("HOME");
-#endif
+    std::string home = base::homeDir();
     while (home.size() > 1 && (home.back() == '/' || home.back() == '\\'))
         home.pop_back();
     return std::string(file::baseName(home));
@@ -106,10 +104,7 @@ bool handOffToEarlierVersion(const std::string &url) {
     const std::string name = "msga-" + homeName();
     const std::string data = url.empty() ? std::string() : utf16BeString(url);
 #ifdef _WIN32
-    const std::string pipe = "\\\\.\\pipe\\" + name;
-    const int         n    = MultiByteToWideChar(CP_UTF8, 0, pipe.c_str(), -1, nullptr, 0);
-    std::wstring      w(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, pipe.c_str(), -1, w.data(), n);
+    const std::wstring w = base::wide("\\\\.\\pipe\\" + name);
     HANDLE h = CreateFileW(w.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h == INVALID_HANDLE_VALUE)
         return false;

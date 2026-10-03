@@ -18,11 +18,6 @@ using model::kNoConv;
 
 namespace {
 
-bool readJson(const std::string &path, json::Document *doc) {
-    std::string text;
-    return file::readAll(path, &text) && !text.empty() && doc->parse(std::move(text));
-}
-
 // "C0123\t1712345678.000100": a thread or reminder key.
 struct ConvTs {
     std::string conv;
@@ -216,10 +211,10 @@ std::string oldCacheDir(plat::App &app, const std::string &key) {
 
 bool importSlackCache(plat::App &app, const std::string &from, const std::string &to) {
     json::Document convs, meta;
-    if (to.empty() || !readJson(file::join(from, "conversations.json"), &convs) ||
+    if (to.empty() || !convs.parseFile(file::join(from, "conversations.json")) ||
         !convs.root().isArray())
         return false;
-    readJson(file::join(from, "meta.json"), &meta);
+    meta.parseFile(file::join(from, "meta.json"));
     const json::Value m = meta.root();
 
     model::Store          s;
@@ -236,7 +231,7 @@ bool importSlackCache(plat::App &app, const std::string &from, const std::string
         // Users and bots before the conversations: their refs resolve.
         for (const char *name : {"users.json", "bots.json"}) {
             json::Document d;
-            if (readJson(file::join(from, name), &d))
+            if (d.parseFile(file::join(from, name)))
                 for (const json::Value o : d.root())
                     if (!o["id"].str().empty())
                         s.addUser(toUser(o));
@@ -247,13 +242,13 @@ bool importSlackCache(plat::App &app, const std::string &from, const std::string
         for (const json::Value o : convs.root())
             if (!o["id"].str().empty())
                 s.addConversation(toConversation(o, s));
-        if (json::Document d; readJson(file::join(from, "emoji.json"), &d)) {
+        if (json::Document d; d.parseFile(file::join(from, "emoji.json"))) {
             for (const json::Value e : d.root())
                 if (!e.key().empty() && !e.str().empty())
                     s.setCustomEmoji(std::string(e.key()), std::string(e.str()));
             wc.emojiChanged();
         }
-        if (json::Document d; readJson(file::join(from, "usergroups.json"), &d)) {
+        if (json::Document d; d.parseFile(file::join(from, "usergroups.json"))) {
             std::vector<model::Store::Usergroup> groups;
             for (const json::Value o : d.root()) {
                 model::Store::Usergroup g{
@@ -330,7 +325,7 @@ bool importSlackCache(plat::App &app, const std::string &from, const std::string
 
 bool importClaudeCodeCache(const std::string &from, const std::string &knownPath) {
     json::Document convs, known;
-    if (!readJson(file::join(from, "conversations.json"), &convs) || !readJson(knownPath, &known) ||
+    if (!convs.parseFile(file::join(from, "conversations.json")) || !known.parseFile(knownPath) ||
         !known.root().isObject())
         return false;
     model::Store dummy; // toConversation interns the DM peer somewhere
@@ -386,7 +381,7 @@ void importOldCaches(
 ) {
     // The keys only (auth::WorkspaceStore would read every credential).
     json::Document ws;
-    if (workspacesPath.empty() || markerPath.empty() || !readJson(workspacesPath, &ws))
+    if (workspacesPath.empty() || markerPath.empty() || !ws.parseFile(workspacesPath))
         return;
     std::vector<std::string> done = readLines(markerPath);
     const size_t             had  = done.size();

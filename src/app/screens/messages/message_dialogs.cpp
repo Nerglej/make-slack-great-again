@@ -168,7 +168,7 @@ public:
              base::formatDateTime(model::tsSecs(root.ts)),
              " \xC2\xB7 ",
              root.replyCount == 1 ? std::string(tr("1 reply"))
-                                  : arg(tr("%1 replies"), std::to_string(root.replyCount))}
+                                  : arg(tr("%1 replies"), str::number(root.replyCount))}
         );
         ui::styledLabel(
             col, sub, ui::pxFont(15 * 0.88f, text::Weight::Regular, ui::color(C::FormTextMuted)), 1
@@ -586,7 +586,7 @@ ui::Popup *showTableViewer(ui::Window &w, std::vector<std::vector<std::string>> 
     if (rows.size() > kMaxRows) {
         const size_t n = rows.size();
         rows.resize(kMaxRows);
-        rows.push_back({arg(tr("Showing the first %1 of %2 rows"), "400", std::to_string(n))});
+        rows.push_back({arg(tr("Showing the first %1 of %2 rows"), "400", str::number(n))});
     }
     auto  v   = std::make_unique<TableViewer>(std::move(rows), nullptr);
     auto *raw = v.get();

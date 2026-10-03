@@ -163,7 +163,7 @@ private:
                 ));
             _days.clear();
             for (int d = 1; d <= 31; ++d)
-                _days.push_back(make(std::to_string(d), 13, text::Weight::Regular, C::FormText));
+                _days.push_back(make(str::number(d), 13, text::Weight::Regular, C::FormText));
         }
         if (_headY != _y || _headM != _m) {
             _headY = _y;

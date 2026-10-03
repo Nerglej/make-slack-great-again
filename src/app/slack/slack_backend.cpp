@@ -16,6 +16,7 @@
 #include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
+#include "base/utf8.h"
 #include "net/net.h"
 #include "plat/plat.h"
 
@@ -1787,9 +1788,7 @@ std::string previewText(const std::string &text) {
     constexpr size_t kMax = 600;
     if (text.size() <= kMax)
         return text;
-    size_t n = kMax;
-    while (n > 0 && (uint8_t(text[n]) & 0xC0) == 0x80)
-        --n;
+    size_t       n    = utf8::truncateAt(text, kMax);
     const size_t open = text.rfind('<', n);
     if (open != std::string::npos && text.find('>', open) >= n)
         n = open;

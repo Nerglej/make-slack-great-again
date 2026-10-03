@@ -228,11 +228,8 @@ buildTranscription(const Endpoint &ep, const TranscriptionInput &in, std::string
     // Random bytes never occur as this text inside compressed audio; no need
     // to scan the payload.
     std::string boundary(boundaryIn);
-    if (boundary.empty()) {
-        uint8_t rnd[16] = {};
-        crypto::randomBytes(rnd, sizeof rnd);
-        boundary = "msga-" + crypto::hex({reinterpret_cast<const char *>(rnd), sizeof rnd});
-    }
+    if (boundary.empty())
+        boundary = "msga-" + crypto::randomHex(16);
     net::Multipart form(boundary);
     out.headers.push_back({"Content-Type", form.contentType()});
     form.reserve(in.audio.size() + 1024);

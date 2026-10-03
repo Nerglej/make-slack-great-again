@@ -39,12 +39,10 @@ std::string tempDownloadPath(plat::App &app, std::string_view name) {
     const std::string tmp = app.standardDir(plat::StandardDir::Temp);
     if (tmp.empty())
         return {};
-    unsigned char r[8];
-    if (!crypto::randomBytes(r, sizeof r))
+    const std::string rnd = crypto::randomHex(8);
+    if (rnd.empty())
         return {};
-    const std::string dir = file::join(
-        file::join(tmp, "msga/downloads"), crypto::hex({reinterpret_cast<char *>(r), sizeof r})
-    );
+    const std::string dir = file::join(file::join(tmp, "msga/downloads"), rnd);
     if (!file::makeDirs(dir))
         return {};
     // Only the last path component, and never "" / "." / "..".

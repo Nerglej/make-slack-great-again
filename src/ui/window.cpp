@@ -1,6 +1,7 @@
 // Window: event routing (hover chain, capture, focus, shortcuts, popups,
 // DnD), the layout pass and damage-driven painting. App: the singleton that
 // owns the plat app and the theme.
+#include "base/str.h"
 #include "ui/view.h"
 #include "ui/widgets.h"
 
@@ -1264,7 +1265,7 @@ void Window::verifyFrame(const plat::Canvas &c, const std::vector<plat::Rect> &p
     );
     if (const char *dir = std::getenv("UI_VERIFY_DUMP");
         dir && *dir && _stats.verifyMismatches <= 3) {
-        const std::string base = std::string(dir) + "/verify-" + std::to_string(_stats.frames);
+        const std::string base = std::string(dir) + "/verify-" + str::number(_stats.frames);
         writePpm(base + "-presented.ppm", _shadow.data(), w, h, w);
         writePpm(base + "-expected.ppm", full.pixels(), w, h, w);
     }

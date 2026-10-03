@@ -5,6 +5,7 @@
 #pragma once
 
 #include "plat/plat.h"
+#include "prim/str.h"
 
 #include <string>
 #include <string_view>
@@ -28,10 +29,11 @@ bool isTextMime(std::string_view mime);
 std::vector<std::string> parseUriList(std::string_view list);
 
 // Percent-encodes every byte except the RFC 3986 unreserved characters and
-// those in `keep` (e.g. "/" for a path).
-std::string percentEncode(std::string_view s, std::string_view keep = {});
+// those in `keep` (e.g. "/" for a path), as upper-case %XX. prim's, shared
+// with the app's base library, as is percentDecode.
+using prim::percentEncode;
 // Decodes %XX escapes (either case); a malformed escape stays literal.
-std::string percentDecode(std::string_view s);
+using prim::percentDecode;
 
 // The action a drop gets when the user asked for none in particular:
 // Copy, else Move, else Link, out of the DropActions the source allows.

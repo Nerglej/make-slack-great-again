@@ -37,26 +37,6 @@ constexpr int kDeleteRetries   = 6;
 constexpr int kUploadScans     = 6; // history scans for a finished upload
 constexpr int kUploadTimeoutMs = 300000;
 
-// A lowercase UUIDv4, the web client's client_msg_id (drafts.create
-// requires one). "" if the OS's random source refused (the call then fails
-// with Slack's own error).
-std::string clientMsgId() {
-    uint8_t b[16] = {};
-    if (!crypto::randomBytes(b, sizeof b))
-        return {};
-    b[6]                     = uint8_t((b[6] & 0x0F) | 0x40); // version 4
-    b[8]                     = uint8_t((b[8] & 0x3F) | 0x80); // variant 10
-    static const char kHex[] = "0123456789abcdef";
-    std::string       s;
-    for (int i = 0; i < 16; ++i) {
-        if (i == 4 || i == 6 || i == 8 || i == 10)
-            s += '-';
-        s += kHex[b[i] >> 4];
-        s += kHex[b[i] & 15];
-    }
-    return s;
-}
-
 // The request may have reached Slack or not: a transport failure or a rate
 // limit. Anything else is Slack's own verdict.
 bool transient(const std::string &e) {
@@ -1026,7 +1006,7 @@ void SlackBackend::downloadFile(const std::string &url, std::string toPath, Done
         }
         std::string err = r.error;
         if (err.empty() && !r.ok())
-            err = str::concat({"http ", std::to_string(r.status)});
+            err = str::concat({"http ", str::number(r.status)});
         if (err.empty() && str::startsWith(r.header("Content-Type"), "text/html") &&
             r.body.find("<html") != std::string::npos &&
             r.url.find("files.slack.com") != std::string::npos)
@@ -1091,7 +1071,7 @@ void SlackBackend::deleteAttachment(ConvRef conv, Ts ts, int attachmentId, Done 
         net::formEncode(
             {{"channel", convId(conv)},
              {"ts", model::formatTs(ts)},
-             {"attachment", std::to_string(attachmentId)}}
+             {"attachment", str::number(attachmentId)}}
         ),
         [this, conv, ts, attachmentId](const json::Document &) {
             // Gone for good: the rest keep their order and are renumbered.
@@ -1166,7 +1146,9 @@ void SlackBackend::scheduleBlocks(
         dest.endObject().endArray();
         addParam(form, "blocks", blocks);
         addParam(form, "destinations", dest.take());
-        addParam(form, "client_msg_id", clientMsgId());
+        // The web client's lowercase UUIDv4 (drafts.create requires one); ""
+        // if the OS's random source refused (Slack's own error then).
+        addParam(form, "client_msg_id", crypto::uuid4());
         addParam(form, "file_ids", "[]");
         addParam(form, "is_from_composer", "true");
         addParam(form, "date_scheduled", str::number(postAt));
@@ -1242,16 +1224,7 @@ void SlackBackend::deleteDraft(const std::string &id, std::string version, bool 
             // The version moved on (an edit elsewhere): once more with now,
             // which is newer than any.
             if (err == "draft_has_conflict" && retry) {
-                char          now[32];
-                const int64_t us = base::nowMicros();
-                std::snprintf(
-                    now,
-                    sizeof now,
-                    "%lld.%06lld0",
-                    (long long)(us / 1000000),
-                    (long long)(us % 1000000)
-                );
-                deleteDraft(id, now, false, std::move(done));
+                deleteDraft(id, model::formatTs(base::nowMicros()) + "0", false, std::move(done));
                 return;
             }
             scheduledGone(id, "drafts.delete", err, std::move(done));
@@ -1845,7 +1818,7 @@ void SlackBackend::loadCanvasContent(const std::string &fileId, CanvasHtmlDone d
                     return;
                 std::string e = r.error;
                 if (e.empty() && !r.ok())
-                    e = str::concat({"http ", std::to_string(r.status)});
+                    e = str::concat({"http ", str::number(r.status)});
                 if (!e.empty())
                     LOG_WARN("slack", "canvas download: %s", e.c_str());
                 if (done)
@@ -2130,11 +2103,7 @@ void SlackBackend::pressButton(ConvRef conv, Ts ts, const std::string &buttonId,
     a.key("action_id").value(bt->id).key("block_id").value(bt->blockId).key("type").value("button");
     a.key("text").beginObject().key("type").value("plain_text").key("text").value(bt->label);
     a.endObject();
-    char actionTs[32];
-    std::snprintf(
-        actionTs, sizeof actionTs, "%lld.%03lld000", (long long)(ms / 1000), (long long)(ms % 1000)
-    );
-    a.key("action_ts").value(actionTs);
+    a.key("action_ts").value(model::formatTs(ms * 1000));
     if (!bt->value.empty())
         a.key("value").value(bt->value);
     if (bt->style != model::Button::Style::Default)

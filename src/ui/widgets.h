@@ -7,6 +7,7 @@
 #include "ui/view.h"
 
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -215,7 +216,7 @@ public:
     SizeF       measureContent(float availW, float availH) override;
     void        paint(gfx::Painter &p) override;
     void        styleChanged() override;
-    std::string accessibleName() const override { return std::to_string(_count); }
+    std::string accessibleName() const override;
 
 private:
     std::unique_ptr<text::Layout> _layout;
@@ -364,6 +365,24 @@ struct MenuItem {
     static MenuItem separatorItem();
     static MenuItem headerItem(std::string text);
 };
+
+// One row of a table-driven menu: its id, icon and label (untranslated,
+// N_()), the label of the caller's variant where different (null: the same)
+// and its shortcut hint (null: none).
+struct MenuDef {
+    uint8_t     id;
+    uint16_t    icon;
+    const char *label;
+    const char *alt;
+    const char *hint;
+};
+// Appends item `id` as `defs` describes it (label translated; `alt` picks
+// the variant's label) and returns it for the caller to adjust.
+MenuItem &addMenuItem(
+    std::vector<MenuItem> &out, std::span<const MenuDef> defs, int id, bool alt, bool enabled
+);
+// Appends a separator, never a leading one and never two in a row.
+void addMenuSeparator(std::vector<MenuItem> &out);
 
 // A popup list of actions (a context menu). Keyboard:
 // an item's hint is its shortcut ("E", "Del", "Ctrl+C" choose it), Up/Down/

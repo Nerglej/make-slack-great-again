@@ -139,3 +139,20 @@ TEST("crypto: fnv1a 64-bit, and continuing a hash") {
     CHECK(crypto::fnv1a("foobar") == 0x88fad7c0a8ff07f2ull);
     CHECK(crypto::fnv1a("bar", crypto::fnv1a("foo")) == crypto::fnv1a("foobar"));
 }
+
+TEST("crypto: uuid4 shape and version bits, randomHex") {
+    const std::string a = crypto::uuid4(), b = crypto::uuid4();
+    CHECK(a.size() == 36);
+    CHECK(a != b);
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (i == 8 || i == 13 || i == 18 || i == 23)
+            CHECK(a[i] == '-');
+        else
+            CHECK((a[i] >= '0' && a[i] <= '9') || (a[i] >= 'a' && a[i] <= 'f'));
+    }
+    CHECK(a[14] == '4');                          // version 4
+    CHECK(std::strchr("89ab", a[19]) != nullptr); // variant 10
+    CHECK(crypto::randomHex(6).size() == 12);
+    CHECK(crypto::randomHex(0).empty());
+    CHECK(crypto::randomHex(65).empty()); // past the cap
+}

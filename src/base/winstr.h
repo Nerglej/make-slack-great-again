@@ -4,18 +4,20 @@
 
 #ifdef _WIN32
 
+#include "prim/winstr.h"
+
 #include <string>
 #include <string_view>
 
 namespace base {
 
-// UTF-8 → UTF-16 ("" stays empty).
-std::wstring wide(std::string_view s);
+// UTF-8 → UTF-16 ("" stays empty). prim's, shared with plat, as is narrow.
+using prim::wide;
 // The same with every '/' as '\': a path for the file API (long "\\?\"
 // paths and some shell calls take no '/').
 std::wstring widePath(std::string_view s);
 // UTF-16 → UTF-8. A wchar_t* converts: up to its NUL.
-std::string  narrow(std::wstring_view w);
+using prim::narrow;
 
 } // namespace base
 

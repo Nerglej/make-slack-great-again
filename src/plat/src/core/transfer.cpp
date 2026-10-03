@@ -15,13 +15,6 @@ bool ieq(std::string_view a, std::string_view lowerB) {
     return true;
 }
 
-int hexValue(char c) {
-    return c >= '0' && c <= '9'   ? c - '0'
-           : c >= 'a' && c <= 'f' ? c - 'a' + 10
-           : c >= 'A' && c <= 'F' ? c - 'A' + 10
-                                  : -1;
-}
-
 } // namespace
 
 bool isTextMime(std::string_view m) {
@@ -55,38 +48,6 @@ std::vector<std::string> parseUriList(std::string_view list) {
         if (!line.empty() && line[0] != '#')
             out.emplace_back(line);
         start = end + 1;
-    }
-    return out;
-}
-
-std::string percentEncode(std::string_view s, std::string_view keep) {
-    static const char hex[] = "0123456789ABCDEF";
-    std::string       out;
-    out.reserve(s.size());
-    for (unsigned char c : s) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '.' || c == '_' || c == '~' ||
-            (c && keep.find(char(c)) != std::string_view::npos)) {
-            out += char(c);
-        } else {
-            out += '%';
-            out += hex[c >> 4];
-            out += hex[c & 15];
-        }
-    }
-    return out;
-}
-
-std::string percentDecode(std::string_view s) {
-    std::string out;
-    out.reserve(s.size());
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size() && hexValue(s[i + 1]) >= 0 && hexValue(s[i + 2]) >= 0) {
-            out += char(hexValue(s[i + 1]) * 16 + hexValue(s[i + 2]));
-            i += 2;
-        } else {
-            out += s[i];
-        }
     }
     return out;
 }

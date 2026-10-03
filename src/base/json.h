@@ -93,6 +93,9 @@ public:
     bool parse(std::string_view text, std::string *error) {
         return parse(std::string(text), error);
     }
+    // Reads the file at `path` and parses it. On failure root() is empty and
+    // *error is empty when the file can't be read, else the parse error.
+    bool parseFile(std::string_view path, std::string *error = nullptr);
 
     Value root() const { return _nodes.empty() ? Value() : Value(this, 0); }
 

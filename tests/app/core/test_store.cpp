@@ -1,3 +1,4 @@
+#include "app/model/null_backend.h"
 #include "app/model/store.h"
 #include "app/model/store_slot.h"
 #include "support/test.h"
@@ -632,4 +633,19 @@ TEST("store slot: an observer may unobserve itself while hearing the switch") {
     CHECK(heard == 1); // Roster, then gone before Users
     b.updateConversation(0, [](Conversation &) {});
     CHECK(heard == 1);
+}
+
+TEST("backend: calls a service lacks default to nothing") {
+    Store       s;
+    NullBackend b{s};
+    ConvRef     dm = 7;
+    b.openDm(1, [&](ConvRef c) { dm = c; });
+    CHECK(dm == kNoConv);
+    int hits = -1;
+    b.search("x", [&](std::vector<Backend::SearchHit> h) { hits = int(h.size()); });
+    CHECK(hits == 0);
+    b.edit(0, 1, "x"); // no-ops
+    b.setPinned(0, 1, true);
+    b.userTyping(0, 0);
+    CHECK(s.conversationCount() == 0);
 }

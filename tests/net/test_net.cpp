@@ -17,7 +17,7 @@
 #include "support/test.h"
 #include "net/net.h"
 #include "net/transport.h"
-#include "net/worker.h"
+#include "base/thread.h"
 #include "plat/plat.h"
 
 #include <algorithm>
@@ -897,7 +897,7 @@ TEST("error: cancel wakes a blocked exchange at once") {
         net::Response        resp;
         std::atomic<int64_t> returned{0};
         req.url = u.str();
-        net::detail::Thread t;
+        base::Thread t;
         REQUIRE(t.start([&] {
             net::detail::perform(u, req, resp, cancel, {});
             returned.store(msNow());

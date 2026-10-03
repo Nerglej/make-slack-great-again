@@ -3,6 +3,7 @@
 // (huddleChanged) and message reminders going off (notifyReminderDue).
 // Shell members kept apart from shell.cpp; the clicks are handleAppEvent's.
 #include "app/media/sounds.h"
+#include "app/screens/common/message_rules.h"
 #include "app/screens/common/message_text.h"
 #include "base/i18n.h"
 #include "base/str.h"
@@ -24,11 +25,10 @@ namespace shell {
 
 namespace {
 
-constexpr int64_t kMaxNotifyAgeSecs   = 30 * 86400; // older messages never notify
-constexpr int     kNotifyResolveStep  = 150;        // ms between tries to resolve names
-constexpr int     kNotifyResolveTries = 10;
-constexpr size_t  kMaxBody            = 100;
-constexpr int     kNotifyTimeoutMs    = 5000;
+constexpr int    kNotifyResolveStep  = 150; // ms between tries to resolve names
+constexpr int    kNotifyResolveTries = 10;
+constexpr size_t kMaxBody            = 100;
+constexpr int    kNotifyTimeoutMs    = 5000;
 
 // The body's cap: 97 characters and "…".
 std::string capped(std::string s) {
@@ -74,6 +74,14 @@ std::string personName(const model::Store &st, model::UserRef u) {
     if (u == kNoUser || x.placeholder || x.label().empty())
         return tr("Someone");
     return std::string(x.label());
+}
+
+// The author as the chat names it (a bot's own name), else personName.
+std::string senderName(const model::Store &st, const model::Message &m) {
+    const std::string_view a = screens::authorName(st, m);
+    if (!a.empty() && a != st.user(m.user).label())
+        return std::string(a); // the bot's name, not the user's
+    return personName(st, m.user);
 }
 
 // A user id's prefix only (U…, W… on Enterprise Grid), not its full shape.
@@ -128,6 +136,23 @@ std::string Shell::workspaceIconFor(const model::Store &st) const {
 uint64_t Shell::post(const plat::Notification &n) {
     plat::App &pa = _ctx.app.platform();
     return pa.notificationsAvailable() ? pa.notify(n) : 0;
+}
+
+void Shell::postNotification(plat::Notification n, std::vector<std::string> pics, Notified where) {
+    n.timeoutMs = kNotifyTimeoutMs;
+    // The chosen sound is ours to play; whether the OS plays its own is
+    // sounds.h's call.
+    n.silent    = sounds::kSilentNotifications;
+    notificationImage(
+        std::move(pics),
+        [this, n = std::move(n), where = std::move(where)](plat::Image img) mutable {
+            n.image = std::move(img);
+            if (const uint64_t id = post(n))
+                _notified[id] = std::move(where);
+            if (_settings.notifySound)
+                sounds::play(_ctx.app.platform(), _settings.soundId);
+        }
+    );
 }
 
 model::NotifyLevel Shell::defaultLevel() const {
@@ -215,7 +240,7 @@ void Shell::maybeNotify(
         }
     }
 
-    const std::string  sender = personName(st, m.user);
+    const std::string  sender = senderName(st, m);
     plat::Notification n;
     std::string        body = preview(st, m);
     if (c.isDirect()) {
@@ -229,28 +254,14 @@ void Shell::maybeNotify(
     }
     n.title = teamTitle(st, key, std::move(n.title));
     n.body  = capped(std::move(body));
-    // DMs: the sender's picture (a bot post's own); channels: the workspace's.
-    std::string pic;
-    if (c.isDirect()) {
-        const std::string &av = st.user(m.user).avatar;
-        pic                   = av.empty() && m.extra ? m.extra->botAvatar : av;
-    } else {
-        pic = workspaceIconFor(st);
-    }
-    n.timeoutMs = kNotifyTimeoutMs;
-    // The chosen sound is ours to play; whether the OS plays its own is
-    // sounds.h's call.
-    n.silent    = sounds::kSilentNotifications;
-    notificationImage(
-        {std::move(pic)},
-        [this, n = std::move(n), key = std::string(key), conv, root](plat::Image img) mutable {
-            n.image = std::move(img);
-            if (const uint64_t id = post(n))
-                _notified[id] = {key, conv, root, 0, {}};
-            if (_settings.notifySound)
-                sounds::play(_ctx.app.platform(), _settings.soundId);
-        }
-    );
+    // DMs: the author's picture as the chat shows it (else a bot post's
+    // own); channels: the workspace's.
+    std::vector<std::string> pics;
+    if (c.isDirect())
+        pics = {screens::authorAvatar(st, m), m.extra ? m.extra->botAvatar : std::string()};
+    else
+        pics = {workspaceIconFor(st)};
+    postNotification(std::move(n), std::move(pics), {key, conv, root, 0, {}});
 }
 
 void Shell::notifyWhenUsersResolve(
@@ -326,21 +337,8 @@ void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv
     }
     n.title          = teamTitle(st, key, std::move(n.title));
     n.actions        = {{"join", tr("Join")}};
-    n.timeoutMs      = kNotifyTimeoutMs;
-    n.silent         = sounds::kSilentNotifications;
     std::string join = c.huddleLink.empty() ? huddleJoinUrl(st, conv) : c.huddleLink;
-    notificationImage(
-        {std::move(pic)},
-        [this, n = std::move(n), key = std::string(key), conv, join = std::move(join)](
-            plat::Image img
-        ) mutable {
-            n.image = std::move(img);
-            if (const uint64_t id = post(n))
-                _notified[id] = {key, conv, 0, 0, std::move(join)};
-            if (_settings.notifySound)
-                sounds::play(_ctx.app.platform(), _settings.soundId);
-        }
-    );
+    postNotification(std::move(n), {std::move(pic)}, {key, conv, 0, 0, std::move(join)});
 }
 
 // Only the master switch gates it; the click opens
@@ -401,20 +399,7 @@ void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef 
     if (c.kind == model::ConvKind::Dm)
         pics.push_back(st.user(c.dmUser).avatar);
     pics.push_back(workspaceIconFor(st));
-    n.timeoutMs = kNotifyTimeoutMs;
-    n.silent    = sounds::kSilentNotifications;
-    notificationImage(
-        std::move(pics),
-        [this, n = std::move(n), key = std::string(key), conv, thread = it->thread, ts](
-            plat::Image img
-        ) mutable {
-            n.image = std::move(img);
-            if (const uint64_t id = post(n))
-                _notified[id] = {key, conv, thread, ts, {}};
-            if (_settings.notifySound)
-                sounds::play(_ctx.app.platform(), _settings.soundId);
-        }
-    );
+    postNotification(std::move(n), std::move(pics), {key, conv, it->thread, ts, {}});
 }
 
 } // namespace shell

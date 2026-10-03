@@ -4,6 +4,7 @@
 #include "base/str.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
+#include "app/screens/common/message_rules.h"
 #ifdef MSGA_HAVE_MESSAGES
 #include "app/screens/messages/rich.h"
 #endif
@@ -29,13 +30,12 @@ public:
     MessageRow(screens::Context &ctx, Avatars &avatars, const model::Message &m) {
         setLook({C::None, C::None, C::None, C::None, 0});
         setCursor(plat::Cursor::Hand); // the whole row opens the thread
-        const model::User &u   = ctx.store().user(m.user);
-        const auto        &x   = m.extra;
-        View              *col = fillMessageRow(
+        const model::Store &st  = ctx.store();
+        View               *col = fillMessageRow(
             this,
             avatars,
-            x && !x->botName.empty() ? x->botName : std::string(u.label()),
-            x && !x->botAvatar.empty() ? x->botAvatar : u.avatar,
+            std::string(screens::authorName(st, m)),
+            screens::authorAvatar(st, m),
             base::dateTimeLabel(model::tsSecs(m.ts), ctx.backend.nowSecs())
         );
         auto *body = col->add<View>();

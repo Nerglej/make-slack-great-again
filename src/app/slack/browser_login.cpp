@@ -128,15 +128,10 @@ std::string makeProfileDir(plat::App &app) {
     if (root.empty())
         return {};
     for (int attempt = 0; attempt < 4; ++attempt) {
-        uint8_t rnd[6];
-        if (!crypto::randomBytes(rnd, sizeof rnd))
+        const std::string rnd = crypto::randomHex(6);
+        if (rnd.empty())
             return {};
-        const std::string dir = file::join(
-            root,
-            str::concat(
-                {kProfilePrefix, crypto::hex({reinterpret_cast<const char *>(rnd), sizeof rnd})}
-            )
-        );
+        const std::string dir = file::join(root, str::concat({kProfilePrefix, rnd}));
         if (file::exists(dir))
             continue;
 #ifdef _WIN32

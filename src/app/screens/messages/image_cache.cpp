@@ -3,14 +3,11 @@
 #include "app/model/image_size.h"
 #include "app/screens/common/remote_images.h"
 #include "base/file.h"
+#include "base/thread.h"
 #include "base/time.h"
 
 #include <algorithm>
 #include <cmath>
-#include <condition_variable>
-#include <deque>
-#include <mutex>
-#include <thread>
 
 namespace screens {
 
@@ -69,28 +66,19 @@ struct ImageCache::Entry {
 // ── Worker ──────────────────────────────────────────────────────────────────
 
 struct ImageCache::Impl {
-    struct Job {
-        uint64_t id;
-        Request  req;
-        bool     animated;
-    };
     struct Result {
         std::vector<gfx::AnimFrame> frames;
         int                         naturalW = 0, naturalH = 0;
         bool                        ok = false, sized = false;
     };
-    std::mutex              m;
-    std::condition_variable cv;
-    std::deque<Job>         jobs;
-    std::thread             thread;
-    bool                    stop     = false;
-    plat::App              *app      = nullptr;
-    ImageCache             *owner    = nullptr; // UI thread only; null once destroyed
-    size_t                  inflight = 0;       // UI thread: queued, decoding or posted
+    // One thread decodes, in order (urgent ones first); it ends when idle.
+    base::WorkerPool worker{{.maxWorkers = 1, .maxParked = 1}};
+    plat::App       *app      = nullptr;
+    ImageCache      *owner    = nullptr; // UI thread only; null once destroyed
+    size_t           inflight = 0;       // UI thread: queued, decoding or posted
 
-    static void work(const Job &job, Result &out) {
-        const Request &r = job.req;
-        std::string    data;
+    static void work(const Request &r, bool animated, Result &out) {
+        std::string data;
         if (!file::readAll(r.path, &data))
             return;
         // naturalSize's answer for it, while the file is at hand.
@@ -101,7 +89,7 @@ struct ImageCache::Impl {
         }
         auto &frames = out.frames;
         bool  ok     = false;
-        if (job.animated) {
+        if (animated) {
             // Each frame is shrunk as it is decoded, under the frame budget.
             gfx::AnimOptions o;
             o.width  = r.width;
@@ -137,55 +125,37 @@ struct ImageCache::Impl {
         out.ok = true;
     }
 
-    static void run(std::shared_ptr<Impl> self) {
-        for (;;) {
-            Job job;
-            {
-                std::unique_lock lock(self->m);
-                self->cv.wait(lock, [&] { return self->stop || !self->jobs.empty(); });
-                if (self->stop)
-                    return;
-                job = std::move(self->jobs.front());
-                self->jobs.pop_front();
+    // Worker thread.
+    static void run(const std::shared_ptr<Impl> &self, uint64_t id, Request &r, bool animated) {
+        auto res = std::make_shared<Result>();
+        work(r, animated, *res);
+        self->app->post([self, id, path = std::move(r.path), res] {
+            ImageCache *owner = self->owner;
+            if (!owner)
+                return;
+            if (res->sized) { // under the path asked for (a URL, not its local copy)
+                const auto it = owner->_loading.find(id);
+                owner->noteSize(
+                    it != owner->_loading.end() ? it->second->path : path,
+                    res->naturalW,
+                    res->naturalH,
+                    true
+                );
             }
-            auto res = std::make_shared<Result>();
-            work(job, *res);
-            self->app->post([self, id = job.id, path = std::move(job.req.path), res] {
-                ImageCache *owner = self->owner;
-                if (!owner)
-                    return;
-                if (res->sized) { // under the path asked for (a URL, not its local copy)
-                    const auto it = owner->_loading.find(id);
-                    owner->noteSize(
-                        it != owner->_loading.end() ? it->second->path : path,
-                        res->naturalW,
-                        res->naturalH,
-                        true
-                    );
-                }
-                owner->deliver(id, std::move(res->frames), res->ok);
-            });
-        }
+            owner->deliver(id, std::move(res->frames), res->ok);
+        });
     }
 };
 
 ImageCache::ImageCache(plat::App &app, size_t budget)
     : _app(app), _impl(std::make_shared<Impl>()), _budget(budget) {
-    _impl->app    = &app;
-    _impl->owner  = this;
-    _impl->thread = std::thread(Impl::run, _impl);
+    _impl->app   = &app;
+    _impl->owner = this;
 }
 
 ImageCache::~ImageCache() {
     _impl->owner = nullptr; // results still in the post queue are dropped
-    {
-        std::lock_guard lock(_impl->m);
-        _impl->stop = true;
-        _impl->jobs.clear();
-    }
-    _impl->cv.notify_all();
-    if (_impl->thread.joinable())
-        _impl->thread.join();
+    _impl->worker.stop();   // and queued decodes
 }
 
 void ImageCache::lruUnlink(Entry &e) {
@@ -292,14 +262,12 @@ void ImageCache::load(Entry &e) {
 }
 
 void ImageCache::decode(uint64_t id, Request r, bool animated, bool urgent) {
-    {
-        std::lock_guard lock(_impl->m);
-        if (urgent)
-            _impl->jobs.push_front({id, std::move(r), animated});
-        else
-            _impl->jobs.push_back({id, std::move(r), animated});
-    }
-    _impl->cv.notify_one();
+    _impl->worker.post(
+        [impl = _impl, id, r = std::move(r), animated]() mutable {
+            Impl::run(impl, id, r, animated);
+        },
+        urgent
+    );
 }
 
 void ImageCache::decodeOnce(Request r, std::function<void(gfx::Bitmap)> done, bool urgent) {

@@ -6,7 +6,6 @@ add_library(msga_net STATIC
     client.cpp
     websocket.cpp
     url.cpp
-    worker.cpp
 )
 target_include_directories(msga_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(msga_net PUBLIC msga_base plat msga_flags)

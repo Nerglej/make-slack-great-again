@@ -258,3 +258,27 @@ TEST("menu: an item's shortcut hint chooses it (T, E, Del, Ctrl+C)") {
     CHECK(chosen == 1);
     CHECK(w.w->topPopup() == nullptr);
 }
+
+TEST("menu: table-driven items and separators") {
+    constexpr ui::MenuDef kDefs[] = {
+        {1, ui::Button::kNoIcon, "Star channel", "Star conversation", nullptr},
+        {2, 7, "Reply in thread", nullptr, "T"},
+    };
+    std::vector<ui::MenuItem> v;
+    ui::addMenuSeparator(v); // never leading
+    CHECK(v.empty());
+    ui::addMenuItem(v, kDefs, 1, false, true);
+    ui::addMenuSeparator(v);
+    ui::addMenuSeparator(v); // never doubled
+    ui::addMenuItem(v, kDefs, 1, true, false);
+    ui::addMenuItem(v, kDefs, 2, true, true).checked = true;
+    REQUIRE(v.size() == 4);
+    CHECK_STR(v[0].label, "Star channel");
+    CHECK(v[0].id == 1 && v[0].enabled && v[0].hint.empty());
+    CHECK(v[1].separator);
+    CHECK_STR(v[2].label, "Star conversation");
+    CHECK_FALSE(v[2].enabled);
+    CHECK_STR(v[3].label, "Reply in thread"); // no alt label: the label
+    CHECK_STR(v[3].hint, "T");
+    CHECK(v[3].icon == 7 && v[3].checked && !v[3].danger);
+}

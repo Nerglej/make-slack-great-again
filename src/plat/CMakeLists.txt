@@ -20,7 +20,6 @@ add_library(plat STATIC
     src/core/transfer.cpp
     src/core/input.cpp
     src/core/image_util.cpp
-    src/core/hash.cpp
     src/core/strings.cpp
     src/core/wire.cpp
 )
@@ -53,6 +52,13 @@ endif()
 
 find_package(Threads REQUIRED)
 target_link_libraries(plat PUBLIC Threads::Threads)
+
+# The string, UTF-8 and hash primitives plat shares with the app's base
+# library (src/prim; an embedding project may have added it already).
+if(NOT TARGET prim)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../prim ${CMAKE_CURRENT_BINARY_DIR}/prim)
+endif()
+target_link_libraries(plat PUBLIC prim)
 
 if(UNIX)
     target_sources(plat PRIVATE src/posix/posix_loop.cpp)

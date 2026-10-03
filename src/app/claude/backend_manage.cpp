@@ -240,28 +240,37 @@ void Backend::removeIfOwned(
     );
 }
 
-void Backend::stopRemoved(const std::string &sessionId, const std::string &cwd) {
-    if (!_hidden.count(sessionId)) {
-        Hidden h;
-        h.atMs             = nowMs();
-        h.transcript       = _paths.findTranscript(sessionId);
-        h.seenSize         = file::size(h.transcript);
-        _hidden[sessionId] = h;
+Backend::Hidden &Backend::hide(const std::string &sessionId) {
+    auto [it, added] = _hidden.try_emplace(sessionId);
+    if (added) {
+        it->second.atMs       = nowMs();
+        it->second.transcript = _paths.findTranscript(sessionId);
+        it->second.seenSize   = file::size(it->second.transcript);
     }
-    _hidden[sessionId].stopping = true;
+    return it->second;
+}
+
+std::string Backend::noteStopped(const std::string &sessionId) {
+    // The worker writes its last records as it exits; that is no new
+    // activity to bring the session back for.
+    const auto h = _hidden.find(sessionId);
+    if (h == _hidden.end())
+        return {};
+    h->second.stopping = false;
+    h->second.atMs     = nowMs();
+    if (h->second.transcript.empty())
+        h->second.transcript = _paths.findTranscript(sessionId);
+    h->second.seenSize     = file::size(h->second.transcript);
+    std::string transcript = h->second.transcript;
+    saveKnown();
+    return transcript;
+}
+
+void Backend::stopRemoved(const std::string &sessionId, const std::string &cwd) {
+    hide(sessionId).stopping = true;
     _launcher->stop(sessionId, cwd, [this, alive = _alive, sessionId] {
-        if (!*alive)
-            return;
-        // The worker writes its last records as it exits; that is no new
-        // activity to bring the session back for.
-        if (const auto h = _hidden.find(sessionId); h != _hidden.end()) {
-            h->second.stopping = false;
-            h->second.atMs     = nowMs();
-            if (h->second.transcript.empty())
-                h->second.transcript = _paths.findTranscript(sessionId);
-            h->second.seenSize = file::size(h->second.transcript);
-            saveKnown();
-        }
+        if (*alive)
+            noteStopped(sessionId);
     });
 }
 
@@ -272,30 +281,13 @@ void Backend::removeOwned(
     bool                            background,
     const std::shared_ptr<Cleanup> &cleanup
 ) {
-    if (!_hidden.count(sessionId)) {
-        Hidden h;
-        h.atMs             = nowMs();
-        h.transcript       = _paths.findTranscript(sessionId);
-        h.seenSize         = file::size(h.transcript);
-        _hidden[sessionId] = h;
-    }
+    hide(sessionId);
     // The job's worktree is read now: `claude rm` drops the job.
     const std::string job  = jobId.empty() ? sessionId.substr(0, 8) : jobId;
     auto              refs = worktreesOfJob(readJobState(_paths, job));
     ++cleanup->pending;
     auto stopped = [this, sessionId, cwd, refs, cleanup]() mutable {
-        std::string transcript;
-        if (const auto h = _hidden.find(sessionId); h != _hidden.end()) {
-            // The worker writes its last records as it exits; that is no new
-            // activity to bring the session back for.
-            h->second.stopping = false;
-            h->second.atMs     = nowMs();
-            if (h->second.transcript.empty())
-                h->second.transcript = _paths.findTranscript(sessionId);
-            h->second.seenSize = file::size(h->second.transcript);
-            transcript         = h->second.transcript;
-            saveKnown();
-        }
+        std::string transcript = noteStopped(sessionId);
         // The transcript's worktrees, read on a worker (all of it is read).
         struct Look {
             std::string              transcript, sessionId, cwd;
@@ -536,11 +528,8 @@ void Backend::teamChanged(const std::string &id) {
 // msga shows for you live in its own data (profile.json + a copied image).
 
 void Backend::loadProfile() {
-    std::string data;
-    if (!file::readAll(profilePath(), &data))
-        return;
     json::Document doc;
-    if (!doc.parse(std::move(data)))
+    if (!doc.parseFile(profilePath()))
         return;
     _myName       = doc.root()["name"].str();
     _myAvatarPath = doc.root()["avatar"].str();
@@ -577,10 +566,7 @@ void Backend::updateProfile(std::string name, std::string, std::string, Done don
     _myName = n == loginName() ? std::string() : n;
     saveProfile();
     putUser(meUser());
-    post([done = std::move(done)] {
-        if (done)
-            done(true, {});
-    });
+    postDone(std::move(done), true);
 }
 
 void Backend::setPhoto(std::string path, Done done) {
@@ -589,10 +575,7 @@ void Backend::setPhoto(std::string path, Done done) {
     const std::string copy =
         dirs().data + "/avatar-" + str::number(nowMs()) + (ext.empty() ? std::string() : "." + ext);
     if (dirs().data.empty() || !file::copy(path, copy)) {
-        post([done = std::move(done)] {
-            if (done)
-                done(false, tr("Couldn't copy the picture."));
-        });
+        postDone(std::move(done), false, tr("Couldn't copy the picture."));
         return;
     }
     if (!_myAvatarPath.empty() && str::startsWith(_myAvatarPath, dirs().data))
@@ -600,9 +583,13 @@ void Backend::setPhoto(std::string path, Done done) {
     _myAvatarPath = copy;
     saveProfile();
     putUser(meUser());
-    post([done = std::move(done)] {
+    postDone(std::move(done), true);
+}
+
+void Backend::postDone(Done done, bool ok, std::string error) {
+    post([done = std::move(done), ok, error = std::move(error)] {
         if (done)
-            done(true, {});
+            done(ok, error);
     });
 }
 

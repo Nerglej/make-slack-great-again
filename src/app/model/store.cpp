@@ -64,21 +64,13 @@ Message::~Message()                                 = default;
 
 bool File::isHtml() const {
     // An HTML file by its type, else by its extension.
-    auto ieq = [](std::string_view a, std::string_view b) {
-        if (a.size() != b.size())
-            return false;
-        for (size_t i = 0; i < a.size(); ++i)
-            if ((a[i] | 0x20) != (b[i] | 0x20))
-                return false;
-        return true;
-    };
-    if (ieq(mime, "text/html"))
+    if (str::iequals(mime, "text/html"))
         return true;
     const size_t dot = name.find_last_of('.');
     if (dot == std::string::npos)
         return false;
     const std::string_view ext = std::string_view(name).substr(dot + 1);
-    return ieq(ext, "html") || ieq(ext, "htm");
+    return str::iequals(ext, "html") || str::iequals(ext, "htm");
 }
 
 MessageExtras &Message::extras() {

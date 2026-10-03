@@ -3,6 +3,7 @@
 #include <cstdlib>
 
 #include "base/i18n.h"
+#include "base/str.h"
 #include "base/utf8.h"
 #include "gfx/icons_generated.h"
 
@@ -353,7 +354,7 @@ void SpinBox::styleChanged() {
 }
 
 std::string SpinBox::accessibleName() const {
-    return std::to_string(_value) + _suffix;
+    return str::number(_value) + _suffix;
 }
 
 SizeF SpinBox::measureContent(float, float) {
@@ -422,7 +423,7 @@ void SpinBox::paint(gfx::Painter &p) {
     const C     tc    = en ? C::FormText : C::FormTextFaint;
     // Focus and enabled only recolour the shaped text; typing reshapes.
     if (!_num || _typing)
-        _num = layoutText(_typing ? _typed : std::to_string(_value), Font::Control, tc, scale);
+        _num = layoutText(_typing ? _typed : str::number(_value), Font::Control, tc, scale);
     _num->setColor(color(_fresh && focused() ? C::AccentText : tc));
     if (!_suf)
         _suf = layoutText(_suffix, Font::Control, tc, scale);
@@ -480,7 +481,7 @@ bool SpinBox::onEvent(Event &e) {
         case plat::Key::Backspace:
             if (!_typing) {
                 _typing = true;
-                _typed  = _fresh ? std::string() : std::to_string(_value);
+                _typed  = _fresh ? std::string() : str::number(_value);
             }
             if (!_typed.empty())
                 _typed.pop_back();
@@ -577,6 +578,14 @@ void TextField::setPrefix(std::string text) {
     l->style().noShrink();
 }
 
+void TextField::setQuiet() {
+    _quiet = true;
+    // The icon 12 in, 8 before the edit; the edit's padding is TextEdit's.
+    style().padding(kFieldPad + (_icon != 0xffff ? 16 + 8 : 0), 0, kFieldPad, 0);
+    _edit->style().padding(8, 6);
+    update();
+}
+
 void TextField::setMaxLength(int n) {
     _max = n;
     if (!_counter) {
@@ -591,7 +600,7 @@ void TextField::setMaxLength(int n) {
 void TextField::updateCounter() {
     const int            n = int(utf8::countCodePoints(_edit->text()));
     text::AttributedText t; // fonts.sm, text.tertiary
-    t.append(std::to_string(_max - n), pxFont(11, text::Weight::Regular, themed(C::FormTextFaint)));
+    t.append(str::number(_max - n), pxFont(11, text::Weight::Regular, themed(C::FormTextFaint)));
     _counter->setRichText(std::move(t));
 }
 
@@ -636,10 +645,13 @@ void TextField::paint(gfx::Painter &p) {
             active ? C::FieldBorderFocus : C::FieldBorder
         );
     } else {
-        inputFrame(p, bounds(), active, enabled());
+        inputFrame(p, bounds(), active && !_quiet, enabled());
         if (_icon != 0xffff)
             gfx::drawIcon(
-                p, gfx::Icon(_icon), {kFieldPad, (height() - 16) / 2, 16, 16}, color(C::FormIcon)
+                p,
+                gfx::Icon(_icon),
+                {kFieldPad, (height() - 16) / 2, 16, 16},
+                color(_quiet ? C::FormTextFaint : C::FormIcon)
             );
     }
 }

@@ -5,6 +5,7 @@
 //
 //   ui_gallery [--dark] [--messages N] [--menu|--context|--emoji] [--type TEXT]
 //              [--jump INDEX] [--hover X Y] [--bench STEPS] [--exit-after MS]
+#include "base/str.h"
 #include "gfx/icons_generated.h"
 #include "plat/testing.h"
 #include "ui/ui.h"
@@ -400,7 +401,7 @@ void Chat::bind(View &row, int i) {
             b->setBorder(C::None);
             b->onClick = [b] { b->setChecked(!b->checked()); };
         }
-        b->setLabel(std::string(emoji[rr.range(5)]) + " " + std::to_string(1 + rr.range(9)));
+        b->setLabel(std::string(emoji[rr.range(5)]) + " " + str::number(1 + rr.range(9)));
     }
     r.reactions->setVisible(m.reactions > 0);
 }

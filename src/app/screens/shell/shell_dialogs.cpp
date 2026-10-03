@@ -713,7 +713,7 @@ const std::vector<std::string> &iconFiles(plat::App &app) {
 // <stem>-<msecs>.img naming: a new file each time, so nothing caches the
 // old picture under the same path.
 std::string newPictureName(std::string_view prefix) {
-    return str::concat({prefix, std::to_string(base::nowMicros() / 1000), ".img"});
+    return str::concat({prefix, str::number(base::nowMicros() / 1000), ".img"});
 }
 
 // The dialogs' common frame: the preview (the subclass's, added first),

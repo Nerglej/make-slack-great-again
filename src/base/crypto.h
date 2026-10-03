@@ -2,6 +2,8 @@
 // nonces) — no TLS here: that is the OS's, or mbedTLS inside net/ on Linux.
 #pragma once
 
+#include "prim/hash.h"
+
 #include <array>
 #include <cstdint>
 #include <string>
@@ -25,16 +27,22 @@ bool randomBytes(void *out, size_t n);
 // FNV-1a, 64-bit: a fast non-cryptographic hash (change detection, cache
 // file identity). `h` continues an earlier hash; the default starts one.
 // The basis is a digit short of FNV's published 14695981039346656037: every
-// copy in the tree (and plat's core::fnv1a) has always used this one, and
-// names derived from it (cache keys, instance sockets) must stay stable.
-inline constexpr uint64_t kFnvOffset = 1469598103934665603ull;
-uint64_t                  fnv1a(std::string_view data, uint64_t h = kFnvOffset);
+// copy in the tree has always used this one, and names derived from it
+// (cache keys, instance sockets) must stay stable. prim's, shared with plat.
+using prim::fnv1a;
+using prim::kFnvOffset;
 
 std::string base64(std::string_view data);    // standard alphabet, padded
 std::string base64url(std::string_view data); // RFC 4648 §5, no padding
 // Either alphabet, padding optional, whitespace skipped. False on junk.
 bool        base64Decode(std::string_view in, std::string *out);
 std::string hex(std::string_view data); // lower case
+
+// `n` random bytes (n <= 64) as lower-case hex; "" if the OS refused.
+std::string randomHex(size_t n);
+// A random UUID, version 4, lower case ("xxxxxxxx-xxxx-4xxx-yxxx-…"); "" if
+// the OS refused.
+std::string uuid4();
 
 template <size_t N>
 std::string_view bytes(const std::array<uint8_t, N> &a) {
