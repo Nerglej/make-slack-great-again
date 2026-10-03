@@ -62,24 +62,34 @@ void Label::dropLayout() {
 void Label::setText(std::string text) {
     if (!_rich && text == _text)
         return;
-    update(); // the old text's extent
+    update();     // the old text's extent
+    dropLayout(); // it borrows the old text
     _text = std::move(text);
     _rich.reset();
     updateInk();
-    dropLayout();
     invalidateLayout();
     update();
 }
 
 void Label::setRichText(text::AttributedText t) {
     update();
+    dropLayout(); // it borrows the old text
     _text.clear();
     _text.shrink_to_fit();
     _rich = std::make_unique<text::AttributedText>(std::move(t));
     updateInk();
-    dropLayout();
     invalidateLayout();
     update();
+}
+
+void Label::setUnderlinedLink(uint32_t linkId) {
+    if (linkId == _underlinedLink)
+        return;
+    _underlinedLink = linkId;
+    if (_rich) {
+        dropLayout();
+        update();
+    }
 }
 
 void Label::setFont(Font f) {
@@ -128,13 +138,19 @@ void Label::styleChanged() {
 }
 
 std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale) const {
-    text::AttributedText t;
+    // The layout borrows the label's text (held once); only the spans are
+    // copied, to resolve sentinel colours and the hovered link per build.
+    std::vector<text::Span> spans;
     if (_rich) {
-        t.text  = _rich->text; // the layout's own copy (moved in below)
-        t.spans = _rich->spans;
-        resolveSpans(t);
-    } else {
-        t.append(_text, font(_font, _color));
+        spans = _rich->spans;
+        for (text::Span &sp : spans) {
+            sp.style.color      = resolve(sp.style.color);
+            sp.style.background = resolve(sp.style.background);
+            if (_underlinedLink && sp.style.linkId == _underlinedLink)
+                sp.style.underline = true;
+        }
+    } else if (!_text.empty()) {
+        spans.push_back({0, uint32_t(_text.size()), font(_font, _color)});
     }
     text::LayoutOptions o;
     // One physical pixel of slack: snapping flex edges to the pixel grid can
@@ -145,7 +161,7 @@ std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale) const {
     o.ellipsis   = _maxLines > 0;
     o.align      = _align;
     o.lineHeight = _lineHeight;
-    return text::Layout::build(std::move(t), o, scale);
+    return text::Layout::buildBorrowed(text(), spans, o, scale);
 }
 
 const text::Layout *Label::layoutFor(float w) {

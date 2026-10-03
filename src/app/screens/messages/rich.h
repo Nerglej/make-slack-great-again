@@ -57,7 +57,6 @@ private:
     ui::View                *_waiter; // repainted when an emoji image lands
     std::vector<Target>      _targets;
     std::vector<std::string> _images;
-    text::AttributedText     _base; // the text without hover underlines
     std::string              _tip;
     ui::PointF               _tipAt;
     uint32_t                 _hoverLink  = 0;

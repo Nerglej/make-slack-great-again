@@ -257,9 +257,9 @@ void RichLabel::setContent(
 ) {
     _targets   = std::move(targets);
     _images    = std::move(images);
-    _base      = t;
     _hoverLink = 0;
     _tip.clear();
+    setUnderlinedLink(0);
     setRichText(std::move(t));
 }
 
@@ -271,19 +271,16 @@ void RichLabel::hoverLink(uint32_t id, ui::PointF at) {
     _tipAt = at;
     if (id == _hoverLink)
         return;
-    _hoverLink                     = id;
+    _hoverLink       = id;
     // Every piece of the hovered URL link
     // underlines together (mentions, channels, message links never).
-    const Target        *tg        = id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
-    const bool           underline = tg && tg->kind == Kind::Link;
-    text::AttributedText t         = _base;
-    std::string          shown;
-    for (text::Span &sp : t.spans)
-        if (id && sp.style.linkId == id) {
-            sp.style.underline = sp.style.underline || underline;
-            shown += t.text.substr(sp.start, sp.end - sp.start);
-        }
-    setRichText(std::move(t));
+    const Target *tg = id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
+    setUnderlinedLink(tg && tg->kind == Kind::Link ? id : 0);
+    std::string shown;
+    if (const text::AttributedText *t = richText(); t && id)
+        for (const text::Span &sp : t->spans)
+            if (sp.style.linkId == id)
+                shown.append(t->text, sp.start, sp.end - sp.start);
     // The URL tooltip: links and message links (their permalink), unless the
     // text already is the URL.
     std::string url;

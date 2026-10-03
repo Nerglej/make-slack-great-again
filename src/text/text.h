@@ -84,6 +84,13 @@ public:
     build(const AttributedText &t, const LayoutOptions &o, float scale);
     // The same, taking over t's text instead of copying it.
     static std::unique_ptr<Layout> build(AttributedText &&t, const LayoutOptions &o, float scale);
+    // The same, borrowing `utf8` instead of holding a copy: the caller keeps
+    // those bytes alive and unchanged for the layout's whole life (a label
+    // that owns both its text and the layout, dropping the layout before the
+    // text changes). Long message text is then held once.
+    static std::unique_ptr<Layout> buildBorrowed(
+        std::string_view utf8, const std::vector<Span> &spans, const LayoutOptions &o, float scale
+    );
     virtual ~Layout() = default;
 
     virtual float width() const            = 0; // logical, tight
@@ -136,6 +143,10 @@ float measure(std::string_view utf8, const Style &s, float scale);
 // How many layouts Layout::build has made in this process (all threads): a
 // diagnostic for tests proving that a path does not reshape.
 size_t layoutBuilds();
+// How many text bytes Layout::build has stored in layouts of their own
+// (copied or moved in; all threads). Borrowed text is not counted: a
+// diagnostic for tests proving that a path holds its text once.
+size_t layoutTextOwned();
 
 // Font metrics for layout decisions (line boxes, vertical centering).
 struct Metrics {

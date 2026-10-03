@@ -379,3 +379,41 @@ TEST("label: rich text is the label's text") {
     w.frame();
     CHECK(l->text() == "plain again");
 }
+
+// A label's layout borrows the label's text: building it, re-wrapping it at
+// another width and underlining a hovered link copy no text bytes.
+TEST("label: the layout borrows the text, building and re-wrapping copy none") {
+    Win         w(600, 400);
+    auto       *col = w.root().add<ui::View>();
+    std::string longText;
+    for (int i = 0; i < 200; ++i)
+        longText += "The quick brown fox jumps over the lazy dog. ";
+    col->style().column().items(Align::Start);
+    auto                *plain = col->add<ui::Label>(longText);
+    auto                *rich  = col->add<ui::Label>();
+    text::AttributedText a;
+    text::Style          st;
+    st.color = ui::themed(ui::C::Text);
+    a.append(longText, st);
+    st.weight = text::Weight::Bold;
+    st.linkId = 1;
+    a.append("a link", st);
+    rich->setRichText(std::move(a));
+    plain->style().width(500);
+    rich->style().width(500);
+    const size_t builds = text::layoutBuilds(), copied = text::layoutTextOwned();
+    w.frame();
+    REQUIRE(plain->textLayout() != nullptr && rich->textLayout() != nullptr);
+    const int lines = rich->textLayout()->lineCount();
+    plain->style().width(300);
+    rich->style().width(300);
+    w.frame();
+    CHECK(rich->textLayout()->lineCount() > lines);
+    rich->setUnderlinedLink(1);
+    w.frame();
+    CHECK(text::layoutBuilds() >= builds + 5);
+    CHECK(text::layoutTextOwned() == copied);
+    // The layout reads the label's own bytes.
+    CHECK(rich->textLayout()->wordEnd(0) == 3);
+    CHECK(plain->text() == longText);
+}

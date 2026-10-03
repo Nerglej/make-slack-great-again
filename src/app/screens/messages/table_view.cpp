@@ -77,8 +77,9 @@ void TableView::build(float width) {
         for (size_t c = 0; c < _cells[r].size(); ++c) {
             text::AttributedText t = cellText(r, c, &measured);
             ui::resolveSpans(t);
-            nat[c] =
-                std::max(nat[c], std::ceil(text::Layout::build(t, {}, scale)->width()) + 2 * kPadX);
+            nat[c] = std::max(
+                nat[c], std::ceil(text::Layout::build(std::move(t), {}, scale)->width()) + 2 * kPadX
+            );
         }
     float sum = 0;
     for (float v : nat)
@@ -104,7 +105,7 @@ void TableView::build(float width) {
             ui::resolveSpans(t);
             text::LayoutOptions o;
             o.maxWidth = std::max(1.f, _colW[c] - 2 * kPadX);
-            _layouts[r].push_back(text::Layout::build(t, o, scale));
+            _layouts[r].push_back(text::Layout::build(std::move(t), o, scale));
             h = std::max(h, _layouts[r].back()->height());
         }
         if (h == 0)

@@ -1049,6 +1049,42 @@ TEST("actions: a message link is a chip; a click jumps there or opens the browse
     CHECK_STR(urls[0], "https://other.slack.com/archives/C77/p1700000000000100");
 }
 
+// Hovering a URL link underlines it and shows the URL: only the label's
+// layout is rebuilt, from the text the label holds (no second copy of the
+// message text, none for the hover either).
+TEST("actions: link hover underlines without copying the text") {
+    Env                  e(false);
+    auto                *label = e.win->root().add<RichLabel>(e.ctx, nullptr);
+    text::AttributedText t;
+    text::Style          st;
+    t.append("see the ", st);
+    st.linkId = 1;
+    t.append("docs", st);
+    std::vector<RichLabel::Target> targets;
+    targets.push_back({mrkdwn::Kind::Link, "https://x.example/a"});
+    label->setContent(std::move(t), std::move(targets), {});
+    label->measureContent(400, 100);
+    REQUIRE(label->textLayout() != nullptr);
+    const ui::RectF  caret  = label->textLayout()->caretRect(10);
+    const ui::PointF o      = label->textOrigin();
+    const size_t     builds = text::layoutBuilds(), copied = text::layoutTextOwned();
+    ui::Event        ev{ui::EventType::PointerMove, {o.x + caret.x, o.y + caret.y + caret.h / 2}};
+    REQUIRE(label->linkAt(ev.pos) == 1);
+    label->onEvent(ev);
+    CHECK_STR(label->tooltip(), "https://x.example/a");
+    label->measureContent(400, 100);
+    CHECK(text::layoutBuilds() == builds + 1);
+    CHECK(text::layoutTextOwned() == copied);
+    // The label's own spans stay as set: the underline is the layout's.
+    REQUIRE(label->richText() != nullptr);
+    for (const text::Span &sp : label->richText()->spans)
+        CHECK(!sp.style.underline);
+    // Off the link: no tooltip.
+    ev.type = ui::EventType::PointerLeave;
+    label->onEvent(ev);
+    CHECK(label->tooltip().empty());
+}
+
 TEST("image: two or more pictures are a gallery of equal 180-px tiles") {
     Env               e(false);
     model::Message    m   = msg(model::kNoUser, 1700000000, "pics");

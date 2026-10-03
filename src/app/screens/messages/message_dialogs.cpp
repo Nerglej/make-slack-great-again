@@ -585,8 +585,10 @@ private:
         std::vector<std::string> measured;
         for (size_t r = 0; r < _rows.size(); ++r)
             for (size_t c = 0; c < _rows[r].size(); ++c) {
-                const text::AttributedText t = cellText(r, c, &measured);
-                nat[c] = std::max(nat[c], std::ceil(text::Layout::build(t, {}, k)->width()) + 24);
+                text::AttributedText t = cellText(r, c, &measured);
+                nat[c]                 = std::max(
+                    nat[c], std::ceil(text::Layout::build(std::move(t), {}, k)->width()) + 24
+                );
             }
         float sum = 0;
         for (float v : nat)
@@ -610,10 +612,10 @@ private:
                     _cells.back().push_back(nullptr);
                     continue;
                 }
-                const text::AttributedText t = cellText(r, c, &_images);
-                text::LayoutOptions        o;
+                text::AttributedText t = cellText(r, c, &_images);
+                text::LayoutOptions  o;
                 o.maxWidth = std::max(1.f, _colW[c] - 24);
-                _cells.back().push_back(text::Layout::build(t, o, k));
+                _cells.back().push_back(text::Layout::build(std::move(t), o, k));
                 h = std::max(h, _cells.back().back()->height());
             }
             _rowH.push_back(std::ceil(h) + 10);

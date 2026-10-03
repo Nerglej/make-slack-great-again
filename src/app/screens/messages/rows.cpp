@@ -777,7 +777,7 @@ public:
             ui::resolveSpans(t);
             text::LayoutOptions o;
             o.maxWidth  = body.w;
-            _body       = text::Layout::build(t, o, scale);
+            _body       = text::Layout::build(std::move(t), o, scale);
             _bodyLoaded = true;
         }
         p.save();

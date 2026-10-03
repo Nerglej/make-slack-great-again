@@ -36,6 +36,12 @@ public:
     void               setAlign(text::LayoutOptions::Align a);
     void               setLineHeight(float multiple);
 
+    // The rich text as set (null for plain labels).
+    const text::AttributedText *richText() const { return _rich.get(); }
+    // Spans of this link paint underlined (a hovered link); 0 = none. Only
+    // the layout is rebuilt: the text and its size stay.
+    void                        setUnderlinedLink(uint32_t linkId);
+
     std::function<void(uint32_t linkId)> onLink;
 
     // The layout for the current width (built on demand; null before layout).
@@ -69,6 +75,8 @@ private:
 
     std::string                           _text; // plain labels; empty for rich ones
     std::unique_ptr<text::AttributedText> _rich; // only for rich labels
+    // Borrows the text above (Layout::buildBorrowed): dropped before the
+    // text changes, and declared after it so it is destroyed first.
     std::unique_ptr<text::Layout>         _layout;
     float                                 _layoutW = -1, _layoutScale = 0, _lineHeight = 1.4f;
     uint32_t                              _pressedLink = 0;
@@ -76,8 +84,9 @@ private:
     std::unique_ptr<Selection> _sel; // only while something is selected
     Font                       _font;
     C                          _color;
-    uint8_t                    _maxLines = 0;
-    text::LayoutOptions::Align _align    = text::LayoutOptions::Align::Left;
+    uint8_t                    _maxLines       = 0;
+    text::LayoutOptions::Align _align          = text::LayoutOptions::Align::Left;
+    uint32_t                   _underlinedLink = 0; // in the tail padding
 };
 
 // ── Clickable ───────────────────────────────────────────────────────────────

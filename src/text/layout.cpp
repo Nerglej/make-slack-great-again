@@ -27,6 +27,7 @@ using fonts::kNoFont;
 namespace {
 
 std::atomic<size_t> gBuilds{0};
+std::atomic<size_t> gOwned{0};
 
 bool sameStyle(const Style &a, const Style &b) {
     return a.size == b.size && a.weight == b.weight && a.italic == b.italic && a.mono == b.mono &&
@@ -110,14 +111,14 @@ Scratch     &scratch() {
     return s;
 }
 
-uint32_t prevCp(const std::string &t, uint32_t at) {
+uint32_t prevCp(std::string_view t, uint32_t at) {
     if (!at)
         return 0;
     size_t k = utf8::prevBoundary(t, at);
     return utf8::decode(t, k);
 }
 
-uint32_t cpAt(const std::string &t, uint32_t at) {
+uint32_t cpAt(std::string_view t, uint32_t at) {
     if (at >= t.size())
         return 0;
     size_t k = at;
@@ -159,8 +160,15 @@ public:
     uint32_t                      wordEnd(uint32_t offset) const override;
     const std::vector<InlineBox> &boxes() const override { return _boxes; }
 
-    void
-    build(std::string text, const std::vector<Span> &spans, const LayoutOptions &o, float scale);
+    // The layout's own copy of the text, when it is not borrowed.
+    void adopt(std::string text) {
+        gOwned.fetch_add(text.size(), std::memory_order_relaxed);
+        _own = std::move(text);
+    }
+    const std::string &own() const { return _own; }
+    void               build(
+        std::string_view text, const std::vector<Span> &spans, const LayoutOptions &o, float scale
+    );
 
 private:
     void paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color *tint) const;
@@ -177,7 +185,8 @@ private:
     uint32_t spanEnd(int span) const;
     bool     sameRun(uint16_t a, uint16_t b) const;
 
-    std::string            _text;
+    std::string            _own;  // empty when the text is borrowed
+    std::string_view       _text; // _own, or the caller's bytes (buildBorrowed)
     std::vector<Style>     _styles;
     std::vector<uint32_t>  _spanStart; // byte start per span
     std::vector<SpanInfo>  _spanInfo;
@@ -243,13 +252,13 @@ void LayoutImpl::shapeRun(
 }
 
 void LayoutImpl::build(
-    std::string text, const std::vector<Span> &spans, const LayoutOptions &o, float scale
+    std::string_view text, const std::vector<Span> &spans, const LayoutOptions &o, float scale
 ) {
-    Scratch &sc          = scratch();
-    _scale               = scale > 0 ? scale : 1;
-    _text                = std::move(text);
-    _maxW                = o.maxWidth * _scale;
-    const std::string &s = _text;
+    Scratch &sc               = scratch();
+    _scale                    = scale > 0 ? scale : 1;
+    _text                     = text;
+    _maxW                     = o.maxWidth * _scale;
+    const std::string_view &s = _text;
 
     // Spans → styles (a missing or partial span list falls back to defaults).
     _styles.clear();
@@ -1236,7 +1245,7 @@ uint32_t LayoutImpl::moveCaret(uint32_t off, int dx, int dy) const {
 
 // Word classes for double-click: word characters, spaces, and everything
 // else one grapheme at a time.
-int wordClass(const std::string &t, uint32_t off) {
+int wordClass(std::string_view t, uint32_t off) {
     const uint32_t cp = cpAt(t, off);
     if (uni::isSelectWordChar(cp))
         return 1;
@@ -1302,14 +1311,25 @@ std::unique_ptr<Layout>
 Layout::build(const AttributedText &t, const LayoutOptions &o, float scale) {
     gBuilds.fetch_add(1, std::memory_order_relaxed);
     auto l = std::make_unique<LayoutImpl>();
-    l->build(t.text, t.spans, o, scale);
+    l->adopt(t.text);
+    l->build(l->own(), t.spans, o, scale);
     return l;
 }
 
 std::unique_ptr<Layout> Layout::build(AttributedText &&t, const LayoutOptions &o, float scale) {
     gBuilds.fetch_add(1, std::memory_order_relaxed);
     auto l = std::make_unique<LayoutImpl>();
-    l->build(std::move(t.text), t.spans, o, scale);
+    l->adopt(std::move(t.text));
+    l->build(l->own(), t.spans, o, scale);
+    return l;
+}
+
+std::unique_ptr<Layout> Layout::buildBorrowed(
+    std::string_view utf8, const std::vector<Span> &spans, const LayoutOptions &o, float scale
+) {
+    gBuilds.fetch_add(1, std::memory_order_relaxed);
+    auto l = std::make_unique<LayoutImpl>();
+    l->build(utf8, spans, o, scale);
     return l;
 }
 
@@ -1324,6 +1344,10 @@ layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth) 
 
 size_t layoutBuilds() {
     return gBuilds.load(std::memory_order_relaxed);
+}
+
+size_t layoutTextOwned() {
+    return gOwned.load(std::memory_order_relaxed);
 }
 
 // measure()'s memo: direct-mapped on a hash of everything that shapes (the
@@ -1359,7 +1383,11 @@ float measure(std::string_view utf8, const Style &s, float scale) {
     Slot &m = memo[(h ^ (h >> 29)) % kSlots];
     if (same(m))
         return m.width;
-    m.width = layoutPlain(utf8, s, scale)->width();
+    // The layout lives only for this line: it borrows the text.
+    std::vector<Span> spans;
+    if (!utf8.empty())
+        spans.push_back({0, uint32_t(utf8.size()), s});
+    m.width = Layout::buildBorrowed(utf8, spans, {}, scale)->width();
     m.text.assign(utf8);
     m.style = s;
     m.scale = scale;
