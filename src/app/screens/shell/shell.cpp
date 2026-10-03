@@ -1364,9 +1364,6 @@ void Shell::buildMain(View *parent) {
     _typing     = area->add<TypingIndicator>(_ctx);
     _composer   = area->add<Composer>(_ctx, _drafts);
     _composer->setEnabled(false); // msga main_window: until a conversation is open
-    // Schedule-send is Slack's (chat.scheduleMessage): the chevron follows
-    // the capability here; msga's thread composer never hides it.
-    _composer->setScheduleVisible(_ctx.backend.capabilities().scheduledSend);
     _search           = areaHost->add<MessageSearch>(_ctx);
     // msga's resultSelected: the conversation opened the usual way, then the
     // jump (it waits for the first page if that is still loading).
@@ -1386,6 +1383,7 @@ void Shell::buildMain(View *parent) {
     _thread   = body->add<ThreadArea>(_ctx, _avatars, _drafts);
     for (Composer *c : {_composer, _thread->composer})
         setupComposer(*c);
+    applyScheduleSend(); // the demo's backend is in place already
     _thread->style().width(float(_settings.threadWidth)).noShrink();
     _splitter->setVisible(false);
     _thread->setVisible(false);
@@ -1523,7 +1521,17 @@ void Shell::notifySessionExpired(const std::string &workspace) {
     pa.notify(n);
 }
 
+// Schedule-send is Slack's (chat.scheduleMessage): both composers' chevrons
+// follow the open workspace. The shell is built before any workspace is
+// behind the proxy, so this runs again on every switch.
+void Shell::applyScheduleSend() {
+    const bool on = _ctx.backend.capabilities().scheduledSend;
+    _composer->setScheduleVisible(on);
+    _thread->composer->setScheduleVisible(on);
+}
+
 void Shell::workspaceChanged() {
+    applyScheduleSend();
     refreshWorkspaceIcon();
     rebuildTrayMenu();
     updateHeader();

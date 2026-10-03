@@ -273,6 +273,7 @@ private:
     void        syncChrome(); // the OS-drawn chrome follows the app theme
     void        updateTitleButtons();
     void        updateHeader();
+    void        applyScheduleSend();
     void        updateHuddleBanner();
     std::string workspaceIconPath() const;
     void        refreshWorkspaceIcon();

@@ -1940,7 +1940,18 @@ void Composer::openLinkPopup() {
 
 void Composer::openSchedule() {
     Window *w = window();
-    if (!w || (str::trim(_edit->text()).empty() && _files.empty()))
+    if (!w || _editTs || _key.conv == model::kNoConv)
+        return;
+    // chat.scheduleMessage takes text only: refuse rather than drop the
+    // attachments.
+    if (!_files.empty()) {
+        if (_ctx.backend.onError)
+            _ctx.backend.onError(
+                tr("Files can't be scheduled. Send them now or remove them first.")
+            );
+        return;
+    }
+    if (str::trim(_edit->text()).empty())
         return;
     std::weak_ptr<int> alive = _alive;
     showSchedulePopup(*w, _dropBtn->windowRect(), [this, alive](int64_t at) {
@@ -1948,16 +1959,28 @@ void Composer::openSchedule() {
             return;
         mrkdwn::Composed  composed = mrkdwn::compose(mrkdwn());
         const std::string text(str::trim(composed.mrkdwn));
+        if (text.empty() || !_files.empty())
+            return;
+        // A failure puts the text back (the banner says why) while the
+        // composer is still on that conversation and empty.
+        const DraftStash::Key key = _key;
+        auto done = [this, alive, key, html = _edit->html()](bool ok, const std::string &) {
+            if (ok || alive.expired() || !(_key == key) || !_edit->empty() || _editTs)
+                return;
+            _edit->insertHtml(html);
+            refreshLook();
+            compositionChanged();
+        };
         _edit->clear();
-        _files.clear();
-        rebuildChips();
+        _drafts.erase(_key);
         refreshLook();
+        compositionChanged();
         if (!composed.blocks.empty())
             _ctx.backend.scheduleBlocks(
-                _key.conv, text, std::move(composed.blocks), _key.thread, at, nullptr
+                key.conv, text, std::move(composed.blocks), key.thread, at, std::move(done)
             );
         else
-            _ctx.backend.scheduleMessage(_key.conv, text, _key.thread, at, nullptr);
+            _ctx.backend.scheduleMessage(key.conv, text, key.thread, at, std::move(done));
     });
 }
 

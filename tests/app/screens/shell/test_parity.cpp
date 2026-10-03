@@ -102,9 +102,12 @@ struct Fake : fake::FakeBackend {
             conv, std::move(text), std::move(blocks), thread, bc, std::move(done)
         );
     }
-    void scheduleMessage(ConvRef conv, std::string text, Ts thread, int64_t at, Done) override {
+    void
+    scheduleMessage(ConvRef conv, std::string text, Ts thread, int64_t at, Done done) override {
         scheduled     = {conv, thread, at};
         scheduledText = std::move(text);
+        if (done)
+            done(scheduleError.empty(), scheduleError);
     }
     struct Scheduled {
         ConvRef conv   = kNoConv;
@@ -120,6 +123,7 @@ struct Fake : fake::FakeBackend {
     int         broadcasts = 0;
     ConvRef     suggestFor = kNoConv;
     std::string membersError, lastBlocks;
+    std::string scheduleError; // scheduleMessage fails with it
 
     std::string presenceError; // setPresence fails with it
     std::string statusError;   // setStatus too
@@ -744,8 +748,9 @@ TEST("thread panel: msga's header buttons; the broadcast tick only where the ser
     CHECK_STR(panel->muteButton()->tooltip(), "Unmute thread");
     CHECK_FALSE(panel->broadcastShown()); // the fake backend can't broadcast replies
     shell::Composer *tc = h.sh->threadComposer();
-    CHECK(tc->scheduleVisible());                // msga's thread composer never hides it
-    CHECK_FALSE(h.composer().scheduleVisible()); // the channel's follows the service
+    // Both composers' schedule chevrons follow the service.
+    CHECK_FALSE(tc->scheduleVisible());
+    CHECK_FALSE(h.composer().scheduleVisible());
     CHECK_STR(tc->edit().accessibleName(), "Reply in thread\xE2\x80\xA6");
 
     // A Slack workspace: ticked, the reply goes to the channel too, once.
@@ -831,6 +836,71 @@ TEST("schedule send: msga's date-time picker, an hour out; a thread reply stays 
     ja.step(1);
     CHECK(ja.hour() == 8);
     base::setDateLanguage("en");
+}
+
+TEST(
+    "schedule send: the chevron follows the open workspace; files are refused; a failure "
+    "gives the text back"
+) {
+    // The shell is built before a workspace is behind the proxy: switching
+    // to one that schedules shows the chevrons, switching away hides them.
+    Harness h;
+    h.sh->openThread(h.conv("C0DESIGN"), h.backend.findTs(h.conv("C0DESIGN"), "Proposal B"));
+    pump();
+    shell::Composer &c  = h.composer();
+    shell::Composer *tc = h.sh->threadComposer();
+    CHECK_FALSE(c.scheduleVisible());
+    h.backend.schedule = true;
+    h.sh->workspaceChanged();
+    CHECK(c.scheduleVisible());
+    CHECK(tc->scheduleVisible());
+    h.backend.schedule = false;
+    h.sh->workspaceChanged();
+    CHECK_FALSE(c.scheduleVisible());
+    CHECK_FALSE(tc->scheduleVisible());
+    h.backend.schedule = true;
+    h.sh->workspaceChanged();
+
+    auto scheduleNow = [&] {
+        c.openSchedule();
+        pump();
+        ui::Popup *p = h.win->topPopup();
+        REQUIRE(p != nullptr);
+        auto *schedule = static_cast<ui::Clickable *>(findView(p, [](ui::View *v) {
+            return v->accessibleName() == "Schedule";
+        }));
+        REQUIRE(schedule != nullptr);
+        schedule->activate();
+        pump();
+    };
+
+    // Attachments can't go with it: nothing is scheduled, nothing is lost.
+    c.edit().insertText("with a file");
+    REQUIRE(c.addAttachments({MSGA_TEST_ASSETS "/images/blog-hero.png"}) == 1);
+    c.openSchedule();
+    pump();
+    CHECK(h.backend.scheduled.conv == kNoConv);
+    CHECK(h.sh->errorBanner()->visible());
+    CHECK_STR(
+        h.sh->errorBanner()->text(), "Files can't be scheduled. Send them now or remove them first."
+    );
+    CHECK(c.attachments().size() == 1);
+    CHECK_STR(c.edit().text(), "with a file");
+    c.removeAttachment(0);
+
+    // Scheduled: the composer empties.
+    scheduleNow();
+    CHECK(h.backend.scheduled.conv == h.conv("C0DESIGN"));
+    CHECK(h.backend.scheduled.thread == 0);
+    CHECK_STR(h.backend.scheduledText, "with a file");
+    CHECK(c.edit().empty());
+
+    // Refused by the service: the text comes back to be sent another way.
+    h.backend.scheduleError = "time_in_past";
+    c.edit().insertText("too late");
+    scheduleNow();
+    CHECK_STR(h.backend.scheduledText, "too late");
+    CHECK_STR(c.edit().text(), "too late");
 }
 #endif
 

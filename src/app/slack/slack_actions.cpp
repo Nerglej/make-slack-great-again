@@ -126,6 +126,9 @@ std::string friendlySendError(const std::string &e) {
         {"channel_not_found", N_("This conversation no longer exists.")},
         {"restricted_action", N_("You don't have permission to post here.")},
         {"no_permission", N_("You don't have permission to post here.")},
+        // chat.scheduleMessage's own
+        {"time_in_past", N_("That time has already passed.")},
+        {"time_too_far", N_("Messages can be scheduled up to 120 days ahead.")},
     };
     for (const auto &t : kText)
         if (e == t.code)
@@ -1168,11 +1171,17 @@ void SlackBackend::scheduleBlocks(
     addParam(form, "post_at", str::number(postAt));
     api("chat.scheduleMessage",
         std::move(form),
-        [done = std::move(done)](const json::Document &, const std::string &err) {
+        [this, done = std::move(done)](const json::Document &, const std::string &err) {
             if (err == "cancelled")
                 return;
-            if (!err.empty())
+            if (!err.empty()) {
                 LOG_WARN("slack", "chat.scheduleMessage: %s", err.c_str());
+                // Nothing on screen stands for it: the banner says why.
+                if (onError)
+                    onError(
+                        i18n::arg(i18n::tr("Couldn't schedule message: %1"), friendlySendError(err))
+                    );
+            }
             if (done)
                 done(err.empty(), err);
         });

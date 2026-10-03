@@ -2430,6 +2430,10 @@ msgid "Ignore"
 msgstr "無視"
 
 #: src/app/screens/shell/composer.cpp
+msgid "Files can't be scheduled. Send them now or remove them first."
+msgstr "ファイルは予約送信できません。今すぐ送信するか、先に削除してください。"
+
+#: src/app/screens/shell/composer.cpp
 msgid "GIF · %1"
 msgstr "GIF · %1"
 
@@ -3637,6 +3641,14 @@ msgid "You don't have permission to post here."
 msgstr "ここに投稿する権限がありません。"
 
 #: src/app/slack/slack_actions.cpp
+msgid "That time has already passed."
+msgstr "その時刻はすでに過ぎています。"
+
+#: src/app/slack/slack_actions.cpp
+msgid "Messages can be scheduled up to 120 days ahead."
+msgstr "メッセージは120日先まで予約できます。"
+
+#: src/app/slack/slack_actions.cpp
 msgid "Upload failed: %1"
 msgstr "アップロードに失敗しました: %1"
 
@@ -3655,6 +3667,10 @@ msgstr "リマインダーを削除できませんでした: %1"
 #: src/app/slack/slack_actions.cpp
 msgid "Couldn't remove the saved message: %1"
 msgstr "保存済みメッセージを削除できませんでした: %1"
+
+#: src/app/slack/slack_actions.cpp
+msgid "Couldn't schedule message: %1"
+msgstr "メッセージを予約できませんでした: %1"
 
 #: src/app/slack/slack_actions.cpp
 msgid "Could not update profile: %1"
