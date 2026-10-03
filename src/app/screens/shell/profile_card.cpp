@@ -6,6 +6,7 @@
 #include "base/str.h"
 #include "base/time.h"
 #include "gfx/icons_generated.h"
+#include "screens/shell/shell_text.h"
 
 #include <algorithm>
 #include <cmath>
@@ -60,16 +61,6 @@ text::Style px(float size, bool bold, Tone t) {
     return pxFont(size, bold ? text::Weight::Bold : text::Weight::Regular, tone(t));
 }
 
-std::unique_ptr<text::Layout> line(std::string_view s, const text::Style &st, float w, float k) {
-    text::AttributedText t;
-    t.append(s, st);
-    text::LayoutOptions o;
-    o.maxWidth = w;
-    o.maxLines = 1;
-    o.ellipsis = true;
-    return text::Layout::build(t, o, k);
-}
-
 uint32_t nowMs() {
     return uint32_t(app()->nowMs());
 }
@@ -112,17 +103,17 @@ void ProfileCard::build() {
                                : u.admin ? tr("Workspace Admin")
                                : u.bot   ? tr("App")
                                          : nullptr;
-    _role              = role ? line(role, px(13, true, Primary), kWidth - 2 * kPad, k) : nullptr;
-    _name              = line(u.label(), px(16, true, Primary), textW - kDotGap - kDot, k);
+    _role = role ? oneLineLayout(role, px(13, true, Primary), kWidth - 2 * kPad, k) : nullptr;
+    _name = oneLineLayout(u.label(), px(16, true, Primary), textW - kDotGap - kDot, k);
     std::string status = emoji::toUnicode(u.statusEmoji);
     if (!u.statusText.empty())
         status = status.empty() ? u.statusText : str::concat({status, " ", u.statusText});
-    _status = status.empty() ? nullptr : line(status, px(13, false, Secondary), textW, k);
-    _title  = u.title.empty() ? nullptr : line(u.title, px(13, false, Secondary), textW, k);
+    _status = status.empty() ? nullptr : oneLineLayout(status, px(13, false, Secondary), textW, k);
+    _title = u.title.empty() ? nullptr : oneLineLayout(u.title, px(13, false, Secondary), textW, k);
     const bool copied = _copiedUntil && int32_t(_copiedUntil - nowMs()) > 0;
     _email            = u.email.empty()
                             ? nullptr
-                            : line(
+                            : oneLineLayout(
                                   copied ? std::string(tr("Copied")) : u.email,
                                   [&] {
                            text::Style s =
@@ -136,7 +127,7 @@ void ProfileCard::build() {
     if (u.hasTz) {
         const int64_t now   = base::nowSecs();
         const int64_t local = now + u.tzOffset - base::localTime(now).utcOffset;
-        _clock              = line(
+        _clock              = oneLineLayout(
             i18n::arg(tr("%1 local time"), base::formatTime(local)),
             px(13, false, Primary),
             kWidth,
@@ -145,7 +136,7 @@ void ProfileCard::build() {
     } else {
         _clock = nullptr;
     }
-    _btn = line(tr("Message"), px(13, true, Primary), kWidth, k);
+    _btn = oneLineLayout(tr("Message"), px(13, true, Primary), kWidth, k);
 
     const float detailH = std::ceil(px(13, false, Primary).size * 1.4f);
     _headerH            = _role ? 34 : 0;

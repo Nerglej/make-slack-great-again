@@ -162,6 +162,7 @@ public:
     // already attached are skipped). Returns how many were added.
     size_t                          addAttachments(const std::vector<std::string> &paths);
     void                            removeAttachment(size_t i);
+    void                            clearAttachments(); // all of them, at once
     const std::vector<std::string> &attachments() const { return _files; }
     void                            chooseAttachments(); // the paperclip
     ui::View                       *attachmentStrip() const { return _chipRow; }
@@ -213,7 +214,6 @@ public:
     GlyphButton *sendButton() const { return _sendBtn; }
     GlyphButton *gifButton() const { return _gifBtn; }
     GlyphButton *mentionButton() const { return _mentionBtn; }
-    bool         focusedLook() const { return _focusedLook; }
 
     bool onEvent(ui::Event &e) override; // file drops
     void layout() override;
@@ -317,10 +317,30 @@ private:
     struct FoldedUser {
         std::string label, name, flabel, fname;
     };
-    std::vector<FoldedUser>  _folded;
-    size_t                   _mentionFolds = 0, _pickRecomputes = 0;
-    void                     computePickList();
-    std::vector<std::string> _files;
+    std::vector<FoldedUser> _folded;
+    // The # filter's folded channel names, by ConvRef (refolded on a rename).
+    struct FoldedName {
+        std::string name, folded;
+    };
+    std::vector<FoldedName>              _foldedConvs;
+    // The / list: the conversation's commands as last fetched, and the same
+    // sorted by name with their names folded (redone when the list changes).
+    model::ConvRef                       _cmdConv = model::kNoConv;
+    std::vector<std::string>             _cmdNames;
+    std::vector<model::Backend::Command> _cmdSorted;
+    std::vector<std::string>             _cmdFolded;
+    size_t                               _mentionFolds = 0, _pickRecomputes = 0;
+    void                                 computePickList();
+    void                                 refreshCommands();
+    std::vector<std::string>             _files;
+    // What a chip shows of its file (its name and size, a text file's first
+    // lines), read when it was attached: kept while it stays attached.
+    struct ChipInfo {
+        std::string path, preview;
+        int64_t     size = 0;
+    };
+    std::vector<ChipInfo>    _chipInfo;
+    std::string              _shownPlaceholder; // what the editor was last given
     std::shared_ptr<int>     _alive      = std::make_shared<int>(0); // guards dialog callbacks
     double                   _lastTyping = -1e9;
     // The undo-send offer (the pill above the box, 5 s): the sent message,

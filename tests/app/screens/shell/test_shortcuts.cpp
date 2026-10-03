@@ -323,6 +323,25 @@ TEST("search: Enter searches, the arrows pick a result, Enter opens it and close
     CHECK(h.edit().focused());
 }
 
+TEST("search: a user resolving later renames the rows in place; the pick stays") {
+    Harness h;
+    h.chord(kCtrl, K::F);
+    shell::MessageSearch *s = h.sh->messageSearch();
+    REQUIRE(s->shown());
+    s->runSearch("proposal b");
+    for (int i = 0; i < 100 && s->statusText() == "Searching\xE2\x80\xA6"; ++i)
+        pump(5);
+    REQUIRE(!s->results().empty());
+    h.key(K::Up);
+    const int sel = s->selected();
+    REQUIRE(sel >= 0);
+    h.store.usersChanged();
+    h.store.usersChanged(); // a burst: one pass over the rows
+    pump();
+    CHECK(s->selected() == sel);
+    CHECK(s->results().size() > 0);
+}
+
 TEST("search: a result's labels") {
     Harness             h;
     const model::Store &st = h.store;

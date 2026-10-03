@@ -124,7 +124,14 @@ struct Settings {
 
     // Missing or broken files leave the defaults.
     static Settings    load(const std::string &path);
-    bool               save(const std::string &path) const; // atomic, owner-only
+    bool               save(const std::string &path) const; // atomic, owner-only, now
+    // save() with the file written on a worker: the text is made here (the
+    // secrets that changed go to the store first), and the writes to one
+    // path land in call order, a later save() included: an older text never
+    // replaces a newer one. A warning in the log when it fails.
+    void               saveInBackground(plat::App &app, const std::string &path) const;
+    // The file's text (the secrets that changed go to the store on the way).
+    std::string        toFile() const;
     // <configDir>/settings.json, or "" when the OS gives no config dir.
     static std::string defaultPath(plat::App &app);
 };

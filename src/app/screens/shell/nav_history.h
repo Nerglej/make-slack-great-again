@@ -37,8 +37,6 @@ public:
     // The location to show, or an invalid one when there is none.
     NavLocation        goBack(const Validator &valid) { return go(_back, _forward, valid); }
     NavLocation        goForward(const Validator &valid) { return go(_forward, _back, valid); }
-    bool               canGoBack() const { return !_back.empty(); }
-    bool               canGoForward() const { return !_forward.empty(); }
     // Drops every trace of a signed-out workspace.
     void               purge(const std::string &key);
 

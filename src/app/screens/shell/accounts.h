@@ -28,10 +28,6 @@ class SlackBackend;
 class SocketMode;
 class TokenDeriver;
 } // namespace slack
-namespace claude {
-class Backend;
-}
-
 namespace shell {
 
 class Shell;
@@ -53,36 +49,34 @@ public:
     ~Accounts();
 
     // Opens the active workspace, or the signed-out page.
-    void             start();
+    void start();
     // The rail's "+" / "Log in to workspace": the service menu at `anchor`.
-    void             promptAdd(ui::PointF anchor);
+    void promptAdd(ui::PointF anchor);
     // Slack's sign-in (the session-import dialog first).
-    void             connectSlack();
+    void connectSlack();
     // The Claude Code workspace: nothing to sign in to — the CLI must be
     // there and logged in.
-    void             connectClaudeCode();
-    // The active workspace's Claude Code backend (null for Slack).
-    claude::Backend *claudeBackend() const;
+    void connectClaudeCode();
     // OAuth with app keys ("Use app keys (OAuth) instead").
-    void             loginWithAppKeys();
+    void loginWithAppKeys();
     // A msga:// URL from the OS (the OAuth callback). True if consumed.
-    bool             handleUrl(std::string_view url);
+    bool handleUrl(std::string_view url);
     // plat's NetworkChanged: the shared Socket Mode socket reconnects when
     // the network comes back.
-    void             networkChanged(bool online);
+    void networkChanged(bool online);
     // "Log out from <workspace>": the active one, or `key`'s ("" = active).
-    void             signOut();
-    void             signOut(const std::string &key);
+    void signOut();
+    void signOut(const std::string &key);
     // The rail: a tile clicked, a drag-reorder
     // dropped (saved), a workspace's Mute/Unmute (saved with its record).
-    void             switchTo(const std::string &key);
-    void             reorder(const std::vector<std::string> &keys);
-    void             setMuted(const std::string &key, bool muted);
+    void switchTo(const std::string &key);
+    void reorder(const std::vector<std::string> &keys);
+    void setMuted(const std::string &key, bool muted);
     // Settings → "Import Slack session…" (the dialog without the OAuth link
     // wired) and "Convert them to session".
-    void             importSession();
-    void             convertToSession();
-    int              oauthSlackWorkspaces() const;
+    void importSession();
+    void convertToSession();
+    int  oauthSlackWorkspaces() const;
 
     auth::WorkspaceStore &store() { return _store; }
 

@@ -71,7 +71,6 @@ public:
     size_t      count() const { return items.size(); }
     size_t      visibleCount() const { return shown.size(); }
     const Item &visibleItem(size_t row) const { return items[shown[row]]; }
-    int         selectedRow() const { return _selected; }
     void        setSelectedRow(int row); // -1: none
     void        moveSelection(int delta);
     void        activateSelected();

@@ -39,14 +39,9 @@ const AgentRole *findRole(const std::vector<AgentRole> &team, const std::string 
 
 } // namespace
 
-void Shell::saveSettingsNow() {
-    if (!_settings.save(_settingsPath) && !_settingsPath.empty())
-        LOG_WARN("shell", "could not save %s", _settingsPath.c_str());
-}
-
 void Shell::buildTeammatePage(View *stack) {
     _teammatePage =
-        stack->add<TeammatePage>(_ctx, _avatars, _settings, [this] { saveSettingsNow(); });
+        stack->add<TeammatePage>(_ctx, _avatars, _settings, [this] { saveSettingsSoon(); });
     _teammatePage->setVisible(false);
     _teammatePage->onOpenSession   = [this](ConvRef c) { open(c); };
     _teammatePage->onEdit          = [this](const std::string &id) { editTeammate(id); };
@@ -117,7 +112,7 @@ void Shell::startAgentSession(bool skipPermissionChecks) {
                 return;
             const std::string dir   = paths.front();
             _settings.claudeLastDir = dir;
-            saveSettingsNow();
+            saveSettingsSoon();
             // The generalist; a specialist is written to on its page.
             _ctx.backend.startAgentSession(
                 dir,
@@ -131,7 +126,7 @@ void Shell::startAgentSession(bool skipPermissionChecks) {
                         return;
                     }
                     recent_folders::bump(_settings, dir);
-                    saveSettingsNow();
+                    saveSettingsSoon();
                     open(conv); // focuses the composer
                 }
             );
@@ -152,26 +147,10 @@ void Shell::openTeammate(const std::string &role) {
     const bool same = teammateOpen() && _teammatePage->teammate().id == role;
     if (!same)
         leaveTeammate(); // another teammate's: its draft is kept
-    leaveThreads();
-    leaveSaved();
-    leaveScheduled();
-    _search->hideNow(); // the conversation's search goes with it
-    // Unlike the other overview pages the composer stays: writing to a
-    // teammate starts a session with it. The conversation's chrome goes.
-    if (threadOpen())
-        closeThread();
-    _composer->setTarget(kNoConv, 0); // stashes the conversation's draft
-    _current = kNoConv;
-    _header->setVisible(false);
-    _tabs->setVisible(false);
-    _huddleBanner->setVisible(false);
-    _messages->setVisible(false);
-    _welcome->setVisible(false);
-    _canvas->flushPendingSave();
-    _canvas->setVisible(false);
-    _typing->setTarget(kNoConv, 0);
-    _typing->setVisible(false);
-    _ctx.backend.setActiveConversation(kNoConv, 0);
+    leavePages();
+    // Unlike the overview pages the composer stays: writing to a teammate
+    // starts a session with it. The conversation's chrome goes.
+    leaveConversationChrome(true);
     _sidebar->selectTeammate(role);
     _teammatePage->setVisible(true);
     _teammatePage->open(*mate);
@@ -209,8 +188,7 @@ void Shell::leaveTeammate() {
              _composer->attachments()}
         );
     _composer->edit().clear();
-    while (!_composer->attachments().empty())
-        _composer->removeAttachment(0);
+    _composer->clearAttachments();
     _composer->onSendRequest = nullptr;
     _composer->setPlaceholder({});
     _composer->setEnabled(true);
@@ -240,10 +218,9 @@ bool Shell::startSessionWithTeammate() {
     const std::string role  = _teammatePage->teammate().id;
     const std::string dir   = _teammatePage->folder();
     _settings.claudeLastDir = dir;
-    saveSettingsNow();
+    saveSettingsSoon();
     _composer->edit().clear();
-    while (!_composer->attachments().empty())
-        _composer->removeAttachment(0);
+    _composer->clearAttachments();
     std::weak_ptr<int> alive = _agentAlive;
     _ctx.backend.startAgentSession(
         dir, false, role, [this, alive, dir, text, files](ConvRef conv, const std::string &err) {
@@ -255,7 +232,7 @@ bool Shell::startSessionWithTeammate() {
                 return;
             }
             recent_folders::bump(_settings, dir);
-            saveSettingsNow();
+            saveSettingsSoon();
             // Listed by now (the backend announces a session before this):
             // open it, then the text is its first message.
             open(conv);

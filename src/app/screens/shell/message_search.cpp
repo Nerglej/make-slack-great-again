@@ -123,7 +123,7 @@ MessageSearch::MessageSearch(screens::Context &ctx) : _ctx(ctx) {
     // A late-resolved user can now be named in a result's preview.
     _observer = _ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
         if (ch.kind == model::ChangeKind::Users && !_results.empty() && visible())
-            populate();
+            renameSoon();
     });
 }
 
@@ -201,6 +201,8 @@ void MessageSearch::reset() {
     _field->clear();
     _results.clear();
     _rows.clear();
+    _heads.clear();
+    _previews.clear();
     _list->content()->clearChildren();
     _list->setVisible(false);
     _statusText.clear();
@@ -247,6 +249,8 @@ void MessageSearch::runSearch(const std::string &query) {
     _sel = -1;
     _list->setVisible(true);
     _rows.clear();
+    _heads.clear();
+    _previews.clear();
     _list->content()->clearChildren();
     addStatus(tr("Searching\xE2\x80\xA6"));
     const uint32_t     gen   = ++_generation;
@@ -265,8 +269,16 @@ void MessageSearch::addStatus(std::string text) {
     _card->invalidateLayout(); // the list is a layout boundary: the card follows it
 }
 
+std::string MessageSearch::headText(const model::Backend::SearchHit &r) const {
+    return str::concat(
+        {searchConvLabel(_ctx.store, r.conv), "  ", base::formatDateTime(model::tsSecs(r.ts))}
+    );
+}
+
 void MessageSearch::populate() {
     _rows.clear();
+    _heads.clear();
+    _previews.clear();
     _list->content()->clearChildren();
     _sel = -1;
     _statusText.clear();
@@ -278,20 +290,36 @@ void MessageSearch::populate() {
     for (size_t i = 0; i < _results.size(); ++i) {
         const model::Backend::SearchHit &r   = _results[i];
         auto                            *row = _list->content()->add<ResultRow>();
-        row->add<Label>(
-               str::concat(
-                   {searchConvLabel(store, r.conv), "  ", base::formatDateTime(model::tsSecs(r.ts))}
-               ),
-               Font::Body,
-               C::FormText
-        )
-            ->setMaxLines(1);
-        row->add<Label>(searchPreview(store, r.text), Font::Body, C::FormText)->setMaxLines(1);
+        _heads.push_back(row->add<Label>(headText(r), Font::Body, C::FormText));
+        _heads.back()->setMaxLines(1);
+        _previews.push_back(row->add<Label>(searchPreview(store, r.text), Font::Body, C::FormText));
+        _previews.back()->setMaxLines(1);
         row->setTooltip(mrkdwn::parse(r.text).text);
         row->onClick = [this, i] { activate(int(i)); };
         _rows.push_back(row);
     }
     _card->invalidateLayout();
+}
+
+void MessageSearch::renameSoon() {
+    if (_renameQueued)
+        return;
+    _renameQueued            = true;
+    std::weak_ptr<int> alive = _alive;
+    _ctx.app.platform().post([this, alive] {
+        if (alive.expired())
+            return;
+        _renameQueued = false;
+        rename();
+    });
+}
+
+void MessageSearch::rename() {
+    const model::Store &store = _ctx.store;
+    for (size_t i = 0; i < _rows.size() && i < _results.size(); ++i) {
+        _heads[i]->setText(headText(_results[i]));
+        _previews[i]->setText(searchPreview(store, _results[i].text));
+    }
 }
 
 void MessageSearch::navigateBy(int delta) {

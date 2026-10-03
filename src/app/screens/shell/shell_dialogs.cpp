@@ -7,13 +7,16 @@
 #include "app/screens/common/file_dialogs.h"
 #include "app/screens/common/message_text.h"
 #include "app/screens/common/remote_images.h"
+#include "app/screens/common/avatar_initial.h"
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
+#include "base/utf8.h"
 #include "gfx/icons_generated.h"
 #include "screens/shell/composer.h"
+#include "screens/shell/shell_text.h"
 #include "ui/controls.h"
 
 #ifdef MSGA_HAVE_MESSAGES
@@ -37,13 +40,6 @@ using i18n::tr;
 namespace shell {
 
 namespace {
-
-std::string lower(std::string s) {
-    for (char &c : s)
-        if (c >= 'A' && c <= 'Z')
-            c = char(c + 32);
-    return s;
-}
 
 // ── The conversation picker ─────────────────────────────────────────────────
 
@@ -90,16 +86,12 @@ public:
                 p.fillRect({1, y, b.w - 2, rowH()}, ui::color(C::AccentSubtle));
             else if (int(i) == _hover)
                 p.fillRect({1, y, b.w - 2, rowH()}, ui::color(C::FormHighlight));
-            text::AttributedText t;
-            t.append(
+            auto l = oneLineLayout(
                 _items[i].label,
-                ui::pxFont(15, text::Weight::Regular, cur ? ui::color(C::ReplyLink) : 0xff1d1c1dU)
+                ui::pxFont(15, text::Weight::Regular, cur ? ui::color(C::ReplyLink) : 0xff1d1c1dU),
+                b.w - 24,
+                k
             );
-            text::LayoutOptions o;
-            o.maxLines = 1;
-            o.ellipsis = true;
-            o.maxWidth = b.w - 24;
-            auto l     = text::Layout::build(t, o, k);
             l->paint(p, snapPx({12, y + std::floor((rowH() - l->height()) / 2)}));
         }
         p.restore();
@@ -228,14 +220,17 @@ private:
         const bool chans = q[0] == '#', people = q[0] == '@';
         if (chans || people)
             q.erase(0, 1);
-        q                      = lower(q);
+        const std::string   fq = utf8::foldCase(q); // folded once, matched per row
         const model::Store &st = _ctx.store;
         std::vector<Target> out;
-        auto                match = [&](const std::string &s) {
-            return q.empty() || lower(s).find(q) != std::string::npos;
+        auto                match = [&](std::string_view s) {
+            return fq.empty() || utf8::containsFoldedNeedle(s, fq);
         };
+        std::vector<bool> hasDm(st.userCount(), false); // people with a DM
         for (ConvRef c = 0; c < st.conversationCount(); ++c) {
             const auto &cv = st.conversation(c);
+            if (cv.kind == ConvKind::Dm && cv.dmUser < hasDm.size())
+                hasDm[cv.dmUser] = true;
             if (!cv.member)
                 continue;
             const bool direct = cv.isDirect();
@@ -252,26 +247,29 @@ private:
                 if (!r.id.empty() && match(r.name))
                     out.push_back({kNoConv, kNoUser, r.name, r.id});
         if (!chans) { // people without a DM (up to 50): prefix matches first
-            std::vector<std::pair<int, Target>> ppl;
+            struct Person {
+                bool        prefix;
+                std::string folded; // the label, folded: the order
+                Target      target;
+            };
+            std::vector<Person> ppl;
             for (UserRef u = 0; u < st.userCount(); ++u) {
                 const model::User &us = st.user(u);
-                if (us.bot || us.placeholder || u == st.me)
+                if (us.bot || us.placeholder || u == st.me || hasDm[u])
                     continue;
-                bool hasDm = false;
-                for (ConvRef c = 0; c < st.conversationCount() && !hasDm; ++c)
-                    hasDm =
-                        st.conversation(c).kind == ConvKind::Dm && st.conversation(c).dmUser == u;
                 const std::string label(us.label());
-                if (hasDm || !match(label))
+                if (!match(label))
                     continue;
-                ppl.push_back({lower(label).rfind(q, 0) == 0 ? 0 : 1, {kNoConv, u, label}});
+                std::string folded = utf8::foldCase(label);
+                const bool  prefix = str::startsWith(folded, fq);
+                ppl.push_back({prefix, std::move(folded), {kNoConv, u, label}});
             }
-            std::sort(ppl.begin(), ppl.end(), [](const auto &a, const auto &b) {
-                return a.first != b.first ? a.first < b.first
-                                          : lower(a.second.label) < lower(b.second.label);
+            const auto top = ppl.begin() + long(std::min<size_t>(ppl.size(), 50));
+            std::partial_sort(ppl.begin(), top, ppl.end(), [](const Person &a, const Person &b) {
+                return a.prefix != b.prefix ? a.prefix : a.folded < b.folded;
             });
-            for (size_t i = 0; i < ppl.size() && i < 50; ++i)
-                out.push_back(ppl[i].second);
+            for (auto it = ppl.begin(); it != top; ++it)
+                out.push_back(std::move(it->target));
         }
         if (out.empty())
             return;
@@ -485,6 +483,14 @@ public:
     // The views go first: they point into the Contexts below.
     ~ForwardDialog() override { clearChildren(); }
     void focusPicker() { _picker->edit().focus(); }
+    // The picker's drop-down is a popup of its own: it closes with the
+    // dialog, not later from the dialog's destructor (which runs while the
+    // window disposes of closed popups).
+    void willClose() override {
+        if (_picker)
+            _picker->closeList();
+        Dialog::willClose();
+    }
 
 private:
     // The picker and the composer work in the
@@ -656,6 +662,211 @@ private:
     Button                                  *_fwd      = nullptr;
 };
 
+// ── Picture dialogs ─────────────────────────────────────────────────────────
+
+// The pictures in `dir` whose names start with `prefix`, sorted (the names
+// carry the time they were saved: the last is the newest).
+std::vector<std::string> listPictures(const std::string &dir, const std::string &prefix) {
+    std::vector<std::string>    out;
+    std::vector<file::DirEntry> es;
+    if (file::listDir(dir, &es))
+        for (const file::DirEntry &e : es)
+            if (!e.isDir && str::startsWith(e.name, prefix))
+                out.push_back(file::join(dir, e.name));
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+std::string iconDir(plat::App &app) {
+    // Pictures from earlier versions are named slack_<id>-…, ours <id>-….
+    return file::join(identity::dataDir(app), "workspace_icons");
+}
+
+std::string iconPrefix(const std::string &workspaceId) {
+    return str::asciiLower(workspaceId) + "-";
+}
+
+// The workspace icon folder, listed once and again after a change of ours
+// (a save, a sign-out): the rail and every notification ask for it.
+struct IconIndex {
+    std::string              dir;
+    std::vector<std::string> files;
+    bool                     listed = false;
+};
+
+IconIndex &iconIndex() {
+    static IconIndex index;
+    return index;
+}
+
+const std::vector<std::string> &iconFiles(plat::App &app) {
+    IconIndex        &x   = iconIndex();
+    const std::string dir = iconDir(app);
+    if (!x.listed || x.dir != dir) {
+        x.files  = listPictures(dir, {});
+        x.dir    = dir;
+        x.listed = true;
+    }
+    return x.files;
+}
+
+// <stem>-<msecs>.img naming: a new file each time, so nothing caches the
+// old picture under the same path.
+std::string newPictureName(std::string_view prefix) {
+    return str::concat({prefix, std::to_string(base::nowMicros() / 1000), ".img"});
+}
+
+// The dialogs' common frame: the preview (the subclass's, added first),
+// "Choose image…" and "Use default", the hint, Save and Cancel; a dropped
+// image file is picked like a chosen one. Save copies the picture into the
+// data folder (the original may move or vanish) on a worker and removes the
+// earlier ones; a copy that fails keeps the dialog open and says so.
+class ImagePickDialog : public Dialog {
+public:
+    bool onEvent(Event &e) override {
+        if (e.type == EventType::DropEnter || e.type == EventType::DropMove) {
+            if (!screens::dragOffersFiles(e.raw))
+                return Dialog::onEvent(e);
+            e.dropAction = plat::DropAction::Copy;
+            return true;
+        }
+        if (e.type == EventType::Drop) {
+            const auto p = screens::droppedFiles(e.raw);
+            if (!p.empty())
+                load(p[0]);
+            return true;
+        }
+        return Dialog::onEvent(e);
+    }
+
+protected:
+    // Where Save puts the picture: `dir`, as <prefix><msecs>.img; the files
+    // there with that prefix are the earlier pictures, removed but `keep`.
+    struct Target {
+        std::string dir, prefix, keep;
+    };
+
+    ImagePickDialog(screens::Context &ctx, const char *title, const char *chooseTitle, bool custom)
+        : Dialog(title, 440), _ctx(ctx), _hasCustom(custom), _chooseTitle(chooseTitle) {
+        content()->style().spacing(8);
+    }
+    // The controls under the preview; `extra` at the button row's start.
+    void buildControls(const char *hint, View *extra) {
+        auto *row = content()->add<View>();
+        row->style().row().spacing(8).items(Align::Center);
+        row->add<View>()->style().flex(1);
+        auto *choose =
+            row->add<Button>(tr("Choose image\xE2\x80\xA6"), V::Secondary, Button::Form::Normal);
+        _reset = row->add<Button>(tr("Use default"), V::Ghost, Button::Form::Normal);
+        row->add<View>()->style().flex(1);
+        _hint = styledLabel(
+            content(), hint, ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
+        );
+        _hint->setAlign(text::LayoutOptions::Align::Center);
+        _save = makeButton(tr("Save"), V::Primary);
+        addButtonRow(_save, makeButton(tr("Cancel"), V::Secondary), extra);
+        choose->onClick = [this] { choose_(); };
+        _reset->onClick = [this] {
+            _chosen.clear();
+            _resetOn = true;
+            reset();
+            refresh();
+        };
+        _save->onClick = [this] { save(); };
+        refresh();
+    }
+    // A picture to try (chosen or dropped); loaded(path) once it is one,
+    // notAnImage() when it isn't.
+    virtual void   load(const std::string &path) = 0;
+    // "Use default": the preview without a picture of its own.
+    virtual void   reset()                       = 0;
+    virtual Target target() const                = 0;
+    // Saved: the picture's new path ("" = the default).
+    virtual void   saved(const std::string &now) = 0;
+
+    void loaded(const std::string &path) {
+        _chosen  = path;
+        _resetOn = false;
+        _dirty   = true;
+        refresh();
+    }
+    void notAnImage() { setHint(tr("That file could not be read as an image."), C::FormTextMuted); }
+    void refresh() {
+        _reset->setVisible(_hasCustom || !_chosen.empty());
+        _reset->setEnabled(!_resetOn);
+        _save->setEnabled(_dirty && !_saving);
+    }
+
+    screens::Context    &_ctx;
+    std::string          _chosen;
+    bool                 _hasCustom, _resetOn = false, _dirty = false;
+    std::shared_ptr<int> _alive = std::make_shared<int>(0); // guards the workers' answers
+
+private:
+    void setHint(const char *text, C color) {
+        text::AttributedText t;
+        t.append(text, ui::pxFont(11, text::Weight::Regular, ui::color(color)));
+        _hint->setRichText(std::move(t));
+    }
+    void choose_() {
+        plat::FileDialogDesc d;
+        d.mode    = plat::FileDialogDesc::Mode::Open;
+        d.title   = tr(_chooseTitle);
+        d.filters = {
+            {tr("Images"), {"*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.bmp", "*.svg"}}
+        };
+        screens::fileDialog(_ctx, std::move(d), [this](std::vector<std::string> p) {
+            if (!p.empty())
+                load(p[0]);
+        });
+    }
+    // The copy and the clean-up on a worker, then saved() and the dialog
+    // closes, or it stays open and says the picture could not be saved.
+    void save() {
+        if (!_dirty || _saving)
+            return;
+        _saving                = true;
+        const Target      t    = target();
+        const std::string from = _resetOn ? std::string() : _chosen;
+        const std::string dest =
+            from.empty() ? std::string() : file::join(t.dir, newPictureName(t.prefix));
+        auto ok = std::make_shared<bool>(false);
+        refresh();
+        model::runInBackground(
+            _ctx.app.platform(),
+            [t, from, dest, ok] {
+                std::string bytes;
+                if (!dest.empty() && (!file::makeDirs(t.dir) || !file::readAll(from, &bytes) ||
+                                      !file::writeAtomic(dest, bytes)))
+                    return;
+                const std::string &now = dest.empty() ? t.keep : dest;
+                for (const std::string &f : listPictures(t.dir, t.prefix)) // the earlier ones go
+                    if (f != now)
+                        file::remove(f);
+                *ok = true;
+            },
+            [this, alive = std::weak_ptr<int>(_alive), t, dest, ok] {
+                if (alive.expired())
+                    return;
+                _saving = false;
+                if (!*ok) {
+                    LOG_WARN("shell", "The picture could not be saved.");
+                    setHint(tr("The icon could not be saved."), C::FormError);
+                    refresh();
+                    return;
+                }
+                saved(dest.empty() ? t.keep : dest);
+                accept();
+            }
+        );
+    }
+
+    const char *_chooseTitle;
+    Button     *_reset = nullptr, *_save = nullptr;
+    Label      *_hint   = nullptr;
+    bool        _saving = false; // a save on its worker
+};
+
 // ── Workspace icon ──────────────────────────────────────────────────────────
 
 // The rail's workspace bubble at 96 px, radius 24: the picture, else the
@@ -669,6 +880,10 @@ public:
         _bmp = std::move(b);
         update();
     }
+    void styleChanged() override {
+        _letter.reset();
+        View::styleChanged();
+    }
     void paint(gfx::Painter &p) override {
         const RectF r{0, 0, 96, 96};
         if (_bmp && !_bmp->empty()) {
@@ -681,16 +896,21 @@ public:
         uint32_t h = 0;
         for (char c : _ctx.store().workspaceId)
             h = h * 31 + uint8_t(c);
-        p.fillRoundRect(r, 24, hsl(float((h * 37) % 360), 0.65f, 0.42f));
-        const std::string &n = _ctx.store().workspaceName;
-        std::string        letter =
-            n.empty() ? std::string("?")
-                      : std::string(1, char(n[0] >= 'a' && n[0] <= 'z' ? n[0] - 32 : n[0]));
-        text::AttributedText t;
-        t.append(letter, ui::pxFont(std::round(96.f * 17 / 40), text::Weight::Bold, 0xffffffffU));
-        auto l = text::Layout::build(t, {}, windowScale());
-        l->paint(
-            p, snapPx({std::floor((96 - l->width()) / 2), std::floor((96 - l->height()) / 2)})
+        const std::string &n      = _ctx.store().workspaceName;
+        const std::string  letter = n.empty() ? std::string("?") : screens::avatarInitial(n);
+        if (letter != _shown) { // another workspace, a rename
+            _shown = letter;
+            _letter.reset();
+        }
+        screens::paintInitial(
+            p,
+            *this,
+            r,
+            24,
+            hsl(float((h * 37) % 360), 0.65f, 0.42f),
+            letter,
+            _letter,
+            std::round(96.f * 17 / 40)
         );
     }
 
@@ -717,31 +937,15 @@ private:
     }
     screens::Context                  &_ctx;
     std::shared_ptr<const gfx::Bitmap> _bmp;
+    std::string                        _shown;
+    std::unique_ptr<text::Layout>      _letter;
 };
-
-std::string iconDir(plat::App &app) {
-    // Pictures from earlier versions are named slack_<id>-…, ours <id>-….
-    return file::join(identity::dataDir(app), "workspace_icons");
-}
-// <stem>-<msecs>.png naming: a new file each time, so nothing caches
-// the old picture under the same path.
-std::vector<std::string> iconFiles(plat::App &app, const std::string &workspaceId) {
-    std::vector<std::string>    out;
-    std::vector<file::DirEntry> es;
-    const std::string           dir = iconDir(app), stem = lower(workspaceId) + "-";
-    if (file::listDir(dir, &es))
-        for (const file::DirEntry &e : es)
-            if (!e.isDir && e.name.rfind(stem, 0) == 0)
-                out.push_back(file::join(dir, e.name));
-    std::sort(out.begin(), out.end());
-    return out;
-}
 
 constexpr const char *kIconHint =
     N_("Only you see this icon. The picture is cropped to a square. You can also drop an image "
        "file onto this window.");
 
-class WorkspaceIconDialog final : public Dialog {
+class WorkspaceIconDialog final : public ImagePickDialog {
 public:
     WorkspaceIconDialog(
         screens::Context                        &ctx,
@@ -751,146 +955,46 @@ public:
         std::string                              current,
         std::function<void(const std::string &)> done
     )
-        : Dialog(tr("Workspace icon"), 440), _ctx(ctx), _avatars(avatars),
-          _id(std::move(workspaceId)), _defaultIcon(std::move(defaultIcon)),
-          _hasCustom(!iconFiles(ctx.app.platform(), _id).empty()), _done(std::move(done)) {
-        content()->style().spacing(8);
+        : ImagePickDialog(
+              ctx,
+              tr("Workspace icon"),
+              N_("Choose workspace icon"),
+              !customWorkspaceIconPath(ctx.app.platform(), workspaceId).empty()
+          ),
+          _avatars(avatars), _id(std::move(workspaceId)), _defaultIcon(std::move(defaultIcon)),
+          _done(std::move(done)) {
         _preview = content()->add<IconPreview>(ctx);
         _preview->set(avatars.get(current, 192));
-        auto *row = content()->add<View>();
-        row->style().row().spacing(8).items(Align::Center);
-        row->add<View>()->style().flex(1);
-        auto *choose =
-            row->add<Button>(tr("Choose image\xE2\x80\xA6"), V::Secondary, Button::Form::Normal);
-        _reset = row->add<Button>(tr("Use default"), V::Ghost, Button::Form::Normal);
-        row->add<View>()->style().flex(1);
-        _hint = styledLabel(
-            content(),
-            tr(kIconHint),
-            ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
-        );
-        _hint->setAlign(text::LayoutOptions::Align::Center);
-        _save = makeButton(tr("Save"), V::Primary);
-        addButtonRow(_save, makeButton(tr("Cancel"), V::Secondary), new View());
-        choose->onClick = [this] { choose_(); };
-        _reset->onClick = [this] {
-            _chosen.clear();
-            _resetOn = true;
-            _dirty   = _hasCustom;
-            _preview->set(_avatars.get(_defaultIcon, 192));
-            refresh();
-        };
-        // Saved first: a picture that can't be stored keeps the dialog open
-        // and says so ("The icon could not be saved.").
-        _save->onClick = [this] {
-            if (!_dirty)
-                return;
-            if (apply())
-                accept();
-            else
-                saveFailed();
-        };
-        refresh();
-    }
-    bool onEvent(Event &e) override {
-        // Drops of an image file onto the window.
-        if (e.type == EventType::DropEnter || e.type == EventType::DropMove) {
-            if (!screens::dragOffersFiles(e.raw))
-                return Dialog::onEvent(e);
-            e.dropAction = plat::DropAction::Copy;
-            return true;
-        }
-        if (e.type == EventType::Drop) {
-            const auto p = screens::droppedFiles(e.raw);
-            if (!p.empty())
-                load(p[0]);
-            return true;
-        }
-        return Dialog::onEvent(e);
+        buildControls(tr(kIconHint), new View());
     }
 
 private:
-    void refresh() {
-        _reset->setVisible(_hasCustom || !_chosen.empty());
-        _reset->setEnabled(!_resetOn);
-        _save->setEnabled(_dirty);
-    }
-    void choose_() {
-        plat::FileDialogDesc d;
-        d.mode    = plat::FileDialogDesc::Mode::Open;
-        d.title   = tr("Choose workspace icon");
-        d.filters = {
-            {tr("Images"), {"*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.bmp", "*.svg"}}
-        };
-        screens::fileDialog(_ctx, std::move(d), [this](std::vector<std::string> p) {
-            if (!p.empty())
-                load(p[0]);
-        });
-    }
-    void load(const std::string &path) {
+    void load(const std::string &path) override {
         // Decoded on the worker: the answer comes once it is.
-        std::weak_ptr<char> alive = _alive;
+        std::weak_ptr<int> alive = _alive;
         _avatars.whenReady(path, 192, [this, alive, path](Avatars::Picture bmp) {
             if (alive.expired())
                 return;
-            if (!bmp) {
-                text::AttributedText t;
-                t.append(
-                    tr("That file could not be read as an image."),
-                    ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
-                );
-                _hint->setRichText(std::move(t));
-                return;
-            }
-            _chosen  = path;
-            _resetOn = false;
-            _dirty   = true;
+            if (!bmp)
+                return notAnImage();
             _preview->set(std::move(bmp));
-            refresh();
+            loaded(path);
         });
     }
-    void saveFailed() {
-        text::AttributedText t;
-        t.append(
-            tr("The icon could not be saved."),
-            ui::pxFont(11, text::Weight::Regular, ui::color(C::FormError))
-        );
-        _hint->setRichText(std::move(t));
+    void reset() override {
+        _dirty = _hasCustom;
+        _preview->set(_avatars.get(_defaultIcon, 192));
     }
-    bool apply() {
-        plat::App        &pa  = _ctx.app.platform();
-        const std::string dir = iconDir(pa);
-        const auto        old = iconFiles(pa, _id);
-        std::string       now;
-        if (!_chosen.empty() && !_resetOn) {
-            const std::string dest = file::join(
-                dir,
-                str::concat({lower(_id), "-", std::to_string(base::nowMicros() / 1000), ".img"})
-            );
-            std::string bytes;
-            if (!file::makeDirs(dir) || !file::readAll(_chosen, &bytes) ||
-                !file::writeAtomic(dest, bytes)) {
-                LOG_WARN("shell", "The icon could not be saved.");
-                return false;
-            }
-            now = dest;
-        }
-        for (const std::string &f : old) // the previous picture goes
-            file::remove(f);
+    Target target() const override { return {iconDir(_ctx.app.platform()), iconPrefix(_id), {}}; }
+    void   saved(const std::string &now) override {
+        iconIndex().listed = false; // listed again on the next look
         if (_done)
             _done(now);
-        return true;
     }
 
-    screens::Context                        &_ctx;
     Avatars                                 &_avatars;
     std::string                              _id, _defaultIcon; // the workspace's
     IconPreview                             *_preview = nullptr;
-    Button                                  *_reset = nullptr, *_save = nullptr;
-    Label                                   *_hint = nullptr;
-    std::string                              _chosen;
-    bool                                     _hasCustom, _resetOn = false, _dirty = false;
-    std::shared_ptr<char>                    _alive = std::make_shared<char>(0); // guards load()
     std::function<void(const std::string &)> _done;
 };
 
@@ -921,72 +1025,22 @@ private:
     std::shared_ptr<const gfx::Bitmap> _bmp;
 };
 
-// The data folder (app/identity.h), where earlier versions' tray_icon.png
-// is too; ours have names of their own, so a rollback finds its picture.
-std::string trayDir(plat::App &app) {
-    return identity::dataDir(app);
-}
-
-std::vector<std::string> trayFiles(plat::App &app) {
-    std::vector<std::string>    out;
-    std::vector<file::DirEntry> es;
-    const std::string           dir = trayDir(app);
-    if (file::listDir(dir, &es))
-        for (const file::DirEntry &e : es)
-            if (!e.isDir && e.name.rfind("tray_icon-", 0) == 0)
-                out.push_back(file::join(dir, e.name));
-    std::sort(out.begin(), out.end());
-    return out;
-}
-
-class TrayIconDialog final : public Dialog {
+class TrayIconDialog final : public ImagePickDialog {
 public:
     TrayIconDialog(screens::Context &ctx, std::string current, bool monochrome, TrayIconDone done)
-        : Dialog(tr("Tray icon"), 440), _ctx(ctx), _current(std::move(current)),
-          _hasCustom(!_current.empty()), _done(std::move(done)) {
-        content()->style().spacing(8);
-        _preview  = content()->add<TrayPreview>();
-        auto *row = content()->add<View>();
-        row->style().row().spacing(8).items(Align::Center);
-        row->add<View>()->style().flex(1);
-        auto *choose =
-            row->add<Button>(tr("Choose image\xE2\x80\xA6"), V::Secondary, Button::Form::Normal);
-        _reset = row->add<Button>(tr("Use default"), V::Ghost, Button::Form::Normal);
-        row->add<View>()->style().flex(1);
-        _hint = styledLabel(
-            content(),
+        : ImagePickDialog(ctx, tr("Tray icon"), N_("Choose tray icon"), !current.empty()),
+          _current(std::move(current)), _done(std::move(done)) {
+        _preview = content()->add<TrayPreview>();
+        _mono    = new CheckBox(tr("Convert to monochrome"), monochrome);
+        buildControls(
             tr("The picture is fitted into a square, and the unread dot is drawn over its corner. "
                "You can also drop an image file onto this window."),
-            ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
+            _mono
         );
-        _hint->setAlign(text::LayoutOptions::Align::Center);
-        _mono = new CheckBox(tr("Convert to monochrome"), monochrome);
-        _save = makeButton(tr("Save"), V::Primary);
-        addButtonRow(_save, makeButton(tr("Cancel"), V::Secondary), _mono);
         _mono->onChange = [this](bool) {
             _dirty = true; // an option alone changed
             refreshPreview();
             refresh();
-        };
-        choose->onClick = [this] { choose_(); };
-        _reset->onClick = [this] {
-            ++_loading; // a picture still decoding is not wanted now
-            _chosen.clear();
-            _picture.reset();
-            _resetOn = true;
-            _dirty   = true;
-            refreshPreview();
-            refresh();
-        };
-        // Saved first: a picture that can't be stored keeps the dialog open
-        // and says so ("The icon could not be saved.").
-        _save->onClick = [this] {
-            if (!_dirty)
-                return;
-            if (apply())
-                accept();
-            else
-                saveFailed();
         };
         if (_hasCustom)
             decode(_current, [this](std::shared_ptr<const gfx::Bitmap> bmp) {
@@ -994,22 +1048,6 @@ public:
                 refreshPreview();
             });
         refreshPreview();
-        refresh();
-    }
-    bool onEvent(Event &e) override {
-        if (e.type == EventType::DropEnter || e.type == EventType::DropMove) {
-            if (!screens::dragOffersFiles(e.raw))
-                return Dialog::onEvent(e);
-            e.dropAction = plat::DropAction::Copy;
-            return true;
-        }
-        if (e.type == EventType::Drop) {
-            const auto p = screens::droppedFiles(e.raw);
-            if (!p.empty())
-                load(p[0]);
-            return true;
-        }
-        return Dialog::onEvent(e);
     }
 
 private:
@@ -1043,88 +1081,41 @@ private:
         }
         _preview->set(std::move(b));
     }
-    void refresh() {
-        _reset->setVisible(_hasCustom || !_chosen.empty());
-        _reset->setEnabled(!_resetOn);
-        _save->setEnabled(_dirty);
-    }
-    void choose_() {
-        plat::FileDialogDesc d;
-        d.mode    = plat::FileDialogDesc::Mode::Open;
-        d.title   = tr("Choose tray icon");
-        d.filters = {
-            {tr("Images"), {"*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.bmp", "*.svg"}}
-        };
-        screens::fileDialog(_ctx, std::move(d), [this](std::vector<std::string> p) {
-            if (!p.empty())
-                load(p[0]);
-        });
-    }
-    void load(const std::string &path) {
+    void load(const std::string &path) override {
         decode(path, [this, path](std::shared_ptr<const gfx::Bitmap> bmp) {
-            if (!bmp) {
-                text::AttributedText t;
-                t.append(
-                    tr("That file could not be read as an image."),
-                    ui::pxFont(11, text::Weight::Regular, ui::color(C::FormTextMuted))
-                );
-                _hint->setRichText(std::move(t));
-                return;
-            }
-            _chosen  = path;
+            if (!bmp)
+                return notAnImage();
             _picture = std::move(bmp);
-            _resetOn = false;
-            _dirty   = true;
             refreshPreview();
-            refresh();
+            loaded(path);
         });
     }
-    void saveFailed() {
-        text::AttributedText t;
-        t.append(
-            tr("The icon could not be saved."),
-            ui::pxFont(11, text::Weight::Regular, ui::color(C::FormError))
-        );
-        _hint->setRichText(std::move(t));
+    void reset() override {
+        ++_loading; // a picture still decoding is not wanted now
+        _picture.reset();
+        _dirty = true;
+        refreshPreview();
     }
-    // The picture is copied into the data folder (the original may move or
-    // vanish), under a new name each time so nothing caches the old one.
-    bool apply() {
-        plat::App  &pa  = _ctx.app.platform();
-        const auto  old = trayFiles(pa);
-        std::string now = _resetOn ? std::string() : _current;
-        if (!_chosen.empty() && !_resetOn) {
-            const std::string dest = file::join(
-                trayDir(pa),
-                str::concat({"tray_icon-", std::to_string(base::nowMicros() / 1000), ".img"})
-            );
-            std::string bytes;
-            if (!file::makeDirs(trayDir(pa)) || !file::readAll(_chosen, &bytes) ||
-                !file::writeAtomic(dest, bytes)) {
-                LOG_WARN("shell", "The tray icon could not be saved.");
-                return false;
-            }
-            now = dest;
-        }
-        for (const std::string &f : old)
-            if (f != now)
-                file::remove(f);
+    // The data folder (app/identity.h), where earlier versions' tray_icon.png
+    // is too; ours have names of their own, so a rollback finds its picture.
+    Target target() const override {
+        return {
+            identity::dataDir(_ctx.app.platform()),
+            "tray_icon-",
+            _resetOn ? std::string() : _current
+        };
+    }
+    void saved(const std::string &now) override {
         if (_done)
             _done(now, _mono->checked());
-        return true;
     }
 
-    screens::Context                  &_ctx;
-    std::string                        _current, _chosen;
+    std::string                        _current;
     std::shared_ptr<const gfx::Bitmap> _picture; // decoded and fitted, before monochrome
     TrayPreview                       *_preview = nullptr;
-    Button                            *_reset = nullptr, *_save = nullptr;
-    CheckBox                          *_mono = nullptr;
-    Label                             *_hint = nullptr;
-    bool                               _hasCustom, _resetOn = false, _dirty = false;
+    CheckBox                          *_mono    = nullptr;
     TrayIconDone                       _done;
     unsigned                           _loading = 0; // the latest decode()'s number
-    std::shared_ptr<int>               _alive   = std::make_shared<int>(0); // guards decode()
 };
 
 } // namespace
@@ -1157,12 +1148,6 @@ Popup *showForwardDialog(
 }
 
 std::string portableMrkdwn(const model::Store &source, std::string_view in) {
-    // The words go out as text: mrkdwn's escapes keep them from turning into
-    // tokens again on the other side.
-    const auto text = [](std::string &out, std::string_view s) {
-        for (const char c : s)
-            out += c == '&' ? "&amp;" : c == '<' ? "&lt;" : c == '>' ? "&gt;" : std::string(1, c);
-    };
     std::string out;
     out.reserve(in.size());
     size_t pos = 0;
@@ -1207,7 +1192,9 @@ std::string portableMrkdwn(const model::Store &source, std::string_view in) {
         } else { // here, channel, everyone: plain words, no broadcast
             words = "@" + std::string(id.substr(0, id.find('^')));
         }
-        text(out, mrkdwn::decodeEntities(words));
+        // The words go out as text: mrkdwn's escapes keep them from turning
+        // into tokens again on the other side.
+        out += mrkdwn::escapeEntities(mrkdwn::decodeEntities(words));
     }
     return out;
 }
@@ -1309,8 +1296,26 @@ Popup *showTrayIconDialog(
 }
 
 std::string customWorkspaceIconPath(plat::App &app, const std::string &workspaceId) {
-    const auto files = iconFiles(app, workspaceId);
-    return files.empty() ? std::string() : files.back();
+    const std::string               prefix = iconPrefix(workspaceId);
+    const std::vector<std::string> &files  = iconFiles(app);
+    for (auto it = files.rbegin(); it != files.rend(); ++it) // the newest first
+        if (str::startsWith(file::baseName(*it), prefix))
+            return *it;
+    return {};
+}
+
+std::string
+workspaceIcon(plat::App &app, const std::string &workspaceId, const std::string &serverIcon) {
+    std::string custom = customWorkspaceIconPath(app, workspaceId);
+    return custom.empty() ? serverIcon : custom;
+}
+
+void removeCustomWorkspaceIcon(plat::App &app, const std::string &workspaceId) {
+    const std::string custom = customWorkspaceIconPath(app, workspaceId);
+    if (custom.empty())
+        return;
+    file::remove(custom);
+    iconIndex().listed = false;
 }
 
 Popup *showRenameDialog(screens::Context &ctx, Window &w, ConvRef c) {
@@ -1369,10 +1374,8 @@ Popup *showWorkspaceIconDialog(
     const std::string                       &defaultIcon,
     std::function<void(const std::string &)> done
 ) {
-    std::string cur = customWorkspaceIconPath(ctx.app.platform(), workspaceId);
-    if (cur.empty())
-        cur = defaultIcon;
-    auto d = std::make_unique<WorkspaceIconDialog>(
+    const std::string cur = workspaceIcon(ctx.app.platform(), workspaceId, defaultIcon);
+    auto              d   = std::make_unique<WorkspaceIconDialog>(
         ctx, avatars, workspaceId, defaultIcon, cur, std::move(done)
     );
     auto *raw = d.get();

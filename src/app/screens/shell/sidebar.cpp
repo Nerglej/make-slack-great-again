@@ -10,6 +10,7 @@
 #include "screens/shell/context_menus.h"
 #include "screens/shell/header.h"
 #include "screens/shell/nav_chrome.h"
+#include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar_footer.h"
 #include "screens/shell/teammate_page.h"
 
@@ -431,9 +432,7 @@ public:
                 others += u != store.me;
             add<GroupTile>(others)->style().margins(0, 0, 8, 0);
         } else {
-            glyph = add<IconView>(
-                cv.kind == ConvKind::Private ? Icon::Lock : Icon::Hash, 14, C::SidebarTextMuted
-            );
+            glyph = add<IconView>(convIcon(cv), 14, C::SidebarTextMuted);
             glyph->style().margins(0, 0, 6, 0);
         }
         label = add<Label>(store.displayName(c), Font::Body, C::SidebarTextMuted);
@@ -488,8 +487,9 @@ public:
         const auto  caps  = sidebar._ctx.backend.capabilities();
         const bool  sel   = sidebar._selected == conv;
         const bool  quiet = sidebar.muted(cv);
-        const bool  stale = cv.latest && tsSecs(cv.latest) < sidebar._now() - kMaxNotifyAgeSecs;
-        unread            = sidebar.paintsUnread(cv);
+        const bool  stale =
+            cv.latest && tsSecs(cv.latest) < sidebar._ctx.backend.nowSecs() - kMaxNotifyAgeSecs;
+        unread        = sidebar.paintsUnread(cv);
         // DMs count every unread message (an agent session only what needs
         // me: Session counts those as mentions); channels their mentions.
         const int red = cv.isDirect() && !caps.agentSessions ? int(cv.unread) : int(cv.mentions);
@@ -590,7 +590,7 @@ public:
         for (ConvRef c = 0; c < store.conversationCount() && !unread; ++c) {
             const auto &cv = store.conversation(c);
             unread         = cv.member && sidebar.paintsUnread(cv) &&
-                             agentSessionRole(sidebar._ctx, c, sidebar._team) == role;
+                             sidebar._ctx.backend.agentSessionRole(c) == role;
         }
         label->setFont(unread ? Font::BodySemibold : Font::Body);
         label->setColor(
@@ -619,7 +619,6 @@ public:
 // ── Sidebar ─────────────────────────────────────────────────────────────────
 
 Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(avatars) {
-    _now    = [this] { return _ctx.backend.nowSecs(); };
     _scroll = add<ScrollView>();
     // A click focuses the list, and then its keys scroll it (they never change the selection). Tab
     // already stops on each row here, so the list itself is click-focus only.
@@ -650,8 +649,7 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
         case model::ChangeKind::Update:
         case model::ChangeKind::Remove:
             // A saved item added or gone shows or hides "Saved messages".
-            if (_savedRow)
-                refreshSections();
+            refreshNav();
             break;
         case model::ChangeKind::Meta: {
             // A star toggle moves the row between sections, leaving/closing
@@ -663,8 +661,8 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
                 r->refreshLook();
             }
             // The scheduled list came or went: show or hide its entry.
-            if (ch.conv == model::kNoConv && _scheduledRow)
-                refreshSections();
+            if (ch.conv == model::kNoConv)
+                refreshNav();
             if (ch.conv >= _ctx.store().conversationCount())
                 break;
             const auto &cv = _ctx.store().conversation(ch.conv);
@@ -751,8 +749,9 @@ bool Sidebar::relevant(ConvRef ref) const {
     const auto &c = _ctx.store().conversation(ref);
     if (c.unread > 0 || ref == _selected || _ctx.backend.capabilities().agentSessions)
         return true;
-    const int64_t cutoff = _now() - int64_t(std::max(1, _filters.relevantDays)) * 86400;
-    const auto    v      = _visited.find(c.id);
+    const int64_t cutoff =
+        _ctx.backend.nowSecs() - int64_t(std::max(1, _filters.relevantDays)) * 86400;
+    const auto v = _visited.find(c.id);
     if (v != _visited.end() && v->second >= cutoff)
         return true;
     const model::Ts activity = std::max(c.latest, c.lastRead);
@@ -766,6 +765,7 @@ void Sidebar::rebuild() {
         _collapsed[h->kind] = h->collapsed; // survives the rebuild
     _items->clearChildren();
     _rows.clear();
+    _rowOf.assign(_ctx.store().conversationCount(), nullptr);
     _teamRows.clear();
     _sections.clear();
     _nav.clear();
@@ -788,30 +788,18 @@ void Sidebar::rebuild() {
         return r;
     };
     if (caps.threadsView) {
-        auto *r = nav(Icon::Split, tr("Threads"), &onThreads);
-        r->setChecked(_threadsSelected);
-        r->unread = store.unreadThreads() > 0;
-        r->refreshLook();
+        auto *r     = nav(Icon::Split, tr("Threads"), &onThreads);
+        r->unread   = store.unreadThreads() > 0;
         _threadsRow = r;
-    } else {
-        _threadsSelected = false;
     }
-    if (caps.messageReminders) {
-        auto *r = nav(Icon::Bookmark, tr("Saved messages"), &onSavedMessages);
-        r->setChecked(_savedSelected);
-        r->refreshLook();
-        _savedRow = r;
-    } else {
-        _savedSelected = false;
-    }
-    if (caps.scheduledSend) {
-        auto *r = nav(Icon::Clock, tr("Scheduled messages"), &onScheduled);
-        r->setChecked(_scheduledSelected);
-        r->refreshLook();
-        _scheduledRow = r;
-    } else {
-        _scheduledSelected = false;
-    }
+    if (caps.messageReminders)
+        _savedRow = nav(Icon::Bookmark, tr("Saved messages"), &onSavedMessages);
+    if (caps.scheduledSend)
+        _scheduledRow = nav(Icon::Clock, tr("Scheduled messages"), &onScheduled);
+    // The open page's entry, if this workspace has one.
+    if (!navRow(_navSelected))
+        _navSelected = Nav::None;
+    showNavSelection();
 
     // Starred first (any kind), then channels, direct messages, agents &
     // apps; fixture (= server) order inside each.
@@ -821,7 +809,7 @@ void Sidebar::rebuild() {
     };
     // The seed: a conversation with unread messages is stamped, so it stays
     // listed for the whole window once read.
-    const int64_t now    = _now();
+    const int64_t now    = _ctx.backend.nowSecs();
     const int64_t cutoff = now - int64_t(std::max(1, _filters.relevantDays)) * 86400;
     bool          seeded = false;
     for (ConvRef c = 0; c < store.conversationCount(); ++c) {
@@ -885,6 +873,8 @@ void Sidebar::rebuild() {
             row->section = h;
             h->rows.push_back(row);
             _rows.push_back(row);
+            if (c < _rowOf.size())
+                _rowOf[c] = row;
         }
         if (s == 1 && _hiddenChannels > 0) {
             auto *more = _items->add<ActionRow>(
@@ -1069,12 +1059,8 @@ void Sidebar::refreshTeammates() {
 void Sidebar::selectTeammate(const std::string &role) {
     if (!role.empty()) {
         select(kNoConv);
-        if (_threadsSelected)
-            selectThreads(false);
-        if (_savedSelected)
-            selectSaved(false);
-        if (_scheduledSelected)
-            selectScheduled(false);
+        if (_navSelected != Nav::None)
+            selectNav(Nav::None);
     }
     _selectedTeammate = role;
     refreshTeammates();
@@ -1126,6 +1112,10 @@ void Sidebar::refreshSections() {
             any |= r->unread;
         h->setUnread(any);
     }
+    refreshNav();
+}
+
+void Sidebar::refreshNav() {
     // "Saved messages" shows while the saved list is not empty.
     if (_savedRow)
         _savedRow->setVisible(_ctx.store().hasSaved());
@@ -1143,76 +1133,52 @@ const ui::View *Sidebar::rowView(ConvRef conv) const {
 }
 
 ConvRow *Sidebar::rowFor(ConvRef conv) const {
-    for (ConvRow *r : _rows)
-        if (r->conv == conv)
-            return r;
+    return conv < _rowOf.size() ? _rowOf[conv] : nullptr;
+}
+
+View *Sidebar::navRow(Nav n) const {
+    switch (n) {
+    case Nav::Threads:
+        return _threadsRow;
+    case Nav::Saved:
+        return _savedRow;
+    case Nav::Scheduled:
+        return _scheduledRow;
+    case Nav::None:
+        break;
+    }
     return nullptr;
 }
 
-void Sidebar::selectThreads(bool on) {
-    _threadsSelected = on && _threadsRow;
-    if (on) {
+void Sidebar::selectNav(Nav n) {
+    _navSelected = navRow(n) ? n : Nav::None;
+    if (_navSelected != Nav::None) {
         select(kNoConv);
         selectTeammate({});
-        if (_savedSelected)
-            selectSaved(false);
-        if (_scheduledSelected)
-            selectScheduled(false);
     }
-    if (auto *r = static_cast<NavRow *>(_threadsRow)) {
-        r->setChecked(_threadsSelected);
-        r->refreshLook();
-    }
+    showNavSelection();
 }
 
-void Sidebar::selectSaved(bool on) {
-    _savedSelected = on && _savedRow;
-    if (on) {
-        select(kNoConv);
-        selectTeammate({});
-        if (_threadsSelected)
-            selectThreads(false);
-        if (_scheduledSelected)
-            selectScheduled(false);
-    }
-    if (auto *r = static_cast<NavRow *>(_savedRow)) {
-        r->setChecked(_savedSelected);
-        r->refreshLook();
-    }
-}
-
-void Sidebar::selectScheduled(bool on) {
-    _scheduledSelected = on && _scheduledRow;
-    if (on) {
-        select(kNoConv);
-        selectTeammate({});
-        if (_threadsSelected)
-            selectThreads(false);
-        if (_savedSelected)
-            selectSaved(false);
-    }
-    if (auto *r = static_cast<NavRow *>(_scheduledRow)) {
-        r->setChecked(_scheduledSelected);
-        r->refreshLook();
-    }
+void Sidebar::showNavSelection() {
+    for (Nav k : {Nav::Threads, Nav::Saved, Nav::Scheduled})
+        if (auto *r = static_cast<NavRow *>(navRow(k))) {
+            r->setChecked(_navSelected == k);
+            r->refreshLook();
+        }
 }
 
 void Sidebar::select(ConvRef conv) {
     const ConvRef old = _selected;
     _selected         = conv;
-    if (conv != kNoConv && _threadsSelected)
-        selectThreads(false); // the Threads page is left
-    if (conv != kNoConv && _savedSelected)
-        selectSaved(false); // the Saved messages page is left
-    if (conv != kNoConv && _scheduledSelected)
-        selectScheduled(false);                          // the Scheduled messages page is left
+    if (conv != kNoConv && _navSelected != Nav::None)
+        selectNav(Nav::None);                            // the overview page is left
     if (conv != kNoConv && !_selectedTeammate.empty()) { // the teammate's page is left
         _selectedTeammate.clear();
         refreshTeammates();
     }
     if (conv < _ctx.store().conversationCount()) { // a visit keeps it relevant for the whole window
         if (const std::string &id = _ctx.store().conversation(conv).id; !id.empty()) {
-            _visited[id] = _now();
+            _visited[id] = _ctx.backend.nowSecs();
             if (onVisitedChanged)
                 onVisitedChanged();
         }
@@ -1290,7 +1256,8 @@ bool Sidebar::joinHuddle(ConvRef conv) {
 }
 
 int Sidebar::attentionCount() const {
-    return workspaceAttention(_ctx.store(), _filters.defaultLevel, _now()).important;
+    return workspaceAttention(_ctx.store(), _filters.defaultLevel, _ctx.backend.nowSecs())
+        .important;
 }
 
 Attention workspaceAttention(const model::Store &st, model::NotifyLevel fallback, int64_t nowSecs) {

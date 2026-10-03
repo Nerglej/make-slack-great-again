@@ -7,58 +7,45 @@
 // backend to list them again, and the cards follow the list while it is up.
 #pragma once
 
-#include "screens/common/context.h"
-#include "screens/shell/avatars.h"
-#include "ui/ui.h"
+#include "screens/shell/overview_page.h"
 
 #include <functional>
-#include <memory>
 #include <string>
 #include <vector>
 
 namespace shell {
 
-class ScheduledPage : public ui::View {
+class ScheduledPage : public OverviewPage {
 public:
     ScheduledPage(screens::Context &ctx, Avatars &avatars);
-    ~ScheduledPage() override;
 
     // (Re)builds the cards and re-lists. Every time the page is brought to front.
-    void open();
+    void open() override;
     // Drops the cards (workspace switch).
-    void clear();
+    void clear() override;
 
     // The conversation name on a card: the conversation.
     std::function<void(model::ConvRef)> onOpenChannel;
 
     // Tests: what the page shows.
-    size_t             cardCount() const { return _cards.size(); }
-    const std::string &statusText() const { return _statusText; }
-    std::string        whenText(size_t i) const; // a card's footer ("Sends Mar 15, 2:34 PM")
-    bool               canSendNow(size_t i) const;
-    void               sendNow(size_t i); // the card's "Send now"
-    void               cancel(size_t i);  // the card's "Cancel"
-
-    void paint(gfx::Painter &p) override;
+    size_t      cardCount() const { return _cards.size(); }
+    std::string whenText(size_t i) const; // a card's footer ("Sends Mar 15, 2:34 PM")
+    bool        canSendNow(size_t i) const;
+    void        sendNow(size_t i); // the card's "Send now"
+    void        cancel(size_t i);  // the card's "Cancel"
 
 private:
     class Card;
-    void rebuild();
-    void reset(); // rebuilt from scratch (a failed action's card clickable again)
-    void setStatus(std::string text);
-    void onChange(const model::Change &ch);
+    void        rebuild() override;
+    void        reset(); // rebuilt from scratch (a failed action's card clickable again)
+    void        onChange(const model::Change &ch) override;
+    // The names the cards show (my name and picture, the conversations'):
+    // a change there rebuilds them even when the list is the same.
+    std::string namesKey() const;
 
-    screens::Context                        &_ctx;
-    Avatars                                 &_avatars;
-    ui::ScrollView                          *_scroll = nullptr;
-    ui::Label                               *_status = nullptr;
-    ui::View                                *_list   = nullptr;
     std::vector<Card *>                      _cards;
     std::vector<model::Store::ScheduledItem> _items; // what the cards show, in order
-    std::string                              _statusText;
-    bool                                     _rebuildQueued = false;
-    model::Store::ObserverId                 _observer      = 0;
-    std::shared_ptr<int>                     _alive         = std::make_shared<int>(0);
+    std::string                              _names; // namesKey() of the cards shown
 };
 
 } // namespace shell

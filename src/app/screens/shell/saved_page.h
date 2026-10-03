@@ -9,26 +9,22 @@
 // fetches it for the preview (Backend::loadMessage).
 #pragma once
 
-#include "screens/common/context.h"
-#include "screens/shell/avatars.h"
-#include "ui/ui.h"
+#include "screens/shell/overview_page.h"
 
 #include <functional>
-#include <memory>
 #include <string>
 #include <vector>
 
 namespace shell {
 
-class SavedPage : public ui::View {
+class SavedPage : public OverviewPage {
 public:
     SavedPage(screens::Context &ctx, Avatars &avatars);
-    ~SavedPage() override;
 
     // (Re)builds the cards. Every time the page is brought to front.
-    void open();
+    void open() override;
     // Drops the cards (workspace switch).
-    void clear();
+    void clear() override;
 
     // A message row: jump to the message (in its thread, for a reply). The
     // conversation name on a card: the conversation.
@@ -36,35 +32,22 @@ public:
     std::function<void(model::ConvRef)>                                 onOpenChannel;
 
     // Tests: what the page shows.
-    size_t             cardCount() const { return _cards.size(); }
-    ui::View          *card(size_t i) const;
-    const std::string &statusText() const { return _statusText; }
+    size_t      cardCount() const { return _cards.size(); }
+    ui::View   *card(size_t i) const;
     // A card's footer line ("Saved for later", "Reminder set for …").
-    std::string        dueText(size_t i) const;
-    void               remove(size_t i);   // the card's "Remove"
-    void               activate(size_t i); // a click on the card's message
-
-    void paint(gfx::Painter &p) override;
+    std::string dueText(size_t i) const;
+    void        remove(size_t i);   // the card's "Remove"
+    void        activate(size_t i); // a click on the card's message
 
 private:
     class Card;
-    void rebuild();
+    void rebuild() override;
     void resolvePreviews();
-    void setStatus(std::string text);
-    void onChange(const model::Change &ch);
+    void onChange(const model::Change &ch) override;
 
-    screens::Context                                 &_ctx;
-    Avatars                                          &_avatars;
-    ui::ScrollView                                   *_scroll = nullptr;
-    ui::Label                                        *_status = nullptr;
-    ui::View                                         *_list   = nullptr;
     std::vector<Card *>                               _cards;
     std::vector<model::Store::SavedItem>              _items; // what the cards show, in order
     std::vector<std::pair<model::ConvRef, model::Ts>> _tried; // previews asked for
-    std::string                                       _statusText;
-    bool                                              _rebuildQueued = false;
-    model::Store::ObserverId                          _observer      = 0;
-    std::shared_ptr<int>                              _alive         = std::make_shared<int>(0);
 };
 
 } // namespace shell

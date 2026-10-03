@@ -1,13 +1,16 @@
 #include "screens/shell/settings.h"
 
 #include "app/identity.h"
+#include "app/model/jobs.h"
 #include "base/file.h"
 #include "base/json.h"
+#include "base/log.h"
 #include "base/secret.h"
 #include "base/str.h"
 #include "base/time.h"
 
 #include <algorithm>
+#include <mutex>
 #include <unordered_map>
 
 // MSGA_GIPHY_KEY comes from credentials.cmake (screens/settings/CMakeLists.txt);
@@ -297,9 +300,7 @@ Settings Settings::load(const std::string &path) {
     return s;
 }
 
-bool Settings::save(const std::string &path) const {
-    if (path.empty())
-        return false;
+std::string Settings::toFile() const {
     json::Writer w(true);
     w.beginObject().key("window").beginObject();
     w.key("width").value(width).key("height").value(height);
@@ -380,7 +381,44 @@ bool Settings::save(const std::string &path) const {
     }
     w.endArray();
     w.endObject();
-    return file::writeAtomic(path, w.str() + "\n", 0600);
+    return w.str() + "\n";
+}
+
+namespace {
+
+// The settings writes, numbered as they are asked for (UI thread): per
+// path the number of the newest one on disk, so a write overtaken by a
+// newer one is skipped.
+std::mutex                                g_writeMutex;
+std::unordered_map<std::string, uint64_t> g_written;
+uint64_t                                  g_asked = 0;
+
+bool writeSettings(const std::string &path, const std::string &text, uint64_t n) {
+    std::lock_guard<std::mutex> lock(g_writeMutex);
+    uint64_t                   &done = g_written[path];
+    if (n <= done)
+        return true;
+    done = n;
+    return file::writeAtomic(path, text, 0600);
+}
+
+} // namespace
+
+bool Settings::save(const std::string &path) const {
+    return !path.empty() && writeSettings(path, toFile(), ++g_asked);
+}
+
+void Settings::saveInBackground(plat::App &app, const std::string &path) const {
+    if (path.empty())
+        return;
+    model::runInBackground(
+        app,
+        [path, text = toFile(), n = ++g_asked] {
+            if (!writeSettings(path, text, n))
+                LOG_WARN("shell", "could not save %s", path.c_str());
+        },
+        [] {}
+    );
 }
 
 std::string Settings::defaultPath(plat::App &app) {

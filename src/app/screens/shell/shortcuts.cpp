@@ -210,7 +210,7 @@ bool matches(Id id, const ui::Event &e) {
     if (e.type != ui::EventType::KeyDown)
         return false;
     const K        key = e.key == K::KpEnter ? K::Enter : e.key;
-    const uint32_t m   = e.mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper);
+    const uint32_t m   = e.mods & ui::kModMask;
     Keys           b[2];
     const size_t   n = bindings(id, b);
     for (size_t i = 0; i < n; ++i)

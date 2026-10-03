@@ -33,8 +33,7 @@ HuddleBanner::HuddleBanner() {
     auto *label = add<Label>(tr("A huddle is happening"), Font::SmallSemibold, C::AccentText);
     label->setMaxLines(1);
     label->style().flex(1);
-    _join          = add<JoinButton>();
-    _join->onClick = [this] {
+    add<JoinButton>()->onClick = [this] {
         if (onJoin)
             onJoin();
     };

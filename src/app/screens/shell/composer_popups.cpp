@@ -8,6 +8,7 @@
 #include "gfx/icons_generated.h"
 #include "ui/controls.h"
 #include "ui/datetime.h"
+#include "screens/shell/shell_text.h"
 #include "screens/shell/shortcuts.h"
 
 #ifdef MSGA_HAVE_MESSAGES
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <unordered_set>
 
 using namespace ui;
 using gfx::Icon;
@@ -101,19 +103,15 @@ public:
         const float right = _badge->visible() ? _badge->frame().x - 12 : width() - 14;
         const float w     = std::max(0.f, right - left);
         if (!_lines[0] || _builtW != w) {
-            _builtW                = w;
-            const float         k  = windowScale();
-            const Color         hi = color(_hover ? C::TooltipText : C::FormText);
-            const Color         lo = color(_hover ? C::OnDarkDim : C::FormTextFaint);
-            text::LayoutOptions o;
-            o.maxLines = 1;
-            o.ellipsis = true;
-            o.maxWidth = w;
+            _builtW                 = w;
+            const float          k  = windowScale();
+            const Color          hi = color(_hover ? C::TooltipText : C::FormText);
+            const Color          lo = color(_hover ? C::OnDarkDim : C::FormTextFaint);
             text::AttributedText t;
             t.append(_it.title, pxFont(14, text::Weight::Bold, hi));
             if (!_it.usage.empty())
                 t.append(str::concat({" ", _it.usage}), pxFont(14, text::Weight::Regular, lo));
-            _lines[0] = text::Layout::build(t, o, k);
+            _lines[0] = oneLineLayout(t, w, k);
             text::AttributedText s2;
             if (!_it.source.empty())
                 s2.append(
@@ -127,7 +125,7 @@ public:
                     _it.source.empty() ? _it.subtitle : str::concat({"  \xC2\xB7  ", _it.subtitle}),
                     pxFont(12, text::Weight::Regular, lo)
                 );
-            _lines[1] = text::Layout::build(s2, o, k);
+            _lines[1] = oneLineLayout(s2, w, k);
         }
         // Centred vertically in the 20 px title box at y 10, the 18 px one at 30.
         _lines[0]->paint(p, snapPx({left, std::floor(20 - _lines[0]->height() / 2)}));
@@ -913,9 +911,16 @@ HistorySearch::HistorySearch(std::vector<std::string> entries, RectF box) : _box
     setModal(false); // the search field takes the keyboard; a click elsewhere goes through
     setCard(false);
     card(this, 6);
-    for (std::string &e : entries)
-        if (std::find(_entries.begin(), _entries.end(), e) == _entries.end())
-            _entries.push_back(std::move(e));
+    // Each prompt once, where it first appears.
+    {
+        std::unordered_set<std::string_view> seen;
+        std::vector<bool>                    keep(entries.size());
+        for (size_t i = 0; i < entries.size(); ++i)
+            keep[i] = seen.insert(entries[i]).second;
+        for (size_t i = 0; i < entries.size(); ++i)
+            if (keep[i])
+                _entries.push_back(std::move(entries[i]));
+    }
     style().width(box.w).padding(kHistMargins).spacing(kHistMargins);
     _scroll = add<ScrollView>();
     _empty  = add<Label>(tr("No earlier prompt matches"), Font::Control, C::FormTextMuted);
@@ -1077,7 +1082,7 @@ bool HistorySearch::key(const Event &e) {
         select(_sel + 1);
         return true;
     }
-    if (e.mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper))
+    if (e.mods & ui::kModMask)
         return false;
     switch (e.key) {
     case plat::Key::Up:

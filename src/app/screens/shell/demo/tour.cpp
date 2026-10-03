@@ -594,9 +594,9 @@ void Tour::run(const TourStep &step, Done done) {
         View      *entry   = findText(threads ? "Threads" : "Saved messages", &_sh.sidebar());
         if (!entry) {
             if (threads)
-                _sh.openThreads();
+                _sh.showPage(shell::Shell::Page::Threads);
             else
-                _sh.openSaved();
+                _sh.showPage(shell::Shell::Page::Saved);
             done();
             return;
         }

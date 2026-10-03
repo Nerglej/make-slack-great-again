@@ -119,8 +119,7 @@ void Shell::notificationImage(std::vector<std::string> paths, std::function<void
 }
 
 std::string Shell::workspaceIconFor(const model::Store &st) const {
-    const std::string custom = customWorkspaceIconPath(_ctx.app.platform(), st.workspaceId);
-    return custom.empty() ? st.workspaceIcon : custom;
+    return workspaceIcon(_ctx.app.platform(), st.workspaceId, st.workspaceIcon);
 }
 
 // The OS notification, where there is a notifier (Windows falls back to a

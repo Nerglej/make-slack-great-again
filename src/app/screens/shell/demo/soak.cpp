@@ -83,9 +83,9 @@ void runSoak(
                 break;
             }
     }
-    steps.push_back([shp] { shp->openThreads(); });
-    steps.push_back([shp] { shp->openSaved(); });
-    steps.push_back([shp] { shp->openScheduled(); });
+    steps.push_back([shp] { shp->showPage(shell::Shell::Page::Threads); });
+    steps.push_back([shp] { shp->showPage(shell::Shell::Page::Saved); });
+    steps.push_back([shp] { shp->showPage(shell::Shell::Page::Scheduled); });
     steps.push_back([shp, start] { shp->open(start); });
     steps.push_back([shp] { shp->openSearch(); });
     steps.push_back([shp] {

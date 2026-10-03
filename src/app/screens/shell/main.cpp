@@ -56,8 +56,10 @@
 #include "app/diag/mem_stats.h"
 #endif
 #ifdef MSGA_HAVE_MESSAGES
-#include "screens/messages/debug_scroll.h"
 #include "screens/messages/image_cache.h"
+#endif
+#if defined(MSGA_DEMO) && defined(MSGA_HAVE_MESSAGES)
+#include "screens/messages/debug_scroll.h"
 #endif
 
 #include <cstdio>
@@ -198,6 +200,8 @@ int main(int argc, char **argv) {
             demo = next();
         else if (str::startsWith(a, "--demo="))
             demo = a.substr(7);
+        else if (a == "--debug-scroll")
+            debugScroll = std::atoi(next().c_str());
 #endif
         else if (a == "--open")
             openId = next();
@@ -207,8 +211,6 @@ int main(int argc, char **argv) {
             exitAfter = std::atoi(next().c_str());
         else if (a == "--browse-all")
             browseAll = true;
-        else if (a == "--debug-scroll")
-            debugScroll = std::atoi(next().c_str());
         else if (a == "--soak")
             soakRounds = std::atoi(next().c_str());
         else if (str::startsWith(a, "msga://"))
@@ -452,7 +454,7 @@ int main(int argc, char **argv) {
             sh,
             win,
             settings,
-            [&] { settings.save(settingsPath); },
+            [&sh] { sh.saveSettingsSoon(); },
             backend,
             noWorkspace,
             client,

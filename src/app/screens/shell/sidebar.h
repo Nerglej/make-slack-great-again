@@ -83,9 +83,6 @@ public:
     void                  clearVisited(); // Settings → "Clear state"
     std::function<void()> onVisitedChanged;
 
-    // Now, in epoch seconds (the relevance window's end). Tests pin it.
-    void setClock(std::function<int64_t()> now) { _now = std::move(now); }
-
     void                        rebuild();                   // from the Store (roster changed)
     void                        select(model::ConvRef conv); // highlight only (kNoConv clears)
     model::ConvRef              selected() const { return _selected; }
@@ -128,20 +125,17 @@ public:
     // conversation is highlighted meanwhile.
     void                                     selectTeammate(const std::string &role);
     const std::string                       &selectedTeammate() const { return _selectedTeammate; }
-    // Highlights the Threads entry as the open page; opening a conversation or a teammate clears
-    // it.
-    void                                     selectThreads(bool on);
+    // The entries over the sections, each an overview page: Threads, Saved
+    // messages (shown while something is saved, Store::hasSaved), Scheduled
+    // messages (while something is scheduled, Store::hasScheduled).
+    enum class Nav : uint8_t { None, Threads, Saved, Scheduled };
+    // Highlights an entry as the open page (None: none); opening a
+    // conversation or a teammate clears it.
+    void selectNav(Nav n);
+    Nav  selectedNav() const { return _navSelected; }
     bool threadsUnread() const; // the Threads entry is bright (Store::unreadThreads)
     // A click on a row's huddle pill (tests): false when it shows none.
     bool joinHuddle(model::ConvRef conv);
-    bool threadsSelected() const { return _threadsSelected; }
-    // The same for the Saved messages entry.
-    void selectSaved(bool on);
-    bool savedSelected() const { return _savedSelected; }
-    // The same for the Scheduled messages entry, shown while something is
-    // scheduled (Store::hasScheduled).
-    void selectScheduled(bool on);
-    bool scheduledSelected() const { return _scheduledSelected; }
     bool scheduledShown() const; // tests
     // The Team section's rows, top to bottom (tests): role ids.
     std::vector<std::string> teammates() const;
@@ -167,7 +161,10 @@ private:
     void               refresh(model::ConvRef conv); // one row from the Store
     void               refreshAll();
     void               refreshSections();
+    void               refreshNav(); // which of the entries show
     ConvRow           *rowFor(model::ConvRef conv) const;
+    ui::View          *navRow(Nav n) const;
+    void               showNavSelection(); // the entries' checked look
     // The unread / effective level (Settings' default) / badge rules.
     bool               paintsUnread(const model::Conversation &c) const;
     model::NotifyLevel level(const model::Conversation &c) const;
@@ -189,16 +186,16 @@ private:
     SidebarFooter                         *_footer = nullptr;
     Menus                                 *_menus  = nullptr;
     std::vector<ConvRow *>                 _rows;
+    std::vector<ConvRow *>                 _rowOf; // by ConvRef: the row, else null
     std::vector<TeammateRow *>             _teamRows;
     std::vector<model::Backend::AgentRole> _team; // as last listed (rebuild)
     std::string                            _selectedTeammate;
     std::vector<SectionHeader *>           _sections;
     std::vector<ui::View *>                _nav; // Threads, Saved messages, Scheduled messages
     std::vector<const char *>              _navTitles;
-    ui::View   *_savedRow = nullptr, *_threadsRow = nullptr, *_scheduledRow = nullptr;
-    bool        _threadsSelected = false, _savedSelected = false, _scheduledSelected = false;
-    VisitStamps _visited; // opened here (visit stamps)
-    std::function<int64_t()> _now;
+    ui::View                *_savedRow = nullptr, *_threadsRow = nullptr, *_scheduledRow = nullptr;
+    Nav                      _navSelected = Nav::None;
+    VisitStamps              _visited; // opened here (visit stamps)
     Filters                  _filters;
     model::ConvRef           _selected        = model::kNoConv;
     model::Store::ObserverId _observer        = 0;

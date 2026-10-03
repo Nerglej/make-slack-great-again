@@ -28,13 +28,6 @@ model::Ts activityOf(const model::Conversation &c) {
 
 } // namespace
 
-std::string agentSessionRole(
-    const screens::Context &ctx, ConvRef conv, const std::vector<model::Backend::AgentRole> &team
-) {
-    (void)team;
-    return ctx.backend.agentSessionRole(conv);
-}
-
 TeammatePage::TeammatePage(
     screens::Context &ctx, Avatars &avatars, Settings &settings, std::function<void()> saveSettings
 )
@@ -170,12 +163,11 @@ void TeammatePage::rebuild() {
         model::Ts        activity = 0;
     };
     std::vector<Row> rows;
-    const int64_t    now  = _ctx.backend.nowSecs();
-    const auto       team = _ctx.backend.agentRoles();
+    const int64_t    now = _ctx.backend.nowSecs();
     for (ConvRef c = 0; c < st.conversationCount(); ++c) {
         const model::Conversation &cv = st.conversation(c);
         if (!cv.member || cv.kind != model::ConvKind::Dm || cv.dmUser >= st.userCount() ||
-            agentSessionRole(_ctx, c, team) != _mate.id)
+            _ctx.backend.agentSessionRole(c) != _mate.id)
             continue;
         const model::User &u = st.user(cv.dmUser);
         Row                r;

@@ -15,10 +15,6 @@ class HuddleBanner final : public ui::View {
 public:
     HuddleBanner();
     std::function<void()> onJoin;
-    ui::Clickable        *joinButton() const { return _join; }
-
-private:
-    ui::Clickable *_join = nullptr;
 };
 
 } // namespace shell

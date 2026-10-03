@@ -53,10 +53,6 @@ std::string iconCachePath(plat::App &app, const std::string &url) {
     );
 }
 
-bool isRemote(std::string_view s) {
-    return str::startsWith(s, "https://") || str::startsWith(s, "http://");
-}
-
 // Destroyed on the next loop turn: these are often dropped from inside one
 // of their own callbacks.
 template <class T>
@@ -128,10 +124,6 @@ Accounts::~Accounts() {
     if (_migration && _migration->req)
         _client.cancel(_migration->req);
     _running.clear();
-}
-
-claude::Backend *Accounts::claudeBackend() const {
-    return _active ? _active->claude : nullptr;
 }
 
 void Accounts::start() {
@@ -545,10 +537,10 @@ void Accounts::connect(uint64_t serial) {
             if (const auth::WorkspaceRecord *rec = _store.find(r->key)) {
                 const std::string &icon = r->store.workspaceIcon;
                 if (rec->displayName != r->store.workspaceName ||
-                    (isRemote(icon) && rec->iconUrl != icon)) {
+                    (screens::RemoteImages::isRemote(icon) && rec->iconUrl != icon)) {
                     auth::WorkspaceRecord x = *rec;
                     x.displayName           = r->store.workspaceName;
-                    if (isRemote(icon))
+                    if (screens::RemoteImages::isRemote(icon))
                         x.iconUrl = icon;
                     _store.save(std::move(x));
                     refreshRail();
@@ -599,7 +591,7 @@ void Accounts::authLost(uint64_t serial, const std::string &error) {
 void Accounts::fetchIcon(Running &r) {
     plat::App        &pa  = _ctx.app.platform();
     const std::string url = r.store.workspaceIcon;
-    if (!isRemote(url))
+    if (!screens::RemoteImages::isRemote(url))
         return;
     const std::string path = iconCachePath(pa, url);
     if (path.empty())
@@ -841,10 +833,8 @@ void Accounts::signOut(const std::string &key) {
     const auth::WorkspaceRecord *rec = k.empty() ? nullptr : _store.find(k);
     if (!rec)
         return;
-    const bool        open   = k == _activeKey;
-    const std::string custom = customWorkspaceIconPath(_ctx.app.platform(), rec->id);
-    if (!custom.empty())
-        file::remove(custom);
+    const bool open = k == _activeKey;
+    removeCustomWorkspaceIcon(_ctx.app.platform(), rec->id);
     drop(find(k), false);
     cache::WorkspaceCache::remove(_ctx.app.platform(), k);
     _shell.drafts().dropScope(k);

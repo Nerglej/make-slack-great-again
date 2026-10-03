@@ -34,6 +34,7 @@ namespace shell {
 
 class CanvasPage;
 class ConvHeader;
+class OverviewPage;
 class TeammatePage;
 class SavedPage;
 class ScheduledPage;
@@ -178,21 +179,16 @@ public:
     void          restoreTeammate(const std::string &role);
     void          removeTeammate(const std::string &role);
 
-    // The sidebar's Threads entry: the followed
-    // threads in the content area, no channel composer (the cards have their
-    // own reply boxes). Reloaded on every open.
-    void           openThreads();
-    bool           threadsOpen() const;
+    // The sidebar's entries over the sections, each an overview page in the
+    // content area in the conversation's place, no composer, refilled on
+    // every open: Threads (the followed threads; the cards have their own
+    // reply boxes), Saved messages (the saved list as cards), Scheduled
+    // messages (what waits to be posted, as cards).
+    using Page = Sidebar::Nav;
+    void           showPage(Page p);
+    bool           pageOpen(Page p) const;
     ThreadsPage   *threadsPage() const { return _threadsPage; }
-    // The sidebar's Saved messages entry: the
-    // saved list as cards in the content area, no composer.
-    void           openSaved();
-    bool           savedOpen() const;
     SavedPage     *savedPage() const { return _savedPage; }
-    // The sidebar's Scheduled messages entry: what waits to be posted, as
-    // cards in the content area, no composer.
-    void           openScheduled();
-    bool           scheduledOpen() const;
     ScheduledPage *scheduledPage() const { return _scheduledPage; }
     // The conversation, then the message (inside
     // its thread when `thread` is its root), scrolled to and flashed.
@@ -221,7 +217,6 @@ public:
     Composer                   *threadComposer();
     // The thread panel (the messages screens' ThreadPanel), null without them.
     ui::View                   *threadPanel() const;
-    TypingIndicator            *threadTyping() const;
     ConvHeader                 &header() { return *_header; }
     ConvTabs                   &tabs() { return *_tabs; }
     TypingIndicator            &typing() { return *_typing; }
@@ -233,7 +228,8 @@ public:
     const SwipeIndicator       &swipeBadge() const { return *_swipeBadge; }
     // Window-chrome hit test for Decorations::Custom (logical window coords).
     plat::HitArea               hitTest(plat::Point p) const;
-    // Everything worth saving happens on close: geometry + stashed drafts.
+    // Everything worth saving happens on close: geometry + stashed drafts,
+    // the settings written at once.
     void                        saveState();
     // Issue #45: a window the work area can't hold
     // shrinks to it (its minimum first) and one hanging off it is pulled
@@ -251,7 +247,10 @@ public:
     // Ctrl+Enter, link previews, animations, cache bound, tray icon); called
     // at start and after every Settings change.
     void                        applySettings();
-    void                        saveSettings(); // to _settingsPath, a warning when it fails
+    // The settings to _settingsPath a moment after the first change, off the
+    // UI thread (a burst of changes is one write; a warning when it fails).
+    // saveState writes what is still waiting at once.
+    void                        saveSettingsSoon();
     // Shows and raises the window, un-hiding and un-minimising it (tray
     // clicks, notification clicks, second instances).
     void                        restore(const std::string &activationToken = {});
@@ -329,30 +328,33 @@ private:
     bool       navInput(const plat::Event &e);        // the window's input filter
     // A workspace's tray item is kTrayWorkspace + its index on the rail.
     enum : uint32_t { kTraySettings = 1, kTrayResetSize, kTrayQuit, kTrayWorkspace = 100 };
-    void showWorkspaceMenu(const std::string &key, ui::PointF at);
-    void refreshRail(); // the tiles' names, icons and active state
-    bool hideWindow();  // to the tray, while a tray host shows our icon
+    void          showWorkspaceMenu(const std::string &key, ui::PointF at);
+    void          refreshRail(); // the tiles' names, icons and active state
+    bool          hideWindow();  // to the tray, while a tray host shows our icon
     // The open chat is on screen and the window focused
     // (not hidden, minimized or in the background); updateReading tells the
     // message list.
-    bool reading() const;
-    void updateReading();
+    bool          reading() const;
+    void          updateReading();
     // Agent workspace (shell_agents.cpp): the teammate page's wiring, leaving
     // it (its draft kept), its composer's lock, sending to it.
-    void buildTeammatePage(ui::View *stack);
-    void buildThreadsPage(ui::View *stack);
-    void buildSavedPage(ui::View *stack);
-    void buildScheduledPage(ui::View *stack);
-    void leaveConversationChrome(); // what the Saved and Scheduled pages hide
-    void leaveScheduled();
-    void setupComposer(Composer &c); // the avatars, GIF key and tips every composer gets
-    void leaveThreads();
-    void leaveSaved();
-    void leaveTeammate();
-    void refreshTeammates();
-    void applyTeammateComposer();
-    bool startSessionWithTeammate();
-    void saveSettingsNow();
+    void          buildTeammatePage(ui::View *stack);
+    void          buildThreadsPage(ui::View *stack);
+    void          buildSavedPage(ui::View *stack);
+    void          buildScheduledPage(ui::View *stack);
+    // What the overview pages and the teammate page take away: the
+    // conversation's chrome and, unless kept (the teammate page writes to
+    // the teammate), the composer; its draft is stashed.
+    void          leaveConversationChrome(bool keepComposer);
+    OverviewPage *pageView(Page p) const; // null: not built
+    void          leavePage(Page p);
+    void          leavePages();               // whichever overview page is open
+    void          setupComposer(Composer &c); // the avatars, GIF key and tips every composer gets
+    void          leaveTeammate();
+    void          refreshTeammates();
+    void          applyTeammateComposer();
+    bool          startSessionWithTeammate();
+    void          saveSettingsNow(); // what saveSettingsSoon has waiting, written at once
     void
     showSampleNotification(plat::Notification n, std::function<void(const std::string &)> result);
     void sampleNotificationReady(const plat::Notification &n); // its picture is there
@@ -467,6 +469,7 @@ private:
     // The visit stamps' save (coalesced), the update bar and checker,
     // Settings' sample notification and where its outcome goes.
     plat::TimerId                            _visitedTimer = 0, _updateTimer = 0;
+    plat::TimerId                            _saveTimer          = 0; // saveSettingsSoon's
     UpdateBar                               *_updateBar          = nullptr;
     update::Updater                         *_updater            = nullptr;
     int                                      _updateListener     = 0;

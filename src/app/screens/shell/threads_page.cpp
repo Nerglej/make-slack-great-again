@@ -21,11 +21,6 @@ namespace shell {
 
 namespace {
 
-// The card geometry: the message list's avatar, the chat rows'
-// rhythm (spacing.sm around a row, spacing.xs under the name line).
-constexpr float kAvatar = 36, kAvatarRadius = 4, kAvatarGap = 10;
-constexpr float kRowPadV = 4, kHdrGap = 2;
-
 // One message inside a card: avatar, name and time
 // over the rich body, a one-line summary of attached files. A click outside
 // a link opens the real thread.
@@ -34,33 +29,15 @@ public:
     MessageRow(screens::Context &ctx, Avatars &avatars, const model::Message &m) {
         setLook({C::None, C::None, C::None, C::None, 0});
         setCursor(plat::Cursor::Hand); // the whole row opens the thread
-        style().row().spacing(kAvatarGap).padding(0, kRowPadV, 0, kRowPadV).items(Align::Start);
-        const model::User &u    = ctx.store().user(m.user);
-        const auto        &x    = m.extra;
-        const std::string  name = x && !x->botName.empty() ? x->botName : std::string(u.label());
-        auto              *av   = add<Avatar>();
-        av->style().size(kAvatar, kAvatar).noShrink();
-        av->setRadius(kAvatarRadius);
-        av->setPlaceholder(C::PresenceAway);
-        av->setInitial(name);
-        const std::string &pic = x && !x->botAvatar.empty() ? x->botAvatar : u.avatar;
-        if (!pic.empty())
-            av->setBitmap(avatars.get(pic, int(kAvatar * 2)));
-        auto *col = add<View>();
-        col->style().flex(1).spacing(kHdrGap);
-        col->style().shrink = 1;
-        auto *hdr           = col->add<View>();
-        hdr->style().row().spacing(8).items(Align::Center);
-        auto *n = hdr->add<Label>(name, Font::BodySemibold);
-        n->setMaxLines(1);
-        n->style().shrink = 1;
-        hdr->add<Label>(
-               base::dateTimeLabel(model::tsSecs(m.ts), ctx.backend.nowSecs()),
-               Font::Small,
-               C::TextMuted
-        )
-            ->style()
-            .noShrink();
+        const model::User &u   = ctx.store().user(m.user);
+        const auto        &x   = m.extra;
+        View              *col = fillMessageRow(
+            this,
+            avatars,
+            x && !x->botName.empty() ? x->botName : std::string(u.label()),
+            x && !x->botAvatar.empty() ? x->botAvatar : u.avatar,
+            base::dateTimeLabel(model::tsSecs(m.ts), ctx.backend.nowSecs())
+        );
         auto *body = col->add<View>();
         body->style().spacing(2);
 #ifdef MSGA_HAVE_MESSAGES
@@ -86,33 +63,6 @@ public:
 };
 
 } // namespace
-
-TextLink::TextLink(std::string text, Font f, C c, bool underline)
-    : _text(std::move(text)), _font(f), _color(c), _underline(underline) {
-    setLook({C::None, C::None, C::None, C::None, 0});
-    setRole(Role::Button);
-    setCursor(plat::Cursor::Hand);
-    style().row().alignSelf(Align::Start);
-    _label = add<Label>();
-    _label->setMaxLines(1);
-    refreshLook();
-}
-
-bool TextLink::onEvent(Event &e) {
-    if (e.type == EventType::PointerEnter || e.type == EventType::PointerLeave)
-        refreshLook();
-    return Clickable::onEvent(e);
-}
-
-void TextLink::refreshLook() {
-    text::Style st = font(_font);
-    // The link button turns accent.hover when hovered.
-    st.color       = themed(_underline && hovered() ? C::AccentHover : _color);
-    st.underline   = _underline || hovered();
-    text::AttributedText t;
-    t.append(_text, st);
-    _label->setRichText(std::move(t));
-}
 
 std::string threadParticipants(const model::Store &store, const model::Message &root) {
     std::vector<model::UserRef> ids{root.user};
@@ -161,29 +111,18 @@ ThreadsPage::Card::Card(ThreadsPage &page, FollowedThread item)
     style().spacing(12);
     auto *head = add<View>();
     head->style().spacing(2);
-    auto *nameRow = head->add<View>();
-    nameRow->style().row().spacing(4).items(Align::Center);
-    const model::Conversation &c = ctx.store().conversation(_item.conv);
-    nameRow->add<IconView>(
-        c.kind == model::ConvKind::Private ? gfx::Icon::Lock : gfx::Icon::Hash, 15, C::Text
-    );
-    auto *name =
-        nameRow->add<TextLink>(ctx.store().displayName(_item.conv), Font::BodyBold, C::Text, false);
-    name->onClick = [this] {
+    View *nameRow = cardHeader(head, ctx.store(), _item.conv, [this] {
         if (_page.onOpenChannel)
             _page.onOpenChannel(_item.conv);
-    };
-    auto *pill = nameRow->add<Label>(tr("New"), Font::PlateName, C::AccentText);
+    });
+    auto *pill    = nameRow->add<Label>(tr("New"), Font::PlateName, C::AccentText);
     pill->setBackground(C::Badge, 8);
     pill->style().padding(8, 1).noShrink();
     pill->setVisible(unread());
     _newPill = pill;
     head->add<Label>(participants(), Font::Small, C::TextMuted)->setMaxLines(1);
 
-    _body = add<View>();
-    _body->setBackground(C::Surface, 8);
-    _body->setBorder(C::Border);
-    _body->style().padding(24, 16, 24, 16).spacing(4);
+    _body                                                           = cardBody(this);
     _body->add<MessageRow>(ctx, page._avatars, _item.root)->onClick = [this] { openThread(); };
     // "Show N more replies": the rest lives in the thread panel.
     const int hidden = int(_item.root.replyCount) - int(_item.latestReplies.size());
@@ -196,7 +135,6 @@ ThreadsPage::Card::Card(ThreadsPage &page, FollowedThread item)
             true
         );
         more->onClick = [this] { openThread(); };
-        _moreReplies  = more;
     }
     _replies = _body->add<View>();
     _replies->style().spacing(4);
@@ -329,44 +267,14 @@ ThreadsPage::ThreadsPage(
     DraftStash                     &drafts,
     std::function<void(Composer &)> setup
 )
-    : _ctx(ctx), _avatars(avatars), _drafts(drafts), _setupComposer(std::move(setup)) {
-    style().column().flex(1);
-    // The thread panel's header: 48 px, the title bold; a hairline under it.
-    auto *header = add<View>();
-    header->style().row().height(48).padding(16, 0, 8, 0).items(Align::Center).noShrink();
-    header->add<Label>(tr("Threads"), Font::Title)->style().flex(1);
-    add<Separator>(false, C::FormDivider);
-    _scroll = add<ScrollView>();
-    _scroll->style().flex(1);
-    View *content = _scroll->content();
-    content->style().padding(24).spacing(24);
-    _status = content->add<Label>("", Font::Body, C::TextMuted);
-    _status->setAlign(text::LayoutOptions::Align::Center);
-    _status->style().padding(24);
-    _status->setVisible(false);
-    _list = content->add<View>();
-    _list->style().spacing(24);
-    _more =
-        content->add<Button>(tr("Show more threads"), Button::Kind::Secondary, Button::Form::Small);
+    : OverviewPage(ctx, avatars, tr("Threads")), _drafts(drafts), _setupComposer(std::move(setup)) {
+    _more = _scroll->content()->add<Button>(
+        tr("Show more threads"), Button::Kind::Secondary, Button::Form::Small
+    );
     _more->setFocusable(false);
     _more->style().alignSelf(Align::Start);
     _more->setVisible(false);
     _more->onClick = [this] { showMore(); };
-    // Keep the cards live: replies arriving while the page is up, our own
-    // sends and their confirmations.
-    _observer      = ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
-        onChange(ch);
-    });
-}
-
-ThreadsPage::~ThreadsPage() {
-    _ctx.store.unobserve(_observer);
-}
-
-void ThreadsPage::paint(gfx::Painter &p) {
-    // One grey surface (the official client's look); the cards are white.
-    p.fillRect(bounds(), color(C::FormSunken));
-    View::paint(p);
 }
 
 void ThreadsPage::onChange(const model::Change &ch) {
@@ -436,12 +344,6 @@ void ThreadsPage::loadPage(std::string cursor) {
             );
         }
     );
-}
-
-void ThreadsPage::setStatus(std::string text) {
-    _statusText = std::move(text);
-    _status->setText(_statusText);
-    _status->setVisible(!_statusText.empty());
 }
 
 } // namespace shell

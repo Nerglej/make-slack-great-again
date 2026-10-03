@@ -28,10 +28,12 @@
 #include "screens/shell/quick_switcher.h"
 #include "screens/shell/session_status_dialog.h"
 #include "screens/shell/teammate_page.h"
+#include "screens/shell/overview_page.h"
 #include "screens/shell/saved_page.h"
 #include "screens/shell/scheduled_page.h"
 #include "screens/shell/threads_page.h"
 #include "screens/shell/shortcuts.h"
+#include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar_footer.h"
 #include "screens/shell/standin.h"
 #include "screens/shell/status_dialog.h"
@@ -72,7 +74,9 @@ constexpr float kTitleBarH = 22; // the compact title strip (Linux/Windows)
 #endif
 constexpr float kRailW = 64;
 constexpr float kListW = 240, kListMinW = 160, kListMaxW = 400;
-constexpr float kResizeEdge = 6;
+constexpr float kResizeEdge          = 6;
+// Settings changes are written this long after the first of a burst.
+constexpr int   kSettingsSaveDelayMs = 500;
 
 } // namespace
 
@@ -596,12 +600,7 @@ public:
         panel->show(conv, root);
         typing->setTarget(conv, root);
 #else
-        where->setText(
-            str::concat(
-                {_ctx.store().conversation(conv).isDirect() ? "" : "#",
-                 _ctx.store().displayName(conv)}
-            )
-        );
+        where->setText(convTitle(_ctx.store(), conv));
         list->setTarget(conv, root);
 #endif
         composer->setTarget(conv, root);
@@ -679,9 +678,16 @@ public:
         const float     room    = std::max(0.f, height() - 2 * kMargin);
         for (View *r : _rows)
             r->setVisible(true);
-        float h = _content->measure(w, 1e6f).h;
-        for (size_t i = _rows.size(); i-- > 0 && h > room;) {
-            _rows[i]->setVisible(false);
+        float       h    = _content->measure(w, 1e6f).h;
+        // A dropped row takes its height and the gap above it along: one
+        // measure for all of them, and one of what is left.
+        const float gap  = _content->currentStyle().gap;
+        size_t      keep = _rows.size();
+        while (keep > 0 && h > room)
+            h -= _rows[--keep]->measure(w, 1e6f).h + gap;
+        if (keep < _rows.size()) {
+            for (size_t i = keep; i < _rows.size(); ++i)
+                _rows[i]->setVisible(false);
             h = _content->measure(w, 1e6f).h;
         }
         const float y = std::max(kMargin, std::round((height() - h) / 2));
@@ -798,7 +804,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         _visitedTimer = _ctx.app.addTimer(1500, false, [this] {
             _visitedTimer = 0;
             storeVisited();
-            saveSettingsNow();
+            saveSettingsSoon();
         });
     };
     _listHandle = body->add<ListHandle>(*_sidebar);
@@ -959,7 +965,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         [this](const std::vector<std::string> &recent, int tone) {
             _settings.emojiRecent   = recent;
             _settings.emojiSkinTone = tone;
-            saveSettings();
+            saveSettingsSoon();
         }
     );
 #endif
@@ -968,7 +974,20 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
     fitToScreen();
 }
 
-void Shell::saveSettings() {
+// Coalesced: an emoji pick, a toggle or a dialog's changes are one write a
+// moment later, made on a worker (Settings::saveInBackground).
+void Shell::saveSettingsSoon() {
+    if (_saveTimer)
+        return;
+    _saveTimer = _ctx.app.addTimer(kSettingsSaveDelayMs, false, [this] {
+        _saveTimer = 0;
+        _settings.saveInBackground(_ctx.app.platform(), _settingsPath);
+    });
+}
+
+void Shell::saveSettingsNow() {
+    if (_saveTimer)
+        _ctx.app.cancelTimer(std::exchange(_saveTimer, 0));
     if (!_settings.save(_settingsPath) && !_settingsPath.empty())
         LOG_WARN("shell", "could not save %s", _settingsPath.c_str());
 }
@@ -996,8 +1015,7 @@ void Shell::wireAgentUi() {
     footer.setZenOn(_settings.zenMode(_activeKey));
     footer.onZenToggled = [this](bool on) {
         _settings.setZenMode(_activeKey, on);
-        if (!_settings.save(_settingsPath) && !_settingsPath.empty())
-            LOG_WARN("shell", "could not save %s", _settingsPath.c_str());
+        saveSettingsSoon();
         _ctx.backend.setZenMode(on);
 #ifdef MSGA_HAVE_MESSAGES
         if (_current != kNoConv)
@@ -1065,6 +1083,8 @@ Shell::~Shell() {
     for (const auto &r : _running)
         r->store->unobserve(r->observer);
     _ctx.app.cancelTimer(_visitedTimer);
+    if (_saveTimer) // a change still waiting is written now
+        saveSettingsNow();
     // The updater outlives us (main owns it): no event or check may reach
     // a dead shell.
     _ctx.app.cancelTimer(_updateTimer);
@@ -1427,9 +1447,7 @@ void Shell::setWaiting(bool on) {
     _listHandle->setVisible(_signedIn && !on);
     if (on) {
         leaveTeammate();
-        leaveThreads();
-        leaveSaved();
-        leaveScheduled();
+        leavePages();
         _header->setVisible(false);
         _tabs->setVisible(false);
         _huddleBanner->setVisible(false);
@@ -1557,9 +1575,7 @@ void Shell::open(ConvRef conv) {
     if (!_signedIn || conv == kNoConv || conv >= _ctx.store().conversationCount())
         return;
     leaveTeammate(); // the teammate page keeps what was typed to it
-    leaveThreads();
-    leaveSaved();
-    leaveScheduled();
+    leavePages();
     _search->hideNow();
     if (conv != _current && threadOpen())
         closeThread(); // a leave path: the thread composer stashes its draft
@@ -1607,9 +1623,7 @@ void Shell::open(ConvRef conv) {
 
 void Shell::leaveWorkspace() {
     leaveTeammate();
-    leaveThreads();
-    leaveSaved();
-    leaveScheduled();
+    leavePages();
     if (_threadsPage)
         _threadsPage->clear(); // its cards point into the old workspace
     if (_savedPage)
@@ -1818,7 +1832,7 @@ void Shell::setupComposer(Composer &c) {
     c.gifKey    = [this] { return _settings.effectiveGiphyKey(); };
     c.setGifKey = [this](const std::string &k) {
         _settings.giphyKey = k;
-        saveSettings();
+        saveSettingsSoon();
     };
     // The paperclip's chooser starts where the last attach was picked.
     c.attachDir    = [this] { return _settings.lastAttachDir; };
@@ -1826,7 +1840,7 @@ void Shell::setupComposer(Composer &c) {
         if (dir == _settings.lastAttachDir)
             return;
         _settings.lastAttachDir = dir;
-        saveSettings();
+        saveSettingsSoon();
     };
     c.refreshTips();
 }
@@ -1841,41 +1855,84 @@ void Shell::buildThreadsPage(View *stack) {
     // the thread panel) the usual way.
     _threadsPage->onOpenThread  = [this](ConvRef c, Ts root) { openThread(c, root); };
     _threadsPage->onOpenChannel = [this](ConvRef c) { open(c); };
-    _sidebar->onThreads         = [this] { openThreads(); };
+    _sidebar->onThreads         = [this] { showPage(Page::Threads); };
 }
 
-bool Shell::threadsOpen() const {
-    return _threadsPage && _threadsPage->visible();
+// ── The overview pages ──────────────────────────────────────────────────────
+
+OverviewPage *Shell::pageView(Page p) const {
+    switch (p) {
+    case Page::Threads:
+        return _threadsPage;
+    case Page::Saved:
+        return _savedPage;
+    case Page::Scheduled:
+        return _scheduledPage;
+    case Page::None:
+        break;
+    }
+    return nullptr;
 }
 
-// Leaving the conversation for the overview: the
-// conversation's chrome and the composer go (the cards bring their own
-// reply boxes), the open chat's draft is stashed.
-void Shell::openThreads() {
-    if (!_threadsPage || !_signedIn || !_ctx.backend.capabilities().threadsView)
+bool Shell::pageOpen(Page p) const {
+    const OverviewPage *v = pageView(p);
+    return v && v->visible();
+}
+
+// Leaving the conversation for the overview: the conversation's chrome and
+// the composer go, the open chat's draft is stashed.
+void Shell::showPage(Page p) {
+    OverviewPage *page = pageView(p);
+    const auto    caps = _ctx.backend.capabilities();
+    const bool    has  = p == Page::Threads ? caps.threadsView
+                         : p == Page::Saved ? caps.messageReminders
+                                            : caps.scheduledSend;
+    if (!page || !_signedIn || !has)
         return;
     leaveTeammate();
-    leaveSaved();
-    leaveScheduled();
+    for (Page o : {Page::Threads, Page::Saved, Page::Scheduled})
+        if (o != p)
+            leavePage(o);
+    leaveConversationChrome(false);
+    _sidebar->selectNav(p);
+    page->setVisible(true);
+    page->open();
+}
+
+void Shell::leaveConversationChrome(bool keepComposer) {
     _search->hideNow();
     if (threadOpen())
         closeThread();
     _composer->setTarget(kNoConv, 0); // stashes the conversation's draft
-    _composer->setVisible(false);
-    _composer->setEnabled(false);
+    if (!keepComposer) {
+        _composer->setVisible(false);
+        _composer->setEnabled(false);
+    }
     _current = kNoConv;
     _header->setVisible(false);
     _tabs->setVisible(false);
     _huddleBanner->setVisible(false);
     _messages->setVisible(false);
     _welcome->setVisible(false);
+    _canvas->flushPendingSave();
     _canvas->setVisible(false);
     _typing->setTarget(kNoConv, 0);
     _typing->setVisible(false);
     _ctx.backend.setActiveConversation(kNoConv, 0);
-    _sidebar->selectThreads(true);
-    _threadsPage->setVisible(true);
-    _threadsPage->open();
+}
+
+void Shell::leavePage(Page p) {
+    if (!pageOpen(p))
+        return;
+    pageView(p)->setVisible(false);
+    if (_sidebar->selectedNav() == p)
+        _sidebar->selectNav(Page::None);
+    _composer->setVisible(true);
+}
+
+void Shell::leavePages() {
+    for (Page p : {Page::Threads, Page::Saved, Page::Scheduled})
+        leavePage(p);
 }
 
 // ── The Saved messages page ─────────────────────────────────────────────────
@@ -1889,54 +1946,7 @@ void Shell::buildSavedPage(View *stack) {
         jumpToMessage(c, ts, thread);
     };
     _savedPage->onOpenChannel = [this](ConvRef c) { open(c); };
-    _sidebar->onSavedMessages = [this] { openSaved(); };
-}
-
-bool Shell::savedOpen() const {
-    return _savedPage && _savedPage->visible();
-}
-
-// Like the Threads page, no conversation
-// chrome and no composer.
-void Shell::openSaved() {
-    if (!_savedPage || !_signedIn || !_ctx.backend.capabilities().messageReminders)
-        return;
-    leaveTeammate();
-    leaveThreads();
-    leaveScheduled();
-    leaveConversationChrome();
-    _sidebar->selectSaved(true);
-    _savedPage->setVisible(true);
-    _savedPage->open();
-}
-
-// What the overview pages (Saved, Scheduled) take away: the conversation's
-// chrome and the composer, its draft stashed.
-void Shell::leaveConversationChrome() {
-    _search->hideNow();
-    if (threadOpen())
-        closeThread();
-    _composer->setTarget(kNoConv, 0); // stashes the conversation's draft
-    _composer->setVisible(false);
-    _composer->setEnabled(false);
-    _current = kNoConv;
-    _header->setVisible(false);
-    _tabs->setVisible(false);
-    _huddleBanner->setVisible(false);
-    _messages->setVisible(false);
-    _welcome->setVisible(false);
-    _canvas->setVisible(false);
-    _typing->setTarget(kNoConv, 0);
-    _typing->setVisible(false);
-    _ctx.backend.setActiveConversation(kNoConv, 0);
-}
-
-void Shell::leaveSaved() {
-    if (!savedOpen())
-        return;
-    _savedPage->setVisible(false);
-    _sidebar->selectSaved(false);
-    _composer->setVisible(true);
+    _sidebar->onSavedMessages = [this] { showPage(Page::Saved); };
 }
 
 // ── The Scheduled messages page ─────────────────────────────────────────────
@@ -1945,31 +1955,7 @@ void Shell::buildScheduledPage(View *stack) {
     _scheduledPage = stack->add<ScheduledPage>(_ctx, _avatars);
     _scheduledPage->setVisible(false);
     _scheduledPage->onOpenChannel = [this](ConvRef c) { open(c); };
-    _sidebar->onScheduled         = [this] { openScheduled(); };
-}
-
-bool Shell::scheduledOpen() const {
-    return _scheduledPage && _scheduledPage->visible();
-}
-
-void Shell::openScheduled() {
-    if (!_scheduledPage || !_signedIn || !_ctx.backend.capabilities().scheduledSend)
-        return;
-    leaveTeammate();
-    leaveThreads();
-    leaveSaved();
-    leaveConversationChrome();
-    _sidebar->selectScheduled(true);
-    _scheduledPage->setVisible(true);
-    _scheduledPage->open();
-}
-
-void Shell::leaveScheduled() {
-    if (!scheduledOpen())
-        return;
-    _scheduledPage->setVisible(false);
-    _sidebar->selectScheduled(false);
-    _composer->setVisible(true);
+    _sidebar->onScheduled         = [this] { showPage(Page::Scheduled); };
 }
 
 void Shell::jumpToMessage(ConvRef conv, Ts ts, Ts thread) {
@@ -1994,14 +1980,6 @@ void Shell::jumpToMessage(ConvRef conv, Ts ts, Ts thread) {
 #endif
 }
 
-void Shell::leaveThreads() {
-    if (!threadsOpen())
-        return;
-    _threadsPage->setVisible(false);
-    _sidebar->selectThreads(false);
-    _composer->setVisible(true);
-}
-
 bool Shell::threadOpen() const {
     return _thread && _thread->visible();
 }
@@ -2009,14 +1987,6 @@ bool Shell::threadOpen() const {
 ui::View *Shell::threadPanel() const {
 #ifdef MSGA_HAVE_MESSAGES
     return _thread ? _thread->panel : nullptr;
-#else
-    return nullptr;
-#endif
-}
-
-TypingIndicator *Shell::threadTyping() const {
-#ifdef MSGA_HAVE_MESSAGES
-    return _thread ? _thread->typing : nullptr;
 #else
     return nullptr;
 #endif
@@ -2296,7 +2266,7 @@ void Shell::setUpdater(update::Updater *u) {
     });
     u->onChecked    = [this](int64_t when) {
         _settings.lastUpdateCheck = when; // when the last check ran
-        saveSettingsNow();
+        saveSettingsSoon();
     };
     // A silent check 5 s after the start (none with auto-checks off).
     _ctx.app.cancelTimer(_updateTimer);
@@ -2595,9 +2565,9 @@ void Shell::openSettingsAt(uint8_t page) {
     if (_settingsDlg)
         return;
     settings::SettingsDialog::Hooks hooks;
+    // What the dialog changes is on disk at once (its pages say so).
     hooks.changed = [this] {
-        if (!_settings.save(_settingsPath) && !_settingsPath.empty())
-            LOG_WARN("shell", "could not save %s", _settingsPath.c_str());
+        saveSettingsNow();
         applySettings();
     };
     hooks.updater = _updater;
@@ -2676,9 +2646,7 @@ void Shell::openSettingsAt(uint8_t page) {
 
 std::string Shell::workspaceIconPath() const {
     // The chosen picture, else the server's.
-    const std::string custom =
-        customWorkspaceIconPath(_ctx.app.platform(), _ctx.store().workspaceId);
-    return custom.empty() ? _ctx.store().workspaceIcon : custom;
+    return workspaceIcon(_ctx.app.platform(), _ctx.store().workspaceId, _ctx.store().workspaceIcon);
 }
 
 void Shell::refreshWorkspaceIcon() {
@@ -2732,9 +2700,8 @@ void Shell::refreshRail() {
             name = _ctx.store().workspaceName;
             icon = workspaceIconPath();
         } else {
-            name                     = w->name;
-            const std::string custom = customWorkspaceIconPath(pa, w->id);
-            icon                     = custom.empty() ? w->icon : custom;
+            name = w->name;
+            icon = workspaceIcon(pa, w->id, w->icon);
         }
         t->setBitmap(icon.empty() ? nullptr : _avatars.get(icon, 80));
         t->setName(name);
@@ -2827,11 +2794,10 @@ std::vector<Shell::LiveWorkspace> Shell::liveWorkspaces() const {
                 const bool  open = r->store == &_ctx.store() && _signedIn;
                 std::string name =
                     open && !r->store->workspaceName.empty() ? r->store->workspaceName : w.name;
-                const std::string custom = customWorkspaceIconPath(_ctx.app.platform(), w.id);
                 out.push_back(
                     {w.key,
                      name.empty() ? w.id : name,
-                     custom.empty() ? w.icon : custom,
+                     workspaceIcon(_ctx.app.platform(), w.id, w.icon),
                      r->store,
                      r->backend}
                 );
@@ -3162,8 +3128,7 @@ void Shell::saveState() {
             _settings.y           = int(pos->y);
         }
     }
-    if (!_settings.save(_settingsPath) && !_settingsPath.empty())
-        LOG_WARN("shell", "could not save %s", _settingsPath.c_str());
+    saveSettingsNow();
 }
 
 } // namespace shell

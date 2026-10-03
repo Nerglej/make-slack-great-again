@@ -1050,6 +1050,52 @@ TEST("forward: pick a channel, add a comment, the message is re-posted there") {
     CHECK(h.store.conversation(general).messages.back().user == h.store.me);
 }
 
+TEST("forward: the picker matches people case-insensitively beyond ASCII") {
+    Harness     h;
+    model::User u;
+    u.id          = "U0ORJAN";
+    u.name        = "orjan";
+    u.displayName = "\xC3\x96rjan Berg"; // "Örjan Berg": no DM with us yet
+    h.store.addUser(std::move(u));
+    h.store.usersChanged();
+    const ConvRef design = h.conv("C0DESIGN");
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    std::function<ui::View *(ui::View *, std::string_view)> byName =
+        [&](ui::View *v, std::string_view n) -> ui::View * {
+        if (v->accessibleName() == n)
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i), n))
+                return f;
+        return nullptr;
+    };
+    auto *fwd = byName(dlg, "Forward");
+    REQUIRE(fwd != nullptr);
+    CHECK_FALSE(fwd->enabled());
+    typeInto(*h.win, "@\xC3\xB6rj"); // "@örj"
+    press(*h.win, plat::Key::Enter); // the first match: picked
+    CHECK(fwd->enabled());
+    dlg->reject();
+    pump();
+}
+
+TEST("forward: Escape with the picker's list open closes both") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN");
+    h.ctx.forwardMessage(design, h.store.conversation(design).messages.back().ts, {});
+    pump();
+    ui::Popup *dlg = h.win->topPopup();
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "@m"); // the list opens over the dialog
+    REQUIRE(h.win->topPopup() != dlg);
+    press(*h.win, plat::Key::Escape);
+    pump();
+    CHECK(h.win->topPopup() == nullptr);
+}
+
 namespace {
 
 // The fixture's backend with a service that hosts files: downloads wait for
@@ -1789,8 +1835,8 @@ TEST("threads page: the sidebar entry opens the followed threads, newest first")
     Harness h;
     REQUIRE(h.backend.capabilities().threadsView);
     h.sh->sidebar().onThreads(); // the entry's click
-    CHECK(h.sh->threadsOpen());
-    CHECK(h.sh->sidebar().threadsSelected());
+    CHECK(h.sh->pageOpen(shell::Shell::Page::Threads));
+    CHECK(h.sh->sidebar().selectedNav() == shell::Sidebar::Nav::Threads);
     CHECK(h.sh->sidebar().selected() == kNoConv);
     CHECK(h.sh->current() == kNoConv);
     CHECK(!h.sh->composer().visible()); // the cards bring their own reply boxes
@@ -1813,14 +1859,14 @@ TEST("threads page: the sidebar entry opens the followed threads, newest first")
     }
     // Opening a conversation leaves the page and its highlight.
     h.sh->open(h.conv("C0DESIGN"));
-    CHECK(!h.sh->threadsOpen());
-    CHECK(!h.sh->sidebar().threadsSelected());
+    CHECK(!h.sh->pageOpen(shell::Shell::Page::Threads));
+    CHECK(h.sh->sidebar().selectedNav() != shell::Sidebar::Nav::Threads);
     CHECK(h.sh->composer().visible());
 }
 
 TEST("threads page: a card's reply box posts into the thread and the card follows") {
     Harness h;
-    h.sh->openThreads();
+    h.sh->showPage(shell::Shell::Page::Threads);
     shell::ThreadsPage &page = *h.sh->threadsPage();
     waitForThreads(page);
     REQUIRE(page.cardCount() > 0);
@@ -1848,25 +1894,25 @@ TEST("threads page: a card's reply box posts into the thread and the card follow
 
 TEST("threads page: a message opens its thread; the channel name its channel") {
     Harness h;
-    h.sh->openThreads();
+    h.sh->showPage(shell::Shell::Page::Threads);
     shell::ThreadsPage &page = *h.sh->threadsPage();
     waitForThreads(page);
     REQUIRE(page.cardCount() > 0);
     const ConvRef conv = page.card(0).conv();
     page.card(0).openThread();
-    CHECK(!h.sh->threadsOpen());
+    CHECK(!h.sh->pageOpen(shell::Shell::Page::Threads));
     CHECK(h.sh->current() == conv);
     CHECK(h.sh->threadOpen());
     CHECK(h.sh->sidebar().selected() == conv);
     // Back to the page: reloaded, highlighted again, the thread closed.
-    h.sh->openThreads();
-    CHECK(h.sh->sidebar().threadsSelected());
+    h.sh->showPage(shell::Shell::Page::Threads);
+    CHECK(h.sh->sidebar().selectedNav() == shell::Sidebar::Nav::Threads);
     CHECK(!h.sh->threadOpen());
     waitForThreads(page);
     REQUIRE(page.cardCount() > 0);
     page.onOpenChannel(conv);
     CHECK(h.sh->current() == conv);
-    CHECK(!h.sh->threadsOpen());
+    CHECK(!h.sh->pageOpen(shell::Shell::Page::Threads));
 }
 
 TEST("threads page: participants, and a feed that can't be loaded") {
@@ -2086,7 +2132,7 @@ TEST("composer: voice input — the mic, the strip, the dictation at the caret, 
     c.edit().clear();
     mic->activate();
     pump(4);
-    h.sh->openThreads();
+    h.sh->showPage(shell::Shell::Page::Threads);
     pump();
     waitIdle();
     h.sh->open(design);
@@ -2922,6 +2968,7 @@ TEST("workspace icon: a picture that can't be saved keeps the dialog open and sa
     REQUIRE(save != nullptr);
     file::remove(pic); // gone before Save: nothing to copy
     save->activate();
+    model::waitBackground(); // the copy runs on a worker
     pump();
     CHECK(h.win->topPopup() == d);
     CHECK(showsText(d, "The icon could not be saved."));

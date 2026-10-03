@@ -67,9 +67,14 @@ std::string portableMrkdwn(const model::Store &source, std::string_view mrkdwn);
 
 // The workspace's own icon file (the data folder), "" when none.
 std::string customWorkspaceIconPath(plat::App &app, const std::string &workspaceId);
+// The workspace's own picture if it has one, else `serverIcon`.
+std::string
+workspaceIcon(plat::App &app, const std::string &workspaceId, const std::string &serverIcon);
+// Its own picture goes (the workspace is signed out of).
+void       removeCustomWorkspaceIcon(plat::App &app, const std::string &workspaceId);
 // done(path) after Save: the new icon ("" = back to the default). The active
 // workspace's, or the one with `workspaceId` (its server icon `defaultIcon`).
-ui::Popup  *showWorkspaceIconDialog(
+ui::Popup *showWorkspaceIconDialog(
     screens::Context                        &ctx,
     ui::Window                              &w,
     Avatars                                 &avatars,

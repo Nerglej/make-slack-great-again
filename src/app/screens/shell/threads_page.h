@@ -10,10 +10,8 @@
 // cards follow replies that reach the Store while it is up.
 #pragma once
 
-#include "screens/common/context.h"
-#include "screens/shell/avatars.h"
 #include "screens/shell/composer.h"
-#include "ui/ui.h"
+#include "screens/shell/overview_page.h"
 
 #include <functional>
 #include <memory>
@@ -27,25 +25,7 @@ namespace shell {
 // shows the bot's name.
 std::string threadParticipants(const model::Store &store, const model::Message &root);
 
-// Text that reads as a link: the channel name on a card (bold, underlined
-// while hovered), "Show N more replies" (link colour, underlined), the
-// Saved messages page's "Remove".
-class TextLink final : public ui::Clickable {
-public:
-    TextLink(std::string text, ui::Font f, ui::C c, bool underline);
-    bool        onEvent(ui::Event &e) override;
-    std::string accessibleName() const override { return _text; }
-
-private:
-    void        refreshLook();
-    std::string _text;
-    ui::Label  *_label = nullptr;
-    ui::Font    _font;
-    ui::C       _color;
-    bool        _underline;
-};
-
-class ThreadsPage : public ui::View {
+class ThreadsPage : public OverviewPage {
 public:
     class Card;
     // setupComposer readies a card's reply box (avatars, GIF key) like the
@@ -56,12 +36,11 @@ public:
         DraftStash                     &drafts,
         std::function<void(Composer &)> setupComposer
     );
-    ~ThreadsPage() override;
 
     // (Re)loads the first page. Every time the page is brought to front.
-    void open();
+    void open() override;
     // Drops the cards and any load in flight (workspace switch).
-    void clear();
+    void clear() override;
 
     // "Show N more replies" / a message: the thread for real (channel +
     // thread panel). The channel name on a card: the channel.
@@ -69,33 +48,23 @@ public:
     std::function<void(model::ConvRef)>                 onOpenChannel;
 
     // Tests: what the page shows.
-    size_t             cardCount() const { return _cards.size(); }
-    Card              &card(size_t i) const { return *_cards[i]; }
-    const std::string &statusText() const { return _statusText; }
-    ui::View          *moreButton() const { return _more; }
-    void               showMore(); // "Show more threads"
-
-    void paint(gfx::Painter &p) override;
+    size_t cardCount() const { return _cards.size(); }
+    Card  &card(size_t i) const { return *_cards[i]; }
+    void   showMore(); // "Show more threads"
 
 private:
     void loadPage(std::string cursor);
-    void setStatus(std::string text);
-    void onChange(const model::Change &ch);
+    // Keeps the cards live: replies arriving while the page is up, our own
+    // sends and their confirmations.
+    void onChange(const model::Change &ch) override;
 
-    screens::Context               &_ctx;
-    Avatars                        &_avatars;
     DraftStash                     &_drafts;
     std::function<void(Composer &)> _setupComposer;
-    ui::ScrollView                 *_scroll = nullptr;
-    ui::Label                      *_status = nullptr;
-    ui::View                       *_list   = nullptr; // the cards
-    ui::Button                     *_more   = nullptr;
+    ui::Button                     *_more = nullptr;
     std::vector<Card *>             _cards;
-    std::string                     _statusText, _nextCursor;
+    std::string                     _nextCursor;
     bool                            _loading    = false;
     uint32_t                        _generation = 0; // the load an answer belongs to
-    model::Store::ObserverId        _observer   = 0;
-    std::shared_ptr<int>            _alive      = std::make_shared<int>(0);
 };
 
 // One followed thread.
@@ -109,7 +78,6 @@ public:
     bool           unread() const;
     std::string    participants() const;
     size_t         replyRows() const { return _item.latestReplies.size(); }
-    ui::View      *moreReplies() const { return _moreReplies; }
     ui::View      *replyButton() const { return _replyBtn; }
     Composer      *composer() const { return _composer; }
     ui::View      *newPill() const { return _newPill; }
@@ -127,7 +95,7 @@ private:
     model::Backend::FollowedThread _item;
     model::Ts                      _latest = 0; // newest reply shown
     ui::View                      *_body = nullptr, *_replies = nullptr;
-    ui::View                      *_moreReplies = nullptr, *_newPill = nullptr;
+    ui::View                      *_newPill  = nullptr;
     ui::Button                    *_replyBtn = nullptr;
     Composer                      *_composer = nullptr;
 };

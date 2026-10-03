@@ -21,15 +21,6 @@
 
 namespace shell {
 
-// The teammate (AgentRole id) a session works as, "" when unknown. Backend
-// has no call for it yet: a session's assistant wears its teammate's
-// picture, so the picture tells.
-std::string agentSessionRole(
-    const screens::Context                       &ctx,
-    model::ConvRef                                conv,
-    const std::vector<model::Backend::AgentRole> &team
-);
-
 class TeammatePage : public ui::View {
 public:
     // saveSettings persists `settings` after a folder pick.

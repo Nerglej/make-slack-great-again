@@ -35,10 +35,6 @@ constexpr size_t kMaxMessageChars = 500;
 // Members beyond this add little and cost prompt space on huge channels.
 constexpr size_t kMaxMembers      = 60;
 
-text::Style captionFont(C c) {
-    return ui::pxFont(12, text::Weight::Regular, ui::color(c));
-}
-
 } // namespace
 
 VoiceStrip::VoiceStrip(plat::App &app) : _app(app), _spinner([this] { update(); }) {
@@ -118,6 +114,12 @@ void VoiceStrip::layout() {
     );
 }
 
+void VoiceStrip::styleChanged() {
+    for (ShapedText &t : _texts)
+        t.layout.reset(); // a theme or text size change
+    View::styleChanged();
+}
+
 void VoiceStrip::paint(gfx::Painter &p) {
     if (_mode == Mode::Hidden)
         return;
@@ -127,21 +129,32 @@ void VoiceStrip::paint(gfx::Painter &p) {
     float       x     = kSpMd;
 
     // Optional pieces simply drop out on a narrow box; the error elides.
+    size_t     slot     = 0;
     const auto drawText = [&](const std::string &s, C color, bool elide = false) {
         if (x >= right)
             return;
-        text::AttributedText t;
-        t.append(s, captionFont(color));
-        text::LayoutOptions o;
-        o.maxLines   = 1;
-        o.ellipsis   = elide;
-        o.maxWidth   = elide ? right - x : 1e9f;
-        o.lineHeight = 1.2f;
-        auto l       = text::Layout::build(t, o, k);
-        if (!elide && x + l->width() > right)
+        ShapedText      &st   = _texts[std::min<size_t>(slot++, 1)];
+        const gfx::Color col  = ui::color(color);
+        const float      maxW = elide ? right - x : 1e9f;
+        if (!st.layout || st.text != s || st.color != col || st.maxWidth != maxW || st.scale != k) {
+            text::AttributedText t;
+            t.append(s, ui::pxFont(12, text::Weight::Regular, col));
+            text::LayoutOptions o;
+            o.maxLines   = 1;
+            o.ellipsis   = elide;
+            o.maxWidth   = maxW;
+            o.lineHeight = 1.2f;
+            st.layout    = text::Layout::build(t, o, k);
+            st.text      = s;
+            st.color     = col;
+            st.maxWidth  = maxW;
+            st.scale     = k;
+        }
+        const text::Layout &l = *st.layout;
+        if (!elide && x + l.width() > right)
             return;
-        l->paint(p, snapPx({x, std::floor(cy - l->height() / 2)}));
-        x += std::ceil(l->width()) + kSpMd;
+        l.paint(p, snapPx({x, std::floor(cy - l.height() / 2)}));
+        x += std::ceil(l.width()) + kSpMd;
     };
 
     switch (_mode) {

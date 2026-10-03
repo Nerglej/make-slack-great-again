@@ -25,10 +25,6 @@ namespace {
 // The browse list's metrics.
 constexpr float kRowH = BrowseList::kRowH, kAvatar = 36, kRowPadH = 24;
 
-std::string lowered(std::string_view s) {
-    return utf8::foldCase(s);
-}
-
 // One row: the picture (or a channel's icon), the title over its subtitle,
 // the badge. Recycled: bind() refills it for another item.
 class BrowseRow final : public Clickable {
@@ -468,7 +464,7 @@ void BrowseList::setItems(std::vector<Item> list) {
 }
 
 void BrowseList::applyFilter(std::string_view query) {
-    const std::string q = lowered(str::trim(query));
+    const std::string q = utf8::foldCase(str::trim(query));
     shown.clear();
     for (size_t i = 0; i < items.size(); ++i)
         if (q.empty() || items[i].searchKey.find(q) != std::string::npos)
@@ -544,7 +540,7 @@ foundSessionItem(const model::Backend::FoundSession &s, const std::string &home,
         it.subtitle += (i ? " \xC2\xB7 " : "") + sub[i];
     if (s.listed != model::kNoConv)
         it.badge = tr("In the list");
-    it.searchKey = lowered(
+    it.searchKey = utf8::foldCase(
         str::concat({s.title, "\n", s.folder, "\n", s.firstPrompt, "\n", s.lastPrompt, "\n", s.id})
     );
     return it;

@@ -4,7 +4,6 @@
 #include "base/time.h"
 #include "gfx/icons_generated.h"
 #include "screens/shell/message_search.h"
-#include "screens/shell/threads_page.h"
 
 #include <algorithm>
 
@@ -19,10 +18,6 @@ namespace shell {
 
 namespace {
 
-// The card geometry the Threads page's cards share.
-constexpr float kAvatar = 36, kAvatarRadius = 4, kAvatarGap = 10;
-constexpr float kRowPadV = 4, kHdrGap = 2;
-
 std::string dueLabel(const SavedItem &s) {
     if (s.due <= 0)
         return tr("Saved for later");
@@ -36,68 +31,31 @@ std::string dueLabel(const SavedItem &s) {
 class SavedPage::Card final : public View {
 public:
     Card(SavedPage &page, const SavedItem &item) : _page(page), _item(item) {
-        screens::Context          &ctx = page._ctx;
-        const model::Store        &st  = ctx.store;
-        const model::Conversation &c   = st.conversation(item.conv);
+        screens::Context   &ctx = page._ctx;
+        const model::Store &st  = ctx.store;
         style().spacing(12);
-        auto *nameRow = add<View>();
-        nameRow->style().row().spacing(4).items(Align::Center);
-        nameRow->add<IconView>(
-            c.isDirect()                         ? gfx::Icon::MessageSquare
-            : c.kind == model::ConvKind::Private ? gfx::Icon::Lock
-                                                 : gfx::Icon::Hash,
-            15,
-            C::Text
-        );
-        auto *name =
-            nameRow->add<TextLink>(st.displayName(item.conv), Font::BodyBold, C::Text, false);
-        name->onClick = [this] {
+        cardHeader(this, st, item.conv, [this] {
             if (_page.onOpenChannel)
                 _page.onOpenChannel(_item.conv);
-        };
-
-        auto *body = add<View>();
-        body->setBackground(C::Surface, 8);
-        body->setBorder(C::Border);
-        body->style().padding(24, 16, 24, 16).spacing(4);
+        });
+        auto *body = cardBody(this);
         // The message, chat-style; a click anywhere jumps to it.
-        auto *row = body->add<Clickable>();
+        auto *row  = body->add<Clickable>();
         row->setLook({C::None, C::None, C::None, C::None, 0});
         row->setCursor(plat::Cursor::Hand);
-        row->style()
-            .row()
-            .spacing(kAvatarGap)
-            .padding(0, kRowPadV, 0, kRowPadV)
-            .items(Align::Start);
         row->onClick           = [this] { open(); };
         const model::User &u   = st.user(item.author);
         // A reminder set from another client carries no author.
         const std::string  who = !item.botName.empty()           ? item.botName
                                  : item.author != model::kNoUser ? std::string(u.label())
                                                                  : std::string(tr("Message"));
-        auto              *av  = row->add<Avatar>();
-        av->style().size(kAvatar, kAvatar).noShrink();
-        av->setRadius(kAvatarRadius);
-        av->setPlaceholder(C::PresenceAway);
-        av->setInitial(who);
-        const std::string &pic = !item.botAvatar.empty() ? item.botAvatar : u.avatar;
-        if (!pic.empty())
-            av->setBitmap(page._avatars.get(pic, int(kAvatar * 2)));
-        auto *col = row->add<View>();
-        col->style().flex(1).spacing(kHdrGap);
-        col->style().shrink = 1;
-        auto *hdr           = col->add<View>();
-        hdr->style().row().spacing(8).items(Align::Center);
-        auto *n = hdr->add<Label>(who, Font::BodySemibold);
-        n->setMaxLines(1);
-        n->style().shrink = 1;
-        hdr->add<Label>(
-               base::dateTimeLabel(model::tsSecs(item.ts), ctx.backend.nowSecs()),
-               Font::Small,
-               C::TextMuted
-        )
-            ->style()
-            .noShrink();
+        View              *col = fillMessageRow(
+            row,
+            page._avatars,
+            who,
+            !item.botAvatar.empty() ? item.botAvatar : u.avatar,
+            base::dateTimeLabel(model::tsSecs(item.ts), ctx.backend.nowSecs())
+        );
         const std::string text = searchPreview(st, item.text);
         col->add<Label>(text.empty() ? std::string(tr("No preview available")) : text, Font::Body)
             ->setMaxLines(1);
@@ -132,41 +90,13 @@ private:
     SavedItem  _item;
 };
 
-SavedPage::SavedPage(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(avatars) {
-    style().column().flex(1);
-    // The Threads page's header: 48 px, the title bold; a hairline under it.
-    auto *header = add<View>();
-    header->style().row().height(48).padding(16, 0, 8, 0).items(Align::Center).noShrink();
-    header->add<Label>(tr("Saved messages"), Font::Title)->style().flex(1);
-    add<Separator>(false, C::FormDivider);
-    _scroll = add<ScrollView>();
-    _scroll->style().flex(1);
-    View *content = _scroll->content();
-    content->style().padding(24).spacing(24);
-    _status = content->add<Label>("", Font::Body, C::TextMuted);
-    _status->setAlign(text::LayoutOptions::Align::Center);
-    _status->style().padding(24);
-    _status->setVisible(false);
-    _list = content->add<View>();
-    _list->style().spacing(24);
-    // Follow set / remove / server sync while the page is on screen; open()
-    // rebuilds anyway when it comes back.
-    _observer = ctx.store.observe(model::Store::kAnyConv, [this](const model::Change &ch) {
-        onChange(ch);
-    });
-}
+SavedPage::SavedPage(screens::Context &ctx, Avatars &avatars)
+    : OverviewPage(ctx, avatars, tr("Saved messages")) {}
 
-SavedPage::~SavedPage() {
-    _ctx.store.unobserve(_observer);
-}
-
-void SavedPage::paint(gfx::Painter &p) {
-    p.fillRect(bounds(), color(C::FormSunken));
-    View::paint(p);
-}
-
+// Follows set / remove / server sync while the page is on screen; open()
+// rebuilds anyway when it comes back.
 void SavedPage::onChange(const model::Change &ch) {
-    if (!visible() || _rebuildQueued)
+    if (!visible() || rebuildQueued())
         return;
     bool mine = false;
     if (ch.kind == model::ChangeKind::Reset || ch.kind == model::ChangeKind::Roster)
@@ -176,18 +106,8 @@ void SavedPage::onChange(const model::Change &ch) {
                std::any_of(_items.begin(), _items.end(), [&](const SavedItem &s) {
                    return s.conv == ch.conv && s.ts == ch.ts;
                });
-    if (!mine)
-        return;
-    // Coalesced: a server sync changes many items in one go.
-    _rebuildQueued           = true;
-    std::weak_ptr<int> alive = _alive;
-    _ctx.app.platform().post([this, alive] {
-        if (alive.expired())
-            return;
-        _rebuildQueued = false;
-        if (visible())
-            rebuild();
-    });
+    if (mine)
+        rebuildSoon();
 }
 
 void SavedPage::open() {
@@ -258,12 +178,6 @@ void SavedPage::remove(size_t i) {
 void SavedPage::activate(size_t i) {
     if (i < _cards.size())
         _cards[i]->open();
-}
-
-void SavedPage::setStatus(std::string text) {
-    _statusText = std::move(text);
-    _status->setText(_statusText);
-    _status->setVisible(!_statusText.empty());
 }
 
 } // namespace shell

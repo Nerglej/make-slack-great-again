@@ -23,6 +23,7 @@
 
 #include <array>
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace shell {
@@ -52,9 +53,20 @@ public:
 
     void layout() override;
     void paint(gfx::Painter &p) override;
+    void styleChanged() override;
 
 private:
     static constexpr int kBars = 28; // meter history, newest on the right
+    // The texts as last shaped, by their place in the strip (at most two
+    // show at once): reused while text, colour and room stay the same, as the
+    // strip repaints at 20 Hz while recording.
+    struct ShapedText {
+        std::string                   text;
+        gfx::Color                    color    = 0;
+        float                         maxWidth = 0, scale = 0;
+        std::unique_ptr<text::Layout> layout;
+    };
+    ShapedText _texts[2];
 
     plat::App                &_app;
     Mode                      _mode = Mode::Hidden;

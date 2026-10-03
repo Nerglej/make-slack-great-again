@@ -6,6 +6,7 @@
 #include "gfx/icons_generated.h"
 #include "screens/common/avatar_initial.h"
 #include "screens/shell/shortcuts.h"
+#include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar.h"
 
 #include <algorithm>
@@ -229,7 +230,7 @@ public:
                                                : nullptr
             );
         } else {
-            r.icon->setIcon(cv.kind == model::ConvKind::Private ? Icon::Lock : Icon::Hash);
+            r.icon->setIcon(convIcon(cv));
         }
         r.name->setText(nm);
         r.setChecked(i == _q._current);

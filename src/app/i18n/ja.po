@@ -3002,14 +3002,6 @@ msgid "Couldn't forward the file."
 msgstr "ファイルを転送できませんでした。"
 
 #: src/app/screens/shell/shell_dialogs.cpp
-msgid "Only you see this icon. The picture is cropped to a square. You can also drop an image file onto this window."
-msgstr "このアイコンは自分にだけ表示されます。画像は正方形に切り抜かれます。画像ファイルをこのウィンドウにドロップすることもできます。"
-
-#: src/app/screens/shell/shell_dialogs.cpp
-msgid "Workspace icon"
-msgstr "ワークスペースのアイコン"
-
-#: src/app/screens/shell/shell_dialogs.cpp
 msgid "Choose image…"
 msgstr "画像を選択…"
 
@@ -3018,32 +3010,40 @@ msgid "Use default"
 msgstr "既定に戻す"
 
 #: src/app/screens/shell/shell_dialogs.cpp
-msgid "Choose workspace icon"
-msgstr "ワークスペースのアイコンを選択"
+msgid "That file could not be read as an image."
+msgstr "そのファイルは画像として読み込めませんでした。"
 
 #: src/app/screens/shell/shell_dialogs.cpp src/app/screens/shell/status_dialog.cpp
 msgid "Images"
 msgstr "画像"
 
 #: src/app/screens/shell/shell_dialogs.cpp
-msgid "That file could not be read as an image."
-msgstr "そのファイルは画像として読み込めませんでした。"
-
-#: src/app/screens/shell/shell_dialogs.cpp
 msgid "The icon could not be saved."
 msgstr "アイコンを保存できませんでした。"
 
 #: src/app/screens/shell/shell_dialogs.cpp
-msgid "The picture is fitted into a square, and the unread dot is drawn over its corner. You can also drop an image file onto this window."
-msgstr "画像は正方形に収まるよう縮小され、未読の点がその角に重ねて表示されます。画像ファイルをこのウィンドウにドロップすることもできます。"
+msgid "Only you see this icon. The picture is cropped to a square. You can also drop an image file onto this window."
+msgstr "このアイコンは自分にだけ表示されます。画像は正方形に切り抜かれます。画像ファイルをこのウィンドウにドロップすることもできます。"
+
+#: src/app/screens/shell/shell_dialogs.cpp
+msgid "Workspace icon"
+msgstr "ワークスペースのアイコン"
+
+#: src/app/screens/shell/shell_dialogs.cpp
+msgid "Choose workspace icon"
+msgstr "ワークスペースのアイコンを選択"
+
+#: src/app/screens/shell/shell_dialogs.cpp
+msgid "Choose tray icon"
+msgstr "トレイアイコンを選択"
 
 #: src/app/screens/shell/shell_dialogs.cpp
 msgid "Convert to monochrome"
 msgstr "モノクロに変換"
 
 #: src/app/screens/shell/shell_dialogs.cpp
-msgid "Choose tray icon"
-msgstr "トレイアイコンを選択"
+msgid "The picture is fitted into a square, and the unread dot is drawn over its corner. You can also drop an image file onto this window."
+msgstr "画像は正方形に収まるよう縮小され、未読の点がその角に重ねて表示されます。画像ファイルをこのウィンドウにドロップすることもできます。"
 
 #: src/app/screens/shell/shell_dialogs.cpp
 msgid "Rename session"

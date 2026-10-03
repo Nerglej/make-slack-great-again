@@ -3,6 +3,7 @@
 #include "base/i18n.h"
 #include "gfx/icons_generated.h"
 #include "screens/shell/nav_chrome.h"
+#include "screens/shell/shell_text.h"
 #include "screens/shell/sidebar.h"
 
 #include <algorithm>
@@ -101,25 +102,16 @@ private:
     void build() {
         if (!_lines.empty())
             return;
-        const float         k = windowScale();
-        text::LayoutOptions o;
-        o.maxWidth       = kTipMaxW;
-        o.maxLines       = 1;
-        o.ellipsis       = true;
+        const float k    = windowScale();
         text::Style head = font(Font::Body);
         head.size *= 0.82f;
         head.color = (color(C::TooltipText) & 0x00ffffffu) | 0xa0000000u; // onDark at 160
-        text::AttributedText t;
-        t.append(tasksHeader(model::jobs().count()), head);
-        _lines.push_back(text::Layout::build(t, o, k));
+        _lines.push_back(oneLineLayout(tasksHeader(model::jobs().count()), head, kTipMaxW, k));
         text::Style st = font(Font::Body);
         st.weight      = text::Weight::Medium;
         st.color       = color(C::TooltipText);
-        for (const std::string &d : model::jobs().descriptions()) {
-            text::AttributedText line;
-            line.append(d, st);
-            _lines.push_back(text::Layout::build(line, o, k));
-        }
+        for (const std::string &d : model::jobs().descriptions())
+            _lines.push_back(oneLineLayout(d, st, kTipMaxW, k));
     }
     std::vector<std::unique_ptr<text::Layout>> _lines;
 };

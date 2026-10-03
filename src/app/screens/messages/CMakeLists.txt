@@ -12,8 +12,11 @@ add_library(msga_screens_messages STATIC
     emoji_picker.cpp
     message_dialogs.cpp
     summary.cpp
-    debug_scroll.cpp
 )
+# The scroll torture test (msga --debug-scroll): demo workspace only.
+if(MSGA_DEMO)
+    target_sources(msga_screens_messages PRIVATE debug_scroll.cpp)
+endif()
 # context.h includes "model/…" relative to app/, so app/ is on the path too.
 target_include_directories(msga_screens_messages PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../..

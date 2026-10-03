@@ -955,10 +955,10 @@ TEST(
     CHECK(h.sidebar().scheduledShown());
     CHECK(entries().find("Scheduled messages") != std::string::npos);
 
-    h.sh->openScheduled();
+    h.sh->showPage(shell::Shell::Page::Scheduled);
     pump();
-    REQUIRE(h.sh->scheduledOpen());
-    CHECK(h.sidebar().scheduledSelected());
+    REQUIRE(h.sh->pageOpen(shell::Shell::Page::Scheduled));
+    CHECK(h.sidebar().selectedNav() == shell::Sidebar::Nav::Scheduled);
     CHECK_FALSE(h.composer().visible());
     CHECK(h.backend.scheduledRefreshes == 1); // opening re-lists
     shell::ScheduledPage *p = h.sh->scheduledPage();
@@ -996,7 +996,7 @@ TEST(
     // Opening a conversation leaves the page.
     h.sh->open(design);
     pump();
-    CHECK_FALSE(h.sh->scheduledOpen());
+    CHECK_FALSE(h.sh->pageOpen(shell::Shell::Page::Scheduled));
     CHECK(h.composer().visible());
 
     // A workspace that can't schedule never shows it.
@@ -1724,4 +1724,28 @@ TEST("spelling: the squiggle is painted in the danger colour just under the word
     // One short wavy band, about a word wide and a few pixels high.
     CHECK(maxY - minY <= int(4 * s));
     CHECK(maxX - minX > int(20 * s) && maxX - minX < int(80 * s));
+}
+
+TEST("scheduled: a new name of mine shows on the cards, the list itself unchanged") {
+    Harness h;
+    h.backend.schedule = true;
+    h.sh->workspaceChanged();
+    h.sidebar().rebuild();
+    pump();
+    model::Store::ScheduledItem s;
+    s.id   = "S1";
+    s.conv = h.conv("C0DESIGN");
+    s.at   = base::nowSecs() + 3600;
+    s.text = "later";
+    h.store.setScheduled({s});
+    pump();
+    h.sh->showPage(shell::Shell::Page::Scheduled);
+    pump();
+    shell::ScheduledPage *p = h.sh->scheduledPage();
+    REQUIRE(p->cardCount() == 1);
+    CHECK_FALSE(hasText(p, "Alex Renamed"));
+    h.store.user(h.store.me).displayName = "Alex Renamed";
+    h.store.usersChanged();
+    pump();
+    CHECK(hasText(p, "Alex Renamed"));
 }

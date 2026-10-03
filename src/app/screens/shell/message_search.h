@@ -60,17 +60,23 @@ public:
 
 private:
     class Card;
-    void populate();
-    void addStatus(std::string text);
-    bool key(const ui::Event &e);
-    void animateTo(bool open);
-    void finishHide();
+    void        populate();
+    // The rows' texts again, in place (a user resolved: a mention's name);
+    // the keyboard selection stays. Coalesced: once per burst of changes.
+    void        renameSoon();
+    void        rename();
+    std::string headText(const model::Backend::SearchHit &r) const;
+    void        addStatus(std::string text);
+    bool        key(const ui::Event &e);
+    void        animateTo(bool open);
+    void        finishHide();
 
     screens::Context                      &_ctx;
     Card                                  *_card  = nullptr;
     ui::TextEdit                          *_field = nullptr;
     ui::ScrollView                        *_list  = nullptr;
     std::vector<ui::Clickable *>           _rows;
+    std::vector<ui::Label *>               _heads, _previews; // per row: its two lines
     std::vector<model::Backend::SearchHit> _results;
     std::string                            _statusText;
     int                                    _sel        = -1;
@@ -81,8 +87,9 @@ private:
     // alpha and the card's opacity, from where they are towards the target.
     float                                  _alpha = 0, _opacity = 0;
     float                                  _alphaFrom = 0, _opacityFrom = 0;
-    double                                 _start   = -1;
-    bool                                   _closing = false;
+    double                                 _start        = -1;
+    bool                                   _closing      = false;
+    bool                                   _renameQueued = false;
 };
 
 } // namespace shell

@@ -4,6 +4,7 @@
 #include "base/str.h"
 #include "base/utf8.h"
 #include "gfx/icons_generated.h"
+#include "screens/shell/shell_text.h"
 #include "ui/controls.h"
 
 #include <algorithm>
@@ -283,10 +284,6 @@ private:
     RadioGroup                                    *_visibility = nullptr;
 };
 
-std::string lowerName(std::string_view s) {
-    return utf8::foldCase(s);
-}
-
 } // namespace
 
 // ── Rows ────────────────────────────────────────────────────────────────────
@@ -298,7 +295,7 @@ std::vector<BrowseList::Item> channelItems(const model::Store &store) {
             channels.push_back(c);
     std::vector<std::string> keys(store.conversationCount());
     for (ConvRef c : channels)
-        keys[c] = lowerName(store.conversation(c).name);
+        keys[c] = utf8::foldCase(store.conversation(c).name);
     std::stable_sort(channels.begin(), channels.end(), [&](ConvRef a, ConvRef b) {
         return keys[a] < keys[b];
     });
@@ -320,10 +317,10 @@ std::vector<BrowseList::Item> channelItems(const model::Store &store) {
         } else {
             it.subtitle = c.topic;
         }
-        it.titleIcon = uint16_t(c.kind == ConvKind::Private ? Icon::Lock : Icon::Hash);
+        it.titleIcon = uint16_t(convIcon(c));
         if (c.member)
             it.badge = tr("Joined");
-        it.searchKey = lowerName(str::concat({c.name, " ", c.topic}));
+        it.searchKey = utf8::foldCase(str::concat({c.name, " ", c.topic}));
         items.push_back(std::move(it));
     }
     return items;
@@ -340,7 +337,7 @@ std::vector<BrowseList::Item> peopleItems(const model::Store &store) {
     }
     std::vector<std::string> keys(store.userCount());
     for (UserRef u : people)
-        keys[u] = lowerName(
+        keys[u] = utf8::foldCase(
             store.user(u).displayName.empty() ? store.user(u).name : store.user(u).displayName
         );
     std::stable_sort(people.begin(), people.end(), [&](UserRef a, UserRef b) {
@@ -357,7 +354,7 @@ std::vector<BrowseList::Item> peopleItems(const model::Store &store) {
         it.avatar = u.avatar;
         if (!u.name.empty() && u.name != name)
             it.subtitle = "@" + u.name;
-        it.searchKey = lowerName(str::concat({name, " ", u.name}));
+        it.searchKey = utf8::foldCase(str::concat({name, " ", u.name}));
         items.push_back(std::move(it));
     }
     return items;

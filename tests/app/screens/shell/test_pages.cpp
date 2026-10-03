@@ -390,8 +390,8 @@ TEST("saved messages: the entry opens the page; cards, due lines, order, remove"
 
     h.sh->sidebar().onSavedMessages();
     pump();
-    REQUIRE(h.sh->savedOpen());
-    CHECK(h.sh->sidebar().savedSelected());
+    REQUIRE(h.sh->pageOpen(shell::Shell::Page::Saved));
+    CHECK(h.sh->sidebar().selectedNav() == shell::Sidebar::Nav::Saved);
     CHECK(h.sh->current() == kNoConv);
     shell::SavedPage *page = h.sh->savedPage();
     REQUIRE(page->cardCount() == 2);
@@ -413,11 +413,11 @@ TEST("saved messages: the entry opens the page; cards, due lines, order, remove"
         page->statusText(), "Messages you save for later or set reminders on will appear here."
     );
     // The entry hides with nothing saved, the page stays until left.
-    CHECK(h.sh->savedOpen());
+    CHECK(h.sh->pageOpen(shell::Shell::Page::Saved));
     h.sh->open(design);
     pump();
-    CHECK_FALSE(h.sh->savedOpen());
-    CHECK_FALSE(h.sh->sidebar().savedSelected());
+    CHECK_FALSE(h.sh->pageOpen(shell::Shell::Page::Saved));
+    CHECK_FALSE(h.sh->sidebar().selectedNav() == shell::Sidebar::Nav::Saved);
 }
 
 TEST("saved messages: a click jumps to the message, a reply inside its thread") {
@@ -437,7 +437,7 @@ TEST("saved messages: a click jumps to the message, a reply inside its thread") 
     REQUIRE(reply);
     h.backend.setSaved(design, reply, true);
     pump();
-    h.sh->openSaved();
+    h.sh->showPage(shell::Shell::Page::Saved);
     pump();
     shell::SavedPage *page = h.sh->savedPage();
     REQUIRE(page->cardCount() == 2);
@@ -453,12 +453,12 @@ TEST("saved messages: a click jumps to the message, a reply inside its thread") 
 #else
     (void)root;
 #endif
-    h.sh->openSaved();
+    h.sh->showPage(shell::Shell::Page::Saved);
     pump();
     page->activate(1);
     pump(20);
     CHECK(h.sh->current() == general);
-    CHECK_FALSE(h.sh->savedOpen());
+    CHECK_FALSE(h.sh->pageOpen(shell::Shell::Page::Saved));
 }
 
 TEST("saved messages: an item whose message isn't known asks for it once") {
@@ -469,7 +469,7 @@ TEST("saved messages: an item whose message isn't known asks for it once") {
     const Store::SavedItem *it = h.store.findSaved(general, 1'000'000'000'000'123);
     REQUIRE(it);
     CHECK_FALSE(it->previewed);
-    h.sh->openSaved();
+    h.sh->showPage(shell::Shell::Page::Saved);
     pump();
     it = h.store.findSaved(general, 1'000'000'000'000'123);
     REQUIRE(it);
@@ -544,6 +544,28 @@ TEST("visited: opening a conversation is saved; the stamps keep it listed after 
     const shell::Settings after = shell::Settings::load(path);
     for (const auto &[id, at] : after.visitedAt)
         CHECK(id != "D0SAM");
+    file::remove(path);
+    file::remove(dir);
+}
+
+TEST("settings: a change is written a moment later, off the UI thread; saveState at once") {
+    const std::string dir  = tempDir();
+    const std::string path = dir + "/settings.json";
+    {
+        Harness h({}, path);
+        h.settings.relevantDays = 9;
+        h.sh->saveSettingsSoon();
+        h.sh->saveSettingsSoon(); // the same write
+        CHECK(shell::Settings::load(path).relevantDays != 9);
+        CHECK(until([&] { return shell::Settings::load(path).relevantDays == 9; }, 3000));
+        h.settings.relevantDays = 11;
+        h.sh->saveSettingsSoon();
+        h.sh->saveState(); // quitting: written now, and the waiting one is not left to overwrite it
+        CHECK(shell::Settings::load(path).relevantDays == 11);
+        model::waitBackground();
+        pump(10);
+        CHECK(shell::Settings::load(path).relevantDays == 11);
+    }
     file::remove(path);
     file::remove(dir);
 }

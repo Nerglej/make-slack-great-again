@@ -8,6 +8,7 @@
 #include "app/mrkdwn/mrkdwn.h"
 #include "base/file.h"
 #include "base/i18n.h"
+#include "base/mime.h"
 #include "base/str.h"
 #include "base/time.h"
 #include "base/utf8.h"
@@ -15,6 +16,7 @@
 #include "screens/common/file_dialogs.h"
 #include "screens/shell/composer_popups.h"
 #include "screens/shell/nav_chrome.h"
+#include "screens/shell/shell_text.h"
 #include "screens/shell/voice_strip.h"
 #include "app/mrkdwn/markdown.h"
 
@@ -216,26 +218,28 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
         return n.find(q) != std::string_view::npos ? 2 : -1;
     };
     // Per rank, in the order considered: common, the table, custom (sorted).
+    // Eight prefix matches fill the list: nothing later can come before them.
+    constexpr size_t                kMax = 8;
     std::vector<EmojiCompletion>    tiers[3];
     std::unordered_set<std::string> added;
     auto                            consider = [&](std::string_view n, bool custom) {
         const int r = rankOf(n);
-        if (r < 0 || !added.emplace(n).second)
-            return;
-        tiers[r].push_back({std::string(n), custom});
+        if (r >= 0 && added.emplace(n).second)
+            tiers[r].push_back({std::string(n), custom});
+        return tiers[0].size() < kMax; // false: the list is settled
     };
     for (const char *n : kCommon)
-        if (!emoji::toUnicode(n).empty())
-            consider(n, false);
-    emoji::forEach([&](std::string_view n, const std::string &) {
-        return consider(n, false), true;
-    });
+        if (!emoji::toUnicode(n).empty() && !consider(n, false))
+            break;
+    if (tiers[0].size() < kMax)
+        emoji::forEach([&](std::string_view n, const std::string &) { return consider(n, false); });
     for (std::string_view n : store.customEmojiNames())
-        consider(n, true);
+        if (tiers[0].size() >= kMax || !consider(n, true))
+            break;
     std::vector<EmojiCompletion> out;
     for (auto &t : tiers)
         for (EmojiCompletion &e : t) {
-            if (out.size() >= 8)
+            if (out.size() >= kMax)
                 return out;
             out.push_back(std::move(e));
         }
@@ -435,15 +439,10 @@ public:
 
 constexpr float kChipW = 160, kChipH = 92, kChipGap = 8;
 
+// A picture the chip shows as one (SVG is shown as a file).
 bool looksLikeImage(std::string_view path) {
-    static const char *kExt[] = {"png", "jpg", "jpeg", "gif", "webp", "bmp"};
-    std::string        ext(file::extension(path));
-    for (char &c : ext)
-        c = char(c >= 'A' && c <= 'Z' ? c | 0x20 : c);
-    for (const char *e : kExt)
-        if (ext == e)
-            return true;
-    return false;
+    const std::string_view m = mime::fromName(path);
+    return str::startsWith(m, "image/") && m != "image/svg+xml";
 }
 
 bool looksLikeText(std::string_view path) {
@@ -467,9 +466,7 @@ bool looksLikeText(std::string_view path) {
         "html",
         "css"
     };
-    std::string ext(file::extension(path));
-    for (char &c : ext)
-        c = char(c >= 'A' && c <= 'Z' ? c | 0x20 : c);
+    const std::string ext = str::asciiLower(file::extension(path));
     for (const char *e : kExt)
         if (ext == e)
             return true;
@@ -775,9 +772,12 @@ void Composer::refreshLook() {
         _sendGroup->update();
     }
     // The placeholder: the suggestion (with its key hint) while there is one.
-    _edit->setPlaceholder(
-        _suggestion.empty() ? _placeholder : str::concat({_suggestion, "  \xE2\x86\x92"})
-    );
+    std::string ph =
+        _suggestion.empty() ? _placeholder : str::concat({_suggestion, "  \xE2\x86\x92"});
+    if (ph != _shownPlaceholder) {
+        _shownPlaceholder = ph;
+        _edit->setPlaceholder(std::move(ph));
+    }
 }
 
 // The composer's key handler, in this order. A feature that is off here
@@ -788,7 +788,7 @@ bool Composer::keyDown(const Event &e) {
     using shortcuts::matches;
     if (!_edit->preedit().empty())
         return false; // the IME owns the keyboard while composing (TextEdit's rule)
-    const uint32_t mods = e.mods & (plat::ModShift | plat::ModCtrl | plat::ModAlt | plat::ModSuper);
+    const uint32_t mods = e.mods & ui::kModMask;
     // Voice input first: while a dictation of ours is in flight, Escape
     // cancels it ahead of every other Escape meaning (popups, edit mode).
     if (e.key == plat::Key::Escape && !mods && voiceActiveHere()) {
@@ -1207,11 +1207,7 @@ void Composer::refreshPlaceholder() {
     const std::string was = _placeholder;
     if (_lock.empty() && _fixedPlaceholder.empty() && _key.conv != model::kNoConv && !_key.thread &&
         _key.conv < _ctx.store().conversationCount()) {
-        const auto &c = _ctx.store().conversation(_key.conv);
-        _placeholder  = i18n::arg(
-            tr("Message %1"),
-            str::concat({c.isDirect() ? "" : "#", _ctx.store().displayName(_key.conv)})
-        );
+        _placeholder = i18n::arg(tr("Message %1"), convTitle(_ctx.store(), _key.conv));
     }
     if (_placeholder != was)
         refreshLook();
@@ -1302,16 +1298,10 @@ void Composer::setTarget(model::ConvRef conv, model::Ts thread) {
             break;
         }
     updateVoiceUi();
-    std::string ph;
-    if (thread)
-        ph = tr("Reply in thread\xE2\x80\xA6");
-    else if (conv != model::kNoConv) {
-        const auto &c = _ctx.store().conversation(conv);
-        ph            = i18n::arg(
-            tr("Message %1"), str::concat({c.isDirect() ? "" : "#", _ctx.store().displayName(conv)})
-        );
-    }
-    _placeholder = _fixedPlaceholder.empty() ? std::move(ph) : _fixedPlaceholder;
+    _placeholder = !_fixedPlaceholder.empty() ? _fixedPlaceholder
+                   : thread                   ? std::string(tr("Reply in thread\xE2\x80\xA6"))
+                                              : std::string();
+    refreshPlaceholder(); // "Message #name"
     if (conv != model::kNoConv)
         setSuggestion(_ctx.backend.promptSuggestion(conv)); // simplified
     refreshLook();
@@ -1509,6 +1499,15 @@ void Composer::removeAttachment(size_t i) {
     _edit->focus();
 }
 
+void Composer::clearAttachments() {
+    if (_files.empty())
+        return;
+    _files.clear();
+    rebuildChips();
+    refreshLook();
+    compositionChanged();
+}
+
 void Composer::chooseAttachments() {
     std::weak_ptr<int> alive = _alive;
     screens::pickFiles(
@@ -1631,8 +1630,29 @@ void Composer::rebuildChips() {
     _chipRow->clearChildren();
     _chips->setVisible(!_files.empty());
     _chipRow->setVisible(!_files.empty());
+    // What the files still attached showed already is kept; a new one is
+    // read once (its head and size).
+    std::vector<ChipInfo> infos;
+    infos.reserve(_files.size());
+    for (const std::string &path : _files) {
+        auto it = std::find_if(_chipInfo.begin(), _chipInfo.end(), [&](const ChipInfo &c) {
+            return c.path == path;
+        });
+        if (it != _chipInfo.end()) {
+            infos.push_back(std::move(*it));
+            continue;
+        }
+        ChipInfo c;
+        c.path = path;
+        c.size = std::max<int64_t>(0, file::size(path));
+        if (!looksLikeImage(path) && looksLikeText(path))
+            c.preview = textPreview(path);
+        infos.push_back(std::move(c));
+    }
+    _chipInfo = std::move(infos);
     for (size_t i = 0; i < _files.size(); ++i) {
         const std::string &path  = _files[i];
+        const ChipInfo    &info  = _chipInfo[i];
         auto              *chip  = _chipRow->add<View>();
         const bool         image = looksLikeImage(path);
         chip->style().size(kChipW, kChipH).stack().noShrink();
@@ -1649,7 +1669,7 @@ void Composer::rebuildChips() {
         {
             chip->setBackground(C::ChipBg, 8);
             if (looksLikeText(path)) {
-                auto *t = chip->add<Label>(textPreview(path), Font::Tiny, C::FormTextFaint);
+                auto *t = chip->add<Label>(info.preview, Font::Tiny, C::FormTextFaint);
                 t->style().padding(6).alignSelf(Align::Start);
                 t->setLineHeight(1.2f);
             }
@@ -1660,7 +1680,7 @@ void Composer::rebuildChips() {
         plates->style().padding(8).spacing(2).justifyContent(Justify::End);
         plates->setHitTransparent(true);
         plate(plates, chipName(path), Font::PlateName);
-        plate(plates, str::byteSize(std::max<int64_t>(0, file::size(path))), Font::Tiny);
+        plate(plates, str::byteSize(info.size), Font::Tiny);
         // The remove cross, top-right.
         auto *x = chip->add<GlyphButton>(
             Icon::X, 16, 10, image ? C::OverlayText : C::FormIcon, tr("Remove attachment")
@@ -2095,8 +2115,10 @@ void Composer::computePickList() {
         }
     std::vector<PickList::Item> items;
     const model::Store         &st = _ctx.store;
-    const bool dm   = _key.conv != model::kNoConv && st.conversation(_key.conv).isDirect();
-    bool       wide = false;
+    const bool        dm   = _key.conv != model::kNoConv && st.conversation(_key.conv).isDirect();
+    bool              wide = false;
+    // The query folded once; every label is matched folded already.
+    const std::string fq   = utf8::foldCase(query);
     if (trig == '@') {
         struct Alias {
             const char *name, *insert, *desc;
@@ -2106,8 +2128,6 @@ void Composer::computePickList() {
             {"@everyone", "<!everyone>", N_("Notify everyone in your workspace")},
             {"@here", "<!here>", N_("Notify every online member here")},
         };
-        // The query folded once; every label is matched folded already.
-        const std::string fq = utf8::foldCase(query);
         if (!dm)
             for (const Alias &a : kAliases)
                 if (query.empty() || utf8::containsFolded(a.name, query)) {
@@ -2162,13 +2182,10 @@ void Composer::computePickList() {
             dismiss();
             return;
         }
-        auto cmds = _ctx.backend.commands(_key.conv);
-        std::sort(cmds.begin(), cmds.end(), [](const auto &a, const auto &b) {
-            return a.name < b.name;
-        });
-        const std::string q = utf8::foldCase(query);
-        for (const auto &c : cmds) {
-            if (!str::startsWith(utf8::foldCase(c.name), q))
+        refreshCommands();
+        for (size_t i = 0; i < _cmdSorted.size(); ++i) {
+            const model::Backend::Command &c = _cmdSorted[i];
+            if (!str::startsWith(_cmdFolded[i], fq))
                 continue;
             PickList::Item it;
             it.kind     = PickList::Item::Kind::Command;
@@ -2188,9 +2205,18 @@ void Composer::computePickList() {
                 break;
         }
     } else if (trig == '#') {
+        if (_foldedConvs.size() < st.conversationCount())
+            _foldedConvs.resize(st.conversationCount());
         for (model::ConvRef c = 0; c < st.conversationCount() && items.size() < 50; ++c) {
             const model::Conversation &cv = st.conversation(c);
-            if (cv.isDirect() || !utf8::containsFolded(cv.name, query))
+            if (cv.isDirect())
+                continue;
+            FoldedName &f = _foldedConvs[c];
+            if (f.name != cv.name) { // new, renamed, another workspace
+                f.name   = cv.name;
+                f.folded = utf8::foldCase(cv.name);
+            }
+            if (!utf8::containsPrefolded(f.folded, fq))
                 continue;
             PickList::Item it;
             it.kind           = PickList::Item::Kind::Channel;
@@ -2259,6 +2285,28 @@ void Composer::computePickList() {
     };
 }
 
+// The "/" list's commands for the open conversation: fetched each time (a
+// session's commands come and go), sorted and folded only when they changed.
+void Composer::refreshCommands() {
+    std::vector<model::Backend::Command> cmds = _ctx.backend.commands(_key.conv);
+    bool same = _cmdConv == _key.conv && cmds.size() == _cmdNames.size();
+    for (size_t i = 0; same && i < cmds.size(); ++i)
+        same = cmds[i].name == _cmdNames[i];
+    if (same)
+        return;
+    _cmdConv = _key.conv;
+    _cmdNames.clear();
+    for (const auto &c : cmds)
+        _cmdNames.push_back(c.name);
+    std::sort(cmds.begin(), cmds.end(), [](const auto &a, const auto &b) {
+        return a.name < b.name;
+    });
+    _cmdFolded.clear();
+    for (const auto &c : cmds)
+        _cmdFolded.push_back(utf8::foldCase(c.name));
+    _cmdSorted = std::move(cmds);
+}
+
 // A pick replaces the trigger and the query typed after it: mentions,
 // channels and GIFs as pills, "@here" in a thread and emoji as text.
 void Composer::pick(const PickList::Item &it) {
@@ -2278,32 +2326,6 @@ void Composer::pick(const PickList::Item &it) {
 
 namespace {
 
-std::string unescape(std::string_view s) {
-    std::string out;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '&') {
-            static const struct {
-                const char *ent;
-                char        c;
-            } kEnt[]  = {{"&amp;", '&'}, {"&lt;", '<'}, {"&gt;", '>'}};
-            bool done = false;
-            for (const auto &e : kEnt) {
-                const size_t n = std::char_traits<char>::length(e.ent);
-                if (s.substr(i, n) == e.ent) {
-                    out += e.c;
-                    i += n - 1;
-                    done = true;
-                    break;
-                }
-            }
-            if (done)
-                continue;
-        }
-        out += s[i];
-    }
-    return out;
-}
-
 bool giphy(std::string_view url) {
     return url.find("giphy.com/") != std::string_view::npos;
 }
@@ -2321,13 +2343,13 @@ void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text
     while (i < text.size()) {
         const size_t lt = text.find('<', i);
         if (lt == std::string_view::npos) {
-            plain += unescape(text.substr(i));
+            plain += mrkdwn::decodeEntities(text.substr(i));
             break;
         }
-        plain += unescape(text.substr(i, lt - i));
+        plain += mrkdwn::decodeEntities(text.substr(i, lt - i));
         const size_t gt = text.find('>', lt);
         if (gt == std::string_view::npos) {
-            plain += unescape(text.substr(lt));
+            plain += mrkdwn::decodeEntities(text.substr(lt));
             break;
         }
         const std::string_view tok  = text.substr(lt, gt - lt + 1);
