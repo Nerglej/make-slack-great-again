@@ -523,6 +523,79 @@ TEST("store: display names for DMs and groups") {
     CHECK_STR(f.s.displayName(f.c), "general");
 }
 
+TEST("store: names resolve per mode, falling back to the other name, then the handle") {
+    const auto shown = [](const char *real, const char *profile, bool realNames) {
+        User u;
+        u.id          = "U1";
+        u.name        = "meg";
+        u.displayName = "kept";
+        u.realName    = real;
+        u.profileName = profile;
+        u.resolveName(realNames);
+        return u.displayName;
+    };
+    CHECK_STR(shown("Meg Ryan", "Meg", true), "Meg Ryan");
+    CHECK_STR(shown("Meg Ryan", "Meg", false), "Meg");
+    CHECK_STR(shown("Meg Ryan", "", false), "Meg Ryan"); // no display name: the full name
+    CHECK_STR(shown("", "Meg", true), "Meg");            // no full name: the display name
+    CHECK_STR(shown("", "", true), "kept");              // neither: the backend's own
+    CHECK_STR(shown("", "", false), "kept");
+    // A mention is the display name in both modes.
+    User u;
+    u.name        = "meg";
+    u.realName    = "Meg Ryan";
+    u.profileName = "Meg";
+    u.resolveName(true);
+    CHECK_STR(u.label(), "Meg Ryan");
+    CHECK_STR(u.mentionLabel(), "Meg");
+    u.profileName.clear();
+    u.resolveName(true);
+    CHECK_STR(u.mentionLabel(), "Meg Ryan");
+    User bare; // an agent session or a bot: only displayName
+    bare.name        = "claude";
+    bare.displayName = "Claude";
+    CHECK_STR(bare.mentionLabel(), "Claude");
+}
+
+TEST("store: setRealNames re-resolves every user and repaints once") {
+    Store s;
+    User  a, b, agent;
+    a.id = "UA", a.name = "meg", a.realName = "Meg Ryan", a.profileName = "Meg";
+    b.id = "UB", b.name = "tom", b.realName = "Tom Hanks"; // no display name
+    agent.id = "UC", agent.name = "claude", agent.displayName = "Claude";
+    const UserRef ra = s.addUser(a), rb = s.addUser(b), rc = s.addUser(agent);
+    Conversation  dm;
+    dm.id           = "D1";
+    dm.kind         = ConvKind::Dm;
+    dm.dmUser       = ra;
+    const ConvRef d = s.addConversation(std::move(dm));
+    s.usersChanged();
+    CHECK(s.realNames());
+    CHECK_STR(s.displayName(d), "Meg Ryan");
+    Recorder r;
+    s.observe(Store::kAnyConv, r.fn());
+    const uint64_t p0 = s.profileRevision(), m0 = s.metaRevision();
+    s.setRealNames(false);
+    CHECK_STR(s.user(ra).displayName, "Meg");
+    CHECK_STR(s.user(rb).displayName, "Tom Hanks");
+    CHECK_STR(s.user(rc).displayName, "Claude");
+    CHECK_STR(s.displayName(d), "Meg");
+    REQUIRE(r.log.size() == 1);
+    CHECK(r.log[0].kind == ChangeKind::Users);
+    CHECK(s.profileRevision() > p0 && s.metaRevision() > m0);
+    CHECK(s.userRevision(ra) == s.profileRevision());
+    CHECK(s.userRevision(rc) < s.profileRevision()); // unchanged
+    // The same mode again: nothing. A user added now resolves in it.
+    s.setRealNames(false);
+    CHECK(r.log.size() == 1);
+    User late;
+    late.id = "UD", late.name = "rita", late.realName = "Rita Wilson", late.profileName = "Rita";
+    CHECK_STR(s.user(s.addUser(late)).displayName, "Rita");
+    s.setRealNames(true);
+    CHECK_STR(s.user(s.findUser("UD")).displayName, "Rita Wilson");
+    CHECK_STR(s.user(ra).displayName, "Meg Ryan");
+}
+
 TEST("store: mark unread moves the read cursor back and recounts") {
     Fixture f;
     f.s.addPage(f.c, page({100, 200, 300}, f.mira));

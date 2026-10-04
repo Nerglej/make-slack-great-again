@@ -181,6 +181,9 @@ public:
     // same app keys run on another device and steal events.
     std::function<void()>                    onParallelUsage;
     void                                     setPresenceMode(PresenceMode mode) override;
+    // Service: Slack's own "Names" preference, read at every connect
+    // (session tokens only: OAuth ones show full names).
+    void                                     setNamesMode(NamesMode mode) override;
     PresenceLink                             presenceLink() const override;
     void                                     noteUserActivity() override;
     RtmPresence                             *presenceLinkForTest() const; // null: OAuth

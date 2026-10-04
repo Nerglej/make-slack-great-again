@@ -32,6 +32,8 @@ const StrField<model::User> kUserStrings[] = {
     {"id", &model::User::id},
     {"name", &model::User::name},
     {"displayName", &model::User::displayName},
+    {"realName", &model::User::realName},
+    {"profileName", &model::User::profileName},
     {"title", &model::User::title},
     {"email", &model::User::email},
 };

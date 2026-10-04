@@ -15,10 +15,22 @@ namespace slack::mapjson {
 // USLACKBOT (Slackbot) / USLACK (the "Slack" workspace notifier): absent
 // from users.list, is_bot=false, no observable presence.
 bool                isSlackSystemUser(std::string_view id);
-// A users.list / users.info member. Display name: real_name, else
-// display_name, else the handle (enterprise directories fill display_name
-// with a login slug); avatar: profile.image_72.
+// A users.list / users.info member. realName / profileName: real_name and
+// display_name (enterprise directories fill display_name with a login
+// slug); displayName as for full names (the Store re-resolves it); avatar:
+// profile.image_72.
 model::User         toUser(const json::Value &u);
+// Slack's "Names" preference. A user's display_real_names_override
+// (users.prefs.get, client.userBoot "prefs"): 1 full names, -1 display
+// names, 0 the workspace's default; kNoPref when absent. The workspace's
+// display_real_names (team.prefs.get, userBoot team prefs): 1 full names,
+// 0 display names, kNoPref when absent.
+constexpr int       kNoPref = 2;
+int                 namesOverride(const json::Value &prefs);
+int                 namesDefault(const json::Value &prefs);
+// What they make together: 1 full names, 0 display names, kNoPref while
+// not decided (the override, or for 0 the default, not known).
+int                 realNamesFrom(int override, int teamDefault);
 // A conversations.list / client.userBoot / im.list / conversations.info
 // channel or IM. Unread falls back to 1 when latest > last_read (Slack often
 // reports unread_count 0 for channels).

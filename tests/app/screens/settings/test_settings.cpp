@@ -201,6 +201,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK(def.paletteLight == int(ui::Palette::Purple));
     CHECK(def.paletteDark == int(ui::Palette::Charcoal));
     CHECK(def.relevantDays == 14);
+    CHECK(def.names == 0); // as set in Slack
     CHECK(def.cacheLimitMb == 250);
     CHECK_STR(def.language, "system");
     CHECK(def.ai.size() == 2);
@@ -218,6 +219,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.linkPreviews               = false;
     s.ctrlEnterSends             = true;
     s.relevantDays               = 45;
+    s.names                      = 2;
     s.unreadsOnly                = true;
     s.animateMedia               = false;
     s.notifyLevel                = 1;
@@ -255,6 +257,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK_FALSE(r.linkPreviews);
     CHECK_FALSE(r.animateMedia);
     CHECK(r.relevantDays == 45);
+    CHECK(r.names == 2);
     CHECK(r.notifyLevel == 1);
     CHECK_FALSE(r.notifySound);
     CHECK(r.cacheLimitMb == 600);
@@ -493,6 +496,7 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     h.click(d.find("Large"));
     h.click(d.find("24-hour clock (14:34)"));
     h.click(d.find("Show link previews"));
+    h.click(d.find("Display names"));
     auto *days = static_cast<ui::SpinBox *>(d.find("14 days"));
     REQUIRE(days != nullptr);
     days->focus();
@@ -501,6 +505,8 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     CHECK(days->value() == 16);
     CHECK(d.draft().relevantDays == 16);
     CHECK(d.draft().fontSize == 2 && d.draft().use24h && !d.draft().linkPreviews);
+    CHECK(d.draft().names == 2);
+    CHECK(h.settings.names == 0);
     // A new language: the restart note says dates follow at once.
     auto *lang = static_cast<ui::Dropdown *>(d.find("System default"));
     REQUIRE(lang != nullptr);
@@ -540,6 +546,7 @@ TEST("settings: Appearance changes wait for Save, which applies them and closes"
     CHECK(h.settings.relevantDays == 16);
     const shell::Settings r = shell::Settings::load(path);
     CHECK(r.fontSize == 2 && r.use24h && !r.linkPreviews && r.relevantDays == 16);
+    CHECK(h.settings.names == 2 && r.names == 2);
     file::remove(path);
 }
 

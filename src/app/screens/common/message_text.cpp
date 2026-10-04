@@ -11,10 +11,10 @@ namespace screens {
 
 std::string entityText(const model::Store &store, const mrkdwn::Entity &e, uint8_t skinTone) {
     switch (e.kind) {
-    case mrkdwn::Kind::User:
+    case mrkdwn::Kind::User: // the display name in either Names mode, as in Slack
         if (const model::UserRef u = store.findUser(e.data);
-            u != model::kNoUser && !store.user(u).label().empty())
-            return "@" + std::string(store.user(u).label());
+            u != model::kNoUser && !store.user(u).mentionLabel().empty())
+            return "@" + std::string(store.user(u).mentionLabel());
         break;
     case mrkdwn::Kind::Channel:
         if (const model::ConvRef c = store.findConversation(e.data);

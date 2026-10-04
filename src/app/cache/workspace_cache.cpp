@@ -201,6 +201,8 @@ void fields(IO &io, model::User &u) {
     io.num(u.tzOffset);
     // Presence too: the dots show until the first poll.
     io.flags({&u.hasTz, &u.active, &u.bot, &u.admin, &u.owner, &u.deleted, &u.stranger});
+    io.str(u.realName);
+    io.str(u.profileName);
 }
 
 void fields(IO &io, model::Reaction &r) {

@@ -1432,6 +1432,26 @@ msgid "Inline (expand replies under the message)"
 msgstr "インライン（メッセージの下に返信を展開）"
 
 #: src/app/screens/settings/settings_dialog.cpp
+msgid "Names"
+msgstr "名前の表示"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "As set in Slack"
+msgstr "Slack の設定に従う"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Full names"
+msgstr "氏名"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Display names"
+msgstr "表示名"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Where a person has no display name, their full name is shown."
+msgstr "表示名が設定されていない人は、氏名で表示されます。"
+
+#: src/app/screens/settings/settings_dialog.cpp
 msgid "Link previews"
 msgstr "リンクプレビュー"
 

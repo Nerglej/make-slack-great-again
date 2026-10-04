@@ -54,6 +54,9 @@ struct Settings {
     // codes, "en_US" / "en-US"); empty = the system language's.
     std::vector<std::string> spellLanguages;
     int                      relevantDays = 14; // sidebar: conversations active in the last N days
+    // People's names: 0 as set in the service, 1 full names, 2 display names
+    // (model::Backend::NamesMode).
+    int                      names        = 0;
     bool                     showAgentsApps = true, unreadsOnly = false;
     bool                     animateEmoji = true, animateMedia = true;
     bool                     customTrayIcon = false;

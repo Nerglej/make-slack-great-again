@@ -62,6 +62,7 @@ const struct {
     {"paletteDark", &Settings::paletteDark, 0, int(ui::Palette::Count) - 1},
     {"fontSize", &Settings::fontSize, 0, 2},
     {"relevantDays", &Settings::relevantDays, 1, 365},
+    {"names", &Settings::names, 0, 2},
     {"notifyLevel", &Settings::notifyLevel, 0, 1},
     {"cacheLimitMb", &Settings::cacheLimitMb, 50, 10240},
     {"presence", &Settings::presence, 0, 2},

@@ -188,6 +188,21 @@ struct SlackBackend::Read {
     std::vector<Backend::Command> serverCommands; // commands.list (session tokens)
     bool                          commandsLoaded = false;
 
+    // ── Names (setNamesMode) ────────────────────────────────────────────────
+    // Slack's "Names" preference as last read (mapjson::namesOverride /
+    // namesDefault); bootDefault: the default came from client.userBoot
+    // (Grid: it, not team.prefs.get, is the workspace's). savedNames: the
+    // last decided answer (mapjson::realNamesFrom) the cache kept, shown
+    // until this run's prefs decide.
+    NamesMode namesMode     = NamesMode::Service;
+    int       namesOverride = mapjson::kNoPref, namesDefault = mapjson::kNoPref;
+    int       savedNames  = mapjson::kNoPref;
+    bool      bootDefault = false;
+    bool      namesAsked  = false; // loadNames ran
+    void      loadNames();
+    void      bootNames(const json::Value &boot); // a client.userBoot answer
+    void      applyNames();
+
     // ── Users ───────────────────────────────────────────────────────────────
     std::unordered_set<std::string>          pendingUsers, presenceUnavailable, offRoster;
     std::unordered_map<std::string, int64_t> probedAt;
@@ -558,6 +573,7 @@ void SlackBackend::Read::startLoads() {
     loadUsergroups();
     refreshSaved();
     loadCommands();
+    loadNames();
 }
 
 void SlackBackend::Read::connectSettled() {
@@ -636,8 +652,11 @@ void SlackBackend::Read::mergeUsers(std::vector<model::User> users) {
             if (!old.placeholder) {
                 if (u.avatar.empty())
                     u.avatar = old.avatar;
-                if (u.displayName.empty())
+                if (u.displayName.empty()) { // no name at all: the known ones
                     u.displayName = old.displayName;
+                    u.realName    = old.realName;
+                    u.profileName = old.profileName;
+                }
                 if (u.name.empty())
                     u.name = old.name;
             }
@@ -734,11 +753,13 @@ void SlackBackend::Read::loadViaWebClient(std::function<void(const std::string &
     call(
         "client.userBoot",
         "min_channel_updated=0",
-        [add, finish](const json::Document &doc, const std::string &err) {
-            if (err.empty())
+        [this, add, finish](const json::Document &doc, const std::string &err) {
+            if (err.empty()) {
                 add(doc.root()["channels"]);
-            else
+                bootNames(doc.root());
+            } else {
                 LOG_WARN("slack", "client.userBoot: %s", err.c_str());
+            }
             finish(err);
         }
     );
@@ -753,6 +774,86 @@ void SlackBackend::Read::loadViaWebClient(std::function<void(const std::string &
             finish(err);
         }
     );
+}
+
+// ── Names ───────────────────────────────────────────────────────────────────
+
+void SlackBackend::setNamesMode(NamesMode mode) {
+    Read &r     = *_read;
+    r.namesMode = mode;
+    r.applyNames();
+    // Switched to Slack's own while connected: ask it now.
+    if (mode == NamesMode::Service && !r.namesAsked && r.started)
+        r.loadNames();
+}
+
+// Slack's "Names" preference, once per connect while it is asked for:
+// users.prefs.get, and team.prefs.get only when the user follows the
+// workspace default. Session tokens only (OAuth ones are refused both). On
+// the paced lane: after what the connect waits for.
+void SlackBackend::Read::loadNames() {
+    if (!session || namesMode != NamesMode::Service)
+        return;
+    namesAsked = true;
+    call(
+        "users.prefs.get",
+        {},
+        [this](const json::Document &doc, const std::string &err) {
+            if (!err.empty()) {
+                LOG_WARN("slack", "users.prefs.get: %s", err.c_str());
+                return;
+            }
+            namesOverride = mapjson::namesOverride(doc.root()["prefs"]);
+            applyNames();
+            if (namesOverride != 0 || bootDefault)
+                return;
+            call(
+                "team.prefs.get",
+                {},
+                [this](const json::Document &doc, const std::string &err) {
+                    if (!err.empty()) {
+                        LOG_WARN("slack", "team.prefs.get: %s", err.c_str());
+                        return;
+                    }
+                    if (bootDefault) // userBoot answered meanwhile: it wins
+                        return;
+                    namesDefault = mapjson::namesDefault(doc.root()["prefs"]);
+                    applyNames();
+                },
+                Lane::Background
+            );
+        },
+        Lane::Background
+    );
+}
+
+// client.userBoot (the Grid roster) carries both prefs: the user's, and the
+// workspace's in team.prefs or in its workspaces[] entry.
+void SlackBackend::Read::bootNames(const json::Value &boot) {
+    if (const int o = mapjson::namesOverride(boot["prefs"]); o != mapjson::kNoPref)
+        namesOverride = o;
+    int d = mapjson::namesDefault(boot["team"]["prefs"]);
+    for (const json::Value w : boot["workspaces"])
+        if (d == mapjson::kNoPref && w["id"].str() == s.workspaceId)
+            d = mapjson::namesDefault(w["prefs"]);
+    if (d != mapjson::kNoPref) {
+        namesDefault = d;
+        bootDefault  = true;
+    }
+    applyNames();
+}
+
+void SlackBackend::Read::applyNames() {
+    bool real = namesMode != NamesMode::Display;
+    if (namesMode == NamesMode::Service) {
+        const int decided = mapjson::realNamesFrom(namesOverride, namesDefault);
+        if (decided != mapjson::kNoPref && decided != savedNames) {
+            savedNames = decided;
+            extrasChanged();
+        }
+        real = savedNames != 0; // not decided yet, nor ever before: full names
+    }
+    s.setRealNames(real);
 }
 
 // A roster reload: what the API cannot
@@ -1833,6 +1934,8 @@ void SlackBackend::Read::saveExtras(json::Writer &w) {
     for (const auto &[id, at] : probedAt)
         w.beginArray().value(id).value(wall - (t - at) / (1000 * speed)).endArray();
     w.endArray().key("sweep").value(sweepAt);
+    if (savedNames != mapjson::kNoPref)
+        w.key("names").value(int64_t(savedNames));
     w.key("dead").beginArray();
     for (const std::string &id : dead)
         w.value(id);
@@ -1871,6 +1974,10 @@ void SlackBackend::Read::loadExtras(const json::Value &x) {
             probedAt[std::string(v[0].str())] =
                 t - std::max<int64_t>(wall - v[1].integer(), 0) * 1000 * speed;
     sweepAt = x["sweep"].integer();
+    if (const int64_t n = x["names"].integer(mapjson::kNoPref); n == 0 || n == 1) {
+        savedNames = int(n);
+        applyNames();
+    }
     for (const json::Value v : x["dead"])
         if (!v.str().empty())
             dead.emplace(v.str());

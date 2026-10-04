@@ -1603,11 +1603,12 @@ void SlackBackend::updateProfile(
     _write->setProfile(
         p,
         [this, name, email, phone](model::User &u) {
-            u.displayName               = name;
             u.email                     = email;
             _write->profile.displayName = name;
             _write->profile.email       = email;
             _write->profile.phone       = phone;
+            u.profileName               = name; // what Slack calls the display name
+            u.resolveName(_store.realNames());
         },
         bannerOnFailure(N_("Could not update profile: %1"), std::move(done))
     );
@@ -1989,7 +1990,8 @@ model::Backend::LocalResult SlackBackend::runLocalCommand(
             for (size_t i = 0; i < _store.userCount() && target == model::kNoUser && !want.empty();
                  ++i) {
                 const model::User &u = _store.user(model::UserRef(i));
-                if (str::asciiLower(u.name) == want || str::asciiLower(u.displayName) == want)
+                if (str::asciiLower(u.name) == want || str::asciiLower(u.displayName) == want ||
+                    str::asciiLower(u.profileName) == want || str::asciiLower(u.realName) == want)
                     target = model::UserRef(i);
             }
         }

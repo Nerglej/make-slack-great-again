@@ -77,6 +77,7 @@ public:
     void         requestPresence(UserRef u) override;
     void         setPresence(bool away, Done d) override;
     void         setPresenceMode(PresenceMode mode) override;
+    void         setNamesMode(NamesMode mode) override;
     PresenceLink presenceLink() const override;
     void         noteUserActivity() override;
     void         setStatus(std::string emoji, std::string text, int64_t expiry, Done d) override;

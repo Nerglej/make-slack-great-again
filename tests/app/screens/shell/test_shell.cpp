@@ -378,6 +378,25 @@ TEST("drafts: stashed per conversation and thread on every leave path") {
 
 // ── Quick switcher ──────────────────────────────────────────────────────────
 
+TEST("quick switcher: a DM matches its peer's full name, display name and handle") {
+    Harness      h;
+    model::User &mira = h.store.user(h.store.findUser("U0MIRA"));
+    mira.realName     = "Mira Okafor";
+    mira.profileName  = "Mimi";
+    h.store.setRealNames(false); // shown as "Mimi"
+    const auto order = h.sh->sidebar().order();
+    CHECK_STR(h.store.displayName(h.conv("D0MIRA")), "Mimi");
+    for (const char *q : {"mimi", "okafor", "mira"}) {
+        const auto r = shell::quickSwitchFilter(h.store, q, order);
+        REQUIRE(!r.empty());
+        CHECK(r[0] == h.conv("D0MIRA"));
+    }
+    h.store.setRealNames(true);
+    const auto r = shell::quickSwitchFilter(h.store, "mimi", order);
+    REQUIRE(!r.empty());
+    CHECK(r[0] == h.conv("D0MIRA"));
+}
+
 TEST("quick switcher: filters by name, best match first") {
     Harness    h;
     const auto order = h.sh->sidebar().order();

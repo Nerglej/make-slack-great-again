@@ -718,6 +718,161 @@ TEST("slack read: Enterprise Grid lists through client.userBoot + im.list") {
     CHECK_STR(Log().get("im.list")["form"]["get_read_state"].str(), "true");
 }
 
+TEST("slack read: the Names preference — override × workspace default, as Slack decides") {
+    using namespace slack::mapjson;
+    const auto prefs = [](const char *text) {
+        auto d = std::make_shared<json::Document>();
+        CHECK(d->parse(std::string(text), nullptr));
+        return d;
+    };
+    CHECK(namesOverride(prefs(R"({"display_real_names_override": 1})")->root()) == 1);
+    CHECK(namesOverride(prefs(R"({"display_real_names_override": -1})")->root()) == -1);
+    CHECK(namesOverride(prefs(R"({"display_real_names_override": 0})")->root()) == 0);
+    CHECK(namesOverride(prefs(R"({"display_real_names_override": "-1"})")->root()) == -1);
+    CHECK(namesOverride(prefs(R"({"display_real_names_override": 7})")->root()) == kNoPref);
+    CHECK(namesOverride(prefs(R"({"display_display_names": true})")->root()) == kNoPref);
+    CHECK(namesDefault(prefs(R"({"display_real_names": true})")->root()) == 1);
+    CHECK(namesDefault(prefs(R"({"display_real_names": false})")->root()) == 0);
+    CHECK(namesDefault(prefs(R"({})")->root()) == kNoPref);
+    // Full names: override 1, or 0 with a full-names workspace; display
+    // names: override -1, or 0 with a display-names one; else undecided.
+    for (int d : {0, 1, kNoPref}) {
+        CHECK(realNamesFrom(1, d) == 1);
+        CHECK(realNamesFrom(-1, d) == 0);
+        CHECK(realNamesFrom(kNoPref, d) == kNoPref);
+    }
+    CHECK(realNamesFrom(0, 1) == 1);
+    CHECK(realNamesFrom(0, 0) == 0);
+    CHECK(realNamesFrom(0, kNoPref) == kNoPref);
+    // toUser keeps both names ("" is no name); displayName starts full-first.
+    const auto u = toUser(prefs(R"({"id": "UMEG", "name": "meg",
+                  "profile": {"real_name": " Meg Ryan ", "display_name": ""}})")
+                              ->root());
+    CHECK_STR(u.realName, "Meg Ryan");
+    CHECK(u.profileName.empty());
+    CHECK_STR(u.displayName, "Meg Ryan");
+}
+
+namespace {
+// kWorkspace plus Meg, who has both names (Mira has a full name only,
+// Jonas a display name only).
+const char *kMeg = R"({"users.list": {"ok": true, "members": [
+     {"id": "UME", "name": "me", "profile": {"real_name": "Me Myself"}},
+     {"id": "UMIRA", "name": "mira", "profile": {"real_name": "Mira Okafor"}},
+     {"id": "UJONAS", "name": "jonas", "profile": {"display_name": "Jonas"}},
+     {"id": "UMEG", "name": "meg", "profile": {"real_name": "Meg Ryan", "display_name": "Meg"}}],
+   "response_metadata": {"next_cursor": ""}}})";
+} // namespace
+
+TEST("slack read: names follow the user's Slack override, the local choice wins") {
+    if (!haveServer())
+        return;
+    Env e;
+    set(kMeg);
+    set(R"({"users.prefs.get": {"ok": true, "prefs": {"display_real_names_override": -1}},
+            "team.prefs.get": {"ok": true, "prefs": {"display_real_names": true}}})");
+    REQUIRE(e.connect());
+    REQUIRE(pumpUntil([&] { return !e.store.realNames(); }, 3000));
+    CHECK_STR(e.user("UMEG").displayName, "Meg");
+    CHECK_STR(e.user("UMIRA").displayName, "Mira Okafor"); // no display name
+    CHECK_STR(e.user("UJONAS").displayName, "Jonas");
+    CHECK_STR(e.store.displayName(e.conv("D1")), "Mira Okafor");
+    CHECK(Log().count("users.prefs.get") == 1);
+    CHECK(Log().count("team.prefs.get") == 0); // the override decided
+    // Settings → Names over Slack's, both ways, at once.
+    e.be->setNamesMode(model::Backend::NamesMode::Full);
+    CHECK(e.store.realNames());
+    CHECK_STR(e.user("UMEG").displayName, "Meg Ryan");
+    CHECK_STR(e.user("UJONAS").displayName, "Jonas"); // no full name
+    e.be->setNamesMode(model::Backend::NamesMode::Display);
+    CHECK_STR(e.user("UMEG").displayName, "Meg");
+    e.be->setNamesMode(model::Backend::NamesMode::Service);
+    CHECK(!e.store.realNames());
+    CHECK(Log().count("users.prefs.get") == 1); // known already: not asked again
+}
+
+TEST("slack read: an override of 0 follows the workspace default (team.prefs.get)") {
+    if (!haveServer())
+        return;
+    for (bool teamReal : {false, true}) {
+        Env e;
+        set(kMeg);
+        set(std::string(
+                R"({"users.prefs.get": {"ok": true, "prefs": {"display_real_names_override": 0}},
+              "team.prefs.get": {"ok": true, "prefs": {"display_real_names": )"
+            ) +
+            (teamReal ? "true" : "false") + "}}}");
+        REQUIRE(e.connect());
+        REQUIRE(pumpUntil([&] { return Log().count("team.prefs.get") == 1; }, 3000));
+        REQUIRE(pumpUntil([&] { return e.store.realNames() == teamReal; }, 3000));
+        CHECK_STR(e.user("UMEG").displayName, teamReal ? "Meg Ryan" : "Meg");
+    }
+    // No pref in the answer (an old server): full names, nothing more asked.
+    Env e;
+    set(kMeg);
+    REQUIRE(e.connect());
+    REQUIRE(pumpUntil([&] { return Log().count("users.prefs.get") == 1; }, 3000));
+    pumpUntil([] { return false; }, 200);
+    CHECK(Log().count("team.prefs.get") == 0);
+    CHECK(e.store.realNames());
+    CHECK_STR(e.user("UMEG").displayName, "Meg Ryan");
+}
+
+TEST("slack read: Grid takes the workspace default from client.userBoot") {
+    if (!haveServer())
+        return;
+    Env e;
+    set(kMeg);
+    set(R"({"conversations.list": {"ok": false, "error": "enterprise_is_restricted"},
+            "client.userBoot": {"ok": true, "channels": [],
+              "prefs": {"display_real_names_override": 0},
+              "team": {"id": "T1", "prefs": {"display_real_names": false}}},
+            "im.list": {"ok": true, "ims": [{"id": "D1", "is_im": true, "user": "UMIRA"}],
+                        "response_metadata": {"next_cursor": ""}},
+            "users.prefs.get": {"ok": true, "prefs": {"display_real_names_override": 0}},
+            "team.prefs.get": {"ok": true, "prefs": {"display_real_names": true}}})");
+    REQUIRE(e.connect());
+    REQUIRE(pumpUntil([&] { return Log().count("users.prefs.get") == 1; }, 3000));
+    pumpUntil([] { return false; }, 300);
+    CHECK(!e.store.realNames());
+    CHECK_STR(e.user("UMEG").displayName, "Meg");
+    CHECK(Log().count("team.prefs.get") == 0); // userBoot had it
+}
+
+TEST("slack read: app keys never ask for the Names prefs; a local choice still applies") {
+    if (!haveServer())
+        return;
+    Env e(kWorkspace, /*session=*/false);
+    set(kMeg);
+    REQUIRE(e.connect());
+    pumpUntil([] { return false; }, 200);
+    CHECK(Log().count("users.prefs.get") == 0 && Log().count("team.prefs.get") == 0);
+    CHECK(e.store.realNames());
+    CHECK_STR(e.user("UMEG").displayName, "Meg Ryan");
+    e.be->setNamesMode(model::Backend::NamesMode::Display);
+    CHECK_STR(e.user("UMEG").displayName, "Meg");
+    e.be->setNamesMode(model::Backend::NamesMode::Service);
+    CHECK_STR(e.user("UMEG").displayName, "Meg Ryan");
+    CHECK(Log().count("users.prefs.get") == 0);
+}
+
+TEST("slack read: a local Names choice asks Slack nothing until switched back") {
+    if (!haveServer())
+        return;
+    Env e;
+    set(kMeg);
+    set(R"({"users.prefs.get": {"ok": true, "prefs": {"display_real_names_override": -1}}})");
+    e.be->setNamesMode(model::Backend::NamesMode::Full);
+    REQUIRE(e.connect());
+    pumpUntil([] { return false; }, 200);
+    CHECK(Log().count("users.prefs.get") == 0);
+    CHECK_STR(e.user("UMEG").displayName, "Meg Ryan");
+    e.be->setNamesMode(model::Backend::NamesMode::Service);
+    REQUIRE(pumpUntil([&] { return !e.store.realNames(); }, 3000));
+    CHECK_STR(e.user("UMEG").displayName, "Meg");
+    CHECK(Log().count("users.prefs.get") == 1);
+}
+
 TEST("slack read: app-key workspaces sweep DM activity instead of client.counts") {
     if (!haveServer())
         return;

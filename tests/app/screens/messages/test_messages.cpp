@@ -612,6 +612,20 @@ TEST("actions: Copy message is the text as read, with full URLs, and asks the ba
     );
 }
 
+TEST("rows: a mention shows the display name in either Names mode") {
+    model::Store s;
+    model::User  meg, tom;
+    meg.id = "UMEG", meg.name = "meg", meg.realName = "Meg Ryan", meg.profileName = "Meg";
+    tom.id = "UTOM", tom.name = "tom", tom.realName = "Tom Hanks"; // no display name
+    s.addUser(meg);
+    s.addUser(tom);
+    for (bool real : {true, false}) {
+        s.setRealNames(real);
+        CHECK_STR(plainText(s, "<@UMEG> and <@UTOM>"), "@Meg and @Tom Hanks");
+    }
+    CHECK_STR(s.user(s.findUser("UMEG")).label(), "Meg"); // the author line follows the mode
+}
+
 TEST("rows: scrolling back over seen messages rebuilds nothing; edits and reactions do") {
     Env                         e(false);
     const int64_t               t0 = base::nowSecs() - 7200;

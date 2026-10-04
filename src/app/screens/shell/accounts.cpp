@@ -386,6 +386,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
         if (!backend->credentials().sessionAuth())
             backend->setRealtime(socketMode());
         backend->setPresenceMode(model::Backend::PresenceMode(_settings.presence));
+        backend->setNamesMode(model::Backend::NamesMode(_settings.names));
         r->slack   = backend.get();
         r->backend = std::move(backend);
     }

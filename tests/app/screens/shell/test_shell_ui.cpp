@@ -787,6 +787,13 @@ TEST("people search key: label and handle, the title on request") {
     CHECK_STR(screens::userSearchKey(u, true), "mira okafor mira design lead");
     u.displayName.clear();
     CHECK_STR(screens::userSearchKey(u), "mira mira");
+    // Both names, whichever shows (Settings → Names).
+    u.realName    = "Mira Okafor";
+    u.profileName = "Mimi";
+    u.resolveName(false);
+    CHECK_STR(screens::userSearchKey(u), "mimi mira okafor mira");
+    u.resolveName(true);
+    CHECK_STR(screens::userSearchKey(u), "mira okafor mimi mira");
 }
 
 // ── Thread panel ────────────────────────────────────────────────────────────

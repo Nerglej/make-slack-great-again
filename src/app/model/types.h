@@ -35,7 +35,11 @@ constexpr ConvRef kNoConv = UINT32_MAX;
 struct User {
     std::string id;          // "U0MIRA"
     std::string name;        // handle: "mira"
-    std::string displayName; // "Mira Okafor"; may be empty
+    std::string displayName; // the shown name, "Mira Okafor" or "Mira"; may be empty
+    // The two names a service keeps apart (Slack's real_name and
+    // display_name; either may be empty): displayName is made from them per
+    // Store::realNames(). Both empty: displayName is the backend's own.
+    std::string realName, profileName;
     std::string title;
     std::string email;
     std::string avatar;      // local path or URL
@@ -60,6 +64,12 @@ struct User {
 
     // What the UI shows: the display name, else the handle, else the id.
     std::string_view label() const;
+    // An @mention inside message text: the profile name whatever
+    // realNames() says (as Slack draws it), else label().
+    std::string_view mentionLabel() const;
+    // displayName from realName / profileName (no-op while both are empty):
+    // full names first, or the profile name first; the handle last.
+    void             resolveName(bool realNames);
 };
 
 enum class ConvKind : uint8_t { Channel, Private, Dm, Group };

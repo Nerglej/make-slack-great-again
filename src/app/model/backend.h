@@ -280,7 +280,13 @@ public:
         Idle,        // WhileUsing dropped it; any input brings it back
         Unavailable, // the service refused it for these credentials
     };
+    // People's names (Settings → Appearance → Names, in its order): as the
+    // account's own preference in the service says (full names where it
+    // has none), or always full / display names. setNamesMode: the backend
+    // sets Store::setRealNames from it.
+    enum class NamesMode : uint8_t { Service, Full, Display };
     virtual void         setPresenceMode(PresenceMode mode) { (void)mode; }
+    virtual void         setNamesMode(NamesMode mode) { (void)mode; }
     virtual PresenceLink presenceLink() const { return PresenceLink::Off; }
     // Real input in the app (a click, a key, a scroll; the shell throttles
     // it to one call per 20 s): the WhileUsing idle clock and the service's

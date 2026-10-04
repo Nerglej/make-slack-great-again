@@ -54,6 +54,18 @@ std::string_view User::label() const {
     return name.empty() ? std::string_view(id) : std::string_view(name);
 }
 
+std::string_view User::mentionLabel() const {
+    return profileName.empty() ? label() : std::string_view(profileName);
+}
+
+void User::resolveName(bool realNames) {
+    if (realName.empty() && profileName.empty())
+        return;
+    const std::string &first = realNames ? realName : profileName;
+    const std::string &other = realNames ? profileName : realName;
+    displayName              = !first.empty() ? first : !other.empty() ? other : name;
+}
+
 MessageExtras::MessageExtras()                      = default;
 MessageExtras::MessageExtras(const MessageExtras &) = default;
 MessageExtras::~MessageExtras()                     = default;
@@ -177,6 +189,7 @@ void Store::clear() {
 }
 
 UserRef Store::addUser(User u) {
+    u.resolveName(_realNames);
     if (const auto it = _userIndex.find(u.id); it != _userIndex.end()) {
         _users[it->second]             = std::move(u); // same ref: messages keep pointing at it
         _users[it->second].placeholder = false;
@@ -188,6 +201,15 @@ UserRef Store::addUser(User u) {
     _users.push_back(std::move(u));
     _touchedUsers.push_back(ref);
     return ref;
+}
+
+void Store::setRealNames(bool on) {
+    if (on == _realNames)
+        return;
+    _realNames = on;
+    for (User &u : _users)
+        u.resolveName(on);
+    usersChanged();
 }
 
 void Store::usersChanged() {
@@ -234,6 +256,8 @@ void Store::noteUserRevisions() {
              {&u.id,
               &u.name,
               &u.displayName,
+              &u.realName,
+              &u.profileName,
               &u.title,
               &u.email,
               &u.avatar,

@@ -692,7 +692,7 @@ text::AttributedText canvasPreviewText(
                 const std::string_view id = std::string_view(links[link - 1]).substr(kUser.size());
                 const model::UserRef   u  = store.findUser(id);
                 const std::string_view name =
-                    u != model::kNoUser ? store.user(u).label() : std::string_view();
+                    u != model::kNoUser ? store.user(u).mentionLabel() : std::string_view();
                 // The editor's spacing can put a blank inside the anchor:
                 // it stays outside the chip.
                 const std::string_view run  = std::string_view(t).substr(i, j - i);

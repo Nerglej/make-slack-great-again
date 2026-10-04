@@ -315,7 +315,7 @@ private:
     // The @ filter's folded user labels and names, by UserRef; an entry
     // refolds only when its user's label or name changed.
     struct FoldedUser {
-        std::string label, name, flabel, fname;
+        std::string label, name, real, profile, flabel, fname, fnames;
     };
     std::vector<FoldedUser> _folded;
     // The # filter's folded channel names, by ConvRef (refolded on a rename).

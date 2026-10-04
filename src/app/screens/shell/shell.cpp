@@ -2929,6 +2929,12 @@ void Shell::applySettings() {
         _ctx.backend.setPresenceMode(presence);
     for (const auto &r : _running)
         r->backend->setPresenceMode(presence);
+    // Settings → Appearance → Names: the same, per workspace Store.
+    const auto names = model::Backend::NamesMode(_settings.names);
+    if (_running.empty())
+        _ctx.backend.setNamesMode(names);
+    for (const auto &r : _running)
+        r->backend->setNamesMode(names);
     // Settings → Check spelling: loads (or frees) the dictionaries; the
     // composers re-check when it is ready.
     spell::Checker::instance().configure(

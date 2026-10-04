@@ -2123,21 +2123,29 @@ void Composer::computePickList() {
                 continue;
             const std::string_view label = user.label();
             FoldedUser            &f     = _folded[u];
-            if (f.label != label || f.name != user.name) { // new, renamed, another workspace
-                f.label  = label;
-                f.name   = user.name;
-                f.flabel = utf8::foldCase(label);
-                f.fname  = utf8::foldCase(user.name);
+            // Both names match whichever one shows (Settings → Names).
+            if (f.label != label || f.name != user.name || f.real != user.realName ||
+                f.profile != user.profileName) { // new, renamed, another workspace
+                f.label   = label;
+                f.name    = user.name;
+                f.real    = user.realName;
+                f.profile = user.profileName;
+                f.flabel  = utf8::foldCase(label);
+                f.fname   = utf8::foldCase(user.name);
+                f.fnames  = utf8::foldCase(str::concat({user.realName, "\n", user.profileName}));
                 ++_mentionFolds;
             }
             if (!query.empty() && !utf8::containsPrefolded(f.flabel, fq) &&
-                !utf8::containsPrefolded(f.fname, fq))
+                !utf8::containsPrefolded(f.fname, fq) && !utf8::containsPrefolded(f.fnames, fq))
                 continue;
             PickList::Item it;
             it.kind    = PickList::Item::Kind::Mention;
-            it.display = str::concat({"@", label});
-            it.title   = u == st.me ? str::concat({it.display, " ", tr("(you)")}) : it.display;
-            it.insert  = str::concat({"<@", user.id, ">"});
+            // The chip reads as the sent mention will (User::mentionLabel).
+            it.display = str::concat({"@", user.mentionLabel()});
+            it.title   = str::concat({"@", label});
+            if (u == st.me)
+                it.title = str::concat({it.title, " ", tr("(you)")});
+            it.insert = str::concat({"<@", user.id, ">"});
             if (!user.name.empty() && !utf8::containsPrefolded(f.fname, f.flabel) &&
                 f.fname != f.flabel)
                 it.subtitle = user.name;
@@ -2333,11 +2341,12 @@ void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text
         std::string display;
         if (!head.empty() && head[0] == '@') {
             const model::UserRef u = store.findUser(head.substr(1));
-            display = lab.empty()
-                          ? str::concat(
-                                {"@", u != model::kNoUser ? store.user(u).label() : head.substr(1)}
-                            )
-                          : str::concat({"@", lab});
+            display =
+                lab.empty()
+                    ? str::concat(
+                          {"@", u != model::kNoUser ? store.user(u).mentionLabel() : head.substr(1)}
+                      )
+                    : str::concat({"@", lab});
         } else if (!head.empty() && head[0] == '#') {
             const model::ConvRef c = store.findConversation(head.substr(1));
             display                = str::concat(

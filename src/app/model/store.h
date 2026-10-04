@@ -87,6 +87,10 @@ public:
     const User &user(UserRef u) const;               // a static empty User for kNoUser
     User       &user(UserRef u);
     size_t      userCount() const { return _users.size(); }
+    // Names: full names (true, the default) or display names first (see
+    // User::resolveName). A change re-resolves every user and fires Users.
+    bool        realNames() const { return _realNames; }
+    void        setRealNames(bool on);
     // After changing users in place (presence, status): fires Users.
     void        usersChanged();
     // The same after changing only user u in place: only u is re-hashed
@@ -366,6 +370,7 @@ private:
     std::unordered_map<std::string, UserRef>     _linkedAuthors; // "conv/ts"
     const Message                               *_arrived       = nullptr;
     int                                          _unreadThreads = 0;
+    bool                                         _realNames     = true;
 
     std::unordered_map<std::string, AiTranscript> _aiTranscripts;
 

@@ -103,6 +103,9 @@ void BackendProxy::setPresence(bool away, Done d) {
 void BackendProxy::setPresenceMode(PresenceMode mode) {
     _t->setPresenceMode(mode);
 }
+void BackendProxy::setNamesMode(NamesMode mode) {
+    _t->setNamesMode(mode);
+}
 Backend::PresenceLink BackendProxy::presenceLink() const {
     return _t->presenceLink();
 }

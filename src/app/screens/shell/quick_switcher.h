@@ -25,7 +25,8 @@ std::vector<model::ConvRef> quickSwitchOrder(
     const model::Store &store, const std::unordered_map<std::string, int64_t> &visited
 );
 
-// Conversations whose name fuzzy-matches `query` (fuzzy_match.h), best
+// Conversations whose name (a DM's: also its peer's other name and
+// handle) fuzzy-matches `query` (fuzzy_match.h), best
 // first, group DMs a little behind; ties keep `order`. Empty query = order
 // (minus the ones without a name yet).
 std::vector<model::ConvRef> quickSwitchFilter(
@@ -37,6 +38,7 @@ std::vector<model::ConvRef> quickSwitchFilter(
 struct QuickSwitchName {
     FuzzyText text;
     bool      group = false; // a group DM, ranked a little behind
+    FuzzyText alt;           // a DM peer's other names and handle (empty: none)
 };
 std::vector<QuickSwitchName>
 quickSwitchNames(const model::Store &store, const std::vector<model::ConvRef> &order);

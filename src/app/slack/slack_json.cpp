@@ -353,9 +353,11 @@ model::User toUser(const json::Value &o) {
     model::User u;
     readStrings(o, u, kTop);
     readStrings(p, u, kProfile);
-    // display_name / real_name are often "" rather than absent.
-    const std::string rn = trimmed(p["real_name"]), dn = trimmed(p["display_name"]);
-    u.displayName = !rn.empty() ? rn : !dn.empty() ? dn : u.name;
+    // display_name / real_name are often "" rather than absent; the Store
+    // makes displayName from them (Store::realNames).
+    u.realName    = trimmed(p["real_name"]);
+    u.profileName = trimmed(p["display_name"]);
+    u.resolveName(true);
     u.statusEmoji = statusEmoji(p["status_emoji"].str());
     u.hasTz       = o.has("tz_offset");
     u.tzOffset    = int32_t(o["tz_offset"].integer());
@@ -367,6 +369,25 @@ model::User toUser(const json::Value &o) {
     u.deleted     = o["deleted"].boolean();
     u.stranger    = o["is_stranger"].boolean();
     return u;
+}
+
+int namesOverride(const json::Value &prefs) {
+    const Value   v = prefs["display_real_names_override"];
+    // A number; a string where a pref travels as text.
+    const int64_t n =
+        v.isString() ? std::strtoll(std::string(v.str()).c_str(), nullptr, 10) : v.integer(kNoPref);
+    return n == 1 || n == -1 || n == 0 ? int(n) : kNoPref;
+}
+
+int namesDefault(const json::Value &prefs) {
+    const Value v = prefs["display_real_names"];
+    return v.isBool() ? int(v.boolean()) : v.isNumber() ? int(v.integer() != 0) : kNoPref;
+}
+
+int realNamesFrom(int override, int teamDefault) {
+    if (override == 1 || override == -1)
+        return override == 1;
+    return override == 0 ? teamDefault : kNoPref;
 }
 
 model::Conversation toConversation(const json::Value &o, model::Store &store) {

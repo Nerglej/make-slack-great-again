@@ -27,7 +27,10 @@ constexpr float kListH = 300; // the list's minimum height
 std::optional<double> scoreOf(const QuickSwitchName &n, const std::vector<uint32_t> &q) {
     if (n.text.folded.empty())
         return std::nullopt;
-    const std::optional<double> s = fuzzyScore(q, n.text);
+    std::optional<double> s = fuzzyScore(q, n.text);
+    if (!n.alt.folded.empty())
+        if (const std::optional<double> a = fuzzyScore(q, n.alt); a && (!s || *a > *s))
+            s = a;
     if (!s)
         return std::nullopt;
     // Group DMs are named after their members, so a person matches every
@@ -147,10 +150,24 @@ std::vector<QuickSwitchName>
 quickSwitchNames(const model::Store &store, const std::vector<ConvRef> &order) {
     std::vector<QuickSwitchName> out;
     out.reserve(order.size());
-    for (ConvRef c : order)
+    for (ConvRef c : order) {
+        const model::Conversation &cv = store.conversation(c);
+        const std::string          nm = store.displayName(c);
+        // A DM also by its peer's other names: the full or display name
+        // that doesn't show (Settings → Names), and the handle.
+        std::string                alt;
+        if (cv.kind == model::ConvKind::Dm && cv.localName.empty() && cv.dmUser != model::kNoUser) {
+            const model::User &u = store.user(cv.dmUser);
+            for (const std::string *n : {&u.realName, &u.profileName, &u.name})
+                if (!n->empty() && *n != nm)
+                    alt = alt.empty() ? *n : str::concat({alt, " ", *n});
+        }
         out.push_back(
-            {FuzzyText(store.displayName(c)), store.conversation(c).kind == model::ConvKind::Group}
+            {FuzzyText(nm),
+             cv.kind == model::ConvKind::Group,
+             alt.empty() ? FuzzyText() : FuzzyText(alt)}
         );
+    }
     return out;
 }
 

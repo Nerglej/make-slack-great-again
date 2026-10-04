@@ -55,7 +55,7 @@ bool shell::Settings::*const kAppearanceBools[] = {
     &shell::Settings::animateMedia,
 };
 int shell::Settings::*const kAppearanceInts[] = {
-    &shell::Settings::fontSize, &shell::Settings::relevantDays
+    &shell::Settings::fontSize, &shell::Settings::relevantDays, &shell::Settings::names
 };
 bool shell::Settings::*const kNotifyBools[] = {
     &shell::Settings::notifications,
@@ -447,6 +447,10 @@ void SettingsDialog::buildAppearance() {
          tr("Inline (expand replies under the message)")},
         &d.threadsInline
     );
+
+    heading(_content, tr("Names"));
+    radios(_content, {tr("As set in Slack"), tr("Full names"), tr("Display names")}, &d.names);
+    caption(_content, tr("Where a person has no display name, their full name is shown."));
 
     heading(_content, tr("Link previews"));
     check(_content, tr("Show link previews"), &d.linkPreviews, true);

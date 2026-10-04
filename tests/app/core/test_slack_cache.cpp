@@ -467,6 +467,39 @@ TEST("slack cache: damaged or foreign files are ignored safely") {
     wipe();
 }
 
+TEST("slack cache: both names and Slack's Names answer show before the network does") {
+    if (!haveServer())
+        return;
+    wipe();
+    ctl("POST", "/_ctl/reset");
+    set(kWorkspace);
+    set(R"({"users.list": {"ok": true, "members": [
+              {"id": "UME", "name": "me", "profile": {"real_name": "Me Myself"}},
+              {"id": "UMIRA", "name": "mira",
+               "profile": {"real_name": "Mira Okafor", "display_name": "Mira"}}],
+            "response_metadata": {"next_cursor": ""}},
+            "users.prefs.get": {"ok": true, "prefs": {"display_real_names_override": -1}}})");
+    {
+        Env e(false);
+        REQUIRE(e.connect());
+        REQUIRE(pumpUntil([&] { return !e.store.realNames(); }, 3000));
+        CHECK_STR(e.store.displayName(e.conv("D1")), "Mira");
+    }
+    // Next start, Slack slow to answer: display names from the first frame.
+    set(R"({"auth.test": {"ok": true, "user_id": "UME", "team_id": "T1", "__delay": 0.6}})");
+    Env e(false);
+    REQUIRE(e.warm);
+    CHECK(!e.store.realNames());
+    const model::User &mira = e.store.user(e.store.findUser("UMIRA"));
+    CHECK_STR(mira.realName, "Mira Okafor");
+    CHECK_STR(mira.profileName, "Mira");
+    CHECK_STR(e.store.displayName(e.conv("D1")), "Mira");
+    // Full names chosen here: the cached names re-resolve.
+    e.be->setNamesMode(model::Backend::NamesMode::Full);
+    CHECK_STR(e.store.displayName(e.conv("D1")), "Mira Okafor");
+    wipe();
+}
+
 TEST("slack read: connect is done once the conversations are in, users may follow") {
     if (!haveServer())
         return;
