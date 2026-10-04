@@ -125,11 +125,18 @@ void TeammatePage::open(const model::Backend::AgentRole &mate) {
     _description->setVisible(!mate.description.empty());
     _avatar->setInitial(mate.name);
     _avatar->setBitmap(_avatars.get(mate.avatar, int(kAvatar * 2)));
-    setFolder(
-        recent_folders::teammateFolder(
-            _settings, mate.id, _ctx.app.platform().standardDir(plat::StandardDir::Home)
-        )
-    );
+    const std::string home  = _ctx.app.platform().standardDir(plat::StandardDir::Home);
+    const std::string dir   = recent_folders::teammateFolder(_settings, mate.id, home);
+    // Moved or deleted since: start in what is left of it, and stop offering it.
+    const auto        isDir = [](const std::string &p) { return file::isDir(p); };
+    std::string       here  = dir;
+    if (!isDir(dir)) {
+        here = recent_folders::existingFolder(dir, home, isDir);
+        recent_folders::forgetFolder(_settings, dir, here);
+        if (_saveSettings)
+            _saveSettings();
+    }
+    setFolder(here);
     rebuild();
 }
 

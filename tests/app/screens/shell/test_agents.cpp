@@ -16,6 +16,7 @@
 #include "app/screens/messages/image_cache.h"
 #endif
 
+#include <algorithm>
 #include <cstdlib>
 #include <memory>
 
@@ -307,6 +308,25 @@ TEST("agents: a teammate's draft waits for the next visit; a blocked folder lock
     CHECK_STR(h.sh->teammatePage()->blocker(), "Not a folder");
 }
 
+TEST("agents: a teammate's folder that's gone starts in its parent, and leaves the menu") {
+    Harness           h;
+    const std::string proj = rf::normalized(file::join(home(), "proj"));
+    const std::string gone = proj + "/robot-experiment/src";
+    REQUIRE(file::makeDirs(proj));
+    h.settings.claudeTeammateDirs.emplace_back("copy", gone);
+    h.settings.claudeRecentDirs = {{gone, 9}, {proj, 5}};
+    h.sh->openTeammate("copy");
+    pump();
+    CHECK_STR(h.sh->teammatePage()->folder(), proj);
+    CHECK(h.sh->teammatePage()->blocker().empty());
+    REQUIRE(h.settings.claudeRecentDirs.size() == 1);
+    CHECK_STR(h.settings.claudeRecentDirs[0].path, proj);
+    CHECK_STR(rf::teammateFolder(h.settings, "copy", home()), proj);
+    std::vector<std::string> paths;
+    h.sh->teammatePage()->folderMenuItems(&paths);
+    CHECK(std::find(paths.begin(), paths.end(), gone) == paths.end());
+}
+
 TEST("agents: a message forwarded to a teammate waits in its page's composer, unsent") {
     Harness h;
     h.settings.claudeTeammateDirs.emplace_back("engineer", home());
@@ -398,6 +418,27 @@ TEST("agents: recent folders are normalised, deduplicated, capped, ranked") {
     CHECK(r[0].lastUsed == 40);
     CHECK_STR(r[1].path, "/b");
     CHECK_STR(r[2].path, "/c");
+}
+
+TEST("agents: a gone folder walks up to the nearest one there, stopping at home") {
+    const auto there = [](const std::string &p) { return p == "/h/a" || p == "/srv"; };
+    CHECK_STR(rf::existingFolder("/h/a/b/c/", "/h", there), "/h/a");
+    CHECK_STR(rf::existingFolder("/h/a", "/h", there), "/h/a");
+    CHECK_STR(rf::existingFolder("/h/x/y", "/h", there), "/h");
+    CHECK_STR(rf::existingFolder("/srv/old", "/h", there), "/srv");
+    CHECK_STR(rf::existingFolder("/mnt/usb", "/h", there), "/h"); // never the root
+    CHECK_STR(rf::existingFolder("C:/gone", "/h", there), "/h");
+    CHECK_STR(rf::existingFolder("", "/h", there), "/h");
+    shell::Settings s;
+    s.claudeLastDir      = "/h/x/y/";
+    s.claudeRecentDirs   = {{"/h/a", 3}, {"/h/x/y", 2}};
+    s.claudeTeammateDirs = {{"copy", "/h/x/y"}, {"engineer", "/h/a"}};
+    rf::forgetFolder(s, "/h/x/y", "/h");
+    REQUIRE(s.claudeRecentDirs.size() == 1);
+    CHECK_STR(s.claudeRecentDirs[0].path, "/h/a");
+    CHECK_STR(s.claudeLastDir, "/h");
+    CHECK_STR(rf::teammateFolder(s, "copy", "/h"), "/h");
+    CHECK_STR(rf::teammateFolder(s, "engineer", "/h"), "/h/a");
 }
 
 TEST("agents: the Claude Code folders survive a settings round trip") {

@@ -100,6 +100,42 @@ std::string teammateFolder(const Settings &s, const std::string &role, const std
     return s.claudeLastDir.empty() ? home : s.claudeLastDir;
 }
 
+std::string existingFolder(
+    std::string_view                                path,
+    const std::string                              &home,
+    const std::function<bool(const std::string &)> &exists
+) {
+    const std::string h = normalized(home);
+    std::string       p = normalized(path);
+    while (p != h) {
+        if (exists(p))
+            return p;
+        const size_t cut = p.rfind('/');
+        if (cut == std::string::npos || cut == 0 || p[cut - 1] == ':')
+            break; // up next is a root ("/", "C:/"): no place to start in
+        p.resize(cut);
+    }
+    return home;
+}
+
+void forgetFolder(Settings &s, const std::string &missing, const std::string &instead) {
+    const std::string gone = normalized(missing);
+    const auto        is   = [&](const std::string &p) { return normalized(p) == gone; };
+    s.claudeRecentDirs.erase(
+        std::remove_if(
+            s.claudeRecentDirs.begin(),
+            s.claudeRecentDirs.end(),
+            [&](const Entry &e) { return is(e.path); }
+        ),
+        s.claudeRecentDirs.end()
+    );
+    for (auto &[id, d] : s.claudeTeammateDirs)
+        if (is(d))
+            d = instead;
+    if (is(s.claudeLastDir))
+        s.claudeLastDir = instead;
+}
+
 void pickTeammateFolder(Settings &s, const std::string &role, const std::string &dir) {
     bool found = false;
     for (auto &[id, d] : s.claudeTeammateDirs)

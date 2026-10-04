@@ -51,10 +51,20 @@ std::vector<Choice> rank(
 // Where a new session with teammate `role` starts: the folder last picked for
 // it, else the last one any session started in, else `home`.
 std::string teammateFolder(const Settings &s, const std::string &role, const std::string &home);
+// The nearest folder `exists` accepts: `path` itself, else its closest parent
+// that does; `home` when the walk gets to home or the root first.
+std::string existingFolder(
+    std::string_view                                path,
+    const std::string                              &home,
+    const std::function<bool(const std::string &)> &exists
+);
+// `missing` is no folder any more: gone from the recent ones, and the
+// defaults that were it (a teammate's, the last one) are `instead` now.
+void forgetFolder(Settings &s, const std::string &missing, const std::string &instead);
 // The folder picked for a teammate: its default from now on, and first among
 // the recent ones.
-void        pickTeammateFolder(Settings &s, const std::string &role, const std::string &dir);
+void pickTeammateFolder(Settings &s, const std::string &role, const std::string &dir);
 // A session actually started in `dir`: first among the recent ones.
-void        bump(Settings &s, const std::string &dir);
+void bump(Settings &s, const std::string &dir);
 
 } // namespace shell::recent_folders
