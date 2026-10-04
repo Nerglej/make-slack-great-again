@@ -206,6 +206,11 @@ std::string subagentReplyPrompt(std::string_view agentId, std::string_view reply
 // subagent in `relayTo`.
 std::string typedPrompt(std::string_view prompt, std::string *relayTo = nullptr);
 
+// Text pasted into Claude Code's prompt box is recorded wrapped in
+// <pasted_content id="e482">…</pasted_content id="e482"> (2.1.278 on); shown
+// as a "> " quote instead. Anything but a matched pair is left as it is.
+std::string quotePastes(std::string_view prompt);
+
 // What someone typed, from a transcript record of type "user", as the chat
 // shows it (slash commands as "/name args", msga's additions taken off as
 // typedPrompt does); "" for what nobody typed — tool output, what Claude Code

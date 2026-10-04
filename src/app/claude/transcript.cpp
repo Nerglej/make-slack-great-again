@@ -204,6 +204,52 @@ std::string sha1Hex(std::string_view data) {
 
 } // namespace
 
+std::string quotePastes(std::string_view prompt) {
+    constexpr std::string_view kOpen = "<pasted_content";
+    std::string                out;
+    size_t                     i = 0;
+    for (size_t at = prompt.find(kOpen); at != std::string_view::npos;
+         at        = prompt.find(kOpen, at + 1)) {
+        // The attribute part (` id="e482"` or nothing), repeated on the close.
+        const size_t gt = prompt.find('>', at + kOpen.size());
+        if (gt == std::string_view::npos)
+            break;
+        const std::string_view attrs = prompt.substr(at + kOpen.size(), gt - at - kOpen.size());
+        if (!attrs.empty() && attrs[0] != ' ')
+            continue;
+        const std::string close = str::concat({"</pasted_content", attrs, ">"});
+        const size_t      end   = prompt.find(close, gt + 1);
+        if (end == std::string_view::npos)
+            continue;
+        std::string_view body = prompt.substr(gt + 1, end - gt - 1);
+        while (!body.empty() && (body.front() == '\n' || body.front() == '\r'))
+            body.remove_prefix(1);
+        while (!body.empty() && (body.back() == '\n' || body.back() == '\r'))
+            body.remove_suffix(1);
+        out.append(prompt.substr(i, at - i));
+        if (!out.empty() && out.back() != '\n')
+            out += '\n';
+        const auto lines = str::split(body, '\n');
+        for (size_t k = 0; k < lines.size(); ++k) {
+            std::string_view line = lines[k];
+            if (!line.empty() && line.back() == '\r')
+                line.remove_suffix(1);
+            if (k)
+                out += '\n';
+            out.append(line.empty() ? std::string_view(">") : std::string_view("> "));
+            out.append(line);
+        }
+        i = end + close.size();
+        if (i < prompt.size() && prompt[i] != '\n')
+            out += '\n';
+        at = i - 1;
+    }
+    if (i == 0)
+        return std::string(prompt);
+    out.append(prompt.substr(i));
+    return out;
+}
+
 std::string summarizeToolInput(std::string_view toolName, const json::Value &input) {
     auto        arg = [&](const char *key) { return input[key].str(); };
     std::string s;
@@ -333,7 +379,7 @@ void TranscriptParser::addPrompt(
     item.images     = std::move(images);
     item.imageNames = std::move(imageNames);
     // Files sent from msga ride the text as mentions (see withAttachments).
-    item.text       = takeAttachments(typedPrompt(text, &item.relayTo), &item.images);
+    item.text       = takeAttachments(quotePastes(typedPrompt(text, &item.relayTo)), &item.images);
     while (item.imageNames.size() < item.images.size())
         item.imageNames.emplace_back(file::baseName(item.images[item.imageNames.size()]));
     item.uuid = _lineUuid;
@@ -884,7 +930,7 @@ std::string promptOfRecord(const json::Value &o) {
     }
     if (std::string output; commandOutput(text, &output))
         return {};
-    return takeAttachments(typedPrompt(cleanPrompt(text)), nullptr);
+    return takeAttachments(quotePastes(typedPrompt(cleanPrompt(text))), nullptr);
 }
 
 std::string subagentReplyPrompt(std::string_view agentId, std::string_view reply) {

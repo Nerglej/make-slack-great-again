@@ -601,6 +601,35 @@ TEST("transcript: a reply relayed to a subagent reads back as the reply alone") 
     CHECK_STR(typedPrompt(subagentReplyPrompt("a1", ""), &to), subagentReplyPrompt("a1", ""));
 }
 
+TEST("transcript: text pasted into Claude Code's prompt box shows as a quote") {
+    TranscriptParser p;
+    p.feed(prompt(
+        "I went to sini.id and I see \n\n<pasted_content id=\"e482\">\n429\nTerlalu "
+        "cepat\n\nCoba lagi.\n</pasted_content id=\"e482\">\n\n WTF?",
+        "2026-10-04T12:20:53.822Z"
+    ));
+    REQUIRE(p.items().size() == 1);
+    CHECK_STR(
+        p.items()[0].text,
+        "I went to sini.id and I see \n\n> 429\n> Terlalu cepat\n>\n> Coba lagi.\n\n WTF?"
+    );
+    // Two pastes, one mid-line, one without an id; text right after a close.
+    CHECK_STR(
+        quotePastes(
+            "a <pasted_content id=\"1\">x</pasted_content id=\"1\">b\n"
+            "<pasted_content>y\r\nz</pasted_content>"
+        ),
+        "a \n> x\nb\n> y\n> z"
+    );
+    // Not a matched pair: left as written.
+    for (const std::string_view s :
+         {"see <pasted_content id=\"1\">x</pasted_content id=\"2\">",
+          "<pasted_content id=\"1\">never closed",
+          "<pasted_contents>x</pasted_contents>",
+          "no paste at all"})
+        CHECK_STR(quotePastes(s), s);
+}
+
 TEST("transcript: records in the same millisecond still get distinct, ordered ids") {
     TranscriptParser p;
     p.feed(
