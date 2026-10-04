@@ -1,6 +1,5 @@
 #include "app/claude/launcher.h"
 
-#include "app/claude/async.h"
 #include "app/model/jobs.h"
 #include "base/file.h"
 #include "base/i18n.h"
@@ -193,16 +192,22 @@ void Launcher::commandFor(std::string &program, std::vector<std::string> &argv) 
 void Launcher::spawn(
     std::vector<std::string> args, base::RunOptions o, std::function<void(base::RunResult)> done
 ) {
+    // A background session refuses a folder Claude Code doesn't trust: the
+    // user picked it in msga, which says as much as its trust prompt would.
+    const bool  bg = !args.empty() && args.front() == "--bg";
     std::string program;
     commandFor(program, args);
-    runAsync(
+    auto r = std::make_shared<base::RunResult>();
+    model::runInBackground(
         _app,
-        program,
-        std::move(args),
-        std::move(o),
-        [alive = _alive, done = std::move(done)](base::RunResult r) {
+        [r, bg, program = std::move(program), args = std::move(args), o = std::move(o)] {
+            if (bg && !isFolderTrusted(o.cwd))
+                trustFolder(o.cwd);
+            *r = base::run(program, args, o);
+        },
+        [r, alive = _alive, done = std::move(done)] {
             if (*alive)
-                done(std::move(r));
+                done(std::move(*r));
         }
     );
 }

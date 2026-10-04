@@ -4,8 +4,10 @@
 #include "app/claude/common.h"
 
 #include "base/file.h"
+#include "base/json.h"
 #include "base/process.h"
 #include "base/str.h"
+#include "base/time.h"
 #include "support/test.h"
 
 #include <cstdlib>
@@ -308,6 +310,89 @@ TEST("roster: a folder is trusted when it or a parent was accepted") {
     CHECK_FALSE(isFolderTrusted(r + "/src/other"));
     CHECK_FALSE(isFolderTrusted(r + "/src/application"));
     CHECK_FALSE(isFolderTrusted(r + "/src"));
+    if (old.empty())
+        base::test::unsetEnv("CLAUDE_CONFIG_DIR");
+    else
+        base::test::setEnv("CLAUDE_CONFIG_DIR", old);
+}
+
+TEST("roster: in a git repository only its root's trust counts; msga records it") {
+    const std::string dir = tempDir();
+    const std::string old = base::env("CLAUDE_CONFIG_DIR");
+    base::test::setEnv("CLAUDE_CONFIG_DIR", dir);
+    const std::string cfg  = dir + "/.claude.json";
+    // The folders outside any repository (the test HOME may be in one).
+    const std::string out  = base::test::makeTempDir("roster-trust-");
+    const std::string top  = file::absolute(out) + "/src";
+    const std::string repo = top + "/robot";
+    REQUIRE(file::makeDirs(repo + "/.git"));
+    REQUIRE(file::makeDirs(repo + "/sub"));
+    REQUIRE(file::makeDirs(top + "/plain/deeper"));
+    REQUIRE(
+        file::writeAtomic(
+            cfg,
+            str::concat(
+                {R"({"oauthAccount":{"emailAddress":"a@b"},"numStartups":7,"ratio":0.25,"projects":{)",
+                 "\"",
+                 top,
+                 R"(":{"hasTrustDialogAccepted":true},")",
+                 repo,
+                 R"(":{"allowedTools":["Bash"],"hasTrustDialogAccepted":false}},"tail":[1,"x"]})"}
+            )
+        )
+    );
+    // A trusted parent no longer reaches into a repository (Claude Code 2.1.289).
+    CHECK(isFolderTrusted(top + "/plain/deeper"));
+    CHECK_FALSE(isFolderTrusted(repo));
+    CHECK_FALSE(isFolderTrusted(repo + "/sub"));
+    CHECK(canTrustFolder(repo + "/sub"));
+    CHECK_FALSE(canTrustFolder(base::homeDir()));
+
+    // Trusting a subfolder trusts the repository's root, everything else kept.
+    REQUIRE(trustFolder(repo + "/sub"));
+    CHECK(isFolderTrusted(repo));
+    CHECK(isFolderTrusted(repo + "/sub"));
+    json::Document doc;
+    REQUIRE(doc.parseFile(cfg));
+    const json::Value root = doc.root();
+    CHECK_STR(std::string(root["oauthAccount"]["emailAddress"].str()), "a@b");
+    CHECK(root["numStartups"].integer() == 7);
+    CHECK(root["ratio"].number() == 0.25);
+    CHECK(root["tail"][1].str() == "x");
+    CHECK(root["projects"][top]["hasTrustDialogAccepted"].boolean());
+    CHECK_STR(std::string(root["projects"][repo]["allowedTools"][0].str()), "Bash");
+    CHECK(root["projects"].size() == 2);
+    CHECK(!file::exists(cfg + ".lock")); // Claude Code's lock, let go
+
+    // A new entry gets the defaults Claude Code's own prompt writes.
+    const std::string other = top + "/other";
+    REQUIRE(file::makeDirs(other + "/.git"));
+    REQUIRE(trustFolder(other));
+    REQUIRE(doc.parseFile(cfg));
+    CHECK(doc.root()["projects"][other]["hasTrustDialogAccepted"].boolean());
+    CHECK(doc.root()["projects"][other]["mcpServers"].isObject());
+
+    // Claude Code holding its lock: waited for, never broken while fresh.
+    REQUIRE(file::makeDirs(cfg + ".lock"));
+    const std::string third = top + "/third";
+    REQUIRE(file::makeDirs(third + "/.git"));
+    const int64_t t0 = base::nowMicros();
+    CHECK_FALSE(trustFolder(third)); // a live holder: gives up after a while
+    CHECK(base::nowMicros() - t0 >= 3'000'000);
+    CHECK(file::exists(cfg + ".lock"));
+    file::remove(cfg + ".lock");
+    // An unreadable config is never overwritten.
+    REQUIRE(file::writeAtomic(cfg, "{broken"));
+    CHECK_FALSE(trustFolder(third));
+    std::string text;
+    CHECK(file::readAll(cfg, &text));
+    CHECK_STR(text, "{broken");
+    // None at all: one is made.
+    file::remove(cfg);
+    REQUIRE(trustFolder(third));
+    CHECK(isFolderTrusted(third));
+    base::test::removeTree(out);
+
     if (old.empty())
         base::test::unsetEnv("CLAUDE_CONFIG_DIR");
     else

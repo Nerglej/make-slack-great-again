@@ -150,10 +150,19 @@ std::vector<SessionInfo> scanSessions(
     const Paths &paths, std::vector<SessionInfo> *live = nullptr, JobStateCache *jobs = nullptr
 );
 
-// Whether Claude Code trusts `dir` (it or a parent folder was accepted in its
-// trust prompt) — background sessions refuse untrusted folders. Reads the
-// "projects" map of Claude Code's global config (~/.claude.json, or
+// Whether Claude Code trusts `dir` — background sessions refuse untrusted
+// folders. Read as Claude Code reads it (2.1.289): in a git repository only
+// the repository root's entry counts, never a trusted folder above it;
+// elsewhere the folder's own or a parent's. Reads the "projects" map of
+// Claude Code's global config (~/.claude.json, or
 // $CLAUDE_CONFIG_DIR/.claude.json when that is set).
 bool isFolderTrusted(std::string_view dir);
+// Whether trustFolder can record trust for `dir`: Claude Code never saves
+// trust for the home folder itself.
+bool canTrustFolder(std::string_view dir);
+// Records `dir` as trusted, as accepting Claude Code's trust prompt there
+// does (inside a repository: its root), under Claude Code's own config lock.
+// Blocking file I/O: off the UI thread. True when it is trusted afterwards.
+bool trustFolder(std::string_view dir);
 
 } // namespace claude

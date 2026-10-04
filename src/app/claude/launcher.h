@@ -25,8 +25,9 @@
 //   • `--agents <json>` is saved too (a flag-free resume reports "woke session
 //     … with its saved options (… --agents …)"), and its types are offered to
 //     the Agent tool next to the built-in ones, each with its own prompt.
-//   • `--bg` refuses a folder Claude Code hasn't trusted (trust is inherited from
-//     a trusted parent folder).
+//   • `--bg` refuses a folder Claude Code hasn't trusted — since 2.1.289 a git
+//     repository's root must be trusted itself, a trusted parent doesn't
+//     count. msga records the trust before starting one (see trustFolder).
 //   • `claude --bg --resume <id> --fork-session -- <prompt>` branches a session
 //     (even one whose worker is alive) into a new background session: its
 //     transcript starts with a copy of the original's records, same uuids and

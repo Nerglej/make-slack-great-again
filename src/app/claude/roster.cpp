@@ -13,10 +13,13 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+
+#include "base/winstr.h"
 #else
 #include <cerrno>
 #include <csignal>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -492,14 +495,17 @@ scanSessions(const Paths &paths, std::vector<SessionInfo> *live, JobStateCache *
     return out;
 }
 
-bool isFolderTrusted(std::string_view dir) {
+namespace {
+
+std::string globalConfigPath() {
     const std::string env = base::env("CLAUDE_CONFIG_DIR");
-    json::Document    doc;
-    if (!doc.parseFile(env.empty() ? base::homeDir() + "/.claude.json" : env + "/.claude.json"))
-        return false;
-    const json::Value projects = doc.root()["projects"];
-    // Trust is inherited: the folder itself or any parent counts.
-    std::string       path     = file::absolute(dir);
+    return env.empty() ? base::homeDir() + "/.claude.json" : env + "/.claude.json";
+}
+
+// A path as Claude Code keys its projects: absolute, forward slashes, no
+// trailing one (a drive root keeps its own).
+std::string projectKey(std::string_view dir) {
+    std::string path = file::absolute(dir);
 #ifdef _WIN32
     for (char &c : path)
         if (c == '\\')
@@ -507,14 +513,189 @@ bool isFolderTrusted(std::string_view dir) {
 #endif
     while (path.size() > 1 && path.back() == '/' && !(path.size() == 3 && path[1] == ':'))
         path.pop_back();
+    return path;
+}
+
+// The folder holding `.git` (a directory, or a worktree's file) at or above
+// `path`; "" outside a repository.
+std::string gitRoot(std::string path) {
+    for (;;) {
+        if (file::exists(path + "/.git"))
+            return path;
+        const std::string_view parent = file::dirName(path);
+        if (parent.empty() || parent == path)
+            return {};
+        path = std::string(parent);
+    }
+}
+
+// Where trust is looked up for a folder. Inside a git repository only the
+// repository root's entry counts (`root`) — a trusted folder above it
+// doesn't — unless the repository is the home folder itself; elsewhere the
+// folder's own or any parent's, up to `bound` ("" = the top).
+struct TrustScope {
+    std::string path, root, bound;
+};
+
+TrustScope trustScope(std::string_view dir) {
+    TrustScope s;
+    s.path                 = projectKey(dir);
+    const std::string repo = gitRoot(s.path);
+    if (repo.empty())
+        return s;
+    if (repo == projectKey(base::homeDir()))
+        s.bound = repo;
+    else
+        s.root = repo;
+    return s;
+}
+
+bool trustedIn(const json::Value &projects, const TrustScope &s) {
+    if (!s.root.empty())
+        return projects[s.root]["hasTrustDialogAccepted"].boolean();
+    std::string path = s.path;
     for (;;) {
         if (projects[path]["hasTrustDialogAccepted"].boolean())
             return true;
         const std::string_view parent = file::dirName(path);
-        if (parent.empty() || parent == path)
+        if (path == s.bound || parent.empty() || parent == path)
             return false;
         path = std::string(parent);
     }
+}
+
+void sleepMs(int ms) {
+#ifdef _WIN32
+    ::Sleep(DWORD(ms));
+#else
+    ::usleep(useconds_t(ms) * 1000);
+#endif
+}
+
+// Claude Code's own lock on its config: the directory `<config>.lock`
+// (proper-lockfile), stale once its holder stops refreshing it for 10 s.
+class ConfigLock {
+public:
+    explicit ConfigLock(std::string path) : _path(std::move(path)) {
+        for (int i = 0; i < 100; ++i) { // up to ~5 s
+            if (makeDir()) {
+                _held = true;
+                return;
+            }
+            file::Stat st;
+            if (file::stat(_path, &st) && base::nowMicros() - st.mtimeMicros > 10'000'000) {
+                file::remove(_path); // its holder is gone
+                continue;
+            }
+            sleepMs(50);
+        }
+    }
+    ~ConfigLock() {
+        if (_held)
+            file::remove(_path);
+    }
+    bool held() const { return _held; }
+
+private:
+    bool makeDir() const {
+#ifdef _WIN32
+        return ::CreateDirectoryW(base::widePath(_path).c_str(), nullptr) != 0;
+#else
+        return ::mkdir(_path.c_str(), 0777) == 0;
+#endif
+    }
+    std::string _path;
+    bool        _held = false;
+};
+
+// A project entry as Claude Code's trust prompt leaves it: `old`'s settings
+// kept, else its defaults.
+void writeTrustedProject(json::Writer &w, const json::Value &old) {
+    w.beginObject();
+    if (old.isObject()) {
+        for (json::Value m : old)
+            if (m.key() != "hasTrustDialogAccepted")
+                w.key(m.key()).value(m);
+    } else {
+        w.key("allowedTools").beginArray().endArray();
+        w.key("mcpContextUris").beginArray().endArray();
+        w.key("mcpServers").beginObject().endObject();
+        w.key("enabledMcpjsonServers").beginArray().endArray();
+        w.key("disabledMcpjsonServers").beginArray().endArray();
+        w.key("hasClaudeMdExternalIncludesApproved").value(false);
+        w.key("hasClaudeMdExternalIncludesWarningShown").value(false);
+    }
+    w.key("hasTrustDialogAccepted").value(true);
+    w.endObject();
+}
+
+} // namespace
+
+bool isFolderTrusted(std::string_view dir) {
+    json::Document doc;
+    if (!doc.parseFile(globalConfigPath()))
+        return false;
+    return trustedIn(doc.root()["projects"], trustScope(dir));
+}
+
+bool canTrustFolder(std::string_view dir) {
+    return projectKey(dir) != projectKey(base::homeDir());
+}
+
+bool trustFolder(std::string_view dir) {
+    if (!canTrustFolder(dir))
+        return false;
+    const TrustScope  s    = trustScope(dir);
+    // Where the trust prompt records it: the repository's root, else the folder.
+    const std::string key  = s.root.empty() ? s.path : s.root;
+    const std::string path = globalConfigPath();
+    ConfigLock        lock(path + ".lock");
+    if (!lock.held())
+        return false;
+    json::Document doc;
+    std::string    error;
+    if (!doc.parseFile(path, &error)) {
+        if (!error.empty() || file::exists(path))
+            return false; // there but unreadable: never overwritten
+    } else if (!doc.root().isObject()) {
+        return false;
+    }
+    const json::Value root = doc.root();
+    if (trustedIn(root["projects"], s))
+        return true;
+    // Everything else as it was (Claude Code rewrites the whole file too).
+    json::Writer w(true);
+    w.beginObject();
+    bool projects = false;
+    for (json::Value m : root) {
+        w.key(m.key());
+        if (m.key() != "projects" || !m.isObject() || projects) {
+            w.value(m);
+            continue;
+        }
+        projects   = true;
+        bool found = false;
+        w.beginObject();
+        for (json::Value p : m) {
+            w.key(p.key());
+            if (p.key() == key && !found) {
+                found = true;
+                writeTrustedProject(w, p);
+            } else {
+                w.value(p);
+            }
+        }
+        if (!found)
+            writeTrustedProject(w.key(key), {});
+        w.endObject();
+    }
+    if (!projects) {
+        w.key("projects").beginObject();
+        writeTrustedProject(w.key(key), {});
+        w.endObject();
+    }
+    w.endObject();
+    return file::writeAtomic(path, w.str() + "\n", 0600);
 }
 
 } // namespace claude

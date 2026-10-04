@@ -341,8 +341,8 @@ msgid "%1 isn't a folder."
 msgstr "%1 はフォルダーではありません。"
 
 #: src/app/claude/backend_send.cpp
-msgid "Claude Code doesn't trust %1 yet. Run `claude` in that folder once and accept its trust prompt, then start the session again."
-msgstr "Claude Code はまだ %1 を信頼していません。そのフォルダーで一度 `claude` を実行して信頼の確認を承認してから、もう一度セッションを開始してください。"
+msgid "Claude Code doesn't run background sessions in the home folder. Pick a project folder."
+msgstr "Claude Code はホームフォルダーではバックグラウンドセッションを実行しません。プロジェクトのフォルダーを選んでください。"
 
 #: src/app/claude/cli.cpp
 msgid "Claude Code isn't installed on this computer (msga can't find the claude command). Install it (https://code.claude.com/docs/en/setup), run `claude` once in a terminal to log in, then try again."

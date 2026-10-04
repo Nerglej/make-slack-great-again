@@ -2668,14 +2668,16 @@ TEST("backend: sending runs background sessions: start, then stop + resume per t
     const std::string untrusted = tempDir("untrusted");
     file::makeDirs(home.dir + "/jobs");
     file::makeDirs(home.dir + "/projects/-fake");
-    home.trust(work); // not `untrusted`
+    home.trust(work); // not `untrusted`, a repository of its own
+    file::makeDirs(untrusted + "/.git");
     const std::string cli = writeCli(work, kSendingCli);
 
     Rig rig(Credentials{cli});
 
-    // Background sessions refuse untrusted folders: said up front.
-    CHECK(rig.start(untrusted) == kNoConv);
-    CHECK(contains(rig.lastStartError, "trust"));
+    // Claude Code never trusts the home folder for background sessions: said
+    // up front. Any other folder msga trusts itself when the session starts.
+    CHECK(rig.start(base::homeDir()) == kNoConv);
+    CHECK(contains(rig.lastStartError, "home folder"));
 
     const ConvRef conv = rig.start(work);
     REQUIRE(conv != kNoConv);
@@ -2767,7 +2769,9 @@ TEST("backend: sending runs background sessions: start, then stop + resume per t
     CHECK(contains(copyLog, "stop abcdef11\n")); // the original is stopped, not left idling
 
     // Skipping permission checks is a start option, saved with the session.
-    const ConvRef noChecks = rig.start(work, true);
+    // (In a folder Claude Code doesn't trust yet: msga trusts it on launch.)
+    CHECK_FALSE(isFolderTrusted(untrusted));
+    const ConvRef noChecks = rig.start(untrusted, true);
     REQUIRE(noChecks != kNoConv);
     rig.load(noChecks);
     rig.send(noChecks, "go");
@@ -2783,6 +2787,8 @@ TEST("backend: sending runs background sessions: start, then stop + resume per t
     ));
     // Let that launch finish before the backend goes away with it.
     CHECK(answered(noChecks, "echo go"));
+    CHECK(isFolderTrusted(untrusted));
+    CHECK(isFolderTrusted(work)); // the trust already there is kept
     // Claude gets the text as typed: fences and backticks too.
     rig.send(noChecks, "quotes ```test``` `code`");
     CHECK(

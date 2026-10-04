@@ -813,13 +813,13 @@ std::string Backend::cannotStartIn(const std::string &dir) const {
         return notInstalledMessage();
     if (!file::isDir(dir))
         return i18n::arg(tr("%1 isn't a folder."), dir);
-    // Background sessions refuse a folder Claude Code hasn't trusted; say so
-    // now rather than on the first message.
-    if (!isFolderTrusted(dir))
-        return i18n::arg(
-            tr("Claude Code doesn't trust %1 yet. Run `claude` in that folder once and accept "
-               "its trust prompt, then start the session again."),
-            homeRelative(dir)
+    // Background sessions refuse a folder Claude Code hasn't trusted. The
+    // launcher trusts the picked one, but Claude Code never saves trust for
+    // the home folder: say so now rather than on the first message.
+    if (!canTrustFolder(dir))
+        return tr(
+            "Claude Code doesn't run background sessions in the home folder. Pick a "
+            "project folder."
         );
     return {};
 }
