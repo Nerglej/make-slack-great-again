@@ -260,21 +260,30 @@ private:
     CachedImage *_thumb = nullptr, *_full = nullptr;
 };
 
+// A label's text in window coordinates, not clipped by the list: in a message
+// taller than the list its first or last text may lie wholly outside it
+// (windowRect() would be empty there).
+ui::RectF textRect(SelectableText &l) {
+    const ui::View  &v = l.textView();
+    const ui::PointF o = v.mapToWindow({0, 0});
+    return {o.x, o.y, v.width(), v.height()};
+}
+
 // The label under (or, between two, nearest to) a window y, and the base
 // offset of its text; null when y is above the first or below the last.
 SelectableText *labelAt(const MessageRow &row, float wy, uint32_t *base) {
     const std::vector<SelectableText *> &labels = row.selectionLabels();
     if (labels.empty())
         return nullptr;
-    const ui::RectF first = labels.front()->textView().windowRect();
-    const ui::RectF last  = labels.back()->textView().windowRect();
+    const ui::RectF first = textRect(*labels.front());
+    const ui::RectF last  = textRect(*labels.back());
     if (wy < first.y || wy > last.y + last.h)
         return nullptr;
     uint32_t        b    = 0;
     SelectableText *best = nullptr;
     float           dist = 1e9f;
     for (SelectableText *l : labels) {
-        const ui::RectF r = l->textView().windowRect();
+        const ui::RectF r = textRect(*l);
         const float     d = wy < r.y ? r.y - wy : wy > r.y + r.h ? wy - (r.y + r.h) : 0;
         if (d < dist) {
             dist  = d;
@@ -2102,7 +2111,7 @@ MessageList::TextPos MessageList::textPosAt(ui::PointF wp) const {
         SelectableText *l    = labelAt(*row, wp.y, &base);
         if (!l)
             return {};
-        const ui::RectF  lr = l->textView().windowRect();
+        const ui::RectF  lr = textRect(*l);
         const ui::PointF p  = l->textView().mapFromWindow(
             {std::max(wp.x, lr.x), std::clamp(wp.y, lr.y, lr.y + std::max(0.f, lr.h - 1))}
         );
@@ -2139,8 +2148,8 @@ MessageList::TextPos MessageList::dragPosAt(ui::PointF wp) const {
     for (SelectableText *l : labels)
         end += l->textSize() + 1;
     end -= 1;
-    const ui::RectF top = labels.front()->textView().windowRect();
-    const ui::RectF bot = labels.back()->textView().windowRect();
+    const ui::RectF top = textRect(*labels.front());
+    const ui::RectF bot = textRect(*labels.back());
     if (wp.y < top.y)
         return {best->ts(), 0};
     if (wp.y > bot.y + bot.h)
@@ -2149,7 +2158,7 @@ MessageList::TextPos MessageList::dragPosAt(ui::PointF wp) const {
     SelectableText *l    = labelAt(*best, wp.y, &base);
     if (!l)
         return {};
-    const ui::RectF  r = l->textView().windowRect();
+    const ui::RectF  r = textRect(*l);
     const ui::PointF p = l->textView().mapFromWindow(
         {std::max(wp.x, r.x), std::clamp(wp.y, r.y, r.y + std::max(0.f, r.h - 1))}
     );

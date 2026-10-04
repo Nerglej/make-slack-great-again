@@ -2501,6 +2501,49 @@ TEST("selection: a drag held past the list's top scrolls it up, selecting on") {
     CHECK(sel.size() >= 10 && sel.compare(sel.size() - 10, 10, "message 58") == 0);
 }
 
+TEST("selection: in a message taller than the list, its end scrolled out") {
+    Env           e(false);
+    const int64_t t0 = base::nowSecs() - 3600;
+    std::string   body;
+    for (int i = 0; i < 40; ++i)
+        body += "paragraph " + std::to_string(i) + "\n> quoted " + std::to_string(i) + "\n";
+    std::vector<model::Message> ms;
+    ms.push_back(msg(0, t0, "before"));
+    ms.push_back(msg(0, t0 + 60, body.c_str()));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    const Ts ts = (t0 + 60) * 1000000;
+    REQUIRE(e.row(ts) != nullptr);
+    REQUIRE(static_cast<MessageRow *>(e.row(ts))->selectionLabels().size() > 2);
+    // Up a little: the message's last texts are now below the list.
+    e.list->list().scrollBy(-200);
+    pump(8);
+    const ui::RectF lr = e.list->list().windowRect();
+    ui::View       *l  = nullptr;
+    for (int i = 39; i >= 0 && !l; --i) {
+        ui::View *v = findLeaf(e.row(ts), ("paragraph " + std::to_string(i)).c_str());
+        if (v && v->windowRect().y > lr.y + 40 &&
+            v->windowRect().y + v->windowRect().h < lr.y + lr.h - 40)
+            l = v;
+    }
+    REQUIRE(l != nullptr);
+    const ui::RectF r = l->windowRect();
+    auto           *h = app().platform().testHooks();
+    for (const double until = app().nowMs() + 450; app().nowMs() < until;)
+        app().pump(5);
+    h->injectPointerMove(e.win->native(), {r.x + 1, r.y + r.h / 2});
+    pump(2);
+    h->injectButton(e.win->native(), plat::Button::Left, true);
+    pump(2);
+    h->injectPointerMove(e.win->native(), {r.x + r.w, r.y + r.h / 2});
+    pump(2);
+    h->injectButton(e.win->native(), plat::Button::Left, false);
+    pump(2);
+    const std::string sel = e.list->selectedText();
+    CHECK(sel.rfind("paragraph ", 0) == 0);
+}
+
 TEST("opening: the first unread a third down, the saved position on return") {
     Env                         e(false);
     const int64_t               t0 = base::nowSecs() - 7200;
