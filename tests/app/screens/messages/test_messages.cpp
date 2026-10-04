@@ -2415,6 +2415,92 @@ TEST("selection: drag positions, across messages, Ctrl+C copies, Escape clears")
     CHECK_FALSE(e.list->onEvent(copy2)); // nothing selected: not ours
 }
 
+TEST("selection: a pointer drag runs from one message's text into the next ones") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 3600;
+    std::vector<model::Message> ms;
+    ms.push_back(msg(0, t0, "first message here"));
+    ms.push_back(msg(0, t0 + 60, "second one"));
+    ms.push_back(msg(0, t0 + 120, "third text"));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    const Ts  a = t0 * 1000000, d = (t0 + 120) * 1000000;
+    ui::View *l1 = findLeaf(e.row(a), "first message here");
+    ui::View *l3 = findLeaf(e.row(d), "third text");
+    REQUIRE(l1 != nullptr && l3 != nullptr);
+    const ui::RectF r1 = l1->windowRect(), r3 = l3->windowRect();
+    auto           *h = app().platform().testHooks();
+    h->injectPointerMove(e.win->native(), {r1.x + 1, r1.y + r1.h / 2});
+    pump(2);
+    h->injectButton(e.win->native(), plat::Button::Left, true);
+    pump(2);
+    // Down through the second message's header and text into the third's.
+    for (float y = r1.y + r1.h / 2; y < r3.y + r3.h / 2; y += 6) {
+        h->injectPointerMove(e.win->native(), {r1.x + 40, y});
+        pump(1);
+    }
+    h->injectPointerMove(e.win->native(), {r3.x + r3.w, r3.y + r3.h / 2});
+    pump(2);
+    CHECK_STR(e.list->selectedText(), "first message here\nsecond one\nthird text");
+    // Over the header between texts: the next message's start.
+    const ui::RectF r2 = findLeaf(e.row(d - 60000000), "second one")->windowRect();
+    h->injectPointerMove(e.win->native(), {r2.x + 40, r2.y - 4});
+    pump(2);
+    CHECK_STR(e.list->selectedText(), "first message here");
+    // Below the list (over the composer): the last text's end.
+    const ui::RectF lr = e.list->list().windowRect();
+    h->injectPointerMove(e.win->native(), {lr.x + 40, lr.y + lr.h + 10});
+    pump(2);
+    h->injectButton(e.win->native(), plat::Button::Left, false);
+    pump(2);
+    CHECK_STR(e.list->selectedText(), "first message here\nsecond one\nthird text");
+}
+
+TEST("selection: a drag held past the list's top scrolls it up, selecting on") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 7200;
+    std::vector<model::Message> ms;
+    for (int i = 0; i < 60; ++i)
+        ms.push_back(msg(i % 2, t0 + i * 60, ("message " + std::to_string(i)).c_str()));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    const Ts  last = (t0 + 59 * 60) * 1000000;
+    ui::View *l    = findLeaf(e.row(last), "message 59");
+    REQUIRE(l != nullptr);
+    const ui::RectF r     = l->windowRect();
+    const ui::RectF lr    = e.list->list().windowRect();
+    const float     start = e.list->list().scrollOffset();
+    auto           *h     = app().platform().testHooks();
+    // Not soon after the last case's press: that would be a double click.
+    for (const double until = app().nowMs() + 450; app().nowMs() < until;)
+        app().pump(5);
+    h->injectPointerMove(e.win->native(), {r.x + 1, r.y + r.h / 2});
+    pump(2);
+    h->injectButton(e.win->native(), plat::Button::Left, true);
+    pump(2);
+    REQUIRE(!e.list->hasSelection());
+    h->injectPointerMove(e.win->native(), {r.x + 40, lr.y + 2}); // in the top band
+    for (const double until = app().nowMs() + 400; app().nowMs() < until;)
+        app().pump(5);
+    const float scrolled = start - e.list->list().scrollOffset();
+    CHECK(scrolled > 40);
+    // Back inside: the scrolling stops.
+    h->injectPointerMove(e.win->native(), {r.x + 40, lr.y + lr.h / 2});
+    pump(2);
+    const float held = e.list->list().scrollOffset();
+    for (const double until = app().nowMs() + 100; app().nowMs() < until;)
+        app().pump(5);
+    CHECK(e.list->list().scrollOffset() == held);
+    h->injectButton(e.win->native(), plat::Button::Left, false);
+    pump(2);
+    // From a message scrolled into view down to the start of the last one.
+    const std::string sel = e.list->selectedText();
+    CHECK(sel.size() > 40);
+    CHECK(sel.size() >= 10 && sel.compare(sel.size() - 10, 10, "message 58") == 0);
+}
+
 TEST("opening: the first unread a third down, the saved position on return") {
     Env                         e(false);
     const int64_t               t0 = base::nowSecs() - 7200;

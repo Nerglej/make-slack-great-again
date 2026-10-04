@@ -644,6 +644,7 @@ MessageList::~MessageList() {
     _ctx.app.cancelTimer(_edgeTimer);
     _ctx.app.cancelTimer(_flashTimer);
     _ctx.app.cancelTimer(_usersTimer);
+    stopDragScroll();
     _toolbarRow = nullptr;
     clearChildren(); // rows reach back into this object while being destroyed
 }
@@ -693,6 +694,7 @@ void MessageList::showConversation(ConvRef conv) {
     saveAnchor(); // where the one we leave was left
     _selAnchor = _selFocus = {};
     _selDragging           = false;
+    stopDragScroll();
     if (conv != _conv)
         _inlineThreads.clear();
     _conv         = conv;
@@ -727,11 +729,12 @@ void MessageList::showThread(ConvRef conv, Ts root) {
     saveAnchor();
     _selAnchor = _selFocus = {};
     _selDragging           = false;
-    _openPending           = false;
-    _conv                  = conv;
-    _root                  = root;
-    _jumpTs                = 0;
-    _loadingThread         = false;
+    stopDragScroll();
+    _openPending   = false;
+    _conv          = conv;
+    _root          = root;
+    _jumpTs        = 0;
+    _loadingThread = false;
     // A thread reads from its root down; a short one sits at the top.
     _list->setBottomAligned(false);
     rebuild(false);
@@ -1347,14 +1350,17 @@ bool MessageList::onEvent(ui::Event &e) {
         if (!tp.ts)
             return false;
         _selDragging = true;
+        _selPointer  = e.windowPos;
         select(tp, tp);
         return true;
     }
     case ui::EventType::PointerMove:
         if (_selDragging) {
-            const TextPos tp = textPosAt(e.windowPos);
+            _selPointer      = e.windowPos;
+            const TextPos tp = dragPosAt(e.windowPos);
             if (tp.ts && !(tp == _selFocus))
                 select(_selAnchor, tp);
+            dragScroll();
             return true;
         }
         return false;
@@ -1363,6 +1369,7 @@ bool MessageList::onEvent(ui::Event &e) {
         if (!_selDragging)
             return false;
         _selDragging = false;
+        stopDragScroll();
         if (_selAnchor == _selFocus) // a plain click: no selection
             clearSelection();
         return true;
@@ -2104,6 +2111,91 @@ MessageList::TextPos MessageList::textPosAt(ui::PointF wp) const {
     return {};
 }
 
+MessageList::TextPos MessageList::dragPosAt(ui::PointF wp) const {
+    // Inside the list (a point past its top or bottom is at that edge), on
+    // the nearest row with text: its start above the text, its end below.
+    const ui::RectF lr = _list->windowRect();
+    wp.y               = std::clamp(wp.y, lr.y, lr.y + std::max(0.f, lr.h - 1));
+    const int   first = _list->firstVisible(), last = _list->lastVisible();
+    MessageRow *best = nullptr;
+    float       dist = 1e9f;
+    for (int i = std::max(0, first); first >= 0 && i <= last; ++i) {
+        if (_items[size_t(i)].kind != Kind::Message)
+            continue;
+        auto *row = static_cast<MessageRow *>(_list->viewFor(i));
+        if (!row || row->selectionLabels().empty())
+            continue;
+        const ui::RectF r = row->windowRect();
+        const float     d = wp.y < r.y ? r.y - wp.y : wp.y >= r.y + r.h ? wp.y - (r.y + r.h) : 0;
+        if (d < dist) {
+            dist = d;
+            best = row;
+        }
+    }
+    if (!best)
+        return {};
+    const std::vector<SelectableText *> &labels = best->selectionLabels();
+    uint32_t                             end    = 0; // the joined text's size
+    for (SelectableText *l : labels)
+        end += l->textSize() + 1;
+    end -= 1;
+    const ui::RectF top = labels.front()->textView().windowRect();
+    const ui::RectF bot = labels.back()->textView().windowRect();
+    if (wp.y < top.y)
+        return {best->ts(), 0};
+    if (wp.y > bot.y + bot.h)
+        return {best->ts(), end};
+    uint32_t        base = 0;
+    SelectableText *l    = labelAt(*best, wp.y, &base);
+    if (!l)
+        return {};
+    const ui::RectF  r = l->textView().windowRect();
+    const ui::PointF p = l->textView().mapFromWindow(
+        {std::max(wp.x, r.x), std::clamp(wp.y, r.y, r.y + std::max(0.f, r.h - 1))}
+    );
+    return {best->ts(), base + l->textOffsetAt(p)};
+}
+
+namespace {
+// How far a point is into the list's top (-) or bottom (+) edge band.
+float dragEdge(const ui::RectF &r, float y) {
+    constexpr float kBand = 24;
+    if (y < r.y + kBand)
+        return y - (r.y + kBand);
+    if (y > r.y + r.h - kBand)
+        return y - (r.y + r.h - kBand);
+    return 0;
+}
+} // namespace
+
+void MessageList::dragScroll() {
+    if (!_selDragging || dragEdge(_list->windowRect(), _selPointer.y) == 0) {
+        stopDragScroll();
+        return;
+    }
+    if (_selScrollTimer)
+        return;
+    _selScrollTimer = _ctx.app.addTimer(16, true, [this] {
+        const float d = _selDragging ? dragEdge(_list->windowRect(), _selPointer.y) : 0;
+        if (d == 0) {
+            stopDragScroll();
+            return;
+        }
+        // The rows laid out after the last step: extend onto them, then on.
+        const TextPos tp = dragPosAt(_selPointer);
+        if (tp.ts && !(tp == _selFocus))
+            select(_selAnchor, tp);
+        // Faster the further out: 4 px a frame at the band, up to 48.
+        _list->scrollBy(std::copysign(std::min(48.f, 4 + std::abs(d) / 2), d));
+    });
+}
+
+void MessageList::stopDragScroll() {
+    if (_selScrollTimer)
+        _ctx.app.cancelTimer(_selScrollTimer);
+    _selScrollTimer = 0;
+}
+
 bool MessageList::hasSelection() const {
     return _selAnchor.ts && _selFocus.ts && !(_selAnchor == _selFocus);
 }
@@ -2120,6 +2212,7 @@ void MessageList::select(TextPos a, TextPos f) {
 
 void MessageList::clearSelection() {
     _selDragging = false;
+    stopDragScroll();
     if (_selAnchor.ts || _selFocus.ts)
         select({}, {});
 }

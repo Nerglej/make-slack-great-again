@@ -267,6 +267,12 @@ private:
     void        rowChanged(Ts ts);
     void        loadInline(Ts root);
     void        copySelection();
+    // A drag's end: the nearest message text to a window point (a header,
+    // a gap, a picture or past the list's edge too).
+    TextPos     dragPosAt(ui::PointF windowPos) const;
+    // A drag held at (or past) the list's top or bottom scrolls it.
+    void        dragScroll();
+    void        stopDragScroll();
     static bool has(const std::vector<Ts> &v, Ts ts) {
         for (Ts x : v)
             if (x == ts)
@@ -320,6 +326,8 @@ private:
     // Selection.
     TextPos                    _selAnchor, _selFocus;
     bool                       _selDragging = false;
+    ui::PointF                 _selPointer;
+    plat::TimerId              _selScrollTimer = 0;
     // Opening: where to land once the first page is laid out — the saved
     // position, else the first message after this read cursor (0: bottom).
     std::vector<SavedAnchor>   _anchors;
