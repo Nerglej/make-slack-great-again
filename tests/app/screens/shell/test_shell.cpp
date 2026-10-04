@@ -1080,6 +1080,41 @@ TEST("forward: Escape with the picker's list open closes both") {
     CHECK(h.win->topPopup() == nullptr);
 }
 
+TEST("forward: Copy link copies the message's permalink, link or not in its text") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN");
+    const Ts      ts     = h.store.conversation(design).messages.back().ts;
+    h.ctx.forwardMessage(design, ts, {});
+    pump();
+    auto *dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    std::function<ui::View *(ui::View *)> byName = [&](ui::View *v) -> ui::View * {
+        if (v->accessibleName() == "Copy link")
+            return v;
+        for (size_t i = 0; i < v->childCount(); ++i)
+            if (ui::View *f = byName(v->child(i)))
+                return f;
+        return nullptr;
+    };
+    auto *copy = static_cast<ui::Clickable *>(byName(dlg));
+    REQUIRE(copy != nullptr);
+    copy->activate();
+    std::string got;
+    bool        done = false;
+    app().platform().requestClipboard(
+        "text/plain;charset=utf-8", [&](std::optional<std::string> s) {
+            got  = s.value_or("");
+            done = true;
+        }
+    );
+    for (int i = 0; i < 100 && !done; ++i)
+        pump();
+    REQUIRE(done);
+    CHECK_STR(got, h.store.permalink(design, ts));
+    dlg->reject();
+    pump();
+}
+
 namespace {
 
 // The fixture's backend with a service that hosts files: downloads wait for

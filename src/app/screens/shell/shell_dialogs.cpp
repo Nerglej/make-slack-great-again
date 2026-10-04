@@ -538,8 +538,17 @@ private:
         const model::Message *m  = st.findMessage(_conv, _ts);
         if (!m)
             return;
-        std::string url =
-            !_onlyFile.empty() ? screens::fileUrl(_onlyFile) : screens::firstLink(m->text);
+        // As the message menu's "Copy link" (the message's permalink) and
+        // "Copy link to file" (the file's page, else its original).
+        std::string url;
+        if (_onlyFile.empty()) {
+            url = st.permalink(_conv, _ts, m->isReply() ? m->threadTs : 0);
+        } else {
+            url = screens::fileUrl(_onlyFile);
+            for (const model::File &f : m->files())
+                if (f.path == _onlyFile)
+                    url = f.permalink.empty() ? screens::fileUrl(f.source()) : f.permalink;
+        }
         if (!url.empty())
             _src->app.platform().setClipboardText(std::move(url));
     }
