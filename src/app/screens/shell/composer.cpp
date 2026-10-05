@@ -2140,8 +2140,8 @@ void Composer::computePickList() {
                 continue;
             PickList::Item it;
             it.kind    = PickList::Item::Kind::Mention;
-            // The chip reads as the sent mention will (User::mentionLabel).
-            it.display = str::concat({"@", user.mentionLabel()});
+            // The chip reads as names show elsewhere (Settings → Names).
+            it.display = str::concat({"@", label});
             it.title   = str::concat({"@", label});
             if (u == st.me)
                 it.title = str::concat({it.title, " ", tr("(you)")});
@@ -2341,12 +2341,11 @@ void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text
         std::string display;
         if (!head.empty() && head[0] == '@') {
             const model::UserRef u = store.findUser(head.substr(1));
-            display =
-                lab.empty()
-                    ? str::concat(
-                          {"@", u != model::kNoUser ? store.user(u).mentionLabel() : head.substr(1)}
-                      )
-                    : str::concat({"@", lab});
+            display = lab.empty()
+                          ? str::concat(
+                                {"@", u != model::kNoUser ? store.user(u).label() : head.substr(1)}
+                            )
+                          : str::concat({"@", lab});
         } else if (!head.empty() && head[0] == '#') {
             const model::ConvRef c = store.findConversation(head.substr(1));
             display                = str::concat(

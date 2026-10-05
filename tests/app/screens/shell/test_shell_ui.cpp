@@ -1140,6 +1140,31 @@ TEST("composer: the window's is disabled until a conversation opens; an embedded
     CHECK_STR(c.edit().text(), "note");
 }
 
+TEST("composer: a mention pill shows the name as Settings → Names does") {
+    Harness      h;
+    auto        &c    = h.composer();
+    model::User &mira = h.store.user(h.store.findUser("U0MIRA"));
+    mira.realName     = "Mira Okafor";
+    mira.profileName  = "Mimi";
+    for (const bool real : {true, false}) {
+        h.store.setRealNames(real);
+        const char *want = real ? "@Mira Okafor " : "@Mimi ";
+        c.edit().clear();
+        c.edit().focus();
+        c.edit().insertText("@mi");
+        pump();
+        REQUIRE(c.pickList() != nullptr);
+        c.pickList()->confirm();
+        pump();
+        CHECK_STR(c.edit().text(), want);
+        CHECK_STR(c.mrkdwn(), "<@U0MIRA> ");
+        // A draft or an edit coming back into the composer reads the same.
+        c.edit().clear();
+        shell::loadMrkdwn(c.edit(), h.store, "<@U0MIRA> ");
+        CHECK_STR(c.edit().text(), want);
+    }
+}
+
 TEST("composer: @ lists people and @channel & co.; a pick is a pill that sends the token") {
     Harness h;
     auto   &c = h.composer();
