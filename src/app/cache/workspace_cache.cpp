@@ -263,6 +263,7 @@ void fields(IO &io, model::Button &b) {
     io.str(b.url);
     io.str(b.blockId);
     io.str(b.value);
+    io.num(b.attachment);
 }
 
 void fields(IO &io, model::Attachment &a) {

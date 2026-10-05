@@ -179,6 +179,9 @@ struct Button {
     // Slack's Block Kit buttons: a link button opens `url` instead of being
     // pressed; the others are pressed with their block and value.
     std::string url, blockId, value;
+    // The attachment it belongs to, 1-based (drawn in that card, as Slack
+    // does); 0 = the message's own.
+    int32_t     attachment = 0;
     bool        operator==(const Button &) const;
 };
 

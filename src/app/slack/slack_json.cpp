@@ -490,6 +490,18 @@ void blockButtons(const Value &blocks, std::vector<model::Button> &out) {
     }
 }
 
+// An attachment's buttons (its blocks', its legacy actions', which have no
+// action id: not pressable from here), marked as the `index`th's.
+void attachmentButtons(const Value &a, int32_t index, std::vector<model::Button> &out) {
+    const size_t first = out.size();
+    blockButtons(a["blocks"], out);
+    for (const Value act : a["actions"])
+        if (act["type"].str() == "button")
+            out.push_back(toButton(act, {}));
+    for (size_t i = first; i < out.size(); ++i)
+        out[i].attachment = index;
+}
+
 } // namespace
 
 bool toHuddleRoom(const json::Value &room, model::Store &store, HuddleRoom &out) {
@@ -639,8 +651,12 @@ model::Attachment toAttachment(const Value &o) {
     // their mrkdwn), else the fallback when the card would otherwise be empty.
     if (a.text.empty() && a.blocks.empty())
         a.text = blocksToMrkdwn(o["blocks"]);
+    // A card of buttons alone shows them, not the fallback ("[no preview
+    // available]").
+    std::vector<model::Button> buttons;
+    attachmentButtons(o, 0, buttons);
     if (a.text.empty() && a.title.empty() && a.pretext.empty() && a.fields.empty() &&
-        a.image.empty() && a.blocks.empty())
+        a.image.empty() && a.blocks.empty() && buttons.empty())
         a.text = owned(o["fallback"]);
     return a;
 }
@@ -732,15 +748,11 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
         // have no text form at all); `text` stays the plain fallback.
         x.blocks = std::move(structure);
         x.botId  = owned(o["bot_id"]);
-        // Buttons: the message's blocks, its attachments' blocks, and legacy
-        // attachment actions (no action id: not pressable from here).
+        // Buttons: the message's blocks, then each attachment's.
         blockButtons(blocks, x.buttons);
-        for (const Value a : o["attachments"]) {
-            blockButtons(a["blocks"], x.buttons);
-            for (const Value act : a["actions"])
-                if (act["type"].str() == "button")
-                    x.buttons.push_back(toButton(act, {}));
-        }
+        int32_t n = 0;
+        for (const Value a : o["attachments"])
+            attachmentButtons(a, ++n, x.buttons);
         // A huddle thread: no Slackbot author, the frozen "A
         // huddle started" block dropped, the room's summary kept; the name
         // line and the text say whether it is still going.

@@ -2873,6 +2873,61 @@ TEST("blocks: a table, a canvas card and a selection as rendered (MSGA_TEST_DUMP
     win.reset();
 }
 
+TEST("blocks: a bot card's mrkdwn title, Show more and its own buttons (MSGA_TEST_DUMP)") {
+    // Outlook Calendar's reminder: the title holds dates and a link, the
+    // long text folds, the second attachment is only its button.
+    model::Store       store;
+    DownloadingBackend backend{store, app().platform()};
+    ImageCache         images{app().platform()};
+    Context            ctx{app(), store, backend, images};
+    plat::WindowDesc   d;
+    d.size                 = {800, 600};
+    auto              win  = std::make_unique<ui::Window>(d);
+    auto             *list = win->root().add<MessageList>(ctx);
+    const int64_t     t0   = base::nowSecs() - 3600;
+    const ConvRef     c    = addConv(store, {});
+    model::Message    m    = msg(1, t0, "");
+    model::Attachment a;
+    a.color   = "#3AA3E3";
+    a.pretext = ":loudspeaker: _1 minute until this event:_";
+    a.author  = "Every weekday";
+    a.title   = "<!date^1791184500^{time}|10:15 AM> - <!date^1791185400^{time}|10:30 AM> "
+                "<https://outlook.office365.com/owa/?itemid=X&amp;path=/calendar/item|Stand-Up>";
+    a.text    = "*Where:* Room 4\n*Guests:* <mailto:a@b.se|a@b.se> _(organizer)_, B, C\n"
+                "*What:* Google Meet\nType : Video\nJoin Meeting : <https://meet.google.com/x>\n"
+                " \nType : Phone\nPIN : 463247662";
+    m.extras().attachments.push_back(a);
+    m.extras().attachments.push_back({});
+    model::Button b;
+    b.label      = "Join Google Meet Meeting";
+    b.url        = "https://meet.google.com/x";
+    b.style      = model::Button::Style::Primary;
+    b.attachment = 2;
+    m.extras().buttons.push_back(b);
+    store.addPage(c, [&] {
+        std::vector<model::Message> v;
+        v.push_back(std::move(m));
+        return v;
+    }());
+    list->showConversation(c);
+    pump(10);
+    std::string                           shown;
+    const std::function<void(ui::View *)> walk = [&](ui::View *v) {
+        shown += v->accessibleName() + "\n";
+        for (size_t i = 0; i < v->childCount(); ++i)
+            walk(v->child(i));
+    };
+    walk(&win->root());
+    CHECK(shown.find("<!date") == std::string::npos);
+    CHECK(shown.find("Stand-Up") != std::string::npos);
+    CHECK(shown.find("Show more") != std::string::npos);
+    CHECK(shown.find("PIN") == std::string::npos); // folded
+    CHECK(shown.find("Join Google Meet Meeting") != std::string::npos);
+    if (const char *dir = std::getenv("MSGA_TEST_DUMP"))
+        win->dumpFullRepaint(std::string(dir) + "/bot_card.ppm");
+    win.reset();
+}
+
 TEST("blocks: a remove preview on my own message goes to the backend") {
     struct RemovingBackend : DownloadingBackend {
         using DownloadingBackend::DownloadingBackend;

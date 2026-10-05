@@ -1207,14 +1207,7 @@ void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root)
         o.labels = labels;
         buildBody(ctx, body, m.text, o, this);
     }
-    if (x && !x->buttons.empty()) {
-        // The button row: floats that wrap between buttons, 8 px apart,
-        // 4 px between rows, 4 px above and 2 below.
-        auto *row = col->add<FlowRow>(8);
-        row->style().margins(0, 4 + 4, 0, 2 + 4);
-        for (const model::Button &b : x->buttons)
-            row->add<BotButton>(_list, m.ts, b);
-    }
+    buildButtons(col, m, 0);
     // The pictures first (one with its name, 2+ as a gallery), then
     // the other files.
     std::vector<const model::File *> previews;
@@ -1233,6 +1226,26 @@ void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root)
             buildAttachment(col, m, i, root);
     if (!m.reactions.empty())
         buildReactions(col, m);
+}
+
+void MessageRow::buildButtons(ui::View *col, const model::Message &m, int32_t owner) {
+    if (!m.extra)
+        return;
+    // The button row: floats that wrap between buttons, 8 px apart,
+    // 4 px between rows, 4 px above and 2 below (in a card, its spacing).
+    FlowRow *row = nullptr;
+    for (const model::Button &b : m.extra->buttons) {
+        if (b.attachment != owner)
+            continue;
+        if (!row) {
+            row = col->add<FlowRow>(8);
+            if (owner == 0)
+                row->style().margins(0, 4 + 4, 0, 2 + 4);
+            else
+                row->style().margins(0, 2, 0, 2);
+        }
+        row->add<BotButton>(_list, m.ts, b);
+    }
 }
 
 void MessageRow::buildBlocks(
@@ -1430,6 +1443,7 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
     const model::Attachment &a   = m.attachments()[index];
     if (a.msgUnfurl) {
         buildUnfurl(col, m, root ? index : SIZE_MAX);
+        buildButtons(col, m, int32_t(index + 1));
         return;
     }
     if (!a.pretext.empty()) {
@@ -1458,8 +1472,14 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
             svc->add<ui::Label>(a.service, Font::SmallBold, C::Text);
     }
     if (!a.author.empty())
-        c->add<ui::Label>(a.author, Font::SmallBold, C::TextMuted);
-    if (!a.title.empty()) {
+        c->add<ui::Label>(a.author, Font::BodyBold, C::Text);
+    if (!a.title.empty() && a.link.empty()) {
+        // A title without its own link is mrkdwn (dates, links), as Slack
+        // draws it: Outlook Calendar's "<!date^…> - <!date^…> <url|Event>".
+        RichOptions o;
+        o.font = Font::BodyBold;
+        buildBody(ctx, c, a.title, o, this);
+    } else if (!a.title.empty()) {
         auto                          *t = c->add<RichLabel>(ctx, this);
         std::vector<RichLabel::Target> tg;
         uint32_t                       link = 0;
@@ -1474,9 +1494,24 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
         );
     }
     if (!a.text.empty()) {
+        // A bot card's text: 5 lines / 700 characters until "Show more".
         RichOptions o;
-        o.maxLines = a.linkPreview ? 3 : 0;
+        o.maxLines          = a.linkPreview ? 3 : 0;
+        const int  key      = int(index);
+        const bool expanded = root && _list.unfurlExpanded(m.ts, key);
+        int        chars = 700, lines = 5;
+        if (root && !a.linkPreview && !expanded)
+            o.cut = previewCut(a.text, &chars, &lines);
         buildBody(ctx, c, a.text, o, this);
+        if (o.cut != UINT32_MAX || expanded) {
+            auto *more = c->add<RichLabel>(ctx, this);
+            more->setContent(
+                styled(expanded ? tr("Show less") : tr("Show more"), Font::Body, C::Link, 1),
+                {{mrkdwn::Kind::Link, {}}},
+                {}
+            );
+            more->onLink = [this, ts = m.ts, key](uint32_t) { _list.toggleUnfurl(ts, key); };
+        }
     }
     for (const model::AttachmentField &fl : a.fields) {
         c->add<ui::Label>(fl.title, Font::SmallBold, C::Text)->style().margins(0, 4, 0, 0);
@@ -1490,6 +1525,7 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
         addThumb(c, a.image, a.imageWidth, a.imageHeight, int(kImgMax), 240);
     if (!a.footer.empty())
         c->add<ui::Label>(a.footer, Font::Caption, C::TextFaint);
+    buildButtons(c, m, int32_t(index + 1));
 }
 
 void MessageRow::buildUnfurl(ui::View *col, const model::Message &m, size_t index) {

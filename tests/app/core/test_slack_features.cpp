@@ -316,6 +316,12 @@ TEST("slack features: bot buttons press through blocks.actions; legacy ones can'
     CHECK_STR(m->extra->buttons[1].id, "yes");
     CHECK(m->extra->buttons[1].style == model::Button::Style::Primary);
     CHECK(m->extra->buttons[2].id.empty()); // legacy
+    // The legacy one is drawn in its attachment, which shows it, not the
+    // fallback.
+    CHECK(m->extra->buttons[1].attachment == 0);
+    CHECK(m->extra->buttons[2].attachment == 1);
+    REQUIRE(m->attachments().size() == 1);
+    CHECK(m->attachments()[0].text.empty());
     CHECK_STR(m->extra->botId, "B42");
 
     bool        called = false, ok = false;
