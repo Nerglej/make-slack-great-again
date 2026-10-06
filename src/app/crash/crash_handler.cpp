@@ -94,16 +94,16 @@ void writeStr(int fd, const char *s) {
     writeAll(fd, s, ::strlen(s));
 }
 
+// A pointer's 2 * sizeof(void *) hex digits into out (not terminated).
+void hexDigits(char *out, const void *p) {
+    auto v = reinterpret_cast<uintptr_t>(p);
+    for (int i = int(2 * sizeof(void *)) - 1; i >= 0; --i, v >>= 4)
+        out[i] = "0123456789abcdef"[v & 0xf];
+}
+
 void writePtr(int fd, const void *p) {
-    char buf[2 + sizeof(void *) * 2];
-    buf[0]      = '0';
-    buf[1]      = 'x';
-    auto      v = reinterpret_cast<uintptr_t>(p);
-    const int n = int(sizeof(buf));
-    for (int pos = n - 1; pos >= 2; --pos) {
-        buf[pos] = "0123456789abcdef"[v & 0xf];
-        v >>= 4;
-    }
+    char buf[2 + sizeof(void *) * 2] = {'0', 'x'};
+    hexDigits(buf + 2, p);
     writeAll(fd, buf, sizeof(buf));
 }
 
@@ -266,12 +266,8 @@ void fatalSignal(int sig, siginfo_t *info, void *uc) {
     std::strcat(what, signalName(sig));
     if (info && (sig == SIGSEGV || sig == SIGBUS || sig == SIGFPE || sig == SIGILL)) {
         std::strcat(what, ", fault address: 0x");
-        char      hex[2 * sizeof(void *) + 1];
-        auto      v = reinterpret_cast<uintptr_t>(info->si_addr);
-        const int n = int(sizeof hex) - 1;
-        for (int i = n - 1; i >= 0; --i, v >>= 4)
-            hex[i] = "0123456789abcdef"[v & 0xf];
-        hex[n] = 0;
+        char hex[2 * sizeof(void *) + 1] = {};
+        hexDigits(hex, info->si_addr);
         std::strcat(what, hex);
     }
     std::strcat(what, "\n");

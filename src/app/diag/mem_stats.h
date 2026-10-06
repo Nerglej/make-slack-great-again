@@ -1,7 +1,8 @@
 // Process memory numbers for leak hunting (dev builds: SIGUSR1,
 // MSGA_MEMSTATS=<s>, msga --soak; see scripts/soak.sh and
-// scripts/run-heaptrack.sh). Not linked into release builds, but for rssKb
-// (the Settings memory figure's fallback on old kernels).
+// scripts/run-heaptrack.sh). Not linked into release builds, but for
+// privateBytes (the Settings memory figure) and rssKb (its fallback on old
+// kernels).
 //
 //   heap     bytes malloc'd and not freed yet: the number a leak grows. glibc
 //            mallinfo2, ASan's allocator, macOS malloc zones; -1 elsewhere
@@ -12,6 +13,7 @@
 // A field the platform can't tell stays -1.
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace diag {
@@ -24,6 +26,11 @@ struct MemStats {
 MemStats    sampleMem();
 // Resident memory in KB (Linux VmRSS, macOS resident size); -1 elsewhere.
 long        rssKb();
+// The process's private memory, the number each OS's task manager shows
+// (Linux smaps_rollup Private_*, macOS phys_footprint, Windows private
+// bytes); 0 when unknown. Linux walks every mapping for it: call it off the
+// UI thread.
+uint64_t    privateBytes();
 // "heap 41234 KB, rss 98765 KB, fds 37, threads 14" (unknown fields left out).
 std::string formatMem(const MemStats &m);
 

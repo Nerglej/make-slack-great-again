@@ -98,11 +98,13 @@ public:
     void       unobserve(ObserverId id);
 
     // Duration and peak of a 16-bit PCM RIFF/WAVE file (others read as empty).
+    // The scan stops at the first sample reaching `enough`: then `peak` is
+    // that sample's, not necessarily the loudest.
     struct WavStats {
         int64_t durationMs = 0;
         float   peak       = 0;
     };
-    static WavStats analyseWav(std::string_view wav);
+    static WavStats analyseWav(std::string_view wav, float enough = 2.0f);
 
 private:
     // One dictation: its recorder while recording, then the requests. Async
@@ -137,8 +139,10 @@ private:
         ObserverId id;
         Listener   l;
     };
-    std::vector<Slot> _listeners;
+    std::vector<Slot> _listeners; // id 0: removed during each(), dropped after it
+    std::vector<Slot> _added;     // observed during each(), joining after it
     ObserverId        _nextId = 1;
+    int               _depth  = 0; // each() nesting
 };
 
 } // namespace llm

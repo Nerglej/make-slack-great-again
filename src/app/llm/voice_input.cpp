@@ -9,6 +9,7 @@
 #include "plat/plat.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <utility>
 
@@ -73,29 +74,39 @@ VoiceInput::Job *VoiceInput::recording() const {
 }
 
 VoiceInput::ObserverId VoiceInput::observe(Listener l) {
-    _listeners.push_back({_nextId, std::move(l)});
+    // While each() walks _listeners it must not grow (a reallocation would
+    // move the listener being called): new ones wait in _added.
+    (_depth > 0 ? _added : _listeners).push_back({_nextId, std::move(l)});
     return _nextId++;
 }
 
 void VoiceInput::unobserve(ObserverId id) {
+    if (std::erase_if(_added, [id](const Slot &s) { return s.id == id; }))
+        return;
     for (auto it = _listeners.begin(); it != _listeners.end(); ++it)
         if (it->id == id) {
-            _listeners.erase(it);
+            if (_depth > 0)
+                it->id = 0; // each() is walking the list: dropped after it
+            else
+                _listeners.erase(it);
             return;
         }
 }
 
-// Over a copy: a listener may unobserve (a composer going away) mid-call.
+// A listener may unobserve (a composer going away) or observe mid-call: the
+// removed one isn't called any more, the added one from the next call on.
 template <class F>
 void VoiceInput::each(F f) {
-    const std::vector<Slot> copy = _listeners;
-    for (const Slot &s : copy) {
-        const bool still = std::any_of(_listeners.begin(), _listeners.end(), [&](const Slot &x) {
-            return x.id == s.id;
-        });
-        if (still)
-            f(s.l);
-    }
+    ++_depth;
+    for (size_t i = 0; i < _listeners.size(); ++i)
+        if (_listeners[i].id)
+            f(_listeners[i].l);
+    if (--_depth > 0)
+        return;
+    std::erase_if(_listeners, [](const Slot &s) { return s.id == 0; });
+    for (Slot &s : _added)
+        _listeners.push_back(std::move(s));
+    _added.clear();
 }
 
 void VoiceInput::setState(const JobPtr &j, State s) {
@@ -198,7 +209,7 @@ void VoiceInput::cancel(const void *owner) {
     }
 }
 
-VoiceInput::WavStats VoiceInput::analyseWav(std::string_view wav) {
+VoiceInput::WavStats VoiceInput::analyseWav(std::string_view wav, float enough) {
     WavStats st;
     if (wav.size() < 12 || wav.substr(0, 4) != "RIFF" || wav.substr(8, 4) != "WAVE")
         return st;
@@ -221,8 +232,10 @@ VoiceInput::WavStats VoiceInput::analyseWav(std::string_view wav) {
             const size_t len    = std::min(size, wav.size() - body);
             const size_t frames = len / (2 * size_t(channels));
             st.durationMs       = int64_t(frames) * 1000 / rate;
-            int maxAbs          = 0;
-            for (size_t i = 0; i + 1 < len; i += 2)
+            // Any sample this loud ends the scan (19 MB at the length limit).
+            const int stopAt    = enough > 1.0f ? 32769 : int(std::ceil(enough * 32768.0f));
+            int       maxAbs    = 0;
+            for (size_t i = 0; i + 1 < len && maxAbs < stopAt; i += 2)
                 maxAbs = std::max(maxAbs, std::abs(int(int16_t(le16(wav, body + i)))));
             st.peak = float(maxAbs) / 32768.0f;
             return st;
@@ -240,7 +253,7 @@ void VoiceInput::onRecorded(const JobPtr &j, std::string wav) {
     if (j->over)
         return;
 
-    const WavStats st = analyseWav(wav);
+    const WavStats st = analyseWav(wav, kSilencePeak); // sound or not, not how loud
     if (st.durationMs < kMinSpeechMs || st.peak < kSilencePeak) {
         fail(j, tr("No speech was recorded"));
         return;

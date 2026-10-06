@@ -14,6 +14,7 @@
 #pragma once
 
 #include "app/llm/provider.h"
+#include "base/observers.h"
 #include "net/net.h"
 
 #include <functional>
@@ -93,17 +94,16 @@ private:
     void fail(TranscribeDone done, std::string error);
     void failChat(ChatDone done, std::string error);
 
-    plat::App                                              &_app;
-    net::Client                                             _net;
-    std::vector<Provider>                                   _providers;
-    std::string                                             _defaultId, _language = "en";
-    Provider                                                _standIn;
-    std::function<std::string(std::string_view)>            _standInAnswer;
-    std::unique_ptr<AudioTranscriber>                       _transcriber;
-    std::unique_ptr<VoiceInput>                             _voice;
-    std::vector<std::pair<uint32_t, std::function<void()>>> _providerObservers;
-    uint32_t                                                _nextObserver = 1;
-    std::shared_ptr<char>                                   _alive = std::make_shared<char>(0);
+    plat::App                                   &_app;
+    net::Client                                  _net;
+    std::vector<Provider>                        _providers;
+    std::string                                  _defaultId, _language = "en";
+    Provider                                     _standIn;
+    std::function<std::string(std::string_view)> _standInAnswer;
+    std::unique_ptr<AudioTranscriber>            _transcriber;
+    std::unique_ptr<VoiceInput>                  _voice;
+    base::Observers                              _providerObservers;
+    std::shared_ptr<char>                        _alive = std::make_shared<char>(0);
 };
 
 } // namespace llm

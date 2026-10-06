@@ -4,8 +4,10 @@
 // record's `auth` blob — each service encodes its own credentials there
 // (slack::Credentials).
 //
-// On disk: <configDir>/workspaces.json (app/identity.h), owner-only; the
-// first start imports the list kept by earlier versions (app/legacy). The
+// On disk: <configDir>/workspaces.json (app/identity.h), owner-only. A
+// switch writes only workspaces.json.active, in place and without fsync (a
+// torn or lost one opens the file's own "active" instead). The first start
+// imports the list kept by earlier versions (app/legacy). The
 // auth blobs live where earlier versions kept them, under the keys
 // "workspace/<key>/auth" (base/secret.h: the macOS Keychain, the old
 // settings store elsewhere); only when that refuses do they stay in the file.
@@ -30,6 +32,8 @@ struct WorkspaceRecord {
     bool        muted = false; // no notifications / tray tint from it
 
     std::string key() const { return service + ":" + id; }
+    // key() == k, without building the key.
+    bool        hasKey(std::string_view k) const;
 };
 
 class WorkspaceStore {
@@ -41,7 +45,8 @@ public:
     const WorkspaceRecord              *find(std::string_view key) const;
     bool                                empty() const { return _records.empty(); }
 
-    // Inserts (at the end) or replaces the record with the same key, and saves.
+    // Inserts (at the end) or replaces the record with the same key, and saves
+    // (an unchanged record is not written again).
     void save(WorkspaceRecord rec);
     // Drops the record (and its keychain item); the active one moves to the
     // first remaining workspace.
@@ -65,6 +70,9 @@ public:
 
 private:
     bool flush();
+    // The active file in step with _active (cheap: no fsync, no rename);
+    // false when it can't be written (then it is gone).
+    bool writeActive();
     // Takes a record in, its auth from the keychain when the file has none;
     // one without a service or id, or already there, is dropped.
     void adopt(WorkspaceRecord r);
@@ -74,6 +82,7 @@ private:
     std::string                                  _path;
     std::vector<WorkspaceRecord>                 _records;
     std::string                                  _active;
+    std::string                                  _activeOnDisk; // the active file's text
     // What the keychain holds per key (secret.h platforms): unchanged blobs
     // are not written again.
     std::unordered_map<std::string, std::string> _inKeychain;

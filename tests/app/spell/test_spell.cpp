@@ -192,6 +192,31 @@ TEST("spell checker: a long text is checked in slices without losing words") {
     spell::Checker::instance().setBackendForTesting(app(), nullptr);
 }
 
+TEST("spell checker: a main-thread checker gets each slice's new words in one call") {
+    struct Batching : FakeBackend {
+        using FakeBackend::FakeBackend;
+        std::vector<size_t> batches;
+        void checkAll(const std::vector<std::string> &w, std::vector<uint8_t> *right) override {
+            batches.push_back(w.size());
+            FakeBackend::checkAll(w, right);
+        }
+    };
+    int   checks = 0;
+    auto  f      = std::make_unique<Batching>(&checks, false);
+    auto *fake   = f.get();
+    f->bad       = {"zzq"};
+    spell::Checker::instance().setBackendForTesting(app(), std::move(f));
+    std::string text;
+    for (int i = 0; i < 450; ++i) // 450 distinct words, each followed by zzq
+        text += "w" + std::string(size_t(1 + i / 26), char('a' + i % 26)) + " zzq ";
+    CHECK(checkNow(text).size() == 450);
+    REQUIRE(fake->batches.size() == 3); // 451 new words: 200 + 200 + 51
+    CHECK(fake->batches[0] == 200);
+    CHECK(fake->batches[2] == 51);
+    CHECK(checks == 451); // the default checkAll: once per new word
+    spell::Checker::instance().setBackendForTesting(app(), nullptr);
+}
+
 TEST("spell checker: a curly apostrophe is checked as a straight one") {
     int  checks = 0;
     auto f      = std::make_unique<FakeBackend>(&checks, true);

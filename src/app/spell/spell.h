@@ -72,15 +72,19 @@ std::string languageName(std::string_view code);
 // ── The platform checker (backend_{linux,mac,win}.cpp) ──────────────────────
 class Backend {
 public:
-    virtual ~Backend()                                                           = default;
+    virtual ~Backend()                                       = default;
     // Gets ready to check `codes` (on a worker thread when loadsOffThread()).
     // False when none of them could be loaded.
-    virtual bool                     load(const std::vector<std::string> &codes) = 0;
-    virtual bool                     loadsOffThread() const { return false; }
+    virtual bool load(const std::vector<std::string> &codes) = 0;
+    virtual bool loadsOffThread() const { return false; }
     // check / suggest may run on worker threads (one at a time: the Checker
     // serialises them); otherwise they run on the UI thread.
-    virtual bool                     threadSafe() const { return false; }
-    virtual bool                     check(std::string_view word)            = 0;
+    virtual bool threadSafe() const { return false; }
+    virtual bool check(std::string_view word) = 0;
+    // check() for many words at once: (*right)[i] for words[i]. The default
+    // asks check() per word; a backend whose every call is a round trip
+    // (macOS, Windows) checks them in one go.
+    virtual void checkAll(const std::vector<std::string> &words, std::vector<uint8_t> *right);
     virtual std::vector<std::string> suggest(std::string_view word, int max) = 0;
     // Into the system's user dictionary (macOS, Windows) or msga's own word
     // list (Linux).

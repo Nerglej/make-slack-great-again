@@ -77,6 +77,52 @@ TEST("auth: workspace store persists order, active, muted; remove moves active")
     // A broken file is an empty store, never a crash.
     file::writeAtomic(path, "{not json");
     CHECK(auth::WorkspaceStore(path).empty());
+    file::remove(path + ".active");
+}
+
+TEST("auth: a switch writes only the active file; the store's own stays the fallback") {
+    const std::string path = file::join(base::env("HOME"), "ws-active/workspaces.json");
+    const std::string act  = path + ".active";
+    file::remove(path);
+    file::remove(act);
+    {
+        auth::WorkspaceStore s(path);
+        s.save({"slack", "T1", "One", "", R"({"xoxp":"a"})"});
+        s.save({"slack", "T2", "Two", "", R"({"xoxp":"b"})"});
+        CHECK_FALSE(file::exists(act)); // nothing switched yet
+        std::string before;
+        REQUIRE(file::readAll(path, &before));
+        s.setActive("slack:T2");
+        s.setActive("slack:T1");
+        s.setActive("slack:T2");
+        std::string after;
+        REQUIRE(file::readAll(path, &after));
+        CHECK(after == before); // the store itself untouched
+        std::string a;
+        REQUIRE(file::readAll(act, &a));
+        CHECK_STR(a, "slack:T2");
+        // An unchanged record is not written again either.
+        s.save({"slack", "T1", "One", "", R"({"xoxp":"a"})"});
+        REQUIRE(file::readAll(path, &after));
+        CHECK(after == before);
+    }
+    CHECK_STR(auth::WorkspaceStore(path).active(), "slack:T2");
+    // A torn or unknown one: the store's own "active".
+    file::overwrite(act, "slack:T");
+    CHECK_STR(auth::WorkspaceStore(path).active(), "slack:T1");
+    // A flush brings a stale one in step: removing T2 makes T1 active.
+    file::overwrite(act, "slack:T2");
+    {
+        auth::WorkspaceStore s(path);
+        s.remove("slack:T2");
+        CHECK_STR(s.active(), "slack:T1");
+    }
+    std::string a;
+    REQUIRE(file::readAll(act, &a));
+    CHECK_STR(a, "slack:T1");
+    CHECK_STR(auth::WorkspaceStore(path).active(), "slack:T1");
+    file::remove(path);
+    file::remove(act);
 }
 
 TEST("slack: one classification of transient errors for reads and writes") {

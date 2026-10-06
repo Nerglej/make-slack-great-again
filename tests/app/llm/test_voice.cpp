@@ -337,6 +337,32 @@ TEST("voice prompt: the STT prompt and the clean-up request") {
 
 // ── VoiceInput end to end ──────────────────────────────────────────────────
 
+TEST("voice input: a listener may unobserve or observe while being told") {
+    llm::Service              s(app()); // no provider: start() fails at once
+    int                       first = 0, second = 0, added = 0, owner = 0;
+    uint32_t                  idA = 0, idB = 0, idC = 0;
+    llm::VoiceInput::Listener a, b;
+    a.failed = [&](const void *, const std::string &) {
+        ++first;
+        s.voice().unobserve(idA); // itself
+        s.voice().unobserve(idB); // the next one
+        llm::VoiceInput::Listener c;
+        c.failed = [&](const void *, const std::string &) { ++added; };
+        idC      = s.voice().observe(std::move(c));
+    };
+    b.failed = [&](const void *, const std::string &) { ++second; };
+    idA      = s.voice().observe(std::move(a));
+    idB      = s.voice().observe(std::move(b));
+    s.voice().start(&owner, {});
+    CHECK(first == 1);
+    CHECK(second == 0); // removed before its turn
+    CHECK(added == 0);  // joins from the next call on
+    s.voice().start(&owner, {});
+    CHECK(first == 1);
+    CHECK(added == 1);
+    s.voice().unobserve(idC);
+}
+
 TEST("voice input: WAV statistics") {
     const auto tone = llm::VoiceInput::analyseWav(wav(0.5f, 1000));
     CHECK(tone.durationMs == 1000);
@@ -345,6 +371,11 @@ TEST("voice input: WAV statistics") {
     CHECK(quiet.durationMs == 500);
     CHECK(quiet.peak == 0);
     CHECK(llm::VoiceInput::analyseWav("not a wav").durationMs == 0);
+    // Stopped at the first sample loud enough: the length still whole.
+    const auto heard = llm::VoiceInput::analyseWav(wav(0.5f, 1000), 0.005f);
+    CHECK(heard.durationMs == 1000);
+    CHECK(heard.peak >= 0.005f && heard.peak < 0.45f);
+    CHECK(llm::VoiceInput::analyseWav(wav(0, 500), 0.005f).peak == 0);
 }
 
 namespace {

@@ -1,5 +1,6 @@
 #include "app/diag/mem_stats.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +18,10 @@ extern "C" size_t __sanitizer_get_current_allocated_bytes();
 #include <dirent.h>
 #elif defined(__APPLE__)
 #include <mach/mach.h>
+#elif defined(_WIN32)
+#define PSAPI_VERSION 2 // K32GetProcessMemoryInfo, in kernel32
+#include <windows.h>
+#include <psapi.h>
 #endif
 
 namespace diag {
@@ -56,6 +61,40 @@ long rssKb() {
     return -1;
 #else
     return -1;
+#endif
+}
+
+uint64_t privateBytes() {
+#if defined(__linux__)
+    if (FILE *f = std::fopen("/proc/self/smaps_rollup", "r")) {
+        char               line[256];
+        unsigned long long clean = 0, dirty = 0, kb = 0;
+        while (std::fgets(line, sizeof line, f)) {
+            if (std::sscanf(line, "Private_Clean: %llu", &kb) == 1)
+                clean = kb;
+            else if (std::sscanf(line, "Private_Dirty: %llu", &kb) == 1)
+                dirty = kb;
+        }
+        std::fclose(f);
+        if (clean + dirty)
+            return (clean + dirty) * 1024;
+    }
+    const long kb = rssKb(); // kernels < 4.14
+    return kb > 0 ? uint64_t(kb) * 1024 : 0;
+#elif defined(__APPLE__)
+    task_vm_info_data_t    info;
+    mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, task_info_t(&info), &n) != KERN_SUCCESS)
+        return 0;
+    return info.phys_footprint;
+#elif defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS_EX pmc{};
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof pmc))
+        return 0;
+    // PagefileUsage is the same commit charge; Wine fills only that one.
+    return pmc.PrivateUsage ? pmc.PrivateUsage : pmc.PagefileUsage;
+#else
+    return 0;
 #endif
 }
 

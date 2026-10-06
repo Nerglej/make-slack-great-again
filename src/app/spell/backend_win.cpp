@@ -98,6 +98,60 @@ public:
         return false;
     }
 
+    // The words a line apiece in one Check per language, rather than one per
+    // word; the next language sees only what this one didn't know.
+    void checkAll(const std::vector<std::string> &words, std::vector<uint8_t> *right) override {
+        right->assign(words.size(), 0);
+        std::vector<size_t> todo(words.size());
+        for (size_t i = 0; i < todo.size(); ++i)
+            todo[i] = i;
+        std::wstring         text;
+        std::vector<ULONG>   at; // each todo word's start in text; its end is the next '\n'
+        std::vector<uint8_t> wrong;
+        for (const auto &c : _checkers) {
+            if (todo.empty())
+                break;
+            text.clear();
+            at.clear();
+            for (size_t i : todo) {
+                at.push_back(ULONG(text.size()));
+                text += base::wide(words[i]);
+                text += L'\n';
+            }
+            Com<IEnumSpellingError> errors;
+            if (FAILED(c->Check(text.c_str(), errors.put())) || !errors)
+                continue;
+            // A word an error touches is wrong in this language. A repeated
+            // word ("the the", CORRECTIVE_ACTION_DELETE) is not about
+            // spelling: check() never sees one.
+            wrong.assign(todo.size(), 0);
+            for (;;) {
+                Com<ISpellingError> e;
+                if (errors->Next(e.put()) != S_OK || !e)
+                    break;
+                ULONG             start = 0, len = 0;
+                CORRECTIVE_ACTION action = CORRECTIVE_ACTION_NONE;
+                if (FAILED(e->get_StartIndex(&start)) || FAILED(e->get_Length(&len)) ||
+                    FAILED(e->get_CorrectiveAction(&action)) || action == CORRECTIVE_ACTION_DELETE)
+                    continue;
+                // The last word starting at or before the error, then every
+                // one it reaches into.
+                size_t k = size_t(std::upper_bound(at.begin(), at.end(), start) - at.begin());
+                k        = k ? k - 1 : 0;
+                for (; k < at.size() && at[k] < start + std::max<ULONG>(len, 1); ++k)
+                    wrong[k] = 1;
+            }
+            std::vector<size_t> next;
+            for (size_t k = 0; k < todo.size(); ++k) {
+                if (wrong[k])
+                    next.push_back(todo[k]);
+                else
+                    (*right)[todo[k]] = 1;
+            }
+            todo = std::move(next);
+        }
+    }
+
     std::vector<std::string> suggest(std::string_view word, int max) override {
         std::vector<std::string> out;
         const std::wstring       w = base::wide(word);

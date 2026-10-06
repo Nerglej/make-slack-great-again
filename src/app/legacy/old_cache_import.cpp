@@ -379,6 +379,11 @@ bool importClaudeCodeCache(const std::string &from, const std::string &knownPath
 void importOldCaches(
     plat::App &app, const std::string &workspacesPath, const std::string &markerPath
 ) {
+    // No earlier cache at all (most starts): nothing to read, not even the
+    // list (this runs on every launch).
+    const std::string data = identity::dataDir(app);
+    if (data.empty() || !file::isDir(file::join(data, "cache")))
+        return;
     // The keys only (auth::WorkspaceStore would read every credential).
     json::Document ws;
     if (workspacesPath.empty() || markerPath.empty() || !ws.parseFile(workspacesPath))

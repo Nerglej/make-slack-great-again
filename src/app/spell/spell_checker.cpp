@@ -19,8 +19,8 @@ namespace {
 // Past this many distinct words the cache starts over, so a long session of
 // typing can't grow it without bound.
 constexpr size_t kCacheLimit = 20000;
-// Words a main-thread backend checks per slice before letting events through
-// (macOS: each is an XPC round trip; the cache makes repeats free).
+// Words new to the cache a main-thread backend checks per slice (one
+// checkAll) before letting events through; the cache makes repeats free.
 constexpr size_t kSliceWords = 200;
 
 // Apostrophes: dictionaries spell "don't" with U+0027, keyboards and
@@ -62,22 +62,68 @@ struct Checker::State {
     std::unique_ptr<Backend>              backend;
     std::unordered_map<std::string, bool> misspelled; // word → answer cache
     std::vector<std::string>              ignored;
+    // The last word's suggestions: a menu opened on it again asks no one.
+    std::string                           suggestedFor;
+    int                                   suggestedMax = 0;
+    std::vector<std::string>              suggestions;
 
-    // Under m.
-    bool isMisspelled(std::string_view word) {
-        const std::string w = normalized(word);
+    // Under m, as the rest. A normalized word: 1 misspelled, 0 right, -1 not
+    // known yet.
+    int known(const std::string &w) const {
         if (std::find(ignored.begin(), ignored.end(), w) != ignored.end())
-            return false;
+            return 0;
         const auto it = misspelled.find(w);
-        if (it != misspelled.end())
-            return it->second;
+        return it == misspelled.end() ? -1 : it->second ? 1 : 0;
+    }
+
+    bool isMisspelled(std::string_view word) {
+        std::string w = normalized(word);
+        if (const int k = known(w); k >= 0)
+            return k == 1;
         if (misspelled.size() >= kCacheLimit)
             misspelled.clear();
         const bool bad = !backend->check(w);
-        misspelled.emplace(w, bad);
+        misspelled.emplace(std::move(w), bad);
         return bad;
     }
+
+    // The words from *next on, until kSliceWords of them were new to the
+    // cache — those asked of the backend in one checkAll — misspelled ones
+    // into *bad. *next moves past them.
+    void checkSlice(
+        std::string_view text, const std::vector<Span> &words, size_t *next, std::vector<Span> *bad
+    ) {
+        const size_t             from = *next;
+        std::vector<std::string> norm, unknown;
+        size_t                   i = from;
+        for (; i < words.size() && unknown.size() < kSliceWords; ++i) {
+            norm.push_back(normalized(text.substr(words[i].start, words[i].length)));
+            const std::string &w = norm.back();
+            if (known(w) < 0 && std::find(unknown.begin(), unknown.end(), w) == unknown.end())
+                unknown.push_back(w);
+        }
+        if (!unknown.empty()) {
+            std::vector<uint8_t> right;
+            backend->checkAll(unknown, &right);
+            if (misspelled.size() + unknown.size() > kCacheLimit)
+                misspelled.clear();
+            for (size_t j = 0; j < unknown.size(); ++j)
+                misspelled.emplace(std::move(unknown[j]), j < right.size() && !right[j]);
+        }
+        for (size_t k = from; k < i; ++k) {
+            const int b = known(norm[k - from]);
+            if (b < 0 ? !backend->check(norm[k - from]) : b == 1)
+                bad->push_back(words[k]);
+        }
+        *next = i;
+    }
 };
+
+void Backend::checkAll(const std::vector<std::string> &words, std::vector<uint8_t> *right) {
+    right->assign(words.size(), 0);
+    for (size_t i = 0; i < words.size(); ++i)
+        (*right)[i] = check(words[i]) ? 1 : 0;
+}
 
 Checker &Checker::instance() {
     static Checker *checker = new Checker; // lives as long as the app
@@ -174,14 +220,9 @@ void Checker::check(
             auto next = std::make_shared<size_t>(0);
             auto step = std::make_shared<std::function<void()>>();
             *step     = [app, st, t, words, bad, next, step, done = std::move(done)] {
-                size_t checked = 0;
-                while (*next < words->size() && checked < kSliceWords) {
-                    const Span                  w = (*words)[(*next)++];
+                {
                     std::lock_guard<std::mutex> lock(st->m);
-                    const std::string_view word(std::string_view(*t).substr(w.start, w.length));
-                    checked += st->misspelled.count(normalized(word)) ? 0 : 1;
-                    if (st->isMisspelled(word))
-                        bad->push_back(w);
+                    st->checkSlice(*t, *words, next.get(), bad.get());
                 }
                 if (*next < words->size()) {
                     app->addTimer(1, false, [step] { (*step)(); });
@@ -210,7 +251,15 @@ void Checker::suggest(
     auto out = std::make_shared<std::vector<std::string>>();
     auto run = [st, out, w = normalized(word), max] {
         std::lock_guard<std::mutex> lock(st->m);
-        *out = st->backend->suggest(w, max);
+        if (w != st->suggestedFor || max > st->suggestedMax) {
+            st->suggestions  = st->backend->suggest(w, max);
+            st->suggestedFor = w;
+            st->suggestedMax = max;
+        }
+        out->assign(
+            st->suggestions.begin(),
+            st->suggestions.begin() + std::min(st->suggestions.size(), size_t(std::max(max, 0)))
+        );
     };
     auto then = [out, done = std::move(done)] { done(std::move(*out)); };
     workerOrPost(*_app, _backend->threadSafe(), std::move(run), std::move(then));
@@ -224,6 +273,7 @@ void Checker::addToDictionary(const std::string &word) {
         std::lock_guard<std::mutex> lock(st->m);
         st->backend->addToDictionary(w); // Linux appends to msga's word list
         st->misspelled.clear();          // "msga" also makes "Msga" right
+        st->suggestedFor.clear();
     };
     const uint32_t gen  = _generation;
     auto           then = [this, gen] {

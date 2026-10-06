@@ -18,25 +18,17 @@ Service::Service(plat::App &app)
 Service::~Service() = default;
 
 void Service::setProviders(std::vector<Provider> providers, std::string defaultId) {
-    _providers           = std::move(providers);
-    _defaultId           = std::move(defaultId);
-    const auto observers = _providerObservers; // one may unobserve
-    for (const auto &o : observers)
-        if (o.second)
-            o.second();
+    _providers = std::move(providers);
+    _defaultId = std::move(defaultId);
+    _providerObservers.notify();
 }
 
 uint32_t Service::observeProviders(std::function<void()> fn) {
-    _providerObservers.emplace_back(_nextObserver, std::move(fn));
-    return _nextObserver++;
+    return _providerObservers.add([fn = std::move(fn)](const std::string &) { fn(); });
 }
 
 void Service::unobserveProviders(uint32_t id) {
-    for (auto it = _providerObservers.begin(); it != _providerObservers.end(); ++it)
-        if (it->first == id) {
-            _providerObservers.erase(it);
-            return;
-        }
+    _providerObservers.remove(id);
 }
 
 const Provider *Service::active() const {
@@ -164,12 +156,12 @@ net::RequestId Service::transcribe(const Provider &p, TranscriptionInput in, Tra
     }
     if (in.model.empty())
         in.model = p.sttModel;
-    return _net.send(
-        buildTranscription(p.endpoint(), in), [done = std::move(done)](net::Response r) {
-            if (done)
-                done(parseTranscription(r));
-        }
-    );
+    net::Request req = buildTranscription(p.endpoint(), in);
+    std::string().swap(in.audio); // the body has it now: one copy in flight, not two
+    return _net.send(std::move(req), [done = std::move(done)](net::Response r) {
+        if (done)
+            done(parseTranscription(r));
+    });
 }
 
 } // namespace llm

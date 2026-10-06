@@ -15,12 +15,26 @@ std::string secretKey(const WorkspaceRecord &r) {
     return "workspace/" + r.key() + "/auth";
 }
 
+bool sameRecord(const WorkspaceRecord &a, const WorkspaceRecord &b) {
+    return a.service == b.service && a.id == b.id && a.displayName == b.displayName &&
+           a.iconUrl == b.iconUrl && a.auth == b.auth && a.muted == b.muted;
+}
+
 } // namespace
 
+bool WorkspaceRecord::hasKey(std::string_view k) const {
+    return k.size() == service.size() + 1 + id.size() && k.substr(0, service.size()) == service &&
+           k[service.size()] == ':' && k.substr(service.size() + 1) == id;
+}
+
 WorkspaceStore::WorkspaceStore(std::string path) : _path(std::move(path)) {
+    if (_path.empty())
+        return;
+    // Read even without the store: a flush corrects a stale one.
+    file::readAll(_path + ".active", &_activeOnDisk);
     json::Document doc;
     std::string    err;
-    if (_path.empty() || !doc.parseFile(_path, &err)) {
+    if (!doc.parseFile(_path, &err)) {
         if (!err.empty())
             LOG_WARN("auth", "%s: %s", _path.c_str(), err.c_str());
         return;
@@ -36,7 +50,9 @@ WorkspaceStore::WorkspaceStore(std::string path) : _path(std::move(path)) {
         r.muted       = w["muted"].boolean();
         adopt(std::move(r));
     }
-    setActiveOrFirst(root["active"].str());
+    // The active file is newer than the store's own "active" when it names
+    // a workspace there (a switch writes only it).
+    setActiveOrFirst(find(_activeOnDisk) ? std::string_view(_activeOnDisk) : root["active"].str());
 }
 
 void WorkspaceStore::adopt(WorkspaceRecord r) {
@@ -57,16 +73,18 @@ void WorkspaceStore::setActiveOrFirst(std::string_view key) {
 
 const WorkspaceRecord *WorkspaceStore::find(std::string_view key) const {
     for (const auto &r : _records)
-        if (r.key() == key)
+        if (r.hasKey(key))
             return &r;
     return nullptr;
 }
 
 void WorkspaceStore::save(WorkspaceRecord rec) {
     for (auto &r : _records)
-        if (r.key() == rec.key()) {
+        if (r.service == rec.service && r.id == rec.id) {
             rec.muted = rec.muted || r.muted;
-            r         = std::move(rec);
+            if (sameRecord(r, rec))
+                return;
+            r = std::move(rec);
             flush();
             return;
         }
@@ -78,7 +96,7 @@ void WorkspaceStore::save(WorkspaceRecord rec) {
 
 void WorkspaceStore::remove(std::string_view key) {
     for (size_t i = 0; i < _records.size(); ++i)
-        if (_records[i].key() == key) {
+        if (_records[i].hasKey(key)) {
             if (secret::available()) {
                 secret::remove(secretKey(_records[i]));
                 _inKeychain.erase(_records[i].key());
@@ -92,7 +110,7 @@ void WorkspaceStore::remove(std::string_view key) {
 
 void WorkspaceStore::setMuted(std::string_view key, bool muted) {
     for (auto &r : _records)
-        if (r.key() == key && r.muted != muted) {
+        if (r.hasKey(key) && r.muted != muted) {
             r.muted = muted;
             flush();
         }
@@ -103,7 +121,7 @@ void WorkspaceStore::setOrder(const std::vector<std::string> &keys) {
     next.reserve(_records.size());
     for (const auto &k : keys)
         for (auto &r : _records)
-            if (!r.service.empty() && r.key() == k) {
+            if (!r.service.empty() && r.hasKey(k)) {
                 next.push_back(std::move(r));
                 r.service.clear(); // taken
                 break;
@@ -128,12 +146,34 @@ void WorkspaceStore::setActive(std::string_view key) {
     if (!find(key) || _active == key)
         return;
     _active = std::string(key);
-    flush();
+    if (!writeActive())
+        flush(); // the store's own "active" then
+}
+
+bool WorkspaceStore::writeActive() {
+    if (_path.empty() || _activeOnDisk == _active)
+        return true;
+    // In place: one small write, no fsync. The first one creates the file.
+    const std::string path = _path + ".active";
+    if (_active.empty()
+            ? file::remove(path) || !file::exists(path)
+            : file::overwrite(path, _active) || file::writeAtomic(path, _active, 0600)) {
+        _activeOnDisk = _active;
+        return true;
+    }
+    LOG_WARN("auth", "could not write %s", path.c_str());
+    // Whatever it holds must not override the store's "active".
+    file::remove(path);
+    _activeOnDisk.clear();
+    return false;
 }
 
 bool WorkspaceStore::flush() {
     if (_path.empty())
         return false;
+    // A stale active file would override the "active" written below.
+    if (!_activeOnDisk.empty())
+        writeActive();
     json::Writer w(true);
     w.beginObject().key("active").value(_active).key("workspaces").beginArray();
     for (const auto &r : _records) {

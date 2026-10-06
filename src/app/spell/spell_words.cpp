@@ -235,10 +235,13 @@ uint32_t byteAt(const std::vector<Cp> &s, size_t i, size_t textSize) {
 
 std::vector<Span> checkableWords(std::string_view text, const std::vector<Span> &excluded) {
     std::vector<Cp> s = decode(text);
-    for (const Span &x : excluded) // pills read as whitespace
-        for (Cp &c : s)
-            if (c.off >= x.start && c.off < x.end())
-                c.c = ' ';
+    for (const Span &x : excluded) { // pills read as whitespace; s is in byte order
+        auto c = std::lower_bound(s.begin(), s.end(), x.start, [](const Cp &a, uint32_t off) {
+            return a.off < off;
+        });
+        for (; c != s.end() && c->off < x.end(); ++c)
+            c->c = ' ';
+    }
     blankCode(s);
     blankUrls(s);
     blankTokens(s);
