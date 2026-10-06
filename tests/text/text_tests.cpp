@@ -816,8 +816,11 @@ void selectionOrder() {
                 CHECK(rs[i].x >= rs[i - 1].x + rs[i - 1].w - 0.01f);
             else
                 CHECK(rs[i].y > rs[i - 1].y);
-        // Nothing above the line the selection starts on.
-        CHECK(rs.front().y >= w->caretRect(from).y - 0.5f);
+        // The first rect is the line the selection starts on: it spans the
+        // caret, and nothing above. (A line can be taller than its caret
+        // when a fallback font is.)
+        const gfx::RectF c = w->caretRect(from);
+        CHECK(rs.front().y <= c.y + 0.5f && rs.front().y + rs.front().h >= c.y + c.h - 0.5f);
     }
 }
 

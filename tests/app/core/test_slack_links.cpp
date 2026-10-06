@@ -423,7 +423,8 @@ TEST("slack links: an answer's files go up into the thread and give the message'
     REQUIRE(pumpUntil([&] { return got != -1; }));
     CHECK(err.empty());
     CHECK(got > root);
-    json::Value done = Log().get("files.completeUploadExternal")["form"];
+    const Log   log; // the values below point into its document
+    json::Value done = log.get("files.completeUploadExternal")["form"];
     CHECK_STR(done["thread_ts"].str(), "1700000000.000100");
     CHECK_STR(done["files"].str(), R"([{"id":"F0001","title":"agent-out.csv"}])");
     // None to upload: said at once, nothing sent.

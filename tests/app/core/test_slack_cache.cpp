@@ -202,13 +202,17 @@ TEST("slack cache: a presence flip doesn't re-serialise users.json; a profile ch
     if (!haveServer())
         return;
     wipe();
+    // The slow cadence shortened before connecting: a read cursor moving
+    // while connecting would otherwise start a 60 s timer the profile
+    // change below then waits for.
+    cache::WorkspaceCache::setSlowDelayForTest(2500);
     Env e;
     // Mira's presence is ours to flip: the sweep stops asking after a failure.
     set(R"({"users.getPresence?user=UMIRA": {"ok": false, "error": "internal_error"}})");
     REQUIRE(e.connect());
     const std::string path = file::join(cacheDir(), "users.json");
     REQUIRE(pumpUntil([&] { return file::exists(path); }, 5000));
-    fakeslack::pumpFor(1500); // the first presence round and its write settle
+    fakeslack::pumpFor(3000); // the first presence round and the slow-cadence writes settle
     std::string before;
     REQUIRE(file::readAll(path, &before));
     const model::UserRef mira = e.store.findUser("UMIRA");
@@ -222,9 +226,8 @@ TEST("slack cache: a presence flip doesn't re-serialise users.json; a profile ch
     REQUIRE(file::readAll(path, &after));
     CHECK(after == before);
 
-    // A profile change waits for the slow cadence (shortened here), not
+    // A profile change waits for the slow cadence (shortened above), not
     // the 1 s throttle; then it is written (with the presence it carries).
-    cache::WorkspaceCache::setSlowDelayForTest(2500);
     e.store.user(mira).displayName = "Mira O.";
     e.store.usersChanged();
     fakeslack::pumpFor(1500);

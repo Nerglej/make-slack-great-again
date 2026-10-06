@@ -1,4 +1,6 @@
 #include "base/crypto.h"
+#include "base/str.h"
+#include "prim/bytes.h"
 
 #include <algorithm>
 #include <cstring>
@@ -42,10 +44,6 @@ void eachBlock(std::string_view data, F &&block) {
     block(tail);
     if (len == 128)
         block(tail + 64);
-}
-
-inline uint32_t be32(const uint8_t *p) {
-    return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
 }
 
 template <size_t N>
@@ -102,7 +100,7 @@ void sha256Block(uint32_t *h, const uint8_t *b) {
     };
     uint32_t w[64];
     for (int i = 0; i < 16; ++i)
-        w[i] = be32(b + 4 * i);
+        w[i] = prim::be32(b + 4 * i);
     for (int i = 16; i < 64; ++i) {
         const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
         const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
@@ -183,7 +181,7 @@ std::array<uint8_t, 20> sha1(std::string_view data) {
     eachBlock(data, [&](const uint8_t *b) {
         uint32_t w[80];
         for (int i = 0; i < 16; ++i)
-            w[i] = be32(b + 4 * i);
+            w[i] = prim::be32(b + 4 * i);
         for (int i = 16; i < 80; ++i)
             w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
         uint32_t a = h[0], bb = h[1], c = h[2], d = h[3], e = h[4];
@@ -329,12 +327,11 @@ bool base64Decode(std::string_view in, std::string *out) {
 }
 
 std::string hex(std::string_view data) {
-    static const char digits[] = "0123456789abcdef";
-    std::string       out;
+    std::string out;
     out.reserve(data.size() * 2);
     for (unsigned char c : data) {
-        out += digits[c >> 4];
-        out += digits[c & 15];
+        out += str::kHexLower[c >> 4];
+        out += str::kHexLower[c & 15];
     }
     return out;
 }

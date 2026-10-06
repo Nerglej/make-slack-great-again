@@ -251,12 +251,11 @@ Shared *shared() {
 }
 
 std::string hexCode(int code) {
-    static const char hex[] = "0123456789abcdef";
-    unsigned          v     = unsigned(code < 0 ? -code : code);
-    char              buf[8];
-    int               n = 0;
+    unsigned v = unsigned(code < 0 ? -code : code);
+    char     buf[8];
+    int      n = 0;
     do {
-        buf[n++] = hex[v & 15];
+        buf[n++] = str::kHexLower[v & 15];
         v >>= 4;
     } while (v && n < 8);
     std::string out = code < 0 ? "-0x" : "0x";
