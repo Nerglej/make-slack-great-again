@@ -1402,6 +1402,11 @@ TEST("backend: /btw is offered with Claude Code's commands") {
     const ConvRef conv = rig.ref("S1");
     const auto    cmds = rig.backend->commands(conv);
     REQUIRE(!cmds.empty());
+    // A revision for the "/" list: steady while the folder's list is.
+    const uint64_t rev = rig.backend->commandsRevision(conv);
+    CHECK(rev != 0);
+    CHECK(rig.backend->commandsRevision(conv) == rev);
+    CHECK(rig.backend->commandsRevision(kNoConv) == 0);
     CHECK_STR(cmds[0].name, "btw");
     CHECK_STR(cmds[0].source, "msga"); // the row's label: msga's own
     const auto local = [&](std::string_view name) {

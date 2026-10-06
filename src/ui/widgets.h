@@ -274,6 +274,7 @@ public:
     SizeF measureContent(float availW, float availH) override;
     void  paint(gfx::Painter &p) override;
     void  windowChanged() override;
+    bool  showsBitmap(const gfx::Bitmap *b) const override;
 
     // Smooth shrinks made since the bitmap / frames were set (tests).
     int  shrinkCount() const { return _shrinks; }

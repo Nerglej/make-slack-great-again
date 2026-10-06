@@ -33,6 +33,7 @@ public:
     void      paint(gfx::Painter &p) override;
     bool      onEvent(ui::Event &e) override;
     void      styleChanged() override;
+    bool      showsBitmap(const gfx::Bitmap *b) const override { return _avatar.get() == b; }
 
     // Geometry (tests): the button and the email row, local coordinates.
     ui::RectF messageButton() const;
@@ -53,6 +54,13 @@ private:
     uint32_t      _copiedUntil = 0; // ms tick; "Copied" shows until then
     plat::TimerId _copiedTimer = 0;
     bool          _btnHover = false, _emailHover = false, _message = false;
+
+    // _avatar shrunk to the pixels it is painted at.
+    struct Shrunk {
+        const uint32_t *src = nullptr; // the source's pixels (filled in place: new ones)
+        int             sw = 0, sh = 0;
+        gfx::Bitmap     bmp;
+    } _shrunk;
 };
 
 class ProfileCards {

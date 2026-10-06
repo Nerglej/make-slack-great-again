@@ -57,13 +57,10 @@ struct AgentFake : fake::FakeBackend {
         return c < _store.conversationCount() && _store.conversation(c).kind == ConvKind::Dm;
     }
     std::vector<Command> commands(ConvRef) override {
-        return {
-            {"status", "Show the session's status", {}, true},
-            {"btw", "Ask a side question", "<question>", false},
-            {"clear", "Start a new session", {}, true},
-            {"compact", "Compact the conversation", {}, false},
-        };
+        ++asked;
+        return cmds;
     }
+    uint64_t commandsRevision(ConvRef) override { return cmdsRev; }
     LocalResult
     runLocalCommand(ConvRef c, Ts thread, const std::string &name, const std::string &) override {
         ran.push_back(name);
@@ -88,6 +85,14 @@ struct AgentFake : fake::FakeBackend {
     }
     void setZenMode(bool on) override { zen = on; }
 
+    std::vector<Command> cmds{
+        {"status", "Show the session's status", {}, true},
+        {"btw", "Ask a side question", "<question>", false},
+        {"clear", "Start a new session", {}, true},
+        {"compact", "Compact the conversation", {}, false},
+    };
+    uint64_t                 cmdsRev = 1;
+    int                      asked   = 0; // commands() calls
     std::vector<std::string> ran, history{"third prompt", "second\nprompt", "first prompt"};
     ConvRef                  clearTo = kNoConv, ranIn = kNoConv;
     Ts                       ranInThread = -1;
@@ -295,6 +300,33 @@ TEST("slash commands: the list at the start, local ones run, the rest are sent")
     pump();
     CHECK(h.backend.ran.size() == 2);
     CHECK(h.store.conversation(now).messages.size() == n + 1);
+}
+
+TEST("slash commands: the list is copied again only when the backend's revision moves") {
+    Harness h;
+    auto   &c = h.sh->composer();
+    c.edit().focus();
+    c.edit().insertText("/");
+    pump();
+    REQUIRE(c.pickList() != nullptr);
+    const int asked = h.backend.asked;
+    CHECK(asked >= 1);
+    c.edit().insertText("c");
+    pump();
+    c.edit().insertText("o");
+    pump();
+    CHECK(h.backend.asked == asked); // keystrokes reuse what was fetched
+    REQUIRE(c.pickList() != nullptr);
+    REQUIRE(c.pickList()->count() == 1);
+    CHECK_STR(c.pickList()->item(0).subtitle, "Compact the conversation");
+    // Same names, another description: a new revision shows it.
+    h.backend.cmds[3].desc = "Summarise the conversation";
+    ++h.backend.cmdsRev;
+    c.edit().insertText("m");
+    pump();
+    CHECK(h.backend.asked == asked + 1);
+    REQUIRE(c.pickList() != nullptr);
+    CHECK_STR(c.pickList()->item(0).subtitle, "Summarise the conversation");
 }
 
 TEST("slash commands: the thread composer runs them on the thread's conversation") {

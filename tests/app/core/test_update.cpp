@@ -123,6 +123,7 @@ TEST("update: a newer manifest downloads, verifies and replaces the binary") {
     CHECK(u.ready());
     CHECK_STR(u.downloadedPath(), target);
     CHECK((file::readAll(target, &have) && have == body));
+    CHECK_FALSE(file::exists(target + ".part")); // streamed there, then moved into place
     file::remove(target);
     file::remove(file::dirName(target));
 }
@@ -147,6 +148,31 @@ TEST("update: a checksum mismatch leaves the binary alone") {
     CHECK_FALSE(u.ready());
     std::string have;
     CHECK((file::readAll(target, &have) && have == "old binary"));
+    CHECK_FALSE(file::exists(target + ".part")); // the unverified download is gone
+
+    // A download the server refuses: nothing written, nothing left behind.
+    run.events.clear();
+    u.setUrls(srv + "/update/41/" + wrong + ".manifest", srv + "/files-pri/u/missing");
+    u.checkNow();
+    REQUIRE(fakeslack::pumpUntil([&] { return run.finished(); }));
+    REQUIRE(run.done(Kind::Failed));
+    CHECK_STR(run.events.back().message, "Download failed: HTTP 404");
+    CHECK((file::readAll(target, &have) && have == "old binary"));
+    CHECK_FALSE(file::exists(target + ".part"));
+
+    // A target that can't be written next to: the download stops at its first bytes.
+    run.events.clear();
+    u.setTarget(std::string(file::dirName(target)) + "/no-such-dir/x/msga");
+    REQUIRE(
+        file::writeAtomic(std::string(file::dirName(target)) + "/no-such-dir", "a file, not a dir")
+    );
+    u.setUrls(srv + "/update/42/-.manifest", srv + "/files-pri/u/msga-new");
+    u.checkNow();
+    REQUIRE(fakeslack::pumpUntil([&] { return run.finished(); }));
+    REQUIRE(run.done(Kind::Failed));
+    CHECK_FALSE(u.ready());
+    file::remove(std::string(file::dirName(target)) + "/no-such-dir");
+    u.setTarget(target);
 
     // Not a manifest at all; and a background check with auto-checks off
     // never asks.

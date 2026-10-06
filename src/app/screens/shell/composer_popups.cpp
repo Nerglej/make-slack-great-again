@@ -910,11 +910,17 @@ std::vector<std::vector<uint32_t>> queryNeedles(std::string_view query) {
 } // namespace
 
 std::vector<size_t> historyFilter(const std::vector<std::string> &entries, std::string_view query) {
-    std::vector<std::string> folded;
-    folded.reserve(entries.size());
-    for (const std::string &e : entries)
-        folded.push_back(utf8::foldCase(e));
-    return filterFolded(folded, foldedWords(query));
+    // The query folded once; the entries are matched as they are.
+    const std::vector<std::string> words = foldedWords(query);
+    std::vector<size_t>            out;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        bool all = true;
+        for (const std::string &w : words)
+            all = all && utf8::containsFoldedNeedle(entries[i], w);
+        if (all)
+            out.push_back(i);
+    }
+    return out;
 }
 
 std::vector<std::pair<size_t, size_t>>

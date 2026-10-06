@@ -157,6 +157,7 @@ public:
     // Slash commands: commands.list + msga's built-ins, run by runLocalCommand
     // (chat.command for the workspace's own).
     std::vector<Command> commands(model::ConvRef conv) override;
+    uint64_t             commandsRevision(model::ConvRef conv) override;
     LocalResult          runLocalCommand(
         model::ConvRef conv, model::Ts thread, const std::string &name, const std::string &args
     ) override;
@@ -286,6 +287,7 @@ private:
     void                 reloadUsergroups();
     // commands.list's answer (empty until it came, or without one).
     std::vector<Command> serverCommands() const;
+    uint64_t             commandsRev() const; // moves with serverCommands()
     // A conversation's live huddle changed (Conversation::huddle*).
     void                 setHuddle(
         model::ConvRef c, bool active, std::string link, std::vector<model::UserRef> participants

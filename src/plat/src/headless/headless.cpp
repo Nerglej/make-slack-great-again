@@ -40,6 +40,7 @@ public:
     void   setFullscreen(bool on) override;
     bool   isMaximized() const override { return _maximized; }
     bool   isFullscreen() const override { return _fullscreen; }
+    bool   isMinimized() const override { return _minimized; }
     bool   supportsAlwaysOnTop() const override { return true; }
     void   setAlwaysOnTop(bool on) override;
     bool   isAlwaysOnTop() const override { return _above; }
@@ -90,6 +91,7 @@ private:
     Point       _pos;
     double      _scale     = 1.0;
     bool        _maximized = false, _fullscreen = false, _active = false, _above = false;
+    bool        _minimized = false;
     Decorations _decorations;
 };
 
@@ -692,6 +694,7 @@ uint64_t HeadlessWindow::monitor() const {
 }
 
 void HeadlessWindow::minimize() {
+    _minimized = true;
     emit({.type = EventType::StateChanged});
 }
 void HeadlessWindow::setMaximized(bool on) {
@@ -710,6 +713,10 @@ void HeadlessWindow::activate() {
     _active   = true;
     attention = false;
     app->focus(this);
+    if (_minimized) { // activating restores, as the OS window managers do
+        _minimized = false;
+        emit({.type = EventType::StateChanged});
+    }
 }
 
 void HeadlessWindow::requestFrame() {

@@ -295,7 +295,7 @@ public:
     void onOutputDone(Output *o);
     void scheduleMonitorsChanged();
     bool beforeWait();
-    void afterWait();
+    void afterWait(uint32_t displayReady);
     bool emitReadyFrames(); // true if some window still wants a frame later
     // Whether w's ready Frame may go out at `now`; else *waitMs until it may.
     bool frameDue(WlWindow *w, std::chrono::steady_clock::time_point now, int *waitMs) const;

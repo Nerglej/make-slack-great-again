@@ -197,7 +197,8 @@ struct SlackBackend::Read {
     void                          loadEmoji();
     void                          loadUsergroups();
     void                          loadCommands();
-    std::vector<Backend::Command> serverCommands; // commands.list (session tokens)
+    std::vector<Backend::Command> serverCommands;     // commands.list (session tokens)
+    uint64_t                      commandsRev    = 1; // moves with serverCommands
     bool                          commandsLoaded = false;
 
     // ── Names (setNamesMode) ────────────────────────────────────────────────
@@ -1171,6 +1172,7 @@ void SlackBackend::Read::loadCommands() {
             out.push_back(std::move(x));
         }
         serverCommands = std::move(out);
+        ++commandsRev;
         commandsLoaded = true;
     });
 }
@@ -3001,6 +3003,10 @@ void SlackBackend::reloadUsergroups() {
 
 std::vector<model::Backend::Command> SlackBackend::serverCommands() const {
     return _read->serverCommands;
+}
+
+uint64_t SlackBackend::commandsRev() const {
+    return _read->commandsRev;
 }
 
 void SlackBackend::rearmReminders() {

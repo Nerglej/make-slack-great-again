@@ -22,8 +22,12 @@ public:
     core::LoopCore core;
 
     // Return false to skip the blocking poll this iteration (work pending).
-    std::function<bool()> beforeWait;
-    std::function<void()> afterWait;
+    std::function<bool()>         beforeWait;
+    // Right after the poll, before any watch callback: what it found on the
+    // watch `waitWatch` names (FdRead / FdWrite; 0 = nothing or no poll), so
+    // the display connection is read without polling it again.
+    std::function<void(uint32_t)> afterWait;
+    uint64_t                      waitWatch = 0;
 
     uint64_t watch(int fd, uint32_t events, std::function<void(uint32_t)> fn);
     void     unwatch(uint64_t id);

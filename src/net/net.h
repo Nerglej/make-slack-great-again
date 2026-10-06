@@ -38,6 +38,28 @@ struct Header {
     std::string name, value;
 };
 
+struct Response;
+
+// Work on a request's answer that runs on the Client's worker thread instead
+// of the UI thread (Request::handler).
+class Handler {
+public:
+    virtual ~Handler() = default;
+    // With streamBody set: a 2xx answer's body in order as it arrives (an
+    // update's tens of megabytes to a file), instead of into Response::body;
+    // the other answers (redirects, errors) still fill Response::body. False
+    // stops the exchange with error "sink". Nothing has come before a
+    // transport retries, so it never hears a byte twice.
+    virtual bool body(const char *data, size_t n) {
+        (void)data, (void)n;
+        return false;
+    }
+    // The final answer (after redirects), just before `done` is posted:
+    // parse it here. Not for a cancelled request.
+    virtual void finished(Response &r) { (void)r; }
+    bool         streamBody = false;
+};
+
 struct Request {
     std::string         method = "GET";
     std::string         url; // http:// or https://
@@ -49,6 +71,9 @@ struct Request {
     // bytes so far and its whole size (0 when the server doesn't say), on
     // the UI thread, a few times a second at most and never after `done`.
     std::function<void(int64_t received, int64_t total)> onProgress;
+    // Worker-side work on the answer (see Handler); the caller keeps its own
+    // reference to read the outcome in `done`.
+    std::shared_ptr<Handler>                             handler;
 };
 
 struct Response {

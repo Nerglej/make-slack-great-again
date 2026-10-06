@@ -162,6 +162,7 @@ public:
         layout.reset();
         Clickable::styleChanged();
     }
+    bool showsBitmap(const gfx::Bitmap *b) const override { return bitmap.get() == b; }
     void paint(gfx::Painter &p) override {
         if (!lifted)
             paintBubble(p, bounds(), hovered() && !pressed());
@@ -751,7 +752,11 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
       _avatars(ctx.images) {
     // Decoded avatars fill the bitmaps the views already hold: repaint.
     _avatars.setRemote(ctx.remote);
-    _avatars.onLoaded = [this] { _win.damageAll(); };
+    // Only the views showing a picture that landed (every view drawing an
+    // Avatars bitmap answers View::showsBitmap).
+    _avatars.onLoaded = [this](const std::vector<Avatars::Picture> &landed) {
+        _win.damageShowing(landed);
+    };
     shortcuts::setCtrlEnterSends(settings.ctrlEnterSends);
     ctx.openConversation = [this](ConvRef c) { open(c); };
     ctx.openThread       = [this](ConvRef c, Ts root) { openThread(c, root); };
@@ -1218,9 +1223,10 @@ void Shell::buildTitleBar(View *parent) {
     // The window manager may change these by itself (a double-click on the
     // caption, its own "Always on top").
     _win.onEvent = [this](const plat::Event &e) {
-        if (e.type == plat::EventType::StateChanged)
+        if (e.type == plat::EventType::StateChanged) {
             updateTitleButtons();
-        else if (e.type == plat::EventType::FocusIn || e.type == plat::EventType::FocusOut)
+            syncWindowVisible(); // minimised or back
+        } else if (e.type == plat::EventType::FocusIn || e.type == plat::EventType::FocusOut)
             updateReading();
         // Dragged onto another monitor: re-fit.
         if (e.type == plat::EventType::Moved) {
@@ -1511,6 +1517,20 @@ void Shell::noteActivity() {
         _ctx.backend.noteUserActivity();
     for (const auto &r : _running)
         r->backend->noteUserActivity();
+}
+
+// Hidden to the tray or minimised, backends poll
+// only what notifies (the open chat slowly, no presence rounds); shown again,
+// they catch up at once.
+void Shell::syncWindowVisible() {
+    const bool visible = !_hidden && !_win.native().isMinimized();
+    if (visible == _windowVisible)
+        return;
+    _windowVisible = visible;
+    if (_running.empty())
+        _ctx.backend.setWindowVisible(visible);
+    for (const auto &r : _running)
+        r->backend->setWindowVisible(visible);
 }
 
 // The Settings dialog's sample notification with the workspace
@@ -2237,6 +2257,7 @@ bool Shell::hideWindow() {
     _win.native().hide();
     _hidden = true;
     updateReading();
+    syncWindowVisible();
     return true;
 }
 
@@ -2312,6 +2333,7 @@ void Shell::restore(const std::string &token) {
         updateReading();
         fitToScreen(); // on show: monitors may have changed meanwhile
     }
+    syncWindowVisible();
     // Un-minimising is the backend's job (Wayland remaps the window).
     if (!token.empty())
         w.activateWithToken(token);

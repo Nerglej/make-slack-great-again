@@ -24,8 +24,8 @@ inline uint32_t rotr(uint32_t x, int n) {
     return (x >> n) | (x << (32 - n));
 }
 
-// Merkle–Damgård padding shared by SHA-1 and SHA-256 (both big-endian,
-// 64-byte blocks): feeds every block of data + 0x80 + zeros + bit length.
+// SHA-1's Merkle–Damgård padding (big-endian, 64-byte blocks; Sha256 pads
+// the same way): feeds every block of data + 0x80 + zeros + bit length.
 template <typename F>
 void eachBlock(std::string_view data, F &&block) {
     const uint64_t bits = uint64_t(data.size()) * 8;
@@ -84,7 +84,10 @@ std::string encode64(std::string_view data, bool url) {
 
 } // namespace
 
-std::array<uint8_t, 32> sha256(std::string_view data) {
+namespace {
+
+// One 64-byte block into SHA-256's state.
+void sha256Block(uint32_t *h, const uint8_t *b) {
     static const uint32_t k[64] = {
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
         0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
@@ -97,43 +100,82 @@ std::array<uint8_t, 32> sha256(std::string_view data) {
         0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
         0xc67178f2,
     };
-    uint32_t h[8] = {
-        0x6a09e667,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19,
-    };
-    eachBlock(data, [&](const uint8_t *b) {
-        uint32_t w[64];
-        for (int i = 0; i < 16; ++i)
-            w[i] = be32(b + 4 * i);
-        for (int i = 16; i < 64; ++i) {
-            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-            w[i]              = w[i - 16] + s0 + w[i - 7] + s1;
-        }
-        uint32_t v[8];
-        std::memcpy(v, h, sizeof v);
-        for (int i = 0; i < 64; ++i) {
-            const uint32_t s1 = rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25);
-            const uint32_t ch = (v[4] & v[5]) ^ (~v[4] & v[6]);
-            const uint32_t t1 = v[7] + s1 + ch + k[i] + w[i];
-            const uint32_t s0 = rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22);
-            const uint32_t mj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
-            std::memmove(v + 1, v, 7 * sizeof(uint32_t));
-            v[4] += t1;
-            v[0] = t1 + s0 + mj;
-        }
-        for (int i = 0; i < 8; ++i)
-            h[i] += v[i];
-    });
+    uint32_t w[64];
+    for (int i = 0; i < 16; ++i)
+        w[i] = be32(b + 4 * i);
+    for (int i = 16; i < 64; ++i) {
+        const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i]              = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    uint32_t v[8];
+    std::memcpy(v, h, sizeof v);
+    for (int i = 0; i < 64; ++i) {
+        const uint32_t s1 = rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25);
+        const uint32_t ch = (v[4] & v[5]) ^ (~v[4] & v[6]);
+        const uint32_t t1 = v[7] + s1 + ch + k[i] + w[i];
+        const uint32_t s0 = rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22);
+        const uint32_t mj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+        std::memmove(v + 1, v, 7 * sizeof(uint32_t));
+        v[4] += t1;
+        v[0] = t1 + s0 + mj;
+    }
+    for (int i = 0; i < 8; ++i)
+        h[i] += v[i];
+}
+
+} // namespace
+
+Sha256::Sha256()
+    : _h{0x6a09e667,
+         0xbb67ae85,
+         0x3c6ef372,
+         0xa54ff53a,
+         0x510e527f,
+         0x9b05688c,
+         0x1f83d9ab,
+         0x5be0cd19} {}
+
+void Sha256::update(std::string_view data) {
+    const auto *p    = reinterpret_cast<const uint8_t *>(data.data());
+    size_t      n    = data.size();
+    size_t      used = size_t(_len % 64);
+    _len += n;
+    if (used) { // top up the partial block first
+        const size_t take = std::min(n, 64 - used);
+        std::memcpy(_buf + used, p, take);
+        p += take, n -= take, used += take;
+        if (used < 64)
+            return;
+        sha256Block(_h, _buf);
+    }
+    for (; n >= 64; p += 64, n -= 64)
+        sha256Block(_h, p);
+    std::memcpy(_buf, p, n);
+}
+
+std::array<uint8_t, 32> Sha256::finish() {
+    // Merkle–Damgård padding: 0x80, zeros, then the bit length.
+    const uint64_t bits      = _len * 8;
+    const size_t   used      = size_t(_len % 64);
+    uint8_t        tail[128] = {};
+    std::memcpy(tail, _buf, used);
+    tail[used]       = 0x80;
+    const size_t len = used + 9 <= 64 ? 64 : 128;
+    for (int k = 0; k < 8; ++k)
+        tail[len - 1 - k] = uint8_t(bits >> (8 * k));
+    sha256Block(_h, tail);
+    if (len == 128)
+        sha256Block(_h, tail + 64);
     std::array<uint8_t, 32> out;
-    store(out, h);
+    store(out, _h);
     return out;
+}
+
+std::array<uint8_t, 32> sha256(std::string_view data) {
+    Sha256 s;
+    s.update(data);
+    return s.finish();
 }
 
 std::array<uint8_t, 20> sha1(std::string_view data) {

@@ -183,6 +183,9 @@ public:
         bool        app = false; // a Slack app's: an initial chip when it has no icon
     };
     virtual std::vector<Command> commands(ConvRef) { return {}; }
+    // Moves whenever commands(c) would answer differently, so the "/" list
+    // needn't copy them per keystroke; 0 = unknown, ask commands() each time.
+    virtual uint64_t             commandsRevision(ConvRef) { return 0; }
     // A local command: rows for a dialog (/status), a conversation to open
     // (/clear), or why it can't run. thread: the root it was typed in (0:
     // the channel) — what it posts goes there.

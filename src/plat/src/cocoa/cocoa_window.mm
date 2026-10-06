@@ -1080,6 +1080,9 @@ bool CocoaWindow::isMaximized() const {
 bool CocoaWindow::isFullscreen() const {
     return (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
 }
+bool CocoaWindow::isMinimized() const {
+    return window.isMiniaturized;
+}
 bool CocoaWindow::isActive() const {
     return window.isKeyWindow;
 }

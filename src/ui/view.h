@@ -362,6 +362,9 @@ public:
     virtual bool    tick(double nowMs) { return false; }
     // A press anywhere in the window: stop flings and smooth scrolls.
     virtual void    interruptAnimation() {}
+    // Whether paint() draws `b` (Window::damageShowing): a view holding a
+    // shared bitmap says so, and repaints alone when it is filled in place.
+    virtual bool    showsBitmap(const gfx::Bitmap *b) const;
     // Tab moved the focus to `descendant`: a scroll container scrolls it into
     // view.
     virtual void    revealFocus(const View *descendant) {}
@@ -499,6 +502,9 @@ public:
     // ── Painting ────────────────────────────────────────────────────────────
     void damage(RectF windowRect);
     void damageAll();
+    // Repaints only the shown views that draw one of `bitmaps`
+    // (View::showsBitmap): shared pictures that were filled in place.
+    void damageShowing(const std::vector<std::shared_ptr<const gfx::Bitmap>> &bitmaps);
     void requestFrame();
     // Shift the pixels already on the canvas inside `area`'s rect up by
     // dyPhys physical pixels (negative = down) at the start of the next frame

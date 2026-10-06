@@ -2104,6 +2104,11 @@ std::vector<model::Backend::Command> SlackBackend::commands(ConvRef) {
     return out;
 }
 
+// The built-ins never change: only commands.list's answer moves it.
+uint64_t SlackBackend::commandsRevision(ConvRef) {
+    return commandsRev();
+}
+
 model::Backend::LocalResult SlackBackend::runLocalCommand(
     ConvRef conv, Ts thread, const std::string &name, const std::string &args
 ) {

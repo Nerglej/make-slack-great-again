@@ -332,6 +332,7 @@ private:
     // The / list: the conversation's commands as last fetched, and the same
     // sorted by name with their names folded (redone when the list changes).
     model::ConvRef                       _cmdConv = model::kNoConv;
+    uint64_t                             _cmdRev  = 0; // Backend::commandsRevision
     std::vector<std::string>             _cmdNames;
     std::vector<model::Backend::Command> _cmdSorted;
     std::vector<std::string>             _cmdFolded;

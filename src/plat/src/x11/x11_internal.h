@@ -122,6 +122,7 @@ public:
     void                 setFullscreen(bool on) override;
     bool                 isMaximized() const override { return _maximized; }
     bool                 isFullscreen() const override { return _fullscreen; }
+    bool                 isMinimized() const override { return _hidden; }
     bool                 supportsAlwaysOnTop() const override { return true; }
     void                 setAlwaysOnTop(bool on) override;
     bool                 isAlwaysOnTop() const override { return _above; }

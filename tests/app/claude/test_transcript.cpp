@@ -1033,6 +1033,23 @@ TEST("transcript: the prompt history is the folder's, this session's first") {
         )
     );
     CHECK(promptHistory(path, pastes, "/src/app", "S1") == (List{"x", "first"}));
+
+    // The UI thread's look: nothing until a folder was read once; then
+    // what was appended since, as promptHistory answers.
+    List got{"stale"};
+    CHECK_FALSE(loadedPromptHistory(path, pastes, "/src/never", "", &got));
+    CHECK(got.empty());
+    CHECK(loadedPromptHistory(path, pastes, "/src/app", "S1", &got));
+    CHECK(got == (List{"x", "first"}));
+    appendFileBytes(path, entry("later", "/src/app", "S1"));
+    CHECK(loadedPromptHistory(path, pastes, "/src/app", "S1", &got));
+    CHECK(got == (List{"later", "x", "first"}));
+    // Rewritten: that is a whole read again, a worker's.
+    REQUIRE(file::writeAtomic(path, entry("redone", "/src/app", "S1")));
+    CHECK_FALSE(loadedPromptHistory(path, pastes, "/src/app", "S1", &got));
+    CHECK(promptHistory(path, pastes, "/src/app", "S1") == (List{"redone"}));
+    CHECK(loadedPromptHistory(path, pastes, "/src/app", "S1", &got));
+    CHECK(got == (List{"redone"}));
 }
 
 // ── Images and files ────────────────────────────────────────────────────────

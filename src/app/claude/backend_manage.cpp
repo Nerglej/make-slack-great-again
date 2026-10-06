@@ -644,14 +644,16 @@ void Backend::postDone(Done done, bool ok, std::string error) {
 
 // ── Commands ────────────────────────────────────────────────────────────────
 
-std::vector<Backend::Command> Backend::commands(ConvRef conv) {
+Backend::CommandList *Backend::commandList(ConvRef conv) {
     // Asked again after a while: skills and commands come and go.
     constexpr int64_t kFreshMs = 5 * 60'000;
     const Tracked    *t        = findRef(conv);
     if (!t || t->info.cwd.empty())
-        return {};
+        return nullptr;
     const std::string cwd  = t->info.cwd;
     CommandList      &list = _commands[cwd];
+    if (!list.rev)
+        list.rev = ++_commandsRev;
     if (!_creds.claudePath.empty() && !list.loading &&
         (list.fetchedMs == 0 || nowMs() - list.fetchedMs > kFreshMs)) {
         list.loading = true;
@@ -667,9 +669,22 @@ std::vector<Backend::Command> Backend::commands(ConvRef conv) {
                 if (commands.empty())
                     return; // keep what we had; tried again after a while
                 l.commands = std::move(commands);
+                l.rev      = ++_commandsRev;
             }
         );
     }
+    return &list;
+}
+
+uint64_t Backend::commandsRevision(ConvRef conv) {
+    const CommandList *list = commandList(conv);
+    return list ? list->rev : 0;
+}
+
+std::vector<Backend::Command> Backend::commands(ConvRef conv) {
+    const CommandList *list = commandList(conv);
+    if (!list)
+        return {};
     std::vector<Command> out;
     // msga's own: Claude Code's /btw is a terminal panel, not something it
     // can run for msga — here a side question opens a thread (a branch of the
@@ -698,7 +713,7 @@ std::vector<Backend::Command> Backend::commands(ConvRef conv) {
          true,
          "msga"}
     );
-    for (const auto &c : list.commands)
+    for (const auto &c : list->commands)
         if (c.name != "btw" && c.name != "status" && c.name != "clear")
             out.push_back({c.name, c.desc, c.usage, c.local, c.source}); // labelled by the launcher
     return out;
@@ -769,17 +784,26 @@ std::vector<std::string> Backend::promptHistory(ConvRef conv) {
     const Tracked *t = findRef(conv);
     if (!t || t->info.cwd.empty())
         return {};
-    return claude::promptHistory(
-        _paths.home + "/history.jsonl", _paths.home + "/paste-cache", t->info.cwd, t->info.sessionId
-    );
+    return loadedHistory(t->info.cwd, t->info.sessionId);
 }
 
 std::vector<std::string> Backend::folderPromptHistory(const std::string &dir) {
     if (dir.empty())
         return {};
-    return claude::promptHistory(
-        _paths.home + "/history.jsonl", _paths.home + "/paste-cache", dir, {}
-    );
+    return loadedHistory(dir, {});
+}
+
+// What is read of the folder's history already (the UI thread never reads
+// all of history.jsonl, nor waits for a worker that does); none yet: it is
+// read ahead now, for the next ↑.
+std::vector<std::string>
+Backend::loadedHistory(const std::string &dir, const std::string &sessionId) {
+    std::vector<std::string> out;
+    if (!claude::loadedPromptHistory(
+            _paths.home + "/history.jsonl", _paths.home + "/paste-cache", dir, sessionId, &out
+        ))
+        readAheadHistory(dir);
+    return out;
 }
 
 // ── Deleting ────────────────────────────────────────────────────────────────

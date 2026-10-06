@@ -905,6 +905,7 @@ public:
         _letter.reset();
         View::styleChanged();
     }
+    bool showsBitmap(const gfx::Bitmap *b) const override { return _bmp.get() == b; }
     void paint(gfx::Painter &p) override {
         const RectF r{0, 0, 96, 96};
         if (_bmp && !_bmp->empty()) {

@@ -453,8 +453,12 @@ public:
     virtual void   setFullscreen(bool on)          = 0;
     virtual bool   isMaximized() const             = 0;
     virtual bool   isFullscreen() const            = 0;
-    virtual bool   isActive() const                = 0;
-    virtual void   activate()                      = 0; // raise + focus where the OS allows it
+    // Minimised, as far as the OS tells a client (X11's hidden state,
+    // IsIconic, miniaturized); StateChanged follows a change. Always false
+    // on Wayland, which doesn't say.
+    virtual bool   isMinimized() const { return false; }
+    virtual bool   isActive() const = 0;
+    virtual void   activate()       = 0; // raise + focus where the OS allows it
     // Same, with a token from an event (Wayland needs one to raise a window
     // on user request; elsewhere it is ignored).
     virtual void   activateWithToken(std::string_view token) { activate(); }

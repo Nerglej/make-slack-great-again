@@ -33,6 +33,23 @@ TEST("crypto: sha256 / sha1 test vectors") {
     );
 }
 
+TEST("crypto: Sha256 in pieces hashes as the whole") {
+    using crypto::bytes;
+    std::string data;
+    for (int i = 0; i < 1000; ++i)
+        data += char(i * 7 + 3);
+    // Every split, piece sizes across the 64-byte block edge.
+    for (size_t step : {size_t(1), size_t(7), size_t(63), size_t(64), size_t(65), size_t(999)}) {
+        for (size_t len : {size_t(0), size_t(55), size_t(56), size_t(64), size_t(1000)}) {
+            crypto::Sha256         s;
+            const std::string_view d = std::string_view(data).substr(0, len);
+            for (size_t i = 0; i < d.size(); i += step)
+                s.update(d.substr(i, step));
+            CHECK(bytes(s.finish()) == bytes(crypto::sha256(d)));
+        }
+    }
+}
+
 TEST("crypto: hmac-sha1 (RFC 2202)") {
     using crypto::bytes;
     using crypto::hex;

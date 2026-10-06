@@ -672,4 +672,8 @@ RectF View::tooltipAnchor() const {
     return windowRect();
 }
 
+bool View::showsBitmap(const gfx::Bitmap *) const {
+    return false;
+}
+
 } // namespace ui

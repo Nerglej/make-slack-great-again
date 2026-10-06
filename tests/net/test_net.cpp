@@ -27,6 +27,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <thread>
 
 #ifndef _WIN32
 #include <csignal>
@@ -585,6 +586,79 @@ TEST("http: download progress — throttled, in order, never after done") {
     pumpFor(300);
     CHECK(ticks.empty());
     CHECK(!late);
+}
+
+TEST("http: a handler hears a 2xx body as it comes, on the worker; other answers fill body") {
+    NEED_SERVER();
+    struct Collect final : net::Handler {
+        std::string     got, finishedBody;
+        int             pieces = 0, finishedStatus = -1;
+        bool            offUi = true, refuse = false;
+        std::thread::id ui = std::this_thread::get_id();
+        bool            body(const char *d, size_t n) override {
+            offUi = offUi && std::this_thread::get_id() != ui;
+            got.append(d, n);
+            ++pieces;
+            return !refuse;
+        }
+        void finished(net::Response &r) override {
+            offUi          = offUi && std::this_thread::get_id() != ui;
+            finishedStatus = r.status;
+            finishedBody   = r.body;
+        }
+    };
+    auto run = [&](const std::string &url, bool stream, bool refuse = false) {
+        auto h        = std::make_shared<Collect>();
+        h->streamBody = stream;
+        h->refuse     = refuse;
+        net::Request req;
+        req.url     = url;
+        req.handler = h;
+        return std::make_pair(fetch(std::move(req)), h);
+    };
+    // Content-Length, in pieces, nothing in Response::body.
+    const size_t n = 3 * 1000 * 1000 + 7;
+    auto [big, hb] = run(srv.base + "/big?n=" + std::to_string(n), true);
+    CHECK_STR(big.error, "");
+    CHECK(big.status == 200);
+    CHECK(big.body.empty());
+    REQUIRE(hb->got.size() == n);
+    bool same = true;
+    for (size_t i = 0; i < n && same; i += 997)
+        same = uint8_t(hb->got[i]) == i % 251;
+    CHECK(same);
+    CHECK(hb->pieces > 1);
+    CHECK(hb->offUi);
+    CHECK(hb->finishedStatus == 200);
+    // Chunked, and until the close.
+    auto [ch, hc] = run(srv.base + "/chunked", true);
+    CHECK_STR(ch.error, "");
+    CHECK(hc->got == "chunk one, chunk two, " + std::string(70000, 'x') + "end");
+    auto [cl, hl] = run(srv.base + "/close", true);
+    CHECK_STR(cl.error, "");
+    CHECK(startsWith(hl->got, "until close "));
+    // A redirect's own body never reaches it; the final 2xx does.
+    auto [rd, hr] = run(srv.base + "/r1", true);
+    CHECK(rd.status == 200);
+    CHECK(rd.body.empty());
+    CHECK(contains(hr->got, "hop=1"));
+    // Not 2xx: the body is the Response's as always.
+    auto [nf, hn] = run(srv.base + "/status?code=404", true);
+    CHECK(nf.status == 404);
+    CHECK_STR(nf.body, "status");
+    CHECK(hn->got.empty());
+    CHECK_STR(hn->finishedBody, "status");
+    // Not streaming: finished() sees the whole answer before `done`.
+    auto [pl, hp] = run(srv.base + "/plain", false);
+    CHECK_STR(pl.body, "hello world");
+    CHECK_STR(hp->finishedBody, "hello world");
+    CHECK(hp->got.empty());
+    CHECK(hp->offUi);
+    // A refusal stops the exchange.
+    auto [st, hs] = run(srv.base + "/big?n=" + std::to_string(n), true, true);
+    CHECK(st.status == 0);
+    CHECK_STR(st.error, "sink");
+    CHECK(hs->pieces == 1);
 }
 
 TEST("http: HEAD and 204 have no body") {

@@ -69,7 +69,16 @@ private:
 // `progress`, when set, hears the body as it arrives (bytes so far, the
 // Content-Length or 0) on the calling worker thread, as often as the
 // transport likes: client.cpp throttles it. req.onProgress is never set.
+//
+// A 2xx answer's body goes to bodySink(req, status) instead of resp.body
+// when that is not null (Handler::streamBody): in order, on this thread; its
+// false ends the exchange with error "sink". `progress` counts those bytes.
 using Progress = std::function<void(int64_t received, int64_t total)>;
+inline Handler *bodySink(const Request &req, int status) {
+    return req.handler && req.handler->streamBody && status >= 200 && status < 300
+               ? req.handler.get()
+               : nullptr;
+}
 void perform(
     const Url &url, Request &req, Response &resp, const Cancel &cancel, const Progress &progress
 );

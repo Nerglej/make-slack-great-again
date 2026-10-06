@@ -7,6 +7,21 @@
 
 namespace plat::posix {
 
+namespace {
+
+// poll()'s revents as FdRead / FdWrite (a hang-up or error reads: the read
+// finds out).
+uint32_t readiness(short revents) {
+    uint32_t ready = 0;
+    if (revents & (POLLIN | POLLHUP | POLLERR))
+        ready |= FdRead;
+    if (revents & POLLOUT)
+        ready |= FdWrite;
+    return ready;
+}
+
+} // namespace
+
 PosixLoop::PosixLoop() {
     // A self-pipe rather than eventfd so the same code builds on macOS/BSD
     // should a test ever want it there.
@@ -84,8 +99,13 @@ void PosixLoop::iterate(int timeoutMs) {
         n = poll(pfds.data(), pfds.size(), timeout);
     while (n < 0 && errno == EINTR);
 
-    if (afterWait)
-        afterWait();
+    if (afterWait) {
+        uint32_t ready = 0;
+        for (size_t i = 0; n > 0 && waitWatch && i < ids.size(); ++i)
+            if (ids[i] == waitWatch)
+                ready = readiness(pfds[i + 1].revents);
+        afterWait(ready);
+    }
 
     if (n > 0) {
         if (pfds[0].revents) {
@@ -101,14 +121,9 @@ void PosixLoop::iterate(int timeoutMs) {
                 if (x.id == ids[i - 1])
                     w = &x;
             if (!w)
-                continue; // unwatched by an earlier callback
-            uint32_t ready = 0;
-            if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR))
-                ready |= FdRead;
-            if (pfds[i].revents & POLLOUT)
-                ready |= FdWrite;
+                continue;    // unwatched by an earlier callback
             auto fn = w->fn; // copy: the callback may unwatch itself
-            fn(ready);
+            fn(readiness(pfds[i].revents));
         }
     }
     _pfds = std::move(pfds);

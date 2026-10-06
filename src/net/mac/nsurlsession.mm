@@ -535,8 +535,23 @@ void perform(
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
         resp.status             = int(http.statusCode);
         readHeaders(http, resp.headers);
-        if (data.length)
+        // A streamed body still arrives whole here (a data task with a
+        // completion block): handed over from the NSData in pieces, never
+        // copied into resp.body.
+        if (Handler *sink = bodySink(req, resp.status)) {
+            const char *p = static_cast<const char *>(data.bytes);
+            for (NSUInteger at = 0; at < data.length;) {
+                const size_t n = size_t(std::min<NSUInteger>(data.length - at, 256 * 1024));
+                if (!sink->body(p + at, n)) {
+                    resp       = Response();
+                    resp.error = "sink";
+                    return;
+                }
+                at += n;
+            }
+        } else if (data.length) {
             resp.body.assign(static_cast<const char *>(data.bytes), data.length);
+        }
         if (progress && data.length) {
             // The size the server announced, as in the ticks: 0 when it
             // didn't say (chunked), whatever arrived.

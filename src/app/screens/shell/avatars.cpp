@@ -128,7 +128,7 @@ void Avatars::filled(const std::string &key, gfx::Bitmap b) {
     for (auto &fn : waiting)
         fn(pic);
     if (ok)
-        notifyLoaded();
+        notifyLoaded(pic);
 }
 
 void Avatars::markReady(Slot &s, const std::string &key) {
@@ -153,8 +153,11 @@ void Avatars::evict() {
     }
 }
 
-void Avatars::notifyLoaded() {
-    if (_notifyQueued || !onLoaded)
+void Avatars::notifyLoaded(Picture landed) {
+    if (!onLoaded)
+        return;
+    _landed.push_back(std::move(landed)); // held until told: never a stale pointer
+    if (_notifyQueued)
         return;
     // One repaint for a burst of avatars landing together.
     _notifyQueued             = true;
@@ -162,9 +165,11 @@ void Avatars::notifyLoaded() {
     ui::app()->platform().post([this, alive] {
         if (alive.expired())
             return;
-        _notifyQueued = false;
+        _notifyQueued                 = false;
+        const std::vector<Picture> to = std::move(_landed);
+        _landed.clear();
         if (onLoaded)
-            onLoaded();
+            onLoaded(to);
     });
 }
 

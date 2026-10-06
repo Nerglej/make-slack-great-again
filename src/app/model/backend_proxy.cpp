@@ -251,6 +251,9 @@ ConvRef BackendProxy::addFoundSession(const std::string &id) {
 std::vector<Backend::Command> BackendProxy::commands(ConvRef c) {
     return _t->commands(c);
 }
+uint64_t BackendProxy::commandsRevision(ConvRef c) {
+    return _t->commandsRevision(c);
+}
 Backend::LocalResult BackendProxy::runLocalCommand(
     ConvRef c, Ts thread, const std::string &name, const std::string &args
 ) {

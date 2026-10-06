@@ -3,6 +3,7 @@
 #include "app/screens/common/canvas_doc.h"
 #include "base/i18n.h"
 #include "base/str.h"
+#include "prim/hash.h"
 #include "gfx/icons_generated.h"
 #include "ui/controls.h"
 
@@ -345,14 +346,22 @@ void CanvasPage::flushPendingSave() {
     // that changed are written, so concurrent edits elsewhere survive. When
     // it can't be expressed safely, the whole document is replaced.
     if (_bodyDirty) {
-        std::vector<screens::canvas::Chunk> base;
-        std::vector<Change>                 ops;
-        const bool                          sections =
-            !_lastHtml.empty() &&
-            screens::canvas::baseChunks(
-                _lastHtml, {_serverTitle, title, std::string(str::trim(_title->text()))}, &base
-            ) &&
-            screens::canvas::diff(base, screens::canvas::documentChunks(md), &ops);
+        // The served HTML is cut once per answer (and titles), not per save.
+        std::vector<std::string> titles{
+            _serverTitle, title, std::string(str::trim(_title->text()))
+        };
+        uint64_t key = prim::fnv1a(_lastHtml) ^ _lastHtml.size();
+        for (const std::string &t : titles)
+            key = prim::fnv1a(t, prim::fnv1a("\x1f", key));
+        if (key != _baseKey || _lastHtml.empty()) {
+            _baseKey = key;
+            _base.clear();
+            _baseOk = !_lastHtml.empty() && screens::canvas::baseChunks(_lastHtml, titles, &_base);
+        }
+        std::vector<Change> ops;
+        const bool          sections =
+            !_lastHtml.empty() && _baseOk &&
+            screens::canvas::diff(_base, screens::canvas::documentChunks(md), &ops);
         if (sections)
             changes.insert(changes.end(), ops.begin(), ops.end());
         else // Slack rejects an empty document; a lone space clears the page.

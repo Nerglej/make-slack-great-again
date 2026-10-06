@@ -263,6 +263,9 @@ public:
     // Shows and raises the window, un-hiding and un-minimising it (tray
     // clicks, notification clicks, second instances).
     void                        restore(const std::string &activationToken = {});
+    // The main window shows: not hidden to the tray, not minimised (where
+    // the OS says). Every running backend hears it (Backend::setWindowVisible).
+    bool                        windowVisible() const { return _windowVisible; }
     // Tray "Quit": saves state, then onQuit.
     void                        quit();
     std::function<void()>       onQuit;
@@ -490,6 +493,8 @@ private:
     // Real input feeds the presence link (noteActivity), throttled.
     int64_t                    _lastActivityNote = 0;
     void                       noteActivity();
+    bool                       _windowVisible = true;
+    void                       syncWindowVisible(); // after a hide, show or state change
     std::string                _composerLock, _composerSuggestion;
 
     // The visit stamps' save (coalesced), the update bar and checker,

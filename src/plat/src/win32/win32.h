@@ -276,6 +276,7 @@ public:
     void                 setFullscreen(bool on) override;
     bool                 isMaximized() const override { return IsZoomed(_hwnd) != 0; }
     bool                 isFullscreen() const override { return _fullscreen; }
+    bool                 isMinimized() const override { return IsIconic(_hwnd) != 0; }
     bool                 supportsAlwaysOnTop() const override { return true; }
     void                 setAlwaysOnTop(bool on) override;
     bool                 isAlwaysOnTop() const override;

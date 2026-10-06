@@ -3882,16 +3882,16 @@ msgid "Cannot write update to %1"
 msgstr "%1にアップデートを書き込めません"
 
 #: src/app/update/updater.cpp
+msgid "Could not replace binary: %1"
+msgstr "バイナリを置き換えられませんでした: %1"
+
+#: src/app/update/updater.cpp
 msgid "Could not move current binary — check file permissions on %1"
 msgstr "現在のバイナリを移動できませんでした — %1のファイル権限を確認してください"
 
 #: src/app/update/updater.cpp
 msgid "Could not place new binary at %1"
 msgstr "新しいバイナリを%1に配置できませんでした"
-
-#: src/app/update/updater.cpp
-msgid "Could not replace binary: %1"
-msgstr "バイナリを置き換えられませんでした: %1"
 
 #: src/app/update/updater.cpp
 msgid "Automatic updates are not supported on this platform."

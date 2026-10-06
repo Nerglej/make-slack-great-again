@@ -253,7 +253,8 @@ bool WlApp::init(std::string *error) {
 
     _displayWatch    = _loop.watch(wl_display_get_fd(display), FdRead, [](uint32_t) {});
     _loop.beforeWait = [this] { return beforeWait(); };
-    _loop.afterWait  = [this] { afterWait(); };
+    _loop.afterWait  = [this](uint32_t ready) { afterWait(ready); };
+    _loop.waitWatch  = _displayWatch;
     return true;
 }
 
@@ -528,13 +529,14 @@ bool WlApp::beforeWait() {
     return true;
 }
 
-void WlApp::afterWait() {
+// displayReady: what the loop's poll found on the display fd (no second
+// poll to ask again).
+void WlApp::afterWait(uint32_t displayReady) {
     if (_dead)
         return;
     if (_reading) {
         _reading = false;
-        pollfd p{wl_display_get_fd(display), POLLIN, 0};
-        if (poll(&p, 1, 0) > 0 && (p.revents & (POLLIN | POLLHUP | POLLERR))) {
+        if (displayReady & FdRead) {
             if (wl_display_read_events(display) < 0) {
                 fatal("read failed");
                 return;

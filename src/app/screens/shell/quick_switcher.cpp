@@ -64,6 +64,7 @@ public:
             update();
         }
     }
+    bool showsBitmap(const gfx::Bitmap *b) const override { return _icon.get() == b; }
     void paint(gfx::Painter &p) override {
         const float in = kRing + kRingGap;
         const RectF r{in, in, kBubble, kBubble};

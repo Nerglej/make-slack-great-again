@@ -10,8 +10,10 @@
 //            removed on the next start.
 //   macOS    the DMG is saved to Downloads; "Open installer" opens it.
 //
-// Network on net::Client, hashing and file work on a background thread, the
-// download a job in the footer's list. Every callback runs on the UI thread.
+// Network on net::Client; the download is written to <target>.part and hashed
+// on the net worker as it arrives, then checked and moved into place on a
+// background thread (a failed or unverified one is removed); a job in the
+// footer's list. Every callback runs on the UI thread.
 #pragma once
 
 #include <cstdint>

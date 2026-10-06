@@ -275,6 +275,8 @@ void Client::Impl::run(Job &job) {
     if (!url.parse(job.req.url) || url.scheme == "ws" || url.scheme == "wss") {
         resp.error = "url";
         resp.url   = job.req.url;
+        if (job.req.handler)
+            job.req.handler->finished(resp);
         deliver(job.id, std::move(resp));
         return;
     }
@@ -356,6 +358,8 @@ void Client::Impl::run(Job &job) {
         }
         url = std::move(next);
     }
+    if (req.handler)
+        req.handler->finished(resp);
     deliver(job.id, std::move(resp));
 }
 

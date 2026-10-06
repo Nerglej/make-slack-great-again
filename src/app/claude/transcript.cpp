@@ -1370,6 +1370,7 @@ struct FolderHistory {
     int64_t                   mtime  = -1;
     std::string               lastBytes; // up to 64 bytes before `offset`, as read
     std::vector<HistoryEntry> entries;
+    bool                      read = false; // the whole file was read once
 };
 struct HistoryCache {
     std::mutex                 lock;
@@ -1385,22 +1386,30 @@ HistoryCache &historyCache() {
 // Folders kept: the sessions' a user goes between.
 constexpr size_t kHistoryFolders = 8;
 
-} // namespace
-
-std::vector<std::string> promptHistory(
-    std::string_view historyPath,
-    std::string_view pasteDir,
-    std::string_view project,
-    std::string_view sessionId,
-    int              max
+// promptHistory; with `loadedOnly`, only for a folder read before, and
+// without waiting for a worker holding the cache: false then.
+bool historyFor(
+    std::string_view          historyPath,
+    std::string_view          pasteDir,
+    std::string_view          project,
+    std::string_view          sessionId,
+    int                       max,
+    bool                      loadedOnly,
+    std::vector<std::string> *answer
 ) {
     file::Stat st;
     if (!file::stat(historyPath, &st))
-        return {};
-    const std::string           dir   = cleanPath(project);
-    HistoryCache               &cache = historyCache();
-    std::lock_guard<std::mutex> hold(cache.lock);
+        return !loadedOnly; // no file: nothing to wait for either way
+    const std::string            dir   = cleanPath(project);
+    HistoryCache                &cache = historyCache();
+    std::unique_lock<std::mutex> hold(cache.lock, std::defer_lock);
+    if (!loadedOnly)
+        hold.lock();
+    else if (!hold.try_lock())
+        return false;
     if (cache.path != historyPath || cache.pasteDir != pasteDir) {
+        if (loadedOnly)
+            return false;
         cache.path     = historyPath;
         cache.pasteDir = pasteDir;
         cache.folders.clear();
@@ -1408,6 +1417,8 @@ std::vector<std::string> promptHistory(
     auto f = std::find_if(cache.folders.begin(), cache.folders.end(), [&](const auto &h) {
         return h.folder == dir;
     });
+    if (loadedOnly && (f == cache.folders.end() || !f->read))
+        return false;
     if (f == cache.folders.end()) {
         if (cache.folders.size() >= kHistoryFolders)
             cache.folders.erase(cache.folders.begin());
@@ -1429,13 +1440,19 @@ std::vector<std::string> promptHistory(
             h.offset = 0;
             h.entries.clear();
             h.lastBytes.clear();
+            h.read = false;
             data.clear();
         } else {
             data.erase(0, seen);
         }
     }
-    if (h.offset == 0 && !file::readAll(historyPath, &data))
-        return {};
+    if (h.offset == 0) { // the whole file: a worker's job when loadedOnly
+        if (loadedOnly && !h.read)
+            return false;
+        if (!file::readAll(historyPath, &data))
+            return true;
+    }
+    h.read             = true;
     h.mtime            = st.mtimeMicros;
     // Whole lines are kept; a last one still being written is read for this
     // answer alone.
@@ -1454,13 +1471,39 @@ std::vector<std::string> promptHistory(
     for (const std::vector<HistoryEntry> *part : {&h.entries, &partial})
         for (const HistoryEntry &e : *part)
             (!sessionId.empty() && e.sessionId == sessionId ? own : others).push_back(e.text);
-    std::vector<std::string> out;
+    std::vector<std::string> &out = *answer;
     for (const std::vector<std::string> *part : {&own, &others}) {
         for (auto it = part->crbegin(); it != part->crend() && int(out.size()) < max; ++it)
             if (out.empty() || out.back() != *it) // the same prompt twice in a row: once
                 out.push_back(*it);
     }
+    return true;
+}
+
+} // namespace
+
+std::vector<std::string> promptHistory(
+    std::string_view historyPath,
+    std::string_view pasteDir,
+    std::string_view project,
+    std::string_view sessionId,
+    int              max
+) {
+    std::vector<std::string> out;
+    historyFor(historyPath, pasteDir, project, sessionId, max, false, &out);
     return out;
+}
+
+bool loadedPromptHistory(
+    std::string_view          historyPath,
+    std::string_view          pasteDir,
+    std::string_view          project,
+    std::string_view          sessionId,
+    std::vector<std::string> *out,
+    int                       max
+) {
+    out->clear();
+    return historyFor(historyPath, pasteDir, project, sessionId, max, true, out);
 }
 
 // ── Rewriting the transcript ────────────────────────────────────────────────

@@ -166,6 +166,7 @@ public:
     void           findAgentSessions(std::function<void(std::vector<FoundSession>)> done) override;
     model::ConvRef addFoundSession(const std::string &id) override;
     std::vector<Command> commands(model::ConvRef conv) override;
+    uint64_t             commandsRevision(model::ConvRef conv) override;
     LocalResult          runLocalCommand(
         model::ConvRef conv, model::Ts thread, const std::string &name, const std::string &args
     ) override;
@@ -351,6 +352,9 @@ private:
     int     subagentReplyCount(const Tracked &t, const std::string &agentId, model::Ts *latest);
     // When the subagent's run under way began (epoch ms); 0 = it isn't running.
     int64_t subagentRunSinceMs(const Tracked &t, const std::string &agentId);
+    // The folder's prompt history (↑) read on a worker, one read per folder
+    // at a time (_historyReads).
+    void    readAheadHistory(const std::string &dir);
 
     // ── backend_send.cpp ────────────────────────────────────────────────────
     void        sendText(model::ConvRef conv, std::string text, model::Ts threadTs, Done done);
@@ -399,6 +403,14 @@ private:
     void branchStarted(const std::string &branchConv, AgentBranchDone started);
 
     // ── backend_manage.cpp ──────────────────────────────────────────────────
+    // ↑'s history for `dir` from what is read already; the first look reads
+    // it ahead (readAheadHistory) and answers none.
+    std::vector<std::string> loadedHistory(const std::string &dir, const std::string &sessionId);
+    struct CommandList;
+    // conv's folder's slash commands, asked of Claude Code again after a
+    // while; null without a folder.
+    CommandList *commandList(model::ConvRef conv);
+
     void hideSession(const std::string &convId, const std::shared_ptr<Cleanup> &cleanup);
     void stopRemoved(const std::string &sessionId, const std::string &cwd);
     void removeOwned(
@@ -573,9 +585,12 @@ private:
     struct CommandList {
         std::vector<SlashCommand> commands;
         int64_t                   fetchedMs = 0;
+        uint64_t                  rev       = 0; // commandsRevision: unique across folders
         bool                      loading   = false;
     };
-    std::unordered_map<std::string, CommandList> _commands;            // by session folder
+    std::unordered_map<std::string, CommandList> _commands;        // by session folder
+    uint64_t                                     _commandsRev = 0; // the last rev handed out
+    std::vector<std::string>              _historyReads; // folders a worker reads the history of
     std::unordered_map<std::string, bool> _roleBusy, _roleUnavailable; // by role, as announced
     Account                               _account; // the login, as Claude Code last reported it
     // The user's reactions, by conversation then message (react()).

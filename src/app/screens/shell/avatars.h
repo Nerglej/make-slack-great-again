@@ -8,9 +8,10 @@
 // file (centre-cropped to a square, resized to px×px). When the picture lands
 // that same bitmap is filled in place, so every view already holding it shows
 // it without being told, and onLoaded runs (once per loop turn) for the shell
-// to repaint the window. A path may be an http(s) URL (Slack's avatars): it
-// is downloaded first (RemoteImages) unless on disk already. Callers that
-// need pixels now (tray, notifications) use whenReady().
+// to repaint the views showing those pictures. A path may be an http(s) URL
+// (Slack's avatars): it is downloaded first (RemoteImages) unless on disk
+// already. Callers that need pixels now (tray, notifications) use
+// whenReady().
 //
 // The cache is bounded: least recently asked-for pictures go once their
 // pixels pass the budget (views holding one keep it).
@@ -65,9 +66,9 @@ public:
     // Decodes asked of the worker so far (tests).
     size_t decodes() const { return _decodes; }
 
-    void                  setRemote(screens::RemoteImages *r) { _remote = r; }
-    // A picture filled its bitmap (UI thread, coalesced).
-    std::function<void()> onLoaded;
+    void setRemote(screens::RemoteImages *r) { _remote = r; }
+    // Pictures filled their bitmaps (UI thread, coalesced): the ones that did.
+    std::function<void(const std::vector<Picture> &landed)> onLoaded;
 
 private:
     struct Slot {
@@ -83,14 +84,15 @@ private:
     void filled(const std::string &key, gfx::Bitmap b);
     void markReady(Slot &s, const std::string &key);
     void evict();
-    void notifyLoaded();
+    void notifyLoaded(Picture landed);
 
     screens::ImageCache                  &_images;
     std::unordered_map<std::string, Slot> _slots;
     std::list<std::string>                _lru; // ready slots, most recently asked first
     screens::RemoteImages                *_remote = nullptr;
-    std::shared_ptr<char>                 _alive; // guards downloads and decodes
-    std::string                           _probe; // get()'s key buffer
+    std::shared_ptr<char>                 _alive;  // guards downloads and decodes
+    std::string                           _probe;  // get()'s key buffer
+    std::vector<Picture>                  _landed; // filled since onLoaded last ran
     size_t                                _bytes = 0, _budget, _decodes = 0;
     bool                                  _notifyQueued = false;
 };

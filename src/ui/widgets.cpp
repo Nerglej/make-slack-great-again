@@ -754,6 +754,10 @@ const gfx::Bitmap *Image::bitmap() const {
     return _bitmap.get();
 }
 
+bool Image::showsBitmap(const gfx::Bitmap *b) const {
+    return _bitmap.get() == b;
+}
+
 void Image::setBitmap(std::shared_ptr<const gfx::Bitmap> b) {
     app()->cancelTimer(_timer);
     _timer = 0;

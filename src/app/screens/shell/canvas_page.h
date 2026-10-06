@@ -13,6 +13,7 @@
 // can't be done safely. There is no co-editing.
 #pragma once
 
+#include "app/screens/common/canvas_doc.h"
 #include "screens/common/context.h"
 #include "ui/ui.h"
 
@@ -80,6 +81,11 @@ private:
     bool                  _loading = false, _refetching = false, _saving = false;
     bool                  _bodyDirty = false, _titleDirty = false;
     std::shared_ptr<bool> _alive;
+
+    // baseChunks of _lastHtml as last cut, keyed by a hash of it and the titles.
+    std::vector<screens::canvas::Chunk> _base;
+    uint64_t                            _baseKey = 0;
+    bool                                _baseOk  = false;
 };
 
 // The body's conversion back (canvas_page.cpp), exposed for tests; the

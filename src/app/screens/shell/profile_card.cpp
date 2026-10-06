@@ -207,7 +207,21 @@ void ProfileCard::paint(gfx::Painter &p) {
     if (_avatar && !_avatar->empty()) { // empty: still downloading
         p.save();
         p.clipRoundRect(av, kAvRadius);
-        p.drawBitmap(_avatar->view(), av, gfx::Sampling::Smooth);
+        // Shrunk once for the pixels it lands on (drawBitmap would
+        // area-average on every paint), as ui::Image does.
+        const gfx::Bitmap *src = _avatar.get();
+        int                dw = 0, dh = 0;
+        p.snappedSize(av, &dw, &dh);
+        if (dw > 0 && dh > 0 && (src->width() > dw || src->height() > dh)) {
+            if (_shrunk.src != src->pixels() || _shrunk.sw != src->width() ||
+                _shrunk.sh != src->height() || _shrunk.bmp.width() != dw ||
+                _shrunk.bmp.height() != dh)
+                _shrunk = {
+                    src->pixels(), src->width(), src->height(), gfx::resize(src->view(), dw, dh)
+                };
+            src = &_shrunk.bmp;
+        }
+        p.drawBitmap(src->view(), av, gfx::Sampling::Smooth);
         p.restore();
     } else { // the initial-letter tile on presence.away
         screens::paintInitial(

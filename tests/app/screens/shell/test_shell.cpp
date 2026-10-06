@@ -250,6 +250,32 @@ TEST("sidebar: the open chat isn't read while the window is in the background") 
     CHECK(h.store.conversation(mira).unread == 0);
 }
 
+TEST("window: hidden to the tray or minimised, the backend polls as hidden; shown, as shown") {
+    Harness h;
+    REQUIRE(h.backend.windowVisible);
+    // Minimised (the OS says so: StateChanged), then raised again.
+    h.win->native().minimize();
+    pump();
+    CHECK_FALSE(h.backend.windowVisible);
+    CHECK_FALSE(h.sh->windowVisible());
+    h.sh->restore();
+    pump();
+    CHECK(h.backend.windowVisible);
+    // To the tray (close with Settings → Close to tray), then back.
+    h.settings.closeToTray = true;
+    REQUIRE(h.sh->hideToTray());
+    pump();
+    CHECK_FALSE(h.backend.windowVisible);
+    h.sh->restore();
+    pump();
+    CHECK(h.backend.windowVisible);
+    // Another state change (maximised) is no news.
+    h.backend.windowVisible = false;
+    h.win->native().setMaximized(true);
+    pump();
+    CHECK_FALSE(h.backend.windowVisible); // not told again: nothing changed for it
+}
+
 TEST("sidebar: a presence flip restyles rows in place; a roster-shape change rebuilds") {
     Harness         h;
     auto           &sb   = h.sh->sidebar();
@@ -1740,14 +1766,19 @@ TEST("avatars: a URL hands out a blank that fills in place when the download lan
         screens::ImageCache images(app().platform());
         shell::Avatars      av(images);
         av.setRemote(&remote);
-        int loaded   = 0;
-        av.onLoaded  = [&] { ++loaded; };
+        int                                  loaded = 0;
+        std::vector<shell::Avatars::Picture> landed;
+        av.onLoaded = [&](const std::vector<shell::Avatars::Picture> &l) {
+            ++loaded;
+            landed = l;
+        };
         const auto b = av.get("https://avatars.test/mira.png", 40);
         REQUIRE(b != nullptr);
         CHECK(b->empty()); // the placeholder shows meanwhile
         CHECK(av.get("https://avatars.test/mira.png", 40) == b);
         REQUIRE(until([&] { return loaded == 1; }));
-        CHECK(b->width() == 40 && b->height() == 40); // the same bitmap, filled
+        CHECK(b->width() == 40 && b->height() == 40);  // the same bitmap, filled
+        CHECK((landed.size() == 1 && landed[0] == b)); // what the shell repaints
         CHECK(asked == 1);
         // On disk now: a fresh cache decodes it (on the worker), no download.
         shell::Avatars again(images);
@@ -1796,7 +1827,7 @@ TEST("avatars: files decode on the worker, never in get(); the cache is bounded"
     screens::ImageCache images(app().platform());
     shell::Avatars      av(images);
     int                 loaded = 0;
-    av.onLoaded                = [&] { ++loaded; };
+    av.onLoaded                = [&](const std::vector<shell::Avatars::Picture> &) { ++loaded; };
     const std::string mira     = std::string(MSGA_TEST_ASSETS) + "/avatars/mira.png";
     // get() returns at once with a blank: the decode is the worker's.
     const auto        b        = av.get(mira, 40);

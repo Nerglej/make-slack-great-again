@@ -33,6 +33,38 @@ TEST("damage: changing one label repaints only its rect (plus its ink margin)") 
     CHECK(boxes[0]->paints == 0 && boxes[4]->paints == 0);
 }
 
+TEST("damage: a bitmap filled in place repaints only the views showing it") {
+    Win   w(400, 300);
+    auto *col = w.root().add<ui::View>();
+    col->style().padding(10).spacing(10).items(ui::Align::Start);
+    auto  shared = std::make_shared<gfx::Bitmap>();
+    auto  other  = std::make_shared<gfx::Bitmap>();
+    auto *a      = col->add<ui::Image>();
+    auto *b      = col->add<ui::Image>();
+    auto *c      = col->add<ui::Image>();
+    auto *gone   = col->add<ui::Image>();
+    for (ui::Image *i : {a, b, c, gone})
+        i->style().size(40, 40);
+    a->setBitmap(shared);
+    b->setBitmap(other);
+    c->setBitmap(shared);
+    gone->setBitmap(shared);
+    gone->setVisible(false); // hidden: paints nothing, damages nothing
+    w.frame();
+    const int f0 = w.w->stats().frames;
+    w.w->damageShowing({other});
+    w.frame();
+    CHECK(w.w->stats().frames == f0 + 1);
+    const float s = w.w->scale();
+    CHECK(w.damageArea() == long(40 * s) * long(40 * s)); // b alone
+    w.w->damageShowing({shared});
+    w.frame();
+    CHECK(w.damageArea() == 2 * long(40 * s) * long(40 * s)); // a and c
+    w.w->damageShowing({std::make_shared<gfx::Bitmap>()});    // nobody's
+    w.frame();
+    CHECK(w.w->stats().frames == f0 + 2);
+}
+
 TEST("damage: hover repaints only the button; idle frames paint nothing") {
     Win   w(400, 300);
     auto *col = w.root().add<ui::View>();

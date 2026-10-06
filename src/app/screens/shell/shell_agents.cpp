@@ -46,6 +46,9 @@ void Shell::buildTeammatePage(View *stack) {
     _teammatePage->onOpenSession   = [this](ConvRef c) { open(c); };
     _teammatePage->onEdit          = [this](const std::string &id) { editTeammate(id); };
     _teammatePage->onFolderChanged = [this] {
+        // ↑'s history for the folder: asked now, so a first look reads it
+        // ahead on a worker rather than at the first ↑.
+        _ctx.backend.folderPromptHistory(_teammatePage->folder());
         applyTeammateComposer();
         if (teammateOpen()) // a folder picked: ready to write
             _composer->edit().focus();

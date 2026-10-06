@@ -117,10 +117,45 @@ struct Body {
     // The caller's progress hook (perform()'s) and the Content-Length.
     const Progress *progress = nullptr;
     int64_t         total    = 0;
+    // A streamed body's handler (bodySink) and what it heard so far.
+    Handler        *sink     = nullptr;
+    size_t          streamed = 0;
 
     void report(size_t got) const {
         if (progress && *progress)
             (*progress)(int64_t(got), total);
+    }
+    size_t received(const std::string &out) const { return sink ? streamed : out.size(); }
+    // n bytes to the sink.
+    bool   put(const char *data, size_t n) {
+        streamed += n;
+        if (!sink->body(data, n)) {
+            *error = "sink";
+            return false;
+        }
+        report(streamed);
+        return true;
+    }
+    // take() for a streamed body: what is buffered, then reads in chunks.
+    bool stream(size_t n) {
+        const size_t have = std::min(n, buf->size() - pos);
+        if (have && !put(buf->data() + pos, have))
+            return false;
+        pos += have;
+        n -= have;
+        char chunk[kReadChunk];
+        while (n) {
+            const long r = s.read(chunk, std::min(n, sizeof chunk), w, error);
+            if (r <= 0) {
+                if (r == 0)
+                    *error = "protocol: truncated body";
+                return false;
+            }
+            if (!put(chunk, size_t(r)))
+                return false;
+            n -= size_t(r);
+        }
+        return true;
     }
     bool more() {
         if (pos > 0) {
@@ -151,6 +186,8 @@ struct Body {
     // n body bytes appended to *out: what is buffered, then read straight
     // into its place, with no staging copy (a Content-Length body or a chunk).
     bool take(size_t n, std::string *out) {
+        if (sink)
+            return stream(n);
         const size_t have = std::min(n, buf->size() - pos);
         if (out->empty())
             out->reserve(n); // later chunks grow it geometrically
@@ -190,7 +227,7 @@ struct Body {
                 if (++digits > 12)
                     break;
             }
-            if (digits == 0 || digits > 12 || out->size() + size > kMaxBody) {
+            if (digits == 0 || digits > 12 || received(*out) + size > kMaxBody) {
                 *error =
                     digits && digits <= 12 ? "protocol: body too large" : "protocol: bad chunk";
                 return false;
@@ -263,6 +300,7 @@ Outcome exchange(
     Body body{s, &buf, size_t(headLen), w, error};
     body.progress = &progress;
     body.total    = contentLength(resp.headers);
+    body.sink     = bodySink(req, resp.status);
     if (bodyless(resp.status, req.method))
         return keep && body.pos == buf.size() ? Outcome::Kept : Outcome::Done;
 
@@ -290,6 +328,22 @@ Outcome exchange(
         }
         if (!body.take(size_t(n), &resp.body))
             return Outcome::Failed;
+    } else if (body.sink) {
+        // Neither, streamed: until the server closes.
+        if (body.pos < buf.size() && !body.put(buf.data() + body.pos, buf.size() - body.pos))
+            return Outcome::Failed;
+        char chunk[kReadChunk];
+        for (;;) {
+            const long r = s.read(chunk, sizeof chunk, w, error);
+            if (r == 0)
+                return Outcome::Done;
+            if (r < 0 || !body.put(chunk, size_t(r)))
+                return Outcome::Failed;
+            if (body.streamed > kMaxBody) {
+                *error = "protocol: body too large";
+                return Outcome::Failed;
+            }
+        }
     } else {
         // Neither: the body runs until the server closes.
         resp.body.assign(buf, body.pos);

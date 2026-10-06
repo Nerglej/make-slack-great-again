@@ -73,6 +73,19 @@ downloadAuth(std::string_view url, const std::vector<TeamAuth> &signedIn, const 
     return onScreen;
 }
 
+namespace {
+
+// The answer parsed on the net worker (a users.list page or a history
+// page is hundreds of KB of JSON); the UI thread gets the Document ready.
+class ApiAnswer final : public net::Handler {
+public:
+    void finished(net::Response &r) override { error = parseApiResponse(std::move(r), &doc); }
+    json::Document doc;
+    std::string    error;
+};
+
+} // namespace
+
 net::RequestId apiCall(
     net::Client &client, const Auth &auth, std::string_view method, std::string form, ApiDone done
 ) {
@@ -82,10 +95,10 @@ net::RequestId apiCall(
     req.body   = std::move(form);
     req.headers.push_back({"Content-Type", "application/x-www-form-urlencoded; charset=utf-8"});
     addAuthHeaders(req.headers, auth);
-    return client.send(std::move(req), [done = std::move(done)](net::Response r) {
-        json::Document    doc;
-        const std::string err = parseApiResponse(std::move(r), &doc);
-        done(doc, err);
+    auto answer = std::make_shared<ApiAnswer>();
+    req.handler = answer;
+    return client.send(std::move(req), [answer, done = std::move(done)](net::Response) {
+        done(answer->doc, answer->error);
     });
 }
 

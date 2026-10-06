@@ -95,6 +95,9 @@ public:
     void
     editCanvas(const std::string &fileId, std::vector<CanvasChange> changes, Done done) override;
     void deleteCanvas(const std::string &fileId, Done done) override;
+    // Nothing polls here; tests read what the shell said last.
+    void setWindowVisible(bool visible) override { windowVisible = visible; }
+    bool windowVisible = true;
 
     // ── Demo extras ─────────────────────────────────────────────────────────
     const Fixture   &fixture() const { return _fx; }

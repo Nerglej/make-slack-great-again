@@ -143,7 +143,7 @@ void Accounts::start() {
     // The rest still connect — badges and notifications must not
     // depend on clicking each one — one at a time after the open one.
     for (const auth::WorkspaceRecord &r : _store.all())
-        if (r.key() != _activeKey)
+        if (!r.hasKey(_activeKey))
             _pending.push_back(r.key());
     startNext();
 }
@@ -238,7 +238,7 @@ void Accounts::addSessionWorkspaces(std::vector<slack::Credentials> creds) {
             continue;
         bool justAdded = false;
         for (const auto &k : added)
-            justAdded = justAdded || k == r.key();
+            justAdded = justAdded || r.hasKey(k);
         const slack::Credentials c = slack::fromRecord(r);
         if (justAdded || c.cookie.empty() || c.workspaceUrl.empty() || c.cookie == cookie)
             continue;
@@ -374,6 +374,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
         auto backend     = std::make_unique<claude::Backend>(st, pa, claude::fromRecord(*rec));
         backend->onError = onError;
         backend->setZenMode(_settings.zenMode(key));
+        backend->setWindowVisible(_shell.windowVisible());
         r->claude  = backend.get();
         r->backend = std::move(backend);
         _links->setAgents(&st, r->claude);
@@ -412,6 +413,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
             backend->setRealtime(socketMode());
         backend->setPresenceMode(model::Backend::PresenceMode(_settings.presence));
         backend->setNamesMode(model::Backend::NamesMode(_settings.names));
+        backend->setWindowVisible(_shell.windowVisible()); // started while hidden: polls slowly
         r->slack   = backend.get();
         r->backend = std::move(backend);
         _links->attach(st, *r->slack);

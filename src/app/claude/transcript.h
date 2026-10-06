@@ -277,6 +277,18 @@ std::vector<std::string> promptHistory(
     std::string_view sessionId,
     int              max = 100
 );
+// promptHistory for the UI thread: only once the folder's history was read
+// (an earlier call, a worker's read ahead) — then just what was appended
+// since is read — and never waiting on a worker busy with the file. False
+// (*out empty) when that is still to do: read it on a worker first.
+bool loadedPromptHistory(
+    std::string_view          historyPath,
+    std::string_view          pasteDir,
+    std::string_view          project,
+    std::string_view          sessionId,
+    std::vector<std::string> *out,
+    int                       max = 100
+);
 
 // Whether the transcript at `path` has a prompt or an answer (any user or
 // assistant record) after the record `uuid` — whether a session went on

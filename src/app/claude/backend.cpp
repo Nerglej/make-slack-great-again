@@ -2752,16 +2752,27 @@ void Backend::setActiveConversation(ConvRef conv, Ts) {
         _lastConv = id;
         scheduleSaveKnown();
     }
-    // Its prompt history (↑), read ahead on a worker: the first look at a
-    // folder's reads all of history.jsonl, later ones what was added since.
+    // Its prompt history (↑), read ahead.
     if (t && !t->info.cwd.empty())
-        model::runInBackground(
-            _app,
-            [home = _paths.home, cwd = t->info.cwd] {
-                claude::promptHistory(home + "/history.jsonl", home + "/paste-cache", cwd, {}, 0);
-            },
-            [] {}
-        );
+        readAheadHistory(t->info.cwd);
+}
+
+// On a worker: the first look at a folder's reads all of history.jsonl, later
+// ones what was added since. One read per folder at a time.
+void Backend::readAheadHistory(const std::string &dir) {
+    if (std::find(_historyReads.begin(), _historyReads.end(), dir) != _historyReads.end())
+        return;
+    _historyReads.push_back(dir);
+    model::runInBackground(
+        _app,
+        [home = _paths.home, dir] {
+            claude::promptHistory(home + "/history.jsonl", home + "/paste-cache", dir, {}, 0);
+        },
+        [this, alive = _alive, dir] {
+            if (*alive)
+                std::erase(_historyReads, dir);
+        }
+    );
 }
 
 bool Backend::isAgentSession(ConvRef conv) const {

@@ -18,6 +18,11 @@
 #include "base/winstr.h"
 
 #include <windows.h>
+#else
+#include <cerrno>
+#include <cstdio>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 using i18n::arg;
@@ -35,41 +40,167 @@ constexpr int         kDownloadTimeoutMs = 10 * 60'000;
 using base::widePath;
 #endif
 
-// Puts the verified download in place (a worker thread); "" or why not.
-std::string install(const std::string &target, const std::string &bytes) {
+// Why the download couldn't be written next to `target` (at `part`).
+std::string writeFailed(const std::string &target, const std::string &part) {
+#if defined(_WIN32)
+    (void)target;
+    return arg(tr("Cannot write update to %1"), part);
+#elif defined(__APPLE__)
+    (void)part;
+    return arg(tr("Cannot write update to %1"), target);
+#else
+    (void)part;
+    return arg(tr("Could not replace binary: %1"), target);
+#endif
+}
+
+// The download, written to <target>.part on the net worker as it arrives
+// and hashed on the way (net::Handler); checked and moved into place on a
+// worker once it is all there. One that never got there removes its file.
+class PartFile final : public net::Handler {
+public:
+    explicit PartFile(std::string t) : target(std::move(t)), part(target + ".part") {
+        streamBody = true;
+    }
+    ~PartFile() override { discard(); }
+
+    bool body(const char *data, size_t n) override {
+        if (!open())
+            return false;
+        sha.update({data, n});
+        if (put(data, n))
+            return true;
+        error = writeFailed(target, part);
+        return false;
+    }
+    // A worker's, after the last byte: flushed to disk and closed. False:
+    // `error` says why.
+    bool finish() {
+        if (!open())
+            return false;
+        if (close(true))
+            return true;
+        error = writeFailed(target, part);
+        return false;
+    }
+    // Closes and removes what was written (a failure, a bad hash).
+    void discard() {
+        close(false);
+        if (_opened && !_installed)
+            file::remove(part);
+        _opened = false;
+    }
+    void installed() { _installed = true; }
+
+    const std::string target, part;
+    crypto::Sha256    sha;
+    std::string       error; // why a write failed
+
+private:
+    // Made (or truncated) at the first byte, on the worker; false once
+    // anything failed.
+    bool open() {
+        if (_opened)
+            return isOpen() && error.empty();
+        _opened = true;
+        file::makeDirs(file::dirName(part));
+#if defined(_WIN32)
+        _fd = CreateFileW(
+            widePath(part).c_str(),
+            GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr
+        );
+#else
+#ifdef __APPLE__
+        const mode_t mode = 0644; // the DMG
+#else
+        const mode_t mode = 0755; // the binary
+#endif
+        _fd = ::open(part.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
+#endif
+        if (!isOpen())
+            error = writeFailed(target, part);
+        return error.empty();
+    }
+    bool put(const char *data, size_t n) {
+        while (n) {
+#ifdef _WIN32
+            DWORD w = 0;
+            if (!WriteFile(_fd, data, DWORD(std::min<size_t>(n, 1u << 30)), &w, nullptr) || !w)
+                return false;
+#else
+            const ssize_t w = ::write(_fd, data, n);
+            if (w < 0 && errno == EINTR)
+                continue;
+            if (w <= 0)
+                return false;
+#endif
+            data += w;
+            n -= size_t(w);
+        }
+        return true;
+    }
+    // durable: flushed to disk first (before the rename, or a crash can
+    // leave the renamed file empty). False when anything failed.
+    bool close(bool durable) {
+        if (!isOpen())
+            return false;
+#ifdef _WIN32
+        bool ok = !durable || FlushFileBuffers(_fd);
+        ok      = CloseHandle(_fd) && ok;
+        _fd     = INVALID_HANDLE_VALUE;
+#else
+        bool ok = !durable || ::fsync(_fd) == 0;
+        ok      = ::close(_fd) == 0 && ok;
+        _fd     = -1;
+#endif
+        return ok;
+    }
+#ifdef _WIN32
+    bool   isOpen() const { return _fd != INVALID_HANDLE_VALUE; }
+    HANDLE _fd = INVALID_HANDLE_VALUE;
+#else
+    bool isOpen() const { return _fd >= 0; }
+    int  _fd = -1;
+#endif
+    bool _opened = false, _installed = false;
+};
+
+// Puts the verified download (closed, at part.part) in place (a worker
+// thread); "" or why not.
+std::string install(PartFile &part) {
+    const std::string &target = part.target, &tmp = part.part;
 #if defined(_WIN32)
     // Windows locks a running .exe against replacing, not against renaming:
     // the current one moves aside first, then the new one takes its name.
-    const std::string tmp = target + ".download", backup = target + ".old";
-    if (!file::writeAtomic(tmp, bytes))
-        return arg(tr("Cannot write update to %1"), tmp);
+    const std::string backup = target + ".old";
     file::remove(backup);
-    if (!MoveFileExW(
-            widePath(target).c_str(), widePath(backup).c_str(), MOVEFILE_REPLACE_EXISTING
-        )) {
-        file::remove(tmp);
+    if (!MoveFileExW(widePath(target).c_str(), widePath(backup).c_str(), MOVEFILE_REPLACE_EXISTING))
         return arg(
             tr("Could not move current binary \xE2\x80\x94 check file permissions on %1"), target
         );
-    }
     if (!MoveFileExW(widePath(tmp).c_str(), widePath(target).c_str(), MOVEFILE_REPLACE_EXISTING)) {
         MoveFileExW(widePath(backup).c_str(), widePath(target).c_str(), 0); // best-effort restore
-        file::remove(tmp);
         return arg(tr("Could not place new binary at %1"), target);
     }
-    return {};
-#elif defined(__APPLE__)
-    // The DMG, for the user to open.
-    if (!file::writeAtomic(target, bytes))
-        return arg(tr("Cannot write update to %1"), target);
-    return {};
 #else
-    // A temp file next to the binary renamed over it: the directory entry
-    // swaps atomically, the running process keeps its inode.
-    if (!file::writeAtomic(target, bytes, 0755))
-        return arg(tr("Could not replace binary: %1"), target);
-    return {};
+    // Renamed over the target (Linux: the binary, macOS: the DMG): the
+    // directory entry swaps atomically, a running process keeps its inode.
+    if (::rename(tmp.c_str(), target.c_str()) != 0)
+        return writeFailed(target, tmp);
 #endif
+    part.installed();
+    return {};
+}
+
+bool digestMatches(const std::array<uint8_t, 32> &digest, std::string_view expectedHex) {
+    if (expectedHex.empty())
+        return true; // older manifests carry no hash: unchecked
+    return str::iequals(crypto::hex(crypto::bytes(digest)), expectedHex);
 }
 
 } // namespace
@@ -127,9 +258,7 @@ std::string manifestUrl() {
 }
 
 bool checksumMatches(std::string_view bytes, std::string_view expectedHex) {
-    if (expectedHex.empty())
-        return true; // older manifests carry no hash: unchecked
-    return str::iequals(crypto::hex(crypto::bytes(crypto::sha256(bytes))), expectedHex);
+    return digestMatches(crypto::sha256(bytes), expectedHex);
 }
 
 // ── Updater ─────────────────────────────────────────────────────────────────
@@ -253,31 +382,34 @@ void Updater::download(int version, std::string sha256) {
         e.percent = pct;
         emit(std::move(e));
     };
-    _client.send(std::move(req), [this, alive, job, sha256](net::Response r) {
-        if (alive.expired()) {
+    // Written and hashed on the net worker as it arrives (PartFile).
+    auto part   = std::make_shared<PartFile>(_target);
+    req.handler = part;
+    _client.send(std::move(req), [this, alive, job, sha256, part](net::Response r) {
+        if (alive.expired()) { // the file goes with the last PartFile reference
             model::jobs().end(job);
             return;
         }
-        if (!r.ok()) {
-            model::jobs().end(job);
-            _busy = false;
-            const std::string why =
-                r.error.empty() ? "HTTP " + str::number(int64_t(r.status)) : r.error;
-            emit({Event::Kind::Failed, 0, arg(tr("Download failed: %1"), why)});
-            return;
-        }
-        // Hash and write off the UI thread: tens of megabytes.
-        auto body = std::make_shared<std::string>(std::move(r.body));
-        auto err  = std::make_shared<std::string>();
+        auto err = std::make_shared<std::string>();
+        if (!r.ok())
+            *err = !part->error.empty() ? part->error
+                   : r.error.empty()
+                       ? arg(tr("Download failed: %1"), "HTTP " + str::number(int64_t(r.status)))
+                       : arg(tr("Download failed: %1"), r.error);
+        // Closed, checked and moved into place off the UI thread (an fsync of
+        // tens of megabytes); a failed or unverified one is removed there.
         model::runInBackground(
             _app,
-            [body, err, sha256, target = _target] {
-                if (!checksumMatches(*body, sha256))
-                    *err = tr("Downloaded update is corrupt (checksum mismatch).");
-                else
-                    *err = install(target, *body);
-                body->clear();
-                body->shrink_to_fit();
+            [part, err, sha256] {
+                if (err->empty() && part->finish()) {
+                    if (!digestMatches(part->sha.finish(), sha256))
+                        *err = tr("Downloaded update is corrupt (checksum mismatch).");
+                    else
+                        *err = install(*part);
+                } else if (err->empty()) {
+                    *err = part->error;
+                }
+                part->discard();
             },
             [this, alive, job, err] {
                 model::jobs().end(job);

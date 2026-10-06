@@ -59,6 +59,7 @@ public:
     void        findAgentSessions(std::function<void(std::vector<FoundSession>)> done) override;
     ConvRef     addFoundSession(const std::string &id) override;
     std::vector<Command> commands(ConvRef c) override;
+    uint64_t             commandsRevision(ConvRef c) override;
     LocalResult          runLocalCommand(
         ConvRef c, Ts thread, const std::string &name, const std::string &args
     ) override;

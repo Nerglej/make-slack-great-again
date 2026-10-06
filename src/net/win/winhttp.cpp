@@ -447,16 +447,19 @@ struct Exchange {
             eol == std::string::npos ? std::string_view() : std::string_view(text).substr(eol + 2);
         parseHeaderLines(rest, &out); // WinHTTP validated them: nothing is dropped
     }
-    // The whole body (WinHTTP has already undone any chunked encoding).
+    // The whole body (WinHTTP has already undone any chunked encoding), into
+    // `body` or, when there is one, `sink` (bodySink).
     std::string read(
         std::string             &body,
+        Handler                 *sink,
         ULONGLONG                deadline,
         const std::atomic<bool> &cancel,
         const Progress          &progress,
         int64_t                  total
     ) {
-        if (total > 0) // one allocation for the whole body (a sane size of one)
+        if (total > 0 && !sink) // one allocation for the whole body (a sane size of one)
             body.reserve(size_t(std::min<int64_t>(total, int64_t(64) << 20)));
+        int64_t got = 0;
         for (;;) {
             if (!WinHttpReadData(request, op->buf, kChunk, nullptr))
                 return failure(GetLastError());
@@ -464,9 +467,13 @@ struct Exchange {
                 return e;
             if (op->bytes == 0)
                 return {};
-            body.append(op->buf, op->bytes);
+            if (!sink)
+                body.append(op->buf, op->bytes);
+            else if (!sink->body(op->buf, op->bytes))
+                return "sink";
+            got += int64_t(op->bytes);
             if (progress)
-                progress(int64_t(body.size()), total);
+                progress(got, total);
         }
     }
 };
@@ -692,7 +699,14 @@ void perform(
     if (e.empty()) {
         resp.status = int(x.status());
         x.headers(resp.headers);
-        e = x.read(resp.body, deadline, cancel.flag(), progress, contentLength(resp.headers));
+        e = x.read(
+            resp.body,
+            bodySink(req, resp.status),
+            deadline,
+            cancel.flag(),
+            progress,
+            contentLength(resp.headers)
+        );
     }
     if (!e.empty()) {
         resp.status = 0;

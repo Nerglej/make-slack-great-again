@@ -12,6 +12,18 @@
 namespace crypto {
 
 std::array<uint8_t, 32> sha256(std::string_view data);
+// SHA-256 over data that comes in pieces (a download hashed as it arrives):
+// update() as often as needed, then finish() once.
+class Sha256 {
+public:
+    Sha256();
+    void                    update(std::string_view data);
+    std::array<uint8_t, 32> finish(); // the digest; the object is spent
+private:
+    uint32_t _h[8];
+    uint8_t  _buf[64];
+    uint64_t _len = 0; // bytes so far
+};
 std::array<uint8_t, 20> sha1(std::string_view data);
 std::array<uint8_t, 20> hmacSha1(std::string_view key, std::string_view data);
 // PBKDF2-HMAC-SHA1 (RFC 2898). `len` bytes of derived key. Used only for

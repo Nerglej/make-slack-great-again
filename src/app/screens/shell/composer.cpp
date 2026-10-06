@@ -2282,11 +2282,16 @@ void Composer::computePickList() {
     };
 }
 
-// The "/" list's commands for the open conversation: fetched each time (a
-// session's commands come and go), sorted and folded only when they changed.
+// The "/" list's commands for the open conversation: fetched when the
+// backend's revision moved (a session's commands come and go; without one,
+// each time), sorted and folded only when they changed.
 void Composer::refreshCommands() {
+    const uint64_t rev = _ctx.backend.commandsRevision(_key.conv);
+    if (rev && rev == _cmdRev && _cmdConv == _key.conv)
+        return;
     std::vector<model::Backend::Command> cmds = _ctx.backend.commands(_key.conv);
-    bool same = _cmdConv == _key.conv && cmds.size() == _cmdNames.size();
+    bool same = _cmdConv == _key.conv && _cmdRev == rev && cmds.size() == _cmdNames.size();
+    _cmdRev   = rev;
     for (size_t i = 0; same && i < cmds.size(); ++i)
         same = cmds[i].name == _cmdNames[i];
     if (same)

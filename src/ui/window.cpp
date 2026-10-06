@@ -889,6 +889,25 @@ void Window::damageAll() {
     requestFrame();
 }
 
+void Window::damageShowing(const std::vector<std::shared_ptr<const gfx::Bitmap>> &bitmaps) {
+    if (bitmaps.empty())
+        return;
+    // Hidden subtrees paint nothing: skipped whole.
+    auto walk = [&](auto &self, View *v) -> void {
+        if (!v->visible())
+            return;
+        for (const auto &b : bitmaps)
+            if (b && v->showsBitmap(b.get())) {
+                v->update();
+                break;
+            }
+        for (auto &c : v->_children)
+            self(self, c.get());
+    };
+    walk(walk, _root.get());
+    walk(walk, _overlay.get());
+}
+
 void Window::scrollBlit(View *area, int dy) {
     const SizeF ws   = size();
     const RectF rect = intersect(area->windowRect(), {0, 0, ws.w, ws.h});
