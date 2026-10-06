@@ -37,6 +37,12 @@ TEST("update: msga.app's asset names per platform") {
     CHECK_STR(update::assetFor("macos", "arm64"), "msga-macos-arm64.dmg");
     CHECK(update::assetFor("linux", "arm64").empty());
     CHECK(update::assetFor("macos", "x86_64").empty());
+    // As scripts/release-*.sh write them and msga.app serves them (issue #95:
+    // "<asset>.manifest" 404'd on Windows and macOS).
+    CHECK_STR(update::manifestFor("msga-linux-x86_64"), "msga-linux-x86_64.manifest");
+    CHECK_STR(update::manifestFor("msga-windows-x86_64.exe"), "msga-windows-x86_64.manifest");
+    CHECK_STR(update::manifestFor("msga-macos-arm64.dmg"), "msga-macos-arm64.manifest");
+    CHECK(update::manifestFor("").empty());
 #if defined(__linux__) && defined(__x86_64__)
     CHECK_STR(update::assetUrl(), "https://msga.app/download/msga-linux-x86_64");
     CHECK_STR(update::manifestUrl(), "https://msga.app/download/msga-linux-x86_64.manifest");

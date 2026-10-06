@@ -45,7 +45,11 @@ bool        parseManifest(std::string_view json, Manifest *out);
 // "msga-macos-arm64.dmg"; "" where no release is built.
 std::string assetFor(std::string_view os, std::string_view arch);
 std::string asset(); // this build's
-// https://msga.app/download/<asset>[.manifest]; "" where unsupported.
+// An asset's manifest, as the release scripts publish it: the asset's name
+// without its extension + ".manifest" ("msga-windows-x86_64.exe" →
+// "msga-windows-x86_64.manifest").
+std::string manifestFor(std::string_view asset);
+// https://msga.app/download/<asset> / <manifestFor(asset)>; "" where unsupported.
 std::string assetUrl();
 std::string manifestUrl();
 // `bytes` hash to `expectedHex` (case-insensitive); an empty expectation

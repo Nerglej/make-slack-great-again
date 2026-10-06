@@ -252,9 +252,16 @@ std::string assetUrl() {
     return a.empty() ? std::string() : kBase + a;
 }
 
+std::string manifestFor(std::string_view asset) {
+    if (asset.empty())
+        return {};
+    // The release scripts name it after the asset without its extension.
+    return str::concat({asset.substr(0, asset.rfind('.')), ".manifest"});
+}
+
 std::string manifestUrl() {
-    const std::string a = asset();
-    return a.empty() ? std::string() : str::concat({kBase, a, ".manifest"});
+    const std::string m = manifestFor(asset());
+    return m.empty() ? std::string() : kBase + m;
 }
 
 bool checksumMatches(std::string_view bytes, std::string_view expectedHex) {
