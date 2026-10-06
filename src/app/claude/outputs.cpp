@@ -209,37 +209,54 @@ std::string cleanPath(std::string_view in) {
     return out;
 }
 
+namespace {
+
+// The next candidate path in `text` from byte *i on, as written ("" when
+// it's a web link or nothing); *i moves past it.
+std::string nextPath(std::string_view text, size_t *i) {
+    // The next token: up to a separator.
+    size_t start = *i;
+    while (start < text.size()) {
+        size_t         j  = start;
+        const uint32_t cp = utf8::decode(text, j);
+        if (!splitsTokens(cp))
+            break;
+        start = j;
+    }
+    size_t end = start;
+    while (end < text.size()) {
+        size_t         j  = end;
+        const uint32_t cp = utf8::decode(text, j);
+        if (splitsTokens(cp))
+            break;
+        end = j;
+    }
+    *i                     = end;
+    std::string_view token = text.substr(start, end - start);
+    while (!token.empty() && std::strchr(".:!?", token.back()))
+        token.remove_suffix(1);
+    if (str::startsWith(token, "file://"))
+        return localFileOf(token);
+    if (token.find("://") != std::string_view::npos)
+        return {}; // a web link
+    return expandHome(token);
+}
+
+} // namespace
+
+bool mayNameFiles(std::string_view text) {
+    // mentionedFiles keeps only paths of a kind shown, whatever folders the
+    // text names besides.
+    for (size_t i = 0; i < text.size();)
+        if (const std::string path = nextPath(text, &i); !path.empty() && shownKind(path))
+            return true;
+    return false;
+}
+
 std::vector<std::string> mentionedFiles(std::string_view text, std::string_view cwd) {
     std::vector<std::string> absolute, relative, dirs;
     for (size_t i = 0; i < text.size();) {
-        // The next token: up to a separator.
-        size_t start = i;
-        while (start < text.size()) {
-            size_t         j  = start;
-            const uint32_t cp = utf8::decode(text, j);
-            if (!splitsTokens(cp))
-                break;
-            start = j;
-        }
-        size_t end = start;
-        while (end < text.size()) {
-            size_t         j  = end;
-            const uint32_t cp = utf8::decode(text, j);
-            if (splitsTokens(cp))
-                break;
-            end = j;
-        }
-        i                      = end;
-        std::string_view token = text.substr(start, end - start);
-        while (!token.empty() && std::strchr(".:!?", token.back()))
-            token.remove_suffix(1);
-        std::string path;
-        if (str::startsWith(token, "file://"))
-            path = localFileOf(token);
-        else if (token.find("://") != std::string_view::npos)
-            continue; // a web link
-        else
-            path = expandHome(token);
+        std::string path = nextPath(text, &i);
         if (path.empty())
             continue;
         if (file::isAbsolute(path)) {

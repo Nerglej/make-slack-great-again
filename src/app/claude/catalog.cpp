@@ -1,5 +1,6 @@
 #include "app/claude/catalog.h"
 
+#include "app/claude/common.h"
 #include "app/claude/outputs.h"
 #include "app/claude/roles.h"
 #include "app/claude/roster.h"
@@ -7,7 +8,6 @@
 #include "base/file.h"
 #include "base/json.h"
 #include "base/str.h"
-#include "base/utf8.h"
 
 #include <algorithm>
 
@@ -18,15 +18,7 @@ constexpr int64_t kEndBytes = 96 * 1024; // read from each end of a transcript
 
 // One line, at most 200 characters.
 std::string oneLine(std::string_view s) {
-    std::string out = str::simplified(s);
-    if (utf8::countCodePoints(out) > 200) {
-        size_t at = 0;
-        for (int n = 0; n < 199; ++n)
-            at = utf8::nextBoundary(out, at);
-        out.resize(at);
-        out += "…";
-    }
-    return out;
+    return ellipsized(str::simplified(s), 200);
 }
 
 // What someone typed, from a "user" record, on one line; "" when it's none
@@ -39,12 +31,20 @@ std::string typedLine(const json::Value &o) {
 } // namespace
 
 bool catalogEntryFrom(std::string_view head, std::string_view tail, CatalogEntry &e) {
-    std::string aiTitle, customTitle, summary;
-    const auto  read = [&](std::string_view line, bool fromHead) {
+    std::string    aiTitle, customTitle, summary;
+    json::Document doc;
+    RecordSkim     skim;
+    const auto     read = [&](std::string_view line, bool fromHead) {
         if (line.empty())
             return;
-        json::Document doc;
-        if (!doc.parse(std::string(line)))
+        // Tool output (most of the bytes) is no one's prompt: only skimmed.
+        if (line.find(R"("type":"tool_result")") != std::string_view::npos &&
+            skimRecord(line, &skim) && skim.type == "user" && !skim.toolResults.empty()) {
+            if (e.cwd.empty())
+                e.cwd = skim.cwd;
+            return;
+        }
+        if (!doc.parse(line, nullptr))
             return;
         const json::Value      o    = doc.root();
         const std::string_view type = o["type"].str();

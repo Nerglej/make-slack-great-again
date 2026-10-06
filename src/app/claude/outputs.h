@@ -34,6 +34,9 @@ namespace claude {
 // relative names resolved against the folders the text names, then `cwd`.
 // Absolute, in the order named, each once.
 std::vector<std::string> mentionedFiles(std::string_view text, std::string_view cwd);
+// False when `text` names no path of such a kind, so mentionedFiles finds
+// nothing in it — told from the text alone, no file looked at.
+bool                     mayNameFiles(std::string_view text);
 
 struct OutputContext {
     std::string convId;        // whose copies they are (cleared with the session)

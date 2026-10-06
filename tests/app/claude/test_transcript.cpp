@@ -12,6 +12,7 @@
 #include "base/str.h"
 #include "support/test.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
@@ -196,6 +197,14 @@ std::string sampleTurn() {
            turnEnd("2026-09-25T10:00:07.000Z");
 }
 
+// Appended in place, as Claude Code writes history.jsonl.
+void appendFileBytes(const std::string &path, std::string_view bytes) {
+    if (FILE *f = std::fopen(path.c_str(), "ab")) {
+        std::fwrite(bytes.data(), 1, bytes.size(), f);
+        std::fclose(f);
+    }
+}
+
 std::string readFile(const std::string &path) {
     std::string out;
     file::readAll(path, &out);
@@ -232,7 +241,6 @@ TEST("transcript: a turn becomes prompt, progress remark, tool card and final an
     CHECK(p.turnStartedAt() == 1790330400000000);
     CHECK(p.lastActivity() == 1790330407000000);
     CHECK(items[0].ts == 1790330400000000);
-    CHECK(items[0].date == items[0].ts);
 }
 
 TEST("transcript: the last text of a live turn stays pending until the turn resolves it") {
@@ -720,7 +728,7 @@ TEST("transcript: a turn that failed for want of a login is marked") {
     const TranscriptItem &answer = p.items()[1];
     CHECK(answer.kind == Kind::AssistantText);
     CHECK(answer.loginError);
-    CHECK(p.loginFailedAt() == answer.date);
+    CHECK(p.loginFailedAt() == answer.ts);
     CHECK_STR(answer.text, "Not logged in · Please run /login");
 
     // Any other answer is Claude's own.
@@ -757,6 +765,174 @@ TEST("transcript: tool inputs summarize to one line") {
     const std::string cut = sum("Bash", str::concat({R"({"command":")", long_, "\"}"}).c_str());
     CHECK(cut.size() == 10 * 2 + 89 + 3);
     CHECK(str::endsWith(cut, "x…"));
+}
+
+// ── Records only skimmed (tool output) ──────────────────────────────────────
+
+TEST("transcript: a record skims as the whole document reads it") {
+    const std::string lines[] = {
+        // As Claude Code writes tool output: blocks inside the result, escapes.
+        R"({"parentUuid":"p1","isSidechain":false,"type":"user","message":{"role":"user",)"
+        R"("content":[{"tool_use_id":"t1","type":"tool_result","content":[{"type":"text",)"
+        R"("text":"a \"type\":\"tool_result\" \u00e9 \ud83d\ude00 \\ \/ \b\f\n\r\t"},)"
+        R"({"type":"image","source":{"type":"base64","data":"AAAA"}}],"is_error":true}]},)"
+        R"("uuid":"u1","timestamp":"2026-09-25T10:00:03.000Z","toolUseResult":{"status":)"
+        R"("completed","agentId":"a42","content":[1,-0.5e+10,0,2E-3,true,false,null]},)"
+        R"("cwd":"/src/app","version":"2.1.290","permissionMode":"auto","isMeta":false})",
+        // Several results; members repeated (the first counts); odd values.
+        R"( { "type" : "user" , "type":"assistant", "message" : { "content" : [ )"
+        R"({"type":"tool_result","tool_use_id":"x","is_error":"yes"}, 7, )"
+        R"({"type":"tool_result","tool_use_id":"y","tool_use_id":"z","is_error":false} ] }, )"
+        R"("uuid":null,"timestamp":12,"toolUseResult":"text","origin":null,"isMeta":true } )",
+        R"({"type":"user","origin":{"kind":"human"},"isCompactSummary":true,"isSidechain":true,)"
+        R"("message":{"content":[{"type":"image"},{"type":"tool_result"}]},"toolUseResult":[]})",
+        R"({"type":"user","message":"plain","toolUseResult":{"agentId":7}})",
+        R"({"message":{"content":{"type":"tool_result"}}})",
+        "{}",
+        // What the document refuses, the skim refuses too.
+        R"({"type":"user","message":{"content":[{"type":"tool_res)", // torn
+        R"({"type":"user","x":"\q"})",                               // bad escape
+        R"({"type":"user","x":"\u12g4"})",
+        "{\"type\":\"user\",\"x\":\"a\tb\"}", // a raw control character
+        R"({"type":"user","x":01})",
+        R"({"type":"user","x":1.})",
+        R"({"type":"user","x":-})",
+        R"({"type":"user","x":.5})",
+        R"({"type":"user","x":1e})",
+        R"({"type":"user","x":tru})",
+        R"({"type":"user","x":[1,]})",
+        R"({"type":"user",})",
+        R"({"type":"user"} x)",
+        R"({"type" "user"})",
+        R"(["type","user"])",
+        R"("type")",
+        "",
+        std::string(300, '[') + std::string(300, ']'),
+        "{\"x\":" + std::string(300, '[') + std::string(300, ']') + "}",
+        "{\"x\":" + std::string(200, '[') + std::string(200, ']') + "}",
+    };
+    for (const std::string &line : lines) {
+        json::Document doc;
+        const bool     parsed = doc.parse(line, nullptr) && doc.root().isObject();
+        RecordSkim     s;
+        const bool     skimmed = skimRecord(line, &s);
+        CHECK(skimmed == parsed);
+        if (!skimmed || !parsed)
+            continue;
+        const json::Value o = doc.root();
+        CHECK_STR(s.type, o["type"].str());
+        CHECK_STR(s.uuid, o["uuid"].str());
+        CHECK_STR(s.timestamp, o["timestamp"].str());
+        CHECK_STR(s.version, o["version"].str());
+        CHECK_STR(s.permissionMode, o["permissionMode"].str());
+        CHECK_STR(s.cwd, o["cwd"].str());
+        CHECK(s.members == o.size());
+        CHECK(s.origin == o["origin"].isObject());
+        CHECK(s.isMeta == o["isMeta"].boolean());
+        CHECK(s.isCompactSummary == o["isCompactSummary"].boolean());
+        CHECK(s.isSidechain == o["isSidechain"].boolean());
+        const json::Value content = o["message"]["content"];
+        CHECK(s.contentArray == content.isArray());
+        std::vector<RecordSkim::ToolResult> results;
+        bool                                image = false;
+        for (const json::Value b : content) {
+            if (b["type"].str() == "tool_result")
+                results.push_back({b["tool_use_id"].str(), b["is_error"].boolean()});
+            image = image || b["type"].str() == "image";
+        }
+        CHECK(s.image == image);
+        REQUIRE(s.toolResults.size() == results.size());
+        for (size_t i = 0; i < results.size(); ++i) {
+            CHECK_STR(s.toolResults[i].id, results[i].id);
+            CHECK(s.toolResults[i].error == results[i].error);
+        }
+        CHECK_STR(s.agentId, o["toolUseResult"]["agentId"].str());
+        CHECK_STR(s.status, o["toolUseResult"]["status"].str());
+    }
+    // A field it hands out must be as written: escaped, the document reads it.
+    RecordSkim s;
+    CHECK_FALSE(skimRecord(R"({"type":"us\u0065r"})", &s));
+    CHECK_FALSE(skimRecord(R"({"typ\u0065":"user"})", &s));
+    CHECK(skimRecord(R"({"other":{"k\u0065y":"v\u0065"}})", &s)); // nobody's asking
+}
+
+TEST("transcript: tool results read off their skim make what the whole record makes") {
+    // The same records twice: as Claude Code writes them (skimmed), and with a
+    // space that no skim looks for ("type": "tool_result") — read whole.
+    const std::string records =
+        prompt("look around", "2026-09-25T10:00:00.000Z") +
+        R"({"type":"assistant","timestamp":"2026-09-25T10:00:01.000Z","version":"2.1.1",)"
+        R"("message":{"model":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash",)"
+        R"("input":{"command":"ls"}},{"type":"tool_use","id":"a1","name":"Agent",)"
+        R"("input":{"description":"Dig","subagent_type":"designer"}},{"type":"tool_use",)"
+        R"("id":"a2","name":"Task","input":{"description":"Fetch"}}]}})"
+        "\n"
+        // Results of the shell call and both subagents, one record; a version.
+        R"({"type":"user","uuid":"r1","timestamp":"2026-09-25T10:00:02.000Z",)"
+        R"("version":"2.1.2","permissionMode":"plan","message":{"content":[)"
+        R"({"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"no \"type\""},)"
+        R"({"type":"tool_result","tool_use_id":"a1","content":[{"type":"text","text":"ok"}]}]},)"
+        R"("toolUseResult":{"agentId":"ag1","status":"async_launched"}})"
+        "\n"
+        // A copy's repeat of it: read once.
+        R"({"type":"user","uuid":"r1","timestamp":"2026-09-25T10:00:09.000Z","message":)"
+        R"({"content":[{"type":"tool_result","tool_use_id":"a1","is_error":true}]}})"
+        "\n"
+        // The second subagent, done in the foreground: its result is its stop.
+        R"({"type":"user","uuid":"r2","timestamp":"2026-09-25T10:00:04.000Z","message":)"
+        R"({"content":[{"type":"tool_result","tool_use_id":"a2"}]},)"
+        R"("toolUseResult":{"status":"completed","agentId":"ag2","totalTokens":5}})"
+        "\n"
+        // Not tool output alone: these the whole record reads.
+        R"({"type":"user","isMeta":true,"timestamp":"2026-09-25T10:00:05.000Z","message":)"
+        R"({"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false}]}})"
+        "\n"
+        R"({"type":"user","origin":{"kind":"human"},"timestamp":"2026-09-25T10:00:06.000Z",)"
+        R"("message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]}})"
+        "\n"
+        R"({"type":"user","timestamp":"2026-09-25T10:00:07.000Z","message":{"content":[)"
+        R"({"type":"tool_result","tool_use_id":"t1","is_error":true},{"type":"text","text":"x"}]}})"
+        "\n"
+        // Only a tool's own output says "tool_result": no result of a call here.
+        R"({"type":"user","timestamp":"2026-09-25T10:00:08.000Z","message":{"content":[)"
+        R"({"type":"text","text":"hi"}]},"toolUseResult":{"blocks":[{"type":"tool_result"}]}})"
+        "\n"
+        // Torn: skipped either way.
+        R"({"type":"user","timestamp":"2026-09-25T10:00:09.500Z","message":{"content":[{"type":"tool_result")"
+        "\n" +
+        assistantText("Found it.", "2026-09-25T10:00:10.000Z") +
+        taskStopped("ag1", "2026-09-25T10:00:11.000Z") + turnEnd("2026-09-25T10:00:12.000Z");
+    std::string whole = records;
+    for (size_t at = whole.find(R"("type":"tool_result")"); at != std::string::npos;
+         at        = whole.find(R"("type":"tool_result")", at))
+        whole.replace(at, 20, R"("type": "tool_result")");
+
+    TranscriptParser skimmed, read;
+    skimmed.keepActivity();
+    read.keepActivity();
+    skimmed.feed(records);
+    read.feed(whole);
+    CHECK(skimmed.items() == read.items());
+    for (size_t i = 0; i < read.items().size(); ++i)
+        CHECK(skimmed.revision(i) == read.revision(i));
+    CHECK(skimmed.revision() == read.revision());
+    CHECK(skimmed.activity() == read.activity());
+    CHECK(skimmed.lastActivity() == read.lastActivity());
+    CHECK_STR(skimmed.version(), read.version());
+    CHECK_STR(skimmed.permissionMode(), read.permissionMode());
+    for (const char *agent : {"ag1", "ag2", "nobody"})
+        CHECK(skimmed.taskStoppedAt(agent) == read.taskStoppedAt(agent));
+    // And what they made is right: the calls' errors, the subagents' ids.
+    const auto &items = skimmed.items();
+    REQUIRE(items.size() == 6); // the prompt, the calls (3), "hi", the answer
+    CHECK_STR(items[4].text, "hi");
+    CHECK(items[1].kind == Kind::ToolGroup);
+    CHECK(items[1].tools[0].error); // the last word on t1: the record with text
+    CHECK_STR(items[2].agentId, "ag1");
+    CHECK_STR(items[3].agentId, "ag2");
+    CHECK(skimmed.taskStoppedAt("ag2") == 1790330404000000);
+    CHECK(skimmed.taskStoppedAt("ag1") == 1790330411000000);
+    CHECK_STR(skimmed.permissionMode(), "plan");
 }
 
 // ── Prompt history (history.jsonl, what ↑ steps through) ────────────────────
@@ -835,6 +1011,28 @@ TEST("transcript: the prompt history is the folder's, this session's first") {
                                                         })
     );
     CHECK(promptHistory(dir + "/missing.jsonl", pastes, "/src/app", "S1").empty());
+
+    // A prompt later: what was added is read (a line still being written
+    // too, once whole only once).
+    appendFileBytes(path, entry("newest", "/src/app", "S1") + R"({"display":"half)");
+    CHECK(promptHistory(path, pastes, "/src/app", "S1", 2) == (List{"newest", "again"}));
+    appendFileBytes(
+        path,
+        R"(","project":"/src/app","sessionId":"S2"})"
+        "\n"
+    );
+    CHECK(promptHistory(path, pastes, "/src/app", "", 3) == (List{"half", "newest", "again"}));
+    CHECK(promptHistory(path, pastes, "/src/app", "", 3) == (List{"half", "newest", "again"}));
+    CHECK(promptHistory(path, pastes, "/src/other", "S1") == (List{"another folder"}));
+    // Rewritten (shorter, or other text where the last look ended): read anew.
+    REQUIRE(file::writeAtomic(path, entry("all new", "/src/app", "S1")));
+    CHECK(promptHistory(path, pastes, "/src/app", "S1") == (List{"all new"}));
+    REQUIRE(
+        file::writeAtomic(
+            path, entry("first", "/src/app", "S1") + entry("x", "/src/app", "S1") + "\n\n\n\n\n\n"
+        )
+    );
+    CHECK(promptHistory(path, pastes, "/src/app", "S1") == (List{"x", "first"}));
 }
 
 // ── Images and files ────────────────────────────────────────────────────────

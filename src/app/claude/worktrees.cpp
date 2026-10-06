@@ -1,6 +1,7 @@
 #include "app/claude/worktrees.h"
 
 #include "app/claude/async.h"
+#include "app/claude/common.h"
 #include "app/claude/outputs.h"
 #include "app/model/jobs.h"
 #include "base/file.h"
@@ -254,26 +255,18 @@ std::vector<WorktreeRef> worktreesOfTranscript(const std::string &transcriptPath
     std::vector<WorktreeRef> out;
     if (transcriptPath.empty())
         return out;
-    std::string data;
-    if (file::readAll(transcriptPath, &data) && !data.empty()) {
-        const std::string_view     all     = data;
-        constexpr std::string_view kNeedle = "\"worktree-state\"";
-        for (size_t at = all.find(kNeedle); at != std::string_view::npos;
-             at        = all.find(kNeedle, at + 1)) {
-            const size_t nl    = at == 0 ? std::string_view::npos : all.rfind('\n', at);
-            const size_t start = nl == std::string_view::npos ? 0 : nl + 1;
-            size_t       end   = all.find('\n', at);
-            if (end == std::string_view::npos)
-                end = all.size();
-            json::Document doc;
-            if (!doc.parse(std::string(all.substr(start, end - start))))
-                continue;
-            const json::Value o = doc.root();
-            if (o["type"].str() != "worktree-state")
-                continue;
-            // null / {} = the session left its worktree, which stays on disk.
-            addWorktree(out, refFrom(o["worktreeSession"], "originalCwd"));
-        }
+    // A megabyte at a time (a transcript runs to tens of MB); only a line
+    // that names the record is parsed.
+    LineReader     lines(transcriptPath, 0);
+    json::Document doc;
+    for (std::string_view line; lines.next(&line);) {
+        if (line.find("\"worktree-state\"") == std::string_view::npos || !doc.parse(line, nullptr))
+            continue;
+        const json::Value o = doc.root();
+        if (o["type"].str() != "worktree-state")
+            continue;
+        // null / {} = the session left its worktree, which stays on disk.
+        addWorktree(out, refFrom(o["worktreeSession"], "originalCwd"));
     }
     const std::string subagents = Paths::subagentsDir(cleanPath(file::absolute(transcriptPath)));
     std::vector<file::DirEntry> metas;

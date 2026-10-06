@@ -3,6 +3,7 @@
 #include "base/file.h"
 #include "base/process.h"
 #include "base/str.h"
+#include "base/utf8.h"
 #include "gfx/gfx.h"
 
 namespace claude {
@@ -31,6 +32,46 @@ std::string homeRelative(std::string_view path) {
             c = '\\';
 #endif
     return out;
+}
+
+std::string ellipsized(std::string s, size_t max) {
+    if (utf8::countCodePoints(s) > max) {
+        size_t i = 0;
+        for (size_t n = 0; n + 1 < max && i < s.size(); ++n)
+            i = utf8::nextBoundary(s, i);
+        s.resize(i);
+        s += "…";
+    }
+    return s;
+}
+
+bool LineReader::next(std::string_view *line) {
+    constexpr size_t kChunk = 1 << 20;
+    for (;;) {
+        const size_t nl = _buf.find('\n', _pos);
+        if (nl != std::string::npos) {
+            *line = std::string_view(_buf).substr(_pos, nl - _pos);
+            _pos  = nl + 1;
+            return true;
+        }
+        if (_eof || _failed) {
+            if (_pos >= _buf.size())
+                return false;
+            *line = std::string_view(_buf).substr(_pos); // the last, without its newline
+            _pos  = _buf.size();
+            return true;
+        }
+        _buf.erase(0, _pos);
+        _pos = 0;
+        if (!file::readRange(_path, _at, kChunk, &_chunk)) {
+            _failed = true;
+            _buf.clear();
+            return false;
+        }
+        _at += int64_t(_chunk.size());
+        _eof = _chunk.size() < kChunk;
+        _buf += _chunk;
+    }
 }
 
 bool showsAsPicture(std::string_view path, std::string_view mime) {

@@ -32,6 +32,27 @@ std::string homeRelative(std::string_view path);
 // empty preview.
 bool showsAsPicture(std::string_view path, std::string_view mime);
 
+// `s` cut to at most `max` code points, the last of them "…" when it's cut.
+std::string ellipsized(std::string s, size_t max);
+
+// The lines of a file (a transcript runs to tens of MB) from byte `from` on,
+// read a megabyte at a time: only an unfinished line is carried from one read
+// to the next. The last line counts without its newline too. Blocking.
+class LineReader {
+public:
+    LineReader(std::string_view path, int64_t from) : _path(path), _at(from) {}
+    // The next line, valid until the next call; false at the end, or when
+    // the file can't be read (failed()).
+    bool next(std::string_view *line);
+    bool failed() const { return _failed; }
+
+private:
+    std::string _path, _buf, _chunk;
+    int64_t     _at  = 0; // the file's next byte to read
+    size_t      _pos = 0; // the next line's start in _buf
+    bool        _eof = false, _failed = false;
+};
+
 // A slash command a session offers (Claude Code's own, a skill's, a project
 // command), or one msga runs itself (source "msga").
 struct SlashCommand {

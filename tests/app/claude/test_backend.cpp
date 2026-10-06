@@ -40,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <unistd.h>
+#include <utime.h>
 #include <vector>
 
 using namespace claude;
@@ -2085,6 +2086,132 @@ TEST("backend: a long session opened renders its newest page only") {
     REQUIRE(rig.wait([&] { return done; }));
     CHECK(rig.messages(conv).size() == 400);
     CHECK(n.renders == 400);
+}
+
+TEST("backend: a subagent that stopped isn't read to tell it isn't running") {
+    FakeClaudeHome home;
+    home.writeSession("busy");
+    home.append(
+        prompt("research it", "2026-09-25T10:00:00.000Z") +
+        toolUse(
+            "a1",
+            "Agent",
+            R"({"description":"Read the docs","subagent_type":"designer"})",
+            "2026-09-25T10:00:01.000Z"
+        ) +
+        toolResult("a1", "2026-09-25T10:00:01.500Z", false, "agent42", "async_launched") +
+        taskStopped("agent42", "2026-09-25T10:00:08.050Z")
+    );
+    // Its file last written a moment after it was told to have stopped.
+    const std::string sub = home.dir + "/projects/-src-app/S1/subagents/agent-agent42.jsonl";
+    writeFile(
+        sub,
+        prompt("Read the docs and report", "2026-09-25T10:00:02.000Z", false) +
+            assistantText("The docs say X.", "2026-09-25T10:00:08.000Z")
+    );
+    utimbuf times;
+    times.actime = times.modtime = 1790330408; // 10:00:08Z
+    REQUIRE(::utime(sub.c_str(), &times) == 0);
+
+    // The session works (its typing pump looks for running subagents every
+    // tick); the stopped one is never read.
+    Rig           rig;
+    const ConvRef conv = rig.ref("S1");
+    REQUIRE(rig.typing(conv));
+    rig.pump(300);
+    CHECK(rig.backend->counters().bytesRead == 0);
+    CHECK_FALSE(rig.anyThreadTyping(conv));
+
+    // Written since (a reply relayed to it): it runs again, read to tell.
+    appendFile(sub, coordinatorNote("Which page?", "2026-09-25T10:05:00.000Z"));
+    REQUIRE(rig.wait([&] { return rig.anyThreadTyping(conv); }, 5000));
+    CHECK(int64_t(rig.backend->counters().bytesRead) == file::size(sub));
+}
+
+TEST("backend: a long subagent transcript is read on a worker") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    home.append(
+        prompt("research it", "2026-09-25T10:00:00.000Z") +
+        toolUse("a1", "Agent", R"({"description":"Read the docs"})", "2026-09-25T10:00:01.000Z") +
+        toolResult("a1", "2026-09-25T10:00:09.000Z", false, "agent42", "completed") +
+        assistantText("Done.", "2026-09-25T10:00:10.000Z") + turnEnd("2026-09-25T10:00:11.000Z")
+    );
+    // Over a megabyte: a prompt and 1199 remarks.
+    std::string       records = prompt("Read the docs", "2026-09-25T10:00:02.000Z", false);
+    const std::string filler(900, 'x');
+    for (int i = 1; i < 1200; ++i)
+        records += assistantText(filler, isoAt(1'790'330'402'000 + i));
+    REQUIRE(records.size() > (1u << 20));
+    writeFile(home.dir + "/projects/-src-app/S1/subagents/agent-agent42.jsonl", records);
+
+    Rig           rig;
+    const ConvRef conv = rig.ref("S1");
+    rig.load(conv);
+    // Counted once it's read — not here.
+    const auto root = [&]() -> const model::Message * {
+        for (const auto &m : rig.messages(conv))
+            if (contains(plain(m), "Read the docs"))
+                return &m;
+        return nullptr;
+    };
+    REQUIRE(root());
+    REQUIRE(rig.wait([&] { return root()->replyCount == 1200; }, 5000));
+    CHECK(rig.backend->counters().bytesRead == 0);
+    CHECK(rig.loadThread(conv, root()->ts).size() == 1200);
+}
+
+TEST("backend: search finds what the lists show, as they show it") {
+    FakeClaudeHome home;
+    home.writeSession("idle");
+    home.append(
+        prompt("Fix the **login** page", "2026-09-25T10:00:00.000Z") +
+        toolUse("t1", "Bash", R"({"command":"grep login"})", "2026-09-25T10:00:01.000Z") +
+        toolResult("t1", "2026-09-25T10:00:02.000Z") +
+        toolUse(
+            "a1", "Agent", R"({"description":"Check the login docs"})", "2026-09-25T10:00:03.000Z"
+        ) +
+        toolResult("a1", "2026-09-25T10:00:04.000Z", false, "agent42", "completed") +
+        assistantText(
+            "The `login` page works: see <https://x.test/login>.", "2026-09-25T10:00:05.000Z"
+        ) +
+        turnEnd("2026-09-25T10:00:06.000Z") + prompt("thanks", "2026-09-25T10:00:07.000Z")
+    );
+
+    Rig        rig;
+    const auto search = [&](std::string q) -> std::vector<Backend::SearchHit> {
+        std::vector<Backend::SearchHit> hits;
+        bool                            done = false;
+        rig.backend->search(std::move(q), [&](std::vector<Backend::SearchHit> h) {
+            hits = std::move(h);
+            done = true;
+        });
+        CHECK(rig.wait([&] { return done; }));
+        return hits;
+    };
+    // Nothing of the session rendered yet, then the same once it's shown.
+    const auto    before = search("  LOGIN ");
+    const ConvRef conv   = rig.ref("S1");
+    const auto   &msgs   = rig.load(conv);
+    const auto    after  = search("login");
+    REQUIRE(before.size() == 3); // the prompt, the subagent, the answer (not the card)
+    REQUIRE(after.size() == before.size());
+    for (size_t i = 0; i < before.size(); ++i) {
+        CHECK(before[i].conv == conv);
+        CHECK(before[i].ts == after[i].ts);
+        CHECK(before[i].thread == 0);
+        CHECK_STR(before[i].text, after[i].text);
+        // Newest first, the text as the list has it.
+        if (i)
+            CHECK(before[i].ts < before[i - 1].ts);
+        const auto m = std::find_if(msgs.begin(), msgs.end(), [&](const auto &x) {
+            return x.ts == before[i].ts;
+        });
+        REQUIRE(m != msgs.end());
+        CHECK_STR(before[i].text, m->text);
+    }
+    CHECK(search("nothing like it").empty());
+    CHECK(search("  ").empty());
 }
 
 TEST("backend: a long transcript found after the first scan is read on a worker") {

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <functional>
 #include <mutex>
+#include <utility>
 
 namespace claude {
 namespace {
@@ -37,14 +38,7 @@ std::string oneLine(std::string_view in, size_t maxLen = 100) {
         out = str::concat({str::trimSpace(s.substr(0, nl)), " …"});
     else
         out = std::string(s);
-    if (utf8::countCodePoints(out) > maxLen) {
-        size_t i = 0;
-        for (size_t n = 0; n + 1 < maxLen && i < out.size(); ++n)
-            i = utf8::nextBoundary(out, i);
-        out.resize(i);
-        out += "…";
-    }
-    return out;
+    return ellipsized(std::move(out), maxLen);
 }
 
 // The text between <tag> and </tag> (or the end), trimmed; "" when no <tag>.
@@ -203,7 +197,303 @@ std::string sha1Hex(std::string_view data) {
     return crypto::hex(crypto::bytes(crypto::sha1(data)));
 }
 
+// A JSON text walked without being built (skimRecord): what isn't asked for is
+// only checked and skipped. It accepts what json::Document accepts, so a line
+// it reads is a line the document would have read alike; any failure (a torn
+// line, or a string it can't hand out unescaped) sends the line there.
+class Skim {
+public:
+    explicit Skim(std::string_view s) : _s(s) {}
+
+    bool ok() const { return _ok; }
+    bool fail() { return _ok = false; }
+    // Nothing but whitespace left, and no failure on the way.
+    bool done() {
+        ws();
+        return _ok && _p == _s.size();
+    }
+    // The next value's first byte ('\0' at the end).
+    char peek() {
+        ws();
+        return _p < _s.size() ? _s[_p] : '\0';
+    }
+    // Steps into the object or array (`open`) at nesting `depth`; more() then
+    // comes before each of its members or elements.
+    bool enter(char open, int depth) {
+        if (peek() != open || depth >= json::Document::kMaxDepth)
+            return fail();
+        ++_p;
+        return true;
+    }
+    // False at the container's end (its close taken) or on a failure.
+    bool more(char close, bool &first) {
+        if (!_ok)
+            return false;
+        const char c = peek();
+        if (c == close) {
+            ++_p;
+            return false;
+        }
+        if (!first) {
+            if (c != ',')
+                return fail();
+            ++_p;
+        }
+        first = false;
+        return true;
+    }
+    // A member's name and its colon; one asked for (`name`) must have no
+    // escapes.
+    bool key(std::string_view *name) {
+        bool escaped = false;
+        if (peek() != '"' || !string(name, &escaped) || (escaped && name) || peek() != ':')
+            return fail();
+        ++_p;
+        return true;
+    }
+    // A string value without escapes; anything else that isn't a string reads
+    // as "" (json::Value::str()). An escaped string fails.
+    bool plain(std::string_view *out, int depth) {
+        if (peek() != '"') {
+            *out = {};
+            return skip(depth);
+        }
+        bool escaped = false;
+        return string(out, &escaped) && (!escaped || fail());
+    }
+    // true; anything else reads as false (json::Value::boolean()).
+    bool flag(bool *out, int depth) {
+        *out = false;
+        if (peek() == 't' && word("true"))
+            return *out = true;
+        return skip(depth);
+    }
+    bool skip(int depth) {
+        switch (peek()) {
+        case '"': {
+            bool escaped;
+            return string(nullptr, &escaped);
+        }
+        case '{':
+        case '[': {
+            const bool object = _s[_p] == '{';
+            if (!enter(_s[_p], depth))
+                return false;
+            for (bool first = true; more(object ? '}' : ']', first);)
+                if ((object && !key(nullptr)) || !skip(depth + 1))
+                    return false;
+            return _ok;
+        }
+        case 't':
+            return word("true");
+        case 'f':
+            return word("false");
+        case 'n':
+            return word("null");
+        default:
+            return number();
+        }
+    }
+
+private:
+    void ws() {
+        while (_p < _s.size() &&
+               (_s[_p] == ' ' || _s[_p] == '\n' || _s[_p] == '\r' || _s[_p] == '\t'))
+            ++_p;
+    }
+    bool word(std::string_view w) {
+        if (_s.substr(_p, w.size()) != w)
+            return fail();
+        _p += w.size();
+        return true;
+    }
+    // At its opening quote: the bytes between the quotes, escapes as written.
+    bool string(std::string_view *raw, bool *escaped) {
+        // Most of a transcript's bytes go through here: a tight loop over
+        // locals, stopping only at a quote, a backslash or a control byte.
+        const char *const begin = _s.data();
+        const char *const end   = begin + _s.size();
+        const char *const start = begin + _p + 1;
+        const char       *p     = start;
+        *escaped                = false;
+        for (;;) {
+            while (p < end && uint8_t(*p) >= 0x20 && *p != '"' && *p != '\\')
+                ++p;
+            if (p >= end || uint8_t(*p) < 0x20)
+                return fail();
+            if (*p == '"')
+                break;
+            *escaped = true;
+            if (++p >= end)
+                return fail();
+            if (*p == 'u') {
+                if (end - p < 5)
+                    return fail();
+                for (int k = 1; k <= 4; ++k)
+                    if (str::hexDigit(p[k]) < 0)
+                        return fail();
+                p += 5;
+            } else if (std::string_view("\"\\/bfnrt").find(*p) == std::string_view::npos) {
+                return fail();
+            } else {
+                ++p;
+            }
+        }
+        if (raw)
+            *raw = std::string_view(start, size_t(p - start));
+        _p = size_t(p - begin) + 1;
+        return true;
+    }
+    bool number() {
+        const auto digits = [this] {
+            const size_t from = _p;
+            while (_p < _s.size() && isDigit(_s[_p]))
+                ++_p;
+            return _p > from;
+        };
+        if (_p < _s.size() && _s[_p] == '-')
+            ++_p;
+        if (_p < _s.size() && _s[_p] == '0') {
+            if (++_p < _s.size() && isDigit(_s[_p]))
+                return fail();
+        } else if (!digits()) {
+            return fail();
+        }
+        if (_p < _s.size() && _s[_p] == '.' && (++_p, !digits()))
+            return fail();
+        if (_p < _s.size() && (_s[_p] == 'e' || _s[_p] == 'E')) {
+            if (++_p < _s.size() && (_s[_p] == '+' || _s[_p] == '-'))
+                ++_p;
+            if (!digits())
+                return fail();
+        }
+        return true;
+    }
+
+    std::string_view _s;
+    size_t           _p  = 0;
+    bool             _ok = true;
+};
+
+// message: {"content": [blocks]} at depth 1.
+bool skimMessage(Skim &s, RecordSkim *r) {
+    if (s.peek() != '{')
+        return s.skip(1);
+    s.enter('{', 1);
+    bool sawContent = false;
+    for (bool first = true; s.more('}', first);) {
+        std::string_view k;
+        if (!s.key(&k))
+            return false;
+        if (k != "content" || std::exchange(sawContent, true) || s.peek() != '[') {
+            if (!s.skip(2))
+                return false;
+            continue;
+        }
+        r->contentArray = true;
+        s.enter('[', 2);
+        for (bool firstBlock = true; s.more(']', firstBlock);) {
+            if (s.peek() != '{') {
+                if (!s.skip(3))
+                    return false;
+                continue;
+            }
+            s.enter('{', 3);
+            std::string_view type, id;
+            bool             error = false, sawType = false, sawId = false, sawError = false;
+            for (bool firstKey = true; s.more('}', firstKey);) {
+                std::string_view bk;
+                if (!s.key(&bk))
+                    return false;
+                bool ok;
+                if (bk == "type" && !std::exchange(sawType, true))
+                    ok = s.plain(&type, 4);
+                else if (bk == "tool_use_id" && !std::exchange(sawId, true))
+                    ok = s.plain(&id, 4);
+                else if (bk == "is_error" && !std::exchange(sawError, true))
+                    ok = s.flag(&error, 4);
+                else
+                    ok = s.skip(4);
+                if (!ok)
+                    return false;
+            }
+            if (type == "tool_result")
+                r->toolResults.push_back({id, error});
+            else if (type == "image")
+                r->image = true;
+        }
+    }
+    return s.ok();
+}
+
 } // namespace
+
+bool skimRecord(std::string_view line, RecordSkim *r) {
+    r->toolResults.clear();
+    std::vector<RecordSkim::ToolResult> keep = std::move(r->toolResults);
+    *r                                       = {};
+    r->toolResults                           = std::move(keep); // its capacity, line after line
+    Skim       s(line);
+    unsigned   seen = 0; // the members read already: only the first of a name counts
+    const auto once = [&seen](unsigned bit) {
+        const bool first = !(seen & bit);
+        seen |= bit;
+        return first;
+    };
+    if (!s.enter('{', 0))
+        return false;
+    for (bool first = true; s.more('}', first);) {
+        std::string_view k;
+        if (!s.key(&k))
+            return false;
+        ++r->members;
+        bool ok;
+        if (k == "type" && once(1u << 0))
+            ok = s.plain(&r->type, 1);
+        else if (k == "uuid" && once(1u << 1))
+            ok = s.plain(&r->uuid, 1);
+        else if (k == "timestamp" && once(1u << 2))
+            ok = s.plain(&r->timestamp, 1);
+        else if (k == "version" && once(1u << 3))
+            ok = s.plain(&r->version, 1);
+        else if (k == "permissionMode" && once(1u << 4))
+            ok = s.plain(&r->permissionMode, 1);
+        else if (k == "cwd" && once(1u << 5))
+            ok = s.plain(&r->cwd, 1);
+        else if (k == "isMeta" && once(1u << 6))
+            ok = s.flag(&r->isMeta, 1);
+        else if (k == "isCompactSummary" && once(1u << 7))
+            ok = s.flag(&r->isCompactSummary, 1);
+        else if (k == "isSidechain" && once(1u << 8))
+            ok = s.flag(&r->isSidechain, 1);
+        else if (k == "origin" && once(1u << 9)) {
+            r->origin = s.peek() == '{';
+            ok        = s.skip(1);
+        } else if (k == "message" && once(1u << 10)) {
+            ok = skimMessage(s, r);
+        } else if (k == "toolUseResult" && once(1u << 11) && s.peek() == '{') {
+            s.enter('{', 1);
+            bool sawAgent = false, sawStatus = false;
+            ok = true;
+            for (bool firstKey = true; ok && s.more('}', firstKey);) {
+                std::string_view rk;
+                if (!s.key(&rk))
+                    return false;
+                if (rk == "agentId" && !std::exchange(sawAgent, true))
+                    ok = s.plain(&r->agentId, 2);
+                else if (rk == "status" && !std::exchange(sawStatus, true))
+                    ok = s.plain(&r->status, 2);
+                else
+                    ok = s.skip(2);
+            }
+        } else {
+            ok = s.skip(1);
+        }
+        if (!ok)
+            return false;
+    }
+    return s.done();
+}
 
 std::string quotePastes(std::string_view prompt) {
     constexpr std::string_view kOpen = "<pasted_content";
@@ -287,11 +577,15 @@ std::string summarizeToolInput(std::string_view toolName, const json::Value &inp
 // ── The parser ──────────────────────────────────────────────────────────────
 
 void TranscriptParser::feed(std::string_view bytes) {
-    const auto line = [this](std::string_view l) {
+    // One document and skim for every line of the call: a whole transcript
+    // read at once doesn't allocate (and free) them per line.
+    json::Document doc;
+    RecordSkim     skim;
+    const auto     line = [&](std::string_view l) {
         l = str::trimSpace(l);
         if (l.empty())
             return;
-        handleLine(l);
+        handleLine(l, doc, skim);
         while (_revs.size() < _items.size())
             _revs.push_back(++_rev);
     };
@@ -329,8 +623,8 @@ void TranscriptParser::reserveTs(int64_t micros) {
     _lastMicros = std::max(_lastMicros, micros);
 }
 
-int64_t TranscriptParser::taskStoppedAt(std::string_view taskId) const {
-    const auto it = _taskStopped.find(std::string(taskId));
+int64_t TranscriptParser::taskStoppedAt(const std::string &taskId) const {
+    const auto it = _taskStopped.find(taskId);
     return it == _taskStopped.end() ? 0 : it->second;
 }
 
@@ -376,7 +670,6 @@ void TranscriptParser::addPrompt(
     TranscriptItem item;
     item.kind       = TranscriptItem::Kind::UserPrompt;
     item.ts         = nextTs(micros);
-    item.date       = item.ts;
     item.images     = std::move(images);
     item.imageNames = std::move(imageNames);
     // Files sent from msga ride the text as mentions (see withAttachments).
@@ -425,8 +718,7 @@ bool TranscriptParser::addPeerMessage(const json::Value &origin, int64_t micros,
     if (newTurn)
         resolvePendingText(TranscriptItem::State::Final);
     closeToolGroup();
-    item.ts   = nextTs(micros);
-    item.date = item.ts;
+    item.ts = nextTs(micros);
     _items.push_back(std::move(item));
     if (newTurn)
         openTurn(micros); // the session answers it
@@ -440,7 +732,6 @@ void TranscriptParser::addCommandOutput(std::string_view output, int64_t micros)
         TranscriptItem item;
         item.kind = TranscriptItem::Kind::AssistantText;
         item.ts   = nextTs(micros);
-        item.date = item.ts;
         // Several lines are a terminal layout (a chart, a list): kept monospaced.
         item.text = text.find('\n') != std::string_view::npos
                         ? str::concat({"```\n", text, "\n```"})
@@ -477,27 +768,67 @@ bool TranscriptParser::hasRecord(std::string_view uuid) const {
     return !uuid.empty() && _seenUuids.count(crypto::fnv1a(uuid));
 }
 
-void TranscriptParser::handleLine(std::string_view line) {
-    json::Document doc;
-    if (!doc.parse(std::string(line), nullptr) || !doc.root().isObject() || doc.root().size() == 0)
-        return; // a torn or foreign line — skip, never fail the whole transcript
-    const json::Value      o    = doc.root();
-    const std::string_view type = o["type"].str();
-    _lineUuid                   = o["uuid"].str();
+bool TranscriptParser::beginRecord(
+    std::string_view uuid,
+    std::string_view timestamp,
+    std::string_view version,
+    std::string_view permissionMode,
+    int64_t         *micros
+) {
+    _lineUuid = uuid;
     // A copy of a session starts with the records it was copied from, same
     // uuids and all — the ones read already, from the session it continues.
     if (!_lineUuid.empty() && !_seenUuids.insert(crypto::fnv1a(_lineUuid)).second)
-        return;
-    const int64_t micros = base::parseIsoMicros(o["timestamp"].str());
-    if (micros > _lastActivity)
-        _lastActivity = micros;
-    if (micros > 0 && _keepActivity)
-        _activity.push_back(micros);
+        return false;
+    *micros = base::parseIsoMicros(timestamp);
+    if (*micros > _lastActivity)
+        _lastActivity = *micros;
+    if (*micros > 0 && _keepActivity)
+        _activity.push_back(*micros);
+    if (!version.empty())
+        _version = version;
+    if (!permissionMode.empty())
+        _permissionMode = permissionMode;
+    return true;
+}
 
-    if (const std::string_view v = o["version"].str(); !v.empty())
-        _version = v;
-    if (const std::string_view m = o["permissionMode"].str(); !m.empty())
-        _permissionMode = m;
+// What handleUser makes of a record holding nothing but tool results — no
+// origin, not meta, no pasted image — from its skim alone.
+bool TranscriptParser::handleToolResults(const RecordSkim &r) {
+    if (r.type != "user" || r.origin || r.isMeta || r.isCompactSummary || !r.contentArray ||
+        r.image || r.toolResults.empty())
+        return false;
+    int64_t micros = 0;
+    if (!beginRecord(r.uuid, r.timestamp, r.version, r.permissionMode, &micros))
+        return true;
+    for (const RecordSkim::ToolResult &t : r.toolResults)
+        toolResult(t.id, t.error, r.agentId, r.status, micros);
+    return true;
+}
+
+void TranscriptParser::handleLine(std::string_view line, json::Document &doc, RecordSkim &skim) {
+    // Tool output is most of a transcript's bytes, and all the parser takes
+    // of it is which call it answers: such a record is only skimmed. (That
+    // text can't stand in a JSON string unescaped: only a block says it —
+    // near the record's start, as Claude Code writes it; one that says it
+    // later is read whole, as any other.)
+    constexpr size_t kBlockWithin = 1024;
+    if (line.substr(0, kBlockWithin).find(R"("type":"tool_result")") != std::string_view::npos &&
+        skimRecord(line, &skim) && handleToolResults(skim))
+        return;
+    if (!doc.parse(line, nullptr) || !doc.root().isObject() || doc.root().size() == 0)
+        return; // a torn or foreign line — skip, never fail the whole transcript
+    const json::Value      o      = doc.root();
+    const std::string_view type   = o["type"].str();
+    int64_t                micros = 0;
+    if (!beginRecord(
+            o["uuid"].str(),
+            o["timestamp"].str(),
+            o["version"].str(),
+            o["permissionMode"].str(),
+            &micros
+        ))
+        return;
     if (type == "queue-operation") {
         // A notification queued for the session, the moment its task stopped
         // (the prompt that delivers it may come much later).
@@ -571,6 +902,34 @@ void TranscriptParser::handleLine(std::string_view line) {
         handleAssistant(o, message, micros);
 }
 
+void TranscriptParser::toolResult(
+    std::string_view id,
+    bool             failed,
+    std::string_view agentId,
+    std::string_view status,
+    int64_t          micros
+) {
+    // Newest first: the call is almost always in the latest item.
+    for (auto it = _items.rbegin(); it != _items.rend(); ++it) {
+        auto call = std::find_if(it->tools.begin(), it->tools.end(), [&](const ToolCall &c) {
+            return c.toolUseId == id;
+        });
+        if (call == it->tools.end())
+            continue;
+        call->error = failed;
+        touch(size_t(std::distance(it, _items.rend()) - 1));
+        if (it->kind == TranscriptItem::Kind::Subagent && !agentId.empty()) {
+            it->agentId = agentId;
+            // A foreground subagent's result comes when it's done
+            // ("completed"), and no notification follows: the result is its
+            // stop. A background one's ("async_launched") only says it started.
+            if (status != "async_launched")
+                noteTaskStopped(agentId, micros);
+        }
+        break;
+    }
+}
+
 void TranscriptParser::handleUser(
     const json::Value &o, const json::Value &content, int64_t micros
 ) {
@@ -608,32 +967,15 @@ void TranscriptParser::handleUser(
         for (const json::Value b : content) {
             const std::string_view bt = b["type"].str();
             if (bt == "tool_result") {
-                sawToolResult                  = true;
-                const std::string_view id      = b["tool_use_id"].str();
-                const bool             failed  = b["is_error"].boolean();
-                const json::Value      result  = o["toolUseResult"];
-                const std::string_view agentId = result["agentId"].str();
-                // Newest first: the call is almost always in the latest item.
-                for (auto it = _items.rbegin(); it != _items.rend(); ++it) {
-                    auto call =
-                        std::find_if(it->tools.begin(), it->tools.end(), [&](const ToolCall &c) {
-                            return c.toolUseId == id;
-                        });
-                    if (call == it->tools.end())
-                        continue;
-                    call->error = failed;
-                    touch(size_t(std::distance(it, _items.rend()) - 1));
-                    if (it->kind == TranscriptItem::Kind::Subagent && !agentId.empty()) {
-                        it->agentId = agentId;
-                        // A foreground subagent's result comes when it's
-                        // done ("completed"), and no notification follows:
-                        // the result is its stop. A background one's
-                        // ("async_launched") only says it started.
-                        if (result["status"].str() != "async_launched")
-                            noteTaskStopped(agentId, micros);
-                    }
-                    break;
-                }
+                sawToolResult            = true;
+                const json::Value result = o["toolUseResult"];
+                toolResult(
+                    b["tool_use_id"].str(),
+                    b["is_error"].boolean(),
+                    result["agentId"].str(),
+                    result["status"].str(),
+                    micros
+                );
             } else if (bt == "text") {
                 if (!text.empty())
                     text += '\n';
@@ -725,7 +1067,6 @@ void TranscriptParser::handleAssistant(
             item.kind       = TranscriptItem::Kind::AssistantText;
             item.state      = TranscriptItem::State::Pending;
             item.ts         = nextTs(micros);
-            item.date       = item.ts;
             item.text       = text;
             item.uuid       = _lineUuid;
             item.loginError = loginError;
@@ -749,7 +1090,6 @@ void TranscriptParser::handleAssistant(
                     TranscriptItem item;
                     item.kind = TranscriptItem::Kind::AssistantText;
                     item.ts   = nextTs(micros);
-                    item.date = item.ts;
                     item.text = report; // no uuid: a tool call can't go without its result
                     _items.push_back(std::move(item));
                     continue;
@@ -760,7 +1100,6 @@ void TranscriptParser::handleAssistant(
                 TranscriptItem item;
                 item.kind      = TranscriptItem::Kind::Subagent;
                 item.ts        = nextTs(micros);
-                item.date      = item.ts;
                 item.text      = call.summary;
                 item.agentType = input["subagent_type"].str();
                 item.agentRole = roleInAgentPrompt(input["prompt"].str());
@@ -772,7 +1111,6 @@ void TranscriptParser::handleAssistant(
                 TranscriptItem item;
                 item.kind = TranscriptItem::Kind::ToolGroup;
                 item.ts   = nextTs(micros);
-                item.date = item.ts;
                 _items.push_back(std::move(item));
                 _openToolGroup = int(_items.size()) - 1;
             }
@@ -956,9 +1294,14 @@ struct HistoryEntry {
     std::string sessionId, text;
 };
 
-// Folder `dir`'s entries in `data` (history.jsonl), oldest first.
-std::vector<HistoryEntry>
-historyOf(std::string_view data, std::string_view pasteDir, const std::string &dir) {
+// Folder `dir`'s entries in `data` (lines of history.jsonl), oldest first,
+// appended to *out.
+void historyOf(
+    std::string_view           data,
+    std::string_view           pasteDir,
+    const std::string         &dir,
+    std::vector<HistoryEntry> *out
+) {
     // A line of the folder's has its name in it, as JSON writes it: lines
     // without are never parsed (most, in a history of many folders).
     std::string            needle;
@@ -966,14 +1309,13 @@ historyOf(std::string_view data, std::string_view pasteDir, const std::string &d
     if (!name.empty() && name.find_first_of("\"\\") == std::string_view::npos &&
         std::none_of(name.begin(), name.end(), [](char c) { return uint8_t(c) < 0x20; }))
         needle = name;
-    std::vector<HistoryEntry> out;
-    str::Splitter             lines(data, '\n');
+    json::Document doc;
+    str::Splitter  lines(data, '\n');
     for (std::string_view line; lines.next(&line);) {
         if (line.find("\"display\"") == std::string_view::npos ||
             (!needle.empty() && line.find(needle) == std::string_view::npos))
             continue; // skip the parse for what can't be an entry of the folder
-        json::Document doc;
-        if (!doc.parse(std::string(line), nullptr))
+        if (!doc.parse(line, nullptr))
             continue;
         const json::Value o = doc.root();
         if (cleanPath(o["project"].str()) != dir)
@@ -1013,24 +1355,35 @@ historyOf(std::string_view data, std::string_view pasteDir, const std::string &d
         // only confuse the next prompt.
         text = std::string(str::trimSpace(typedPrompt(dropImageMarks(text))));
         if (!text.empty())
-            out.push_back({std::string(o["sessionId"].str()), std::move(text)});
+            out->push_back({std::string(o["sessionId"].str()), std::move(text)});
     }
-    return out;
 }
 
-// What history.jsonl said last of the folder asked for last: read again only
-// for another folder, or once it changed (its size or modification time).
-struct HistoryCache {
-    std::mutex                lock;
-    std::string               path, pasteDir, folder;
-    int64_t                   size = -1, mtime = -1;
+// What history.jsonl said of the folders asked for lately. The file only
+// grows (a line per prompt, after every one): each folder's entries are
+// taken as far as its last whole line, and only what was appended since is
+// read then — the whole file again only for a folder new here, or once it
+// was rewritten. On a worker too (warmPromptHistory).
+struct FolderHistory {
+    std::string               folder;
+    int64_t                   offset = 0; // past the last whole line taken
+    int64_t                   mtime  = -1;
+    std::string               lastBytes; // up to 64 bytes before `offset`, as read
     std::vector<HistoryEntry> entries;
+};
+struct HistoryCache {
+    std::mutex                 lock;
+    std::string                path, pasteDir;
+    std::vector<FolderHistory> folders; // the one asked for last, last
 };
 
 HistoryCache &historyCache() {
     static HistoryCache cache;
     return cache;
 }
+
+// Folders kept: the sessions' a user goes between.
+constexpr size_t kHistoryFolders = 8;
 
 } // namespace
 
@@ -1047,21 +1400,60 @@ std::vector<std::string> promptHistory(
     const std::string           dir   = cleanPath(project);
     HistoryCache               &cache = historyCache();
     std::lock_guard<std::mutex> hold(cache.lock);
-    if (cache.path != historyPath || cache.pasteDir != pasteDir || cache.folder != dir ||
-        cache.size != st.size || cache.mtime != st.mtimeMicros) {
-        std::string data;
-        if (!file::readAll(historyPath, &data))
-            return {};
+    if (cache.path != historyPath || cache.pasteDir != pasteDir) {
         cache.path     = historyPath;
         cache.pasteDir = pasteDir;
-        cache.folder   = dir;
-        cache.size     = st.size;
-        cache.mtime    = st.mtimeMicros;
-        cache.entries  = historyOf(data, pasteDir, dir);
+        cache.folders.clear();
     }
+    auto f = std::find_if(cache.folders.begin(), cache.folders.end(), [&](const auto &h) {
+        return h.folder == dir;
+    });
+    if (f == cache.folders.end()) {
+        if (cache.folders.size() >= kHistoryFolders)
+            cache.folders.erase(cache.folders.begin());
+        cache.folders.push_back({dir});
+    } else {
+        std::rotate(f, f + 1, cache.folders.end());
+    }
+    FolderHistory &h = cache.folders.back();
+    // What was appended since, after the bytes the last look ended on — a
+    // file shorter than that, or with something else there, was rewritten.
+    std::string    data;
+    if (h.offset > 0 && (st.size != h.offset || st.mtimeMicros != h.mtime)) {
+        const size_t seen = h.lastBytes.size();
+        if (st.size < h.offset ||
+            !file::readRange(
+                historyPath, h.offset - int64_t(seen), size_t(st.size - h.offset) + seen, &data
+            ) ||
+            data.compare(0, seen, h.lastBytes) != 0) {
+            h.offset = 0;
+            h.entries.clear();
+            h.lastBytes.clear();
+            data.clear();
+        } else {
+            data.erase(0, seen);
+        }
+    }
+    if (h.offset == 0 && !file::readAll(historyPath, &data))
+        return {};
+    h.mtime            = st.mtimeMicros;
+    // Whole lines are kept; a last one still being written is read for this
+    // answer alone.
+    const size_t whole = data.rfind('\n') + 1; // 0 when there's none
+    historyOf(std::string_view(data).substr(0, whole), pasteDir, dir, &h.entries);
+    h.offset += int64_t(whole);
+    constexpr size_t kLastBytes = 64;
+    const size_t     from       = whole > kLastBytes ? whole - kLastBytes : 0;
+    h.lastBytes.append(data, from, whole - from);
+    if (h.lastBytes.size() > kLastBytes)
+        h.lastBytes.erase(0, h.lastBytes.size() - kLastBytes);
+    std::vector<HistoryEntry> partial;
+    if (whole < data.size())
+        historyOf(std::string_view(data).substr(whole), pasteDir, dir, &partial);
     std::vector<std::string> own, others; // oldest first
-    for (const HistoryEntry &e : cache.entries)
-        (!sessionId.empty() && e.sessionId == sessionId ? own : others).push_back(e.text);
+    for (const std::vector<HistoryEntry> *part : {&h.entries, &partial})
+        for (const HistoryEntry &e : *part)
+            (!sessionId.empty() && e.sessionId == sessionId ? own : others).push_back(e.text);
     std::vector<std::string> out;
     for (const std::vector<std::string> *part : {&own, &others}) {
         for (auto it = part->crbegin(); it != part->crend() && int(out.size()) < max; ++it)
@@ -1109,21 +1501,27 @@ bool endsTurn(const json::Value &o) {
 } // namespace
 
 bool hasTurnSince(std::string_view path, int64_t from, int64_t afterMs) {
-    std::string data;
-    if (!file::readRange(path, from, size_t(-1) >> 1, &data))
-        return false;
-    str::Splitter lines(data, '\n');
+    LineReader     lines(path, from);
+    RecordSkim     skim;
+    json::Document doc;
     for (std::string_view line; lines.next(&line);) {
-        json::Document doc;
-        if (line.empty() || !doc.parse(std::string(line), nullptr))
+        std::string_view type, timestamp;
+        if (line.empty())
             continue;
-        const json::Value      rec  = doc.root();
-        const std::string_view type = rec["type"].str();
+        if (skimRecord(line, &skim)) {
+            type      = skim.type;
+            timestamp = skim.timestamp;
+        } else if (doc.parse(line, nullptr)) {
+            type      = doc.root()["type"].str();
+            timestamp = doc.root()["timestamp"].str();
+        } else {
+            continue;
+        }
         if (type != "user" && type != "assistant")
             continue;
         if (afterMs <= 0)
             return true;
-        const int64_t at = base::parseIsoMicros(rec["timestamp"].str());
+        const int64_t at = base::parseIsoMicros(timestamp);
         if (at > 0 && at / 1000 > afterMs)
             return true;
     }
@@ -1147,7 +1545,9 @@ bool readBackwards(std::string_view path, const std::function<bool(const LineRec
     int64_t           pos    = file::size(path);
     if (pos < 0)
         return false;
-    std::string carry; // a line's end, its start still to be read
+    std::string    carry; // a line's end, its start still to be read
+    RecordSkim     skim;
+    json::Document doc;
     while (pos > 0) {
         const int64_t from = std::max<int64_t>(0, pos - kChunk);
         std::string   chunk;
@@ -1162,17 +1562,21 @@ bool readBackwards(std::string_view path, const std::function<bool(const LineRec
             const size_t nl = end ? carry.rfind('\n', end - 1) : std::string::npos;
             if (nl == std::string::npos && pos > 0)
                 break;
-            const size_t   start = nl == std::string::npos ? 0 : nl + 1;
-            json::Document doc;
-            if (end > start && doc.parse(carry.substr(start, end - start), nullptr) &&
-                doc.root().isObject()) {
-                const std::string_view type = doc.root()["type"].str();
-                if (!fn(
-                        {std::string(doc.root()["uuid"].str()),
-                         type == "user" || type == "assistant"}
-                    ))
-                    return true;
+            const size_t           start = nl == std::string::npos ? 0 : nl + 1;
+            const std::string_view line  = std::string_view(carry).substr(start, end - start);
+            std::string_view       type, uuid;
+            bool                   read = false;
+            if (end > start && skimRecord(line, &skim)) {
+                type = skim.type;
+                uuid = skim.uuid;
+                read = true;
+            } else if (end > start && doc.parse(line, nullptr) && doc.root().isObject()) {
+                type = doc.root()["type"].str();
+                uuid = doc.root()["uuid"].str();
+                read = true;
             }
+            if (read && !fn({std::string(uuid), type == "user" || type == "assistant"}))
+                return true;
             if (nl == std::string::npos)
                 break;
             end = nl;
@@ -1228,50 +1632,72 @@ bool removeFromTranscript(std::string_view path, std::string_view uuid, std::str
         return fail(str::concat({"can't read ", path}));
     std::vector<std::string_view> lines = str::split(data, '\n');
     if (lines.back().empty())
-        lines.pop_back();                           // after the last newline
-    std::vector<json::Document> docs(lines.size()); // empty for a line that isn't JSON
-    int                         target = -1;
-    for (size_t i = 0; i < lines.size(); ++i) {
-        if (!docs[i].parse(std::string(lines[i]), nullptr) || !docs[i].root().isObject())
-            docs[i] = json::Document();
-        if (docs[i].root()["uuid"].str() == uuid)
+        lines.pop_back(); // after the last newline
+    // Never every line's document at once (a long transcript's would take
+    // several times its size): one is parsed at a time, and each line keeps
+    // only what the rewrite asks of it. A line that isn't JSON is an empty
+    // record.
+    json::Document doc;
+    RecordSkim     skim;
+    const auto     parse = [&doc](std::string_view line) {
+        if (!doc.parse(line, nullptr) || !doc.root().isObject())
+            doc = json::Document();
+        return doc.root();
+    };
+    int target = -1;
+    for (size_t i = 0; i < lines.size(); ++i)
+        if ((skimRecord(lines[i], &skim) ? skim.uuid : parse(lines[i])["uuid"].str()) == uuid)
             target = int(i);
-    }
     if (target < 0)
         return fail(str::concat({"no record ", uuid, " in ", path}));
-    auto rec = [&docs](size_t i) { return docs[i].root(); };
+    // The record taken out: its type, its message's id, a prompt's text.
+    json::Document targetDoc;
+    targetDoc.parse(lines[size_t(target)], nullptr);
+    const json::Value t      = targetDoc.root();
+    const bool        answer = t["type"].str() == "assistant";
+    const std::string messageId(t["message"]["id"].str());
+    const json::Value promptText = t["message"]["content"];
+    const bool        bookkept   = t["type"].str() == "user" && promptText.isString();
 
     // What goes, each with the parent that records linked to it are moved to.
+    constexpr std::string_view kLinks[] = {"parentUuid", "logicalParentUuid", "leafUuid"};
+    struct Line {
+        std::string uuid, links[3]; // links: as kLinks
+    };
+    std::vector<Line>                            info(lines.size());
     std::unordered_map<std::string, std::string> gone;
     std::vector<bool>                            dropped(lines.size(), false);
     auto                                         drop = [&](size_t i) {
-        dropped[i]                = true;
-        const std::string_view id = rec(i)["uuid"].str();
-        if (!id.empty())
-            gone[std::string(id)] = rec(i)["parentUuid"].str();
+        dropped[i] = true;
+        if (!info[i].uuid.empty())
+            gone[info[i].uuid] = info[i].links[0];
     };
-    const json::Value t = rec(size_t(target));
+    info[size_t(target)].uuid = std::string(t["uuid"].str());
+    for (size_t k = 0; k < 3; ++k)
+        info[size_t(target)].links[k] = std::string(t[kLinks[k]].str());
     drop(size_t(target));
-    if (t["type"].str() == "assistant") {
-        // An answer: the thinking written as part of the same message.
-        const std::string_view id = t["message"]["id"].str();
-        for (size_t i = 0; i < lines.size(); ++i)
-            if (!id.empty() && isThinkingRecord(rec(i)) && rec(i)["message"]["id"].isString() &&
-                rec(i)["message"]["id"].str() == id)
+    bool inTurn = true; // a prompt: the turn it started, up to its end
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const json::Value r = parse(lines[i]);
+        info[i].uuid        = std::string(r["uuid"].str());
+        for (size_t k = 0; k < 3; ++k)
+            info[i].links[k] = std::string(r[kLinks[k]].str());
+        if (answer) {
+            // An answer: the thinking written as part of the same message.
+            if (!messageId.empty() && isThinkingRecord(r) && r["message"]["id"].isString() &&
+                r["message"]["id"].str() == messageId)
                 drop(i);
-    } else {
-        // A prompt: the thinking of the turn it started.
-        for (size_t i = size_t(target) + 1; i < lines.size() && !endsTurn(rec(i)); ++i)
-            if (isThinkingRecord(rec(i)))
+        } else if (i > size_t(target) && inTurn) {
+            // A prompt: the thinking of the turn it started.
+            if (endsTurn(r))
+                inTurn = false;
+            else if (isThinkingRecord(r))
                 drop(i);
-    }
-    // Claude Code's own bookkeeping keeps a typed prompt's text as well (its
-    // input queue, the last prompt for `claude --resume`): none of it reaches
-    // Claude, but a deleted message shouldn't linger in the file.
-    const json::Value promptText = t["message"]["content"];
-    if (t["type"].str() == "user" && promptText.isString())
-        for (size_t i = 0; i < lines.size(); ++i) {
-            const json::Value      r    = rec(i);
+        }
+        // Claude Code's own bookkeeping keeps a typed prompt's text as well
+        // (its input queue, the last prompt for `claude --resume`): none of it
+        // reaches Claude, but a deleted message shouldn't linger in the file.
+        if (bookkept) {
             const std::string_view type = r["type"].str();
             if ((type == "queue-operation" && r["content"].isString() &&
                  r["content"].str() == promptText.str()) ||
@@ -1279,6 +1705,7 @@ bool removeFromTranscript(std::string_view path, std::string_view uuid, std::str
                  r["lastPrompt"].str() == promptText.str()))
                 dropped[i] = true;
         }
+    }
     auto relink = [&gone](std::string id) {
         for (size_t hops = 0; hops < gone.size(); ++hops) {
             const auto it = gone.find(id);
@@ -1289,25 +1716,22 @@ bool removeFromTranscript(std::string_view path, std::string_view uuid, std::str
         return id;
     };
 
-    constexpr std::string_view kLinks[] = {"parentUuid", "logicalParentUuid", "leafUuid"};
-    std::string                out;
+    std::string out;
     out.reserve(data.size());
     for (size_t i = 0; i < lines.size(); ++i) {
-        const json::Value o = rec(i);
-        if (dropped[i] || gone.count(std::string(o["uuid"].str())))
+        if (dropped[i] || gone.count(info[i].uuid))
             continue;
         bool changed = false;
-        for (const std::string_view key : kLinks) {
-            const std::string_view link = o[key].str();
-            if (!link.empty() && gone.count(std::string(link)))
+        for (const std::string &link : info[i].links)
+            if (!link.empty() && gone.count(link))
                 changed = true;
-        }
         if (!changed) {
             out.append(lines[i]); // untouched lines are kept byte for byte
             out += '\n';
             continue;
         }
-        json::Writer w;
+        const json::Value o = parse(lines[i]);
+        json::Writer      w;
         w.beginObject();
         for (const json::Value v : o) {
             const std::string_view key = v.key();

@@ -289,9 +289,10 @@ void Launcher::waitStopped(
     // The worker's pid file goes when it exits. The job's state is no help: a
     // worker stopped while idle leaves it reading "done" (verified 2026-09-25).
     // The pid file may go a moment before the process does, so the workers
-    // seen before the stop are waited for too.
+    // seen before the stop are waited for too — looked at first: while one
+    // lives, the session files (every one read) needn't be.
     const bool exited =
-        !hasLiveWorker(_paths, sessionId) && std::none_of(pids.begin(), pids.end(), isProcessAlive);
+        std::none_of(pids.begin(), pids.end(), isProcessAlive) && !hasLiveWorker(_paths, sessionId);
     if (exited || attemptsLeft <= 0) {
         then();
         return;

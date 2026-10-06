@@ -223,6 +223,10 @@ private:
     void                       refreshScan(); // refresh()'s body
     void                       scheduleRefresh();
     void                       watchTick();
+    void                       watchCheck(); // the look: what changed since the last
+    void                       syncWatches();
+    void                       readWatchEvents();
+    std::vector<std::string>   watchedFiles(bool *anyBusy) const;
     // `looked`: findSubagentRuns has just run (the refresh's own look).
     void                       pumpTyping(bool looked = false);
     void                       announceRoles();
@@ -244,17 +248,18 @@ private:
     model::User    assistantUser(const Tracked &t) const;
     model::User    teammateUser(const Role &r) const;
 
-    bool           busy(const Tracked &t) const;
-    bool           working(const Tracked &t) const; // busy, msga's own turn aside
-    bool           needsUser(const Tracked &t) const;
-    bool           unavailable(const Tracked &t) const; // the yellow dot
-    std::string    readOnlyReason(const Tracked &t) const;
-    std::string    roleOf(const Tracked &t) const;  // its teammate's role id
-    const Role    &roleFor(const Tracked &t) const; // …and the teammate, as shown
-    model::UserRef subagentAuthor(const TranscriptItem &item, model::UserRef parent);
+    bool               busy(const Tracked &t) const;
+    bool               working(const Tracked &t) const; // busy, msga's own turn aside
+    bool               needsUser(const Tracked &t) const;
+    bool               unavailable(const Tracked &t) const; // the yellow dot
+    std::string        readOnlyReason(const Tracked &t) const;
+    bool               readOnly(const Tracked &t) const; // readOnlyReason isn't ""
+    const std::string &roleOf(const Tracked &t) const;   // its teammate's role id
+    const Role        &roleFor(const Tracked &t) const;  // …and the teammate, as shown
+    model::UserRef     subagentAuthor(const TranscriptItem &item, model::UserRef parent);
     // What a PeerMessage of `subagent` handing back (at `ts`) shows as in the
     // session: a line pointing to that subagent's thread.
-    model::Message handbackPointer(
+    model::Message     handbackPointer(
         const Tracked &t, const TranscriptItem &subagent, model::Ts ts, model::UserRef parent
     );
     bool                     roleBusy(const std::string &role) const;
@@ -297,6 +302,9 @@ private:
     // The ts of the session's "Waiting for you…" message, 0 when it shows none.
     model::Ts      waitingTs(const Tracked &t, model::Ts lastTs) const;
     model::Message waitingMessage(const Tracked &t, model::Ts ts);
+    // The newest ts the session's list (a /btw branch: its thread) shows;
+    // 0 when it's empty. Nothing rendered.
+    model::Ts      lastShownTs(Tracked &t);
     // The message at ts in a list the Store doesn't hold, built for its
     // notification alone (no output files); false when nothing shows there.
     bool           newsAt(Tracked &t, bool thread, model::Ts ts, model::Message *out);
@@ -328,17 +336,21 @@ private:
     );
     // Reactions on, and each message's fingerprint taken (Visible::fp).
     void          applyReactions(const std::string &convId, std::vector<Visible> &list) const;
-    // A subagent's transcript, read up to its end (only what was appended).
-    SubagentFeed &subagentFeed(const Tracked &t, const std::string &agentId) const;
+    // A subagent's transcript, read up to its end (only what was appended) —
+    // a long one first read on a worker: unread until then.
+    SubagentFeed &subagentFeed(const Tracked &t, const std::string &agentId);
+    void          parseSubagentOnWorker(const std::string &path, const Tracked &t, SubagentFeed &f);
+    // Subagent transcripts read on workers are in: their sessions synced again.
+    void          subagentsRead();
     // What msga keeps of a session it no longer tracks: its subagents'
     // transcripts, the answers known to have no output files.
     void          forgetCaches(Tracked &t);
     // The background subagents running now (pumpTyping, roleSubagentRunning):
     // looked for once per tick.
     void          findSubagentRuns();
-    int subagentReplyCount(const Tracked &t, const std::string &agentId, model::Ts *latest) const;
+    int     subagentReplyCount(const Tracked &t, const std::string &agentId, model::Ts *latest);
     // When the subagent's run under way began (epoch ms); 0 = it isn't running.
-    int64_t subagentRunSinceMs(const Tracked &t, const std::string &agentId) const;
+    int64_t subagentRunSinceMs(const Tracked &t, const std::string &agentId);
 
     // ── backend_send.cpp ────────────────────────────────────────────────────
     void        sendText(model::ConvRef conv, std::string text, model::Ts threadTs, Done done);
@@ -412,27 +424,33 @@ private:
     const TranscriptItem *deletableItem(Tracked &t, model::Ts ts);
     Tracked              *queuedHolder(const std::string &convId, model::Ts ts, size_t *index);
     std::vector<std::pair<std::string, std::string>> conversationStatus(Tracked &t);
-    void                                             teamChanged(const std::string &id);
-    void                                             loadProfile();
-    void                                             saveProfile() const;
-    void                                             reportError(const std::string &message);
+    // What search() looks through of a session: each message its list shows
+    // (visibleList; a /btw branch: threadList; in any order: search sorts
+    // by ts) — its text, or the Markdown its text is rendered from, rendered
+    // on a worker.
+    struct SearchText;
+    void searchTexts(Tracked &t, std::vector<SearchText> &out);
+    void teamChanged(const std::string &id);
+    void loadProfile();
+    void saveProfile() const;
+    void reportError(const std::string &message);
 
     // Calls fn later on the loop unless this backend is gone by then.
     void post(std::function<void()> fn);
     // A one-shot timer that dies with the backend.
     void after(int ms, std::function<void()> fn);
 
-    plat::App                                      &_app;
-    Credentials                                     _creds;
-    Paths                                           _paths;
-    Team                                            _team;
-    std::unique_ptr<Launcher>                       _launcher;
-    std::shared_ptr<bool>                           _alive;
+    plat::App                                                   &_app;
+    Credentials                                                  _creds;
+    Paths                                                        _paths;
+    Team                                                         _team;
+    std::unique_ptr<Launcher>                                    _launcher;
+    std::shared_ptr<bool>                                        _alive;
     // By conversation id — the session id, except for a session started with
     // "+": its conversation exists before Claude Code picks the session's id on
     // the first message, so it keeps its own id and _convOf maps the session to it.
-    std::map<std::string, std::unique_ptr<Tracked>> _sessions;
-    std::unordered_map<std::string, std::string>    _convOf; // session id → conversation id
+    std::map<std::string, std::unique_ptr<Tracked>, std::less<>> _sessions;
+    std::unordered_map<std::string, std::string> _convOf; // session id → conversation id
     // Sessions removed from msga, by session id: when, and the transcript whose
     // later growth brings the session back (forgotten once Claude Code drops it).
     struct Hidden {
@@ -440,7 +458,11 @@ private:
         std::string transcript;
         int64_t     seenSize = -1;    // transcript bytes already known not to be new activity
         bool        stopping = false; // its worker is being stopped (stopRemoved)
+        bool checking = false; // its transcript's growth looked through (checkHiddenOnWorker)
     };
+    void checkHiddenOnWorker(
+        const std::string &sessionId, const std::string &path, int64_t from, int64_t size
+    );
     std::unordered_map<std::string, Hidden> _hidden;
     // Its entry, made now (with the transcript as it stands) if there's none.
     Hidden                                 &hide(const std::string &sessionId);
@@ -475,6 +497,15 @@ private:
     bool                                                         _usersDirty    = false;
     // What the watcher saw last (path → size + mtime), and when it last looked.
     std::unordered_map<std::string, std::pair<int64_t, int64_t>> _watched;
+    int64_t                                                      _watchCheckedMs = 0;
+    // inotify (Linux): its descriptor (-1 = not yet, -2 = none to have), its
+    // watch on the loop (0: no loop to wake, read by watchTick), the folders
+    // watched and the files in them looked at; _watchAll: every one is.
+    int                                                          _inotify        = -1;
+    uint64_t                                                     _inotifyWatch   = 0;
+    std::unordered_map<std::string, int64_t>                     _watchDirs;
+    std::unordered_set<std::string>                              _watchFiles;
+    bool                                                         _watchAll           = false;
     // Typing into live workers (typeLive): misses in a row, and off until when.
     int                                                          _typeLiveMisses     = 0;
     int64_t                                                      _typeLiveOffUntilMs = 0;
@@ -488,8 +519,9 @@ private:
     std::string                            _myName;       // "" = the login name
     std::string                            _myAvatarPath; // a copy in msga's data; "" = initials
     std::string                            _lastConv;     // the conversation open last
-    mutable std::unordered_map<std::string, std::unique_ptr<SubagentFeed>>
-                                    _subagents; // by transcript path
+    std::unordered_map<std::string, std::unique_ptr<SubagentFeed>> _subagents; // by transcript path
+    uint64_t                        _subagentParses = 0; // parseSubagentOnWorker's, numbered
+    std::vector<std::string>        _subagentsReadFor; // conversations synced again (subagentsRead)
     // Answers whose output files are being copied (by their copies' folder),
     // and those known to have none.
     std::unordered_set<std::string> _outputsPending, _noOutputs;
@@ -510,6 +542,10 @@ private:
     std::vector<SubagentRun>        _subagentRuns;
     std::unordered_set<std::string> _subagentRoles;
     uint64_t                        _savedHash = 0; // of known-sessions.json as last written
+    // Removed and started sessions Claude Code has dropped (not saved), as of
+    // when saveKnown last looked.
+    std::unordered_set<std::string> _dropped;
+    int64_t                         _prunedMs = 0;
     // Each job's state.json as last read (scanSessions).
     JobStateCache                   _jobStates;
     // Sessions whose transcript wasn't found, by session id → the refresh

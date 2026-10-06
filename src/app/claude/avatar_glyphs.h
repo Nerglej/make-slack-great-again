@@ -5,9 +5,9 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace claude::avatar_glyphs {
 
@@ -16,11 +16,11 @@ struct Glyph {
     const char *elements; // its SVG elements, in Lucide's 24-unit box
 };
 
-const std::vector<Glyph>    &glyphs();
+std::span<const Glyph>    glyphs();
 // The tile colours on offer, 0xRRGGBB; the first is Claude orange, the last a
 // neutral slate (former teammates).
-const std::vector<uint32_t> &colors();
-bool                         hasGlyph(std::string_view id);
+std::span<const uint32_t> colors();
+bool                      hasGlyph(std::string_view id);
 
 // A 128-unit tile of `color` (0xRRGGBB) with glyph `id` on it; the first glyph
 // for an unknown id.

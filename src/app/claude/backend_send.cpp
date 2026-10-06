@@ -157,10 +157,7 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
                              str::startsWith(body, "/btw\n") || str::startsWith(body, "/btw\t");
     const auto        fail = [&](const std::string &why) {
         reportError(i18n::arg(tr("Couldn't send message: %1"), why));
-        post([done = std::move(done), why] {
-            if (done)
-                done(false, why);
-        });
+        postDone(std::move(done), false, why);
     };
     if (!t) {
         reason = tr("This session no longer exists.");
@@ -222,10 +219,7 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
         }
     }
     enqueue(*target, std::move(text), relayRoot, std::move(shown));
-    post([done = std::move(done)] {
-        if (done)
-            done(true, {});
-    });
+    postDone(std::move(done), true);
 }
 
 void Backend::enqueue(Tracked &target, std::string text, Ts relayRoot, std::string shown) {
@@ -233,8 +227,8 @@ void Backend::enqueue(Tracked &target, std::string text, Ts relayRoot, std::stri
         sync(target); // what's there already isn't news
     // msga's copy of it, from now on: after everything shown, uniquely timed.
     Ts micros = nowMs() * 1000;
-    for (const auto &v : asThread(target) ? threadList(target) : visibleList(target))
-        micros = std::max(micros, v.ts + 1);
+    if (const Ts last = lastShownTs(target))
+        micros = std::max(micros, last + 1);
     target.outbox.push_back({std::move(text), micros, relayRoot, std::move(shown)});
     // A record timed before that (clocks, the same millisecond) would
     // otherwise be tie-broken onto the copy's very ts, and its prompt never
@@ -504,13 +498,8 @@ void Backend::readApproval(Tracked &t) {
 }
 
 void Backend::pressButton(ConvRef conv, Ts, const std::string &buttonId, Done done) {
-    const auto fail = [&](const std::string &why) {
-        post([done = std::move(done), why] {
-            if (done)
-                done(false, why);
-        });
-    };
-    Tracked *t = findRef(conv);
+    const auto fail = [&](const std::string &why) { postDone(std::move(done), false, why); };
+    Tracked   *t    = findRef(conv);
     if (!t || !awaitsApproval(t->info) || t->approvalNeeds != t->info.needs)
         return fail(tr("Claude isn't waiting for that approval any more."));
     int number = 0;
@@ -550,10 +539,7 @@ void Backend::pressButton(ConvRef conv, Ts, const std::string &buttonId, Done do
             if (!*alive)
                 return;
             const auto reply = [this, &done](bool ok, std::string why) {
-                post([done, ok, why = std::move(why)] {
-                    if (done)
-                        done(ok, why);
-                });
+                postDone(done, ok, std::move(why));
             };
             Tracked *t = find(convId);
             if (t)

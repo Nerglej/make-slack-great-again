@@ -9,6 +9,7 @@
 #include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
+#include "base/utf8.h"
 #include "plat/plat.h"
 
 #include <algorithm>
@@ -50,16 +51,6 @@ void addTs(std::vector<Ts> &v, Ts ts) {
         v.push_back(ts);
 }
 
-// Cut at `max` bytes, never inside a UTF-8 sequence.
-size_t utf8Cut(std::string_view s, size_t max) {
-    if (s.size() <= max)
-        return s.size();
-    size_t n = max;
-    while (n > 0 && (uint8_t(s[n]) & 0xC0) == 0x80)
-        --n;
-    return n;
-}
-
 // The first line, trimmed, at most `max` bytes ("…" when cut).
 std::string firstLine(std::string_view s, size_t max) {
     s = str::trim(s);
@@ -67,7 +58,7 @@ std::string firstLine(std::string_view s, size_t max) {
     s = str::trim(s);
     if (s.size() <= max)
         return std::string(s);
-    return std::string(s.substr(0, utf8Cut(s, max))) + "\xE2\x80\xA6";
+    return std::string(s.substr(0, utf8::truncateAt(s, max))) + "\xE2\x80\xA6";
 }
 
 // & < > as mrkdwn wants them: a name or a line taken as text.
@@ -118,7 +109,7 @@ std::vector<std::string> splitAnswer(std::string_view text) {
             if (at == std::string_view::npos || at == 0)
                 at = para.rfind(' ', kChunk);
             if (at == std::string_view::npos || at == 0)
-                at = utf8Cut(para, kChunk);
+                at = utf8::truncateAt(para, kChunk);
             out.push_back(std::string(para.substr(0, at)));
             para = str::trim(para.substr(at));
         }

@@ -26,6 +26,10 @@
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
+#if defined(__linux__)
+#include <sys/inotify.h>
+#include <unistd.h>
+#endif
 
 namespace claude {
 
@@ -154,6 +158,13 @@ void Backend::close() {
         *t = 0;
     }
     _oneShots.cancelAll();
+    if (_inotifyWatch)
+        _app.unwatchFd(std::exchange(_inotifyWatch, 0));
+#if defined(__linux__)
+    if (_inotify >= 0)
+        ::close(_inotify);
+#endif
+    _inotify = -2;
     for (auto &[id, t] : _sessions) {
         if (const auto typing = std::exchange(t->typing, {}).lock())
             typing->cancel(); // its done finds the backend gone
@@ -236,6 +247,24 @@ void Backend::loadKnown() {
 }
 
 void Backend::saveKnown() {
+    // Removed and started sessions are forgotten once Claude Code has dropped
+    // them: their transcript and, for a background session, its job both
+    // gone. Hundreds of them, a few stats each: looked at once an hour, not
+    // on every save.
+    constexpr int64_t kPruneMs = 60 * 60'000;
+    if (_prunedMs == 0 || nowMs() - _prunedMs >= kPruneMs) {
+        _prunedMs        = nowMs();
+        const auto jobOf = [this](const std::string &sid) {
+            return file::exists(_paths.jobsDir() + "/" + sid.substr(0, 8));
+        };
+        _dropped.clear();
+        for (const auto &[sid, h] : _hidden)
+            if ((h.transcript.empty() || !file::exists(h.transcript)) && !jobOf(sid))
+                _dropped.insert(sid);
+        for (const std::string &sid : _launchedHere)
+            if (!_convOf.count(sid) && (!_hidden.count(sid) || _dropped.count(sid)) && !jobOf(sid))
+                _dropped.insert(sid);
+    }
     json::Writer w;
     w.beginObject();
     w.key("sessions").beginArray();
@@ -277,10 +306,7 @@ void Backend::saveKnown() {
     w.endArray();
     w.key("hidden").beginArray();
     for (const auto &[sid, h] : _hidden) {
-        // Forgotten once Claude Code has dropped the session: its transcript
-        // and, for a background session, its job are both gone.
-        if ((h.transcript.empty() || !file::exists(h.transcript)) &&
-            !file::exists(_paths.jobsDir() + "/" + sid.substr(0, 8)))
+        if (_dropped.count(sid))
             continue;
         w.beginObject();
         w.key("sessionId").value(sid);
@@ -293,8 +319,7 @@ void Backend::saveKnown() {
     w.endArray();
     w.key("started").beginArray();
     for (const std::string &sid : _launchedHere)
-        if (_convOf.count(sid) || _hidden.count(sid) ||
-            file::exists(_paths.jobsDir() + "/" + sid.substr(0, 8)))
+        if (_convOf.count(sid) || !_dropped.count(sid))
             w.value(sid);
     w.endArray();
     if (!_lastConv.empty())
@@ -336,12 +361,12 @@ Backend::Tracked &Backend::ensureTracked(const std::string &convId) {
 }
 
 Backend::Tracked *Backend::find(std::string_view convId) {
-    const auto it = _sessions.find(std::string(convId));
+    const auto it = _sessions.find(convId);
     return it == _sessions.end() ? nullptr : it->second.get();
 }
 
 const Backend::Tracked *Backend::find(std::string_view convId) const {
-    const auto it = _sessions.find(std::string(convId));
+    const auto it = _sessions.find(convId);
     return it == _sessions.end() ? nullptr : it->second.get();
 }
 
@@ -396,10 +421,11 @@ bool Backend::needsUser(const Tracked &t) const {
            !working(t);
 }
 
-std::string Backend::roleOf(const Tracked &t) const {
+const std::string &Backend::roleOf(const Tracked &t) const {
+    static const std::string generalist(kGeneralist);
     if (!t.parser.role().empty())
         return t.parser.role();
-    return t.role.empty() ? std::string(kGeneralist) : t.role;
+    return t.role.empty() ? generalist : t.role;
 }
 
 const Role &Backend::roleFor(const Tracked &t) const {
@@ -480,6 +506,11 @@ std::string Backend::teammateNames(std::string_view text) const {
     return out;
 }
 
+bool Backend::readOnly(const Tracked &t) const {
+    return (t.info.running && t.info.kind == SessionInfo::Kind::Interactive) ||
+           _creds.claudePath.empty();
+}
+
 std::string Backend::readOnlyReason(const Tracked &t) const {
     if (t.info.running && t.info.kind == SessionInfo::Kind::Interactive) {
         if (t.info.entrypoint == "cli")
@@ -500,7 +531,7 @@ std::string Backend::readOnlyReason(const Tracked &t) const {
 // Not working, yet waiting on something besides a message: open in a
 // terminal, or on a permission question (messages wait for its answer).
 bool Backend::unavailable(const Tracked &t) const {
-    return awaitsApproval(t.info) || !readOnlyReason(t).empty();
+    return awaitsApproval(t.info) || readOnly(t);
 }
 
 bool Backend::roleBusy(const std::string &role) const {
@@ -615,12 +646,17 @@ uint64_t Backend::syncKey(Tracked &t) {
         target == kNoConv ? _shown.end() : _shown.find({target, thread ? t.forkRoot : 0});
     k = mix(k, int64_t(target));
     k = mix(k, shown == _shown.end() ? -1 : shown->second.from);
-    // A loaded list counts its subagents' replies: their transcripts.
+    // A loaded list counts its subagents' replies: their transcripts — how
+    // long each is, and what was read of it (only the sync reads them).
     if (shown != _shown.end() && !thread)
         for (const size_t i : subagentItems(t)) {
-            const SubagentFeed &f = subagentFeed(t, t.parser.items()[i].agentId);
-            k                     = mix(k, int64_t(f.parser.revision()));
-            k                     = mix(k, f.offset);
+            const std::string path =
+                Paths::subagentTranscript(t.transcriptPath, t.parser.items()[i].agentId);
+            k = mix(k, file::size(path));
+            if (const auto f = _subagents.find(path); f != _subagents.end()) {
+                k = mix(k, int64_t(f->second->parser.revision()));
+                k = mix(k, f->second->offset);
+            }
         }
     return k;
 }
@@ -689,6 +725,9 @@ namespace {
 constexpr size_t  kReadChunk       = 1 << 20;
 // A transcript read from its start beyond this is read on a worker.
 constexpr int64_t kWorkerParseFrom = 1 << 20;
+// What a removed session's transcript grew by, looked through for a turn
+// (hasTurnSince), beyond this is looked through on a worker.
+constexpr int64_t kWorkerScanFrom  = 256 << 10;
 // The transcript of a session nothing runs, not found, is looked for again
 // after this long (each look lists every project folder): a background job
 // whose transcript Claude Code deleted lingers for days.
@@ -820,16 +859,24 @@ void Backend::tail(Tracked &t) {
         putUser(teammateUser(_team.resolve(t.parser.role())));
 }
 
-Backend::SubagentFeed &Backend::subagentFeed(const Tracked &t, const std::string &agentId) const {
+Backend::SubagentFeed &Backend::subagentFeed(const Tracked &t, const std::string &agentId) {
     const std::string path = Paths::subagentTranscript(t.transcriptPath, agentId);
     auto             &slot = _subagents[path];
     if (!slot)
         slot = std::make_unique<SubagentFeed>();
-    SubagentFeed &f    = *slot;
+    SubagentFeed &f = *slot;
+    if (f.parsing)
+        return f; // read on a worker: as it is until then
     const int64_t size = file::size(path);
     if (size < f.offset)
         f = SubagentFeed{};  // gone, rewritten or truncated: start over
     f.parser.keepActivity(); // when its runs began (subagentRunSinceMs)
+    if (f.offset == 0 && size > kWorkerParseFrom) {
+        // A long subagent (they run to a hundred MB): read on a worker, as
+        // tail() does a session's.
+        parseSubagentOnWorker(path, t, f);
+        return f;
+    }
     if (size > f.offset) {
         // Only what was appended since the last look, as tail().
         std::string chunk;
@@ -849,6 +896,52 @@ Backend::SubagentFeed &Backend::subagentFeed(const Tracked &t, const std::string
     return f;
 }
 
+void Backend::parseSubagentOnWorker(const std::string &path, const Tracked &t, SubagentFeed &f) {
+    f.parsing    = true;
+    f.parseToken = ++_subagentParses;
+    auto parsed  = std::make_shared<Preparsed>();
+    parsed->parser.keepActivity();
+    model::runInBackground(
+        _app,
+        [parsed, path] { parsed->offset = feedTranscript(path, parsed->parser); },
+        [this, alive = _alive, parsed, path, convId = t.convId, token = f.parseToken] {
+            if (!*alive)
+                return;
+            // The feed may have been dropped meanwhile (the session no longer
+            // looks at its subagents), or started over: then this is no one's.
+            const auto it = _subagents.find(path);
+            if (it == _subagents.end() || !it->second->parsing || it->second->parseToken != token)
+                return;
+            SubagentFeed &f = *it->second;
+            f.parsing       = false;
+            if (parsed->offset > 0) { // unreadable: tried again on a later look
+                f.parser = std::move(parsed->parser);
+                f.offset = parsed->offset;
+                f.rendered.clear();
+                f.counted = 0;
+            }
+            if (std::find(_subagentsReadFor.begin(), _subagentsReadFor.end(), convId) ==
+                _subagentsReadFor.end())
+                _subagentsReadFor.push_back(convId);
+            if (_subagentsReadFor.size() == 1)
+                post([this] { subagentsRead(); }); // all that come in meanwhile at once
+        }
+    );
+}
+
+void Backend::subagentsRead() {
+    for (const std::string &convId : std::exchange(_subagentsReadFor, {})) {
+        Tracked *t = find(convId);
+        if (!t || t->parsing || !t->announcedInit)
+            continue;
+        // Their reply counts in its list, their threads, their runs.
+        sync(*t);
+        t->syncedKey = syncKey(*t);
+        syncThreads(*t);
+    }
+    pumpTyping();
+}
+
 void Backend::forgetCaches(Tracked &t) {
     // Waiting for its transcript, which no one reads now: they find it gone.
     for (auto &then : std::exchange(t.afterParse, {}))
@@ -865,7 +958,7 @@ void Backend::forgetCaches(Tracked &t) {
         _transcriptMiss.erase(t.info.sessionId);
 }
 
-int Backend::subagentReplyCount(const Tracked &t, const std::string &agentId, Ts *latest) const {
+int Backend::subagentReplyCount(const Tracked &t, const std::string &agentId, Ts *latest) {
     const SubagentFeed &f     = subagentFeed(t, agentId);
     const auto         &items = f.parser.items();
     *latest                   = items.empty() ? 0 : items.back().ts;
@@ -876,9 +969,24 @@ int Backend::subagentReplyCount(const Tracked &t, const std::string &agentId, Ts
 // the session is notified each time it stops, a few ms after its last record,
 // and it may start again (a reply relayed to it, or on its own when work of
 // its own ends) — then its file grows past that notification.
-int64_t Backend::subagentRunSinceMs(const Tracked &t, const std::string &agentId) const {
-    const auto   &activity = subagentFeed(t, agentId).parser.activity();
-    const int64_t stopped  = t.parser.taskStoppedAt(agentId);
+//
+// One that stopped and hasn't been read here isn't read to tell — the look
+// every tick makes would otherwise read every finished subagent of a live
+// session, a hundred MB in all — while its file was last written no later
+// than a moment after the notification (its own last writes trail that by
+// ~0.1 s, measured 2026-10-06; a run starting again writes on).
+int64_t Backend::subagentRunSinceMs(const Tracked &t, const std::string &agentId) {
+    constexpr int64_t kStopSlackMicros = 1'000'000;
+    const int64_t     stopped          = t.parser.taskStoppedAt(agentId);
+    if (stopped > 0) {
+        const std::string path = Paths::subagentTranscript(t.transcriptPath, agentId);
+        const auto        feed = _subagents.find(path);
+        file::Stat        st;
+        if ((feed == _subagents.end() || feed->second->offset == 0) &&
+            (!file::stat(path, &st) || st.mtimeMicros <= stopped + kStopSlackMicros))
+            return 0;
+    }
+    const auto &activity = subagentFeed(t, agentId).parser.activity();
     if (activity.empty() || activity.back() <= stopped)
         return 0;
     auto it = activity.end();
@@ -887,13 +995,10 @@ int64_t Backend::subagentRunSinceMs(const Tracked &t, const std::string &agentId
     return *it / 1000;
 }
 
-namespace {
-// The key an answer's output files are kept under (OutputContext::messageKey).
 std::string outputKey(const TranscriptItem &item, const std::string &agentId) {
     return (agentId.empty() ? std::string() : agentId + "-") +
            (item.uuid.empty() ? model::formatTs(item.ts) : item.uuid);
 }
-} // namespace
 
 void Backend::attachOutputs(
     Message                           &m,
@@ -904,17 +1009,18 @@ void Backend::attachOutputs(
     const std::string                 &agentId
 ) {
     const TranscriptItem &item = items[i];
-    if (item.kind != TranscriptItem::Kind::AssistantText)
+    // Most answers name no file: nothing to look for, nothing to read.
+    if (item.kind != TranscriptItem::Kind::AssistantText || !mayNameFiles(item.text))
         return;
     OutputContext ctx;
     ctx.convId     = convId;
     ctx.messageKey = outputKey(item, agentId);
     ctx.cwd        = cwd;
-    ctx.date       = item.date;
-    ctx.turnStart  = items.front().date;
+    ctx.date       = item.ts;
+    ctx.turnStart  = items.front().ts;
     for (size_t j = i; j-- > 0;)
         if (items[j].kind == TranscriptItem::Kind::UserPrompt) {
-            ctx.turnStart = items[j].date;
+            ctx.turnStart = items[j].ts;
             break;
         }
     std::string folder = outputsFolder(ctx);
@@ -1290,6 +1396,42 @@ Ts Backend::waitingTs(const Tracked &t, Ts lastTs) const {
     return micros <= lastTs ? lastTs + 1 : micros;
 }
 
+// The ts visibleList (a /btw branch: threadList) ends on, 0 for an empty
+// list — read off the items, nothing rendered.
+Ts Backend::lastShownTs(Tracked &t) {
+    tail(t);
+    const bool thread = asThread(t);
+    if (thread && t.forkAt < 0)
+        return 0;
+    const auto  &items  = t.parser.items();
+    const bool   isBusy = busy(t);
+    const size_t from   = thread ? size_t(t.forkAt) + 1 : 0;
+    Ts           last   = 0; // the newest item shown (their ts only grow)
+    for (size_t i = items.size(); i-- > from;)
+        if (isVisible(items[i], isBusy) &&
+            !(_zen && items[i].kind == TranscriptItem::Kind::ToolGroup)) {
+            last = items[i].ts;
+            break;
+        }
+    Ts out = last;
+    if (!thread) {
+        out = std::max(out, waitingTs(t, last));
+        for (auto &[id, fp] : _sessions) { // the /btw threads' roots
+            Tracked &f = *fp;
+            if (f.forkOf != t.convId || !asThread(f))
+                continue;
+            tail(f);
+            if (f.forkAt >= 0)
+                out = std::max(out, f.parser.items()[size_t(f.forkAt)].ts);
+        }
+    }
+    if (t.flying)
+        out = std::max(out, t.flying->ts);
+    for (const auto &o : t.outbox)
+        out = std::max(out, o.ts);
+    return out;
+}
+
 // What visibleList (thread: threadList) shows, as sync() takes it —
 // each message's ts, whose and what kind — read off the parser's items alone.
 // It must keep in step with those two, item for item.
@@ -1444,7 +1586,6 @@ void Backend::appendOutgoing(const Tracked &t, std::vector<Visible> &out, Ts thr
         TranscriptItem item;
         item.kind  = TranscriptItem::Kind::UserPrompt;
         item.ts    = o.ts;
-        item.date  = o.ts;
         item.text  = takeAttachments(o.shown.empty() ? o.text : o.shown, &item.images);
         Message m  = toMessage(item, _store.me, _store.me);
         m.threadTs = o.threadRoot ? o.threadRoot : threadRoot;
@@ -1521,39 +1662,63 @@ int64_t Backend::bornMicros(const std::string &path) {
     return born;
 }
 
+namespace {
+// What a session's family is known by: its first item (its time and text).
+int64_t familyKey(const TranscriptItem &first) {
+    return int64_t(mix(crypto::fnv1a(first.text), first.ts));
+}
+} // namespace
+
 std::unordered_set<std::string> Backend::detectForks() {
-    // Families are made of the sessions' items alone: when none changed (nor
-    // which sessions there are) since the last look, neither did they.
+    // Families are made of the sessions' first items alone, and a family's
+    // forks of its members' items: when none of those changed (nor which
+    // sessions there are) since the last look, neither did they. A session of
+    // no family streaming its answer changes nothing.
     uint64_t sig = crypto::kFnvOffset;
     for (const auto &[id, tp] : _sessions) {
-        sig = mix(sig, id);
-        sig = mix(sig, tp->transcriptPath);
-        sig = mix(sig, int64_t(tp->info.sessionId.empty()));
-        sig = mix(sig, tp->offset);
-        sig = mix(sig, int64_t(tp->parser.revision()));
-        sig = mix(sig, int64_t(tp->parser.items().size()));
+        const auto &items = tp->parser.items();
+        sig               = mix(sig, id);
+        sig               = mix(sig, tp->transcriptPath);
+        sig               = mix(sig, int64_t(tp->info.sessionId.empty()));
+        sig               = mix(sig, items.empty() ? 0 : familyKey(items.front()));
+        if (tp->inFamily) {
+            sig = mix(sig, tp->offset);
+            sig = mix(sig, int64_t(tp->parser.revision()));
+            sig = mix(sig, int64_t(items.size()));
+        }
     }
     if (sig == _forkSig)
         return {};
-    _forkSig = sig;
-    std::map<std::string, std::vector<Tracked *>> families; // by first item
+    _forkSig           = sig;
+    // By first item: sorted by its key, then each run of the same first item.
+    const auto byFirst = [](const std::pair<int64_t, Tracked *> &a,
+                            const std::pair<int64_t, Tracked *> &b) { return a.first < b.first; };
+    std::vector<std::pair<int64_t, Tracked *>> keyed;
     for (auto &[id, tp] : _sessions) {
         Tracked    &t     = *tp;
         const auto &items = t.parser.items();
+        t.inFamily        = false;
         if (t.info.sessionId.empty() || items.empty() || t.transcriptPath.empty())
             continue;
-        families[model::formatTs(items.front().ts) + "\n" + items.front().text].push_back(&t);
+        keyed.emplace_back(familyKey(items.front()), &t);
     }
+    std::stable_sort(keyed.begin(), keyed.end(), byFirst);
     std::unordered_set<std::string> changed; // parents whose threads changed
-    for (auto &[key, family] : families) {
-        if (family.size() < 2)
+    for (size_t from = 0, to = 0; from < keyed.size(); from = to) {
+        const TranscriptItem &first = keyed[from].second->parser.items().front();
+        for (to = from + 1; to < keyed.size() && keyed[to].first == keyed[from].first; ++to) {
+            const TranscriptItem &other = keyed[to].second->parser.items().front();
+            if (other.ts != first.ts || other.text != first.text)
+                break; // the same key, another first item: never one family
+        }
+        if (to - from < 2)
             continue;
         std::vector<std::pair<int64_t, Tracked *>> byAge;
-        for (Tracked *t : family)
-            byAge.emplace_back(bornMicros(t->transcriptPath), t);
-        std::stable_sort(byAge.begin(), byAge.end(), [](const auto &a, const auto &b) {
-            return a.first < b.first;
-        });
+        for (size_t k = from; k < to; ++k) {
+            keyed[k].second->inFamily = true;
+            byAge.emplace_back(bornMicros(keyed[k].second->transcriptPath), keyed[k].second);
+        }
+        std::stable_sort(byAge.begin(), byAge.end(), byFirst);
         for (size_t i = 1; i < byAge.size(); ++i) {
             Tracked &f      = *byAge[i].second;
             Tracked *parent = nullptr;
@@ -1909,7 +2074,7 @@ void Backend::refresh() {
 void Backend::refreshScan() {
     ++_scanGen; // a transcript not found is looked for again from here on
     // Only the jobs whose state.json changed are read again.
-    const auto                      scanned = scanSessions(_paths, nullptr, &_jobStates);
+    auto                            scanned = scanSessions(_paths, nullptr, &_jobStates);
     // A "+" session being started shows up in the roster a moment before the
     // launcher reports its id — don't list it twice meanwhile.
     std::unordered_set<std::string> startingIn;
@@ -1919,7 +2084,7 @@ void Backend::refreshScan() {
     for (const auto &f : _forkingIn)
         startingIn.insert(f);                  // likewise a /btw branch being launched
     std::unordered_set<std::string> listedNow; // conversation ids
-    for (const auto &s : scanned) {
+    for (auto &s : scanned) {
         const std::string convId = convIdFor(s.sessionId);
         if (!find(convId) && startingIn.count(file::absolute(s.cwd)))
             continue;
@@ -1939,12 +2104,17 @@ void Backend::refreshScan() {
             // daemon retiring the idle worker an hour on appends some). An
             // entry saved before sizes were kept has no size: look for a turn
             // timestamped after the removal anywhere in the file instead.
+            if (h->second.checking)
+                continue; // being looked through on a worker
             if (h->second.seenSize < 0 || size >= h->second.seenSize) {
-                const bool sized = h->second.seenSize >= 0;
+                const bool    sized = h->second.seenSize >= 0;
+                const int64_t from  = sized ? h->second.seenSize : 0;
+                if (size != h->second.seenSize && size - from > kWorkerScanFrom) {
+                    checkHiddenOnWorker(s.sessionId, path, from, size);
+                    continue;
+                }
                 if (size == h->second.seenSize ||
-                    !hasTurnSince(
-                        path, sized ? h->second.seenSize : 0, sized ? 0 : h->second.atMs
-                    )) {
+                    !hasTurnSince(path, from, sized ? 0 : h->second.atMs)) {
                     h->second.seenSize = size;
                     scheduleSaveKnown();
                     continue;
@@ -1958,19 +2128,19 @@ void Backend::refreshScan() {
             owner && !owner->info.sessionId.empty() && owner->info.sessionId != s.sessionId)
             continue;
         listedNow.insert(convId);
-        const bool        isNew   = !find(convId);
-        Tracked          &t       = ensureTracked(convId);
+        const bool isNew = !find(convId);
+        Tracked   &t     = ensureTracked(convId);
         // Keep a known name when the fresh entry has none. A background worker
         // is named after the prompt it was resumed with, and a slash command
         // ("/compact") is no name for a session.
-        const std::string oldName = t.info.name;
-        t.info                    = s;
+        if (!s.transcriptPath.empty())
+            t.transcriptPath = s.transcriptPath;
+        std::string oldName = std::move(t.info.name);
+        t.info              = std::move(s); // the scan's own copy: taken, not copied
         if (str::startsWith(t.info.name, "/"))
             t.info.name.clear();
         if (t.info.name.empty())
-            t.info.name = oldName;
-        if (!s.transcriptPath.empty())
-            t.transcriptPath = s.transcriptPath;
+            t.info.name = std::move(oldName);
         t.listed = true;
         if (isNew)
             t.announcedInit = false; // a session started elsewhere: its history isn't news
@@ -2090,6 +2260,8 @@ void Backend::refreshScan() {
     _preparsed.clear();
     _preFound.clear();
     scheduleSaveKnown();
+    if (_watchTimer)
+        syncWatches(); // sessions and transcripts come and go
     pumpTyping(true);
     // Subagent transcripts are kept read only for the sessions that look at
     // them: a live one (its subagents' runs) and one whose list is loaded
@@ -2104,12 +2276,58 @@ void Backend::refreshScan() {
     });
 }
 
+// A removed session's transcript grew by more than a glance reads: whether
+// that was a turn (it comes back) is looked for on a worker.
+void Backend::checkHiddenOnWorker(
+    const std::string &sessionId, const std::string &path, int64_t from, int64_t size
+) {
+    Hidden &h  = _hidden[sessionId];
+    h.checking = true;
+    auto found = std::make_shared<bool>(false);
+    model::runInBackground(
+        _app,
+        [found, path, from, afterMs = h.seenSize >= 0 ? int64_t(0) : h.atMs] {
+            *found = hasTurnSince(path, from, afterMs);
+        },
+        [this, alive = _alive, found, sessionId, size, atMs = h.atMs] {
+            if (!*alive)
+                return;
+            const auto it = _hidden.find(sessionId);
+            if (it == _hidden.end())
+                return;
+            it->second.checking = false;
+            if (it->second.atMs != atMs)
+                return; // removed again meanwhile: looked at anew
+            if (*found) {
+                _hidden.erase(it);
+                scheduleRefresh(); // listed again
+            } else {
+                it->second.seenSize = size;
+                scheduleSaveKnown();
+            }
+        }
+    );
+}
+
 // A teammate shows as working while any of its sessions does, or a subagent
 // started as it does — which no roster scan need notice: pumpTyping asks too.
 void Backend::announceRoles() {
+    // Every teammate's dot from one walk over the sessions (as roleBusy and
+    // roleUnavailable tell one teammate's): those working, and those of the
+    // rest waiting on something besides a message.
+    std::unordered_set<std::string> working, waiting;
+    for (const auto &[id, tp] : _sessions) {
+        const Tracked &t = *tp;
+        if (asThread(t))
+            continue;
+        if (busy(t))
+            working.insert(roleOf(t));
+        else if (unavailable(t))
+            waiting.insert(roleOf(t));
+    }
     for (const std::string &role : roleIds()) {
-        const bool b = roleBusy(role);
-        const bool y = roleUnavailable(role);
+        const bool b = working.count(role) || roleSubagentRunning(role);
+        const bool y = !b && waiting.count(role);
         if (_roleBusy[role] == b && _roleUnavailable[role] == y && _firstScanDone)
             continue;
         _roleBusy[role]        = b;
@@ -2173,11 +2391,38 @@ void Backend::pumpTyping(bool looked) {
     announceRoles();
 }
 
-// File watching, by looking: the roster dirs (sessions come and go), every
-// live session's state file (status changes) and live transcripts (new
-// messages). What changed since the last look schedules a refresh. Faster
-// while something works, so a streamed answer shows as it comes.
-void Backend::watchTick() {
+// File watching: the roster dirs (sessions come and go), every live
+// session's state file (status changes) and live transcripts (new messages).
+// What changed schedules a refresh. On Linux the folders holding them are
+// watched (inotify): a change wakes the loop, and the look below runs only
+// as a slow safety sweep. Elsewhere — and while a folder can't be watched
+// (one not there yet) — it is all by looking, faster while something works,
+// so a streamed answer shows as it comes.
+
+namespace {
+// The sweep while every folder is watched.
+constexpr int kWatchSweepMs = 10'000;
+} // namespace
+
+// What watchCheck looks at besides the sessions folder's own files: live
+// background sessions' state files and live transcripts.
+std::vector<std::string> Backend::watchedFiles(bool *anyBusy) const {
+    std::vector<std::string> want;
+    for (const auto &[id, tp] : _sessions) {
+        const Tracked &t = *tp;
+        if (anyBusy)
+            *anyBusy = *anyBusy || t.sending || busy(t);
+        if ((!t.listed && !t.sending) || t.info.sessionId.empty())
+            continue;
+        if (t.info.kind == SessionInfo::Kind::Background)
+            want.push_back(_paths.jobsDir() + "/" + t.info.sessionId.substr(0, 8) + "/state.json");
+        if (!t.transcriptPath.empty())
+            want.push_back(t.transcriptPath);
+    }
+    return want;
+}
+
+void Backend::watchCheck() {
     const std::string sessionsDir = _paths.sessionsDir(), jobsDir = _paths.jobsDir();
     // A directory's entries' names say what came and went; the sessions
     // folder's one listing serves for that and for its files alike.
@@ -2187,23 +2432,13 @@ void Backend::watchTick() {
             h ^= crypto::fnv1a(e.name); // whatever order the OS lists them in
         return int64_t(h);
     };
+    syncWatches(); // first: what changes from here on wakes the loop
     std::vector<file::DirEntry> entries;
     file::listDir(sessionsDir, &entries);
-    std::vector<std::string> want;
+    std::vector<std::string> want = watchedFiles(nullptr);
     for (const auto &e : entries)
         if (!e.isDir && str::endsWith(e.name, ".json"))
             want.push_back(sessionsDir + "/" + e.name);
-    bool anyBusy = false;
-    for (const auto &[id, tp] : _sessions) {
-        const Tracked &t = *tp;
-        anyBusy          = anyBusy || t.sending || busy(t);
-        if ((!t.listed && !t.sending) || t.info.sessionId.empty())
-            continue;
-        if (t.info.kind == SessionInfo::Kind::Background)
-            want.push_back(jobsDir + "/" + t.info.sessionId.substr(0, 8) + "/state.json");
-        if (!t.transcriptPath.empty())
-            want.push_back(t.transcriptPath);
-    }
     // Each path's size (a folder: its listing's names) and modification
     // time; -1 and 0 when it's missing.
     std::unordered_map<std::string, std::pair<int64_t, int64_t>> seen;
@@ -2226,13 +2461,121 @@ void Backend::watchTick() {
     _watched           = std::move(seen);
     if (changed)
         scheduleRefresh();
-    const int next = anyBusy ? 400 : 1200;
+}
+
+void Backend::watchTick() {
+    bool anyBusy = false;
+    watchedFiles(&anyBusy);
+    // Watched, with no loop to wake (a headless app): what it says is read here.
+    if (_watchAll && !_inotifyWatch)
+        readWatchEvents();
+    if (!_watchAll || nowMs() - _watchCheckedMs >= kWatchSweepMs) {
+        _watchCheckedMs = nowMs();
+        watchCheck();
+    }
+    const int next = _watchAll && _inotifyWatch ? kWatchSweepMs : anyBusy ? 400 : 1200;
     _watchTimer    = _app.addTimer(next, false, [this, alive = _alive] {
         if (!*alive)
             return;
         _watchTimer = 0;
         watchTick();
     });
+}
+
+// The folders of what watchCheck looks at, watched: those no longer of
+// interest dropped, new ones added (_watchAll: all of them are).
+void Backend::syncWatches() {
+#if defined(__linux__)
+    if (_inotify == -1) {
+        _inotify = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+        if (_inotify < 0) {
+            _inotify = -2; // never: looked at instead
+            return;
+        }
+        _inotifyWatch = _app.watchFd(_inotify, plat::FdRead, [this, alive = _alive](uint32_t) {
+            if (*alive)
+                readWatchEvents();
+        });
+    }
+    if (_inotify < 0)
+        return;
+    std::vector<std::string> files = watchedFiles(nullptr);
+    std::vector<std::string> dirs{_paths.sessionsDir(), _paths.jobsDir()};
+    for (const std::string &f : files)
+        if (const std::string d(file::dirName(f));
+            std::find(dirs.begin(), dirs.end(), d) == dirs.end())
+            dirs.push_back(d);
+    _watchFiles = {files.begin(), files.end()};
+    for (auto it = _watchDirs.begin(); it != _watchDirs.end();)
+        if (std::find(dirs.begin(), dirs.end(), it->first) == dirs.end()) {
+            inotify_rm_watch(_inotify, int(it->second));
+            it = _watchDirs.erase(it);
+        } else {
+            ++it;
+        }
+    constexpr uint32_t kMask = IN_CREATE | IN_DELETE | IN_MODIFY | IN_CLOSE_WRITE | IN_ATTRIB |
+                               IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF;
+    bool               all = true, added = false;
+    for (const std::string &d : dirs) {
+        if (_watchDirs.count(d))
+            continue;
+        const int wd = inotify_add_watch(_inotify, d.c_str(), kMask);
+        if (wd < 0) {
+            all = false; // not there (yet): looked at instead
+            continue;
+        }
+        _watchDirs[d] = wd;
+        added         = true;
+    }
+    // What a new folder had written before it was watched isn't missed.
+    if (added && _watchAll)
+        scheduleRefresh();
+    _watchAll = all;
+#endif
+}
+
+// What inotify says: a change to anything watchCheck looks at schedules a
+// refresh, as a look that saw it would.
+void Backend::readWatchEvents() {
+#if defined(__linux__)
+    if (_inotify < 0)
+        return;
+    alignas(inotify_event) char buf[4096];
+    bool                        changed = false;
+    for (;;) {
+        const ssize_t n = ::read(_inotify, buf, sizeof buf);
+        if (n <= 0)
+            break;
+        for (ssize_t at = 0; at < n;) {
+            const auto *e = reinterpret_cast<const inotify_event *>(buf + at);
+            at += ssize_t(sizeof(inotify_event) + e->len);
+            if (changed)
+                continue;
+            if (e->mask & (IN_Q_OVERFLOW | IN_IGNORED)) {
+                // Events lost, or a folder gone (watched again once it's
+                // back): whatever changed, a refresh finds.
+                if (e->mask & IN_IGNORED)
+                    std::erase_if(_watchDirs, [&](const auto &w) { return w.second == e->wd; });
+                changed = true;
+                continue;
+            }
+            const auto dir = std::find_if(_watchDirs.begin(), _watchDirs.end(), [&](const auto &w) {
+                return w.second == e->wd;
+            });
+            if (dir == _watchDirs.end())
+                continue;
+            const std::string_view name = e->len ? std::string_view(e->name) : std::string_view();
+            constexpr uint32_t     kCameOrWent =
+                IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF;
+            if (dir->first == _paths.sessionsDir() ||
+                (dir->first == _paths.jobsDir() && (e->mask & kCameOrWent)) ||
+                (!name.empty() && _watchFiles.count(str::concat({dir->first, "/", name}))))
+                changed = true;
+        }
+    }
+    if (changed)
+        scheduleRefresh();
+#endif
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -2247,10 +2590,7 @@ void Backend::connect(Done done) {
         firstScan(std::move(done));
         return;
     }
-    post([done = std::move(done)] {
-        if (done)
-            done(true, {});
-    });
+    postDone(std::move(done), true);
 }
 
 // The first scan reads every session msga remembers or the roster lists —
@@ -2331,10 +2671,7 @@ void Backend::firstScan(Done done) {
 void Backend::loadHistory(ConvRef conv, Ts before, Done done) {
     Tracked *t = findRef(conv);
     if (!t) {
-        post([done = std::move(done)] {
-            if (done)
-                done(false, "not found");
-        });
+        postDone(std::move(done), false, "not found");
         return;
     }
     if (t->parsing) { // its transcript is being read on a worker: served once it is
@@ -2378,10 +2715,7 @@ void Backend::loadHistory(ConvRef conv, Ts before, Done done) {
         s.from = 0;
     _store.addPage(conv, std::move(page));
     _store.updateConversation(conv, [&](model::Conversation &c) { c.hasMoreBefore = begin > 0; });
-    post([done = std::move(done)] {
-        if (done)
-            done(true, {});
-    });
+    postDone(std::move(done), true);
 }
 
 void Backend::loadThread(ConvRef conv, Ts root, Done done) {
@@ -2408,10 +2742,7 @@ void Backend::loadThread(ConvRef conv, Ts root, Done done) {
         replies.push_back(make(v));
     }
     _store.addPage(conv, std::move(replies));
-    post([ok = t != nullptr, done = std::move(done)] {
-        if (done)
-            done(ok, ok ? std::string() : std::string("not found"));
-    });
+    postDone(std::move(done), t != nullptr, t ? std::string() : std::string("not found"));
 }
 
 void Backend::setActiveConversation(ConvRef conv, Ts) {
@@ -2421,6 +2752,16 @@ void Backend::setActiveConversation(ConvRef conv, Ts) {
         _lastConv = id;
         scheduleSaveKnown();
     }
+    // Its prompt history (↑), read ahead on a worker: the first look at a
+    // folder's reads all of history.jsonl, later ones what was added since.
+    if (t && !t->info.cwd.empty())
+        model::runInBackground(
+            _app,
+            [home = _paths.home, cwd = t->info.cwd] {
+                claude::promptHistory(home + "/history.jsonl", home + "/paste-cache", cwd, {}, 0);
+            },
+            [] {}
+        );
 }
 
 bool Backend::isAgentSession(ConvRef conv) const {
@@ -2431,7 +2772,7 @@ std::string Backend::promptSuggestion(ConvRef conv) const {
     const Tracked *t = findRef(conv);
     // Only while it still waits for that answer: once msga sends one, or the
     // reply typed in a terminal is under way, it answers nothing any more.
-    if (!t || !needsUser(*t) || !readOnlyReason(*t).empty() || awaitsApproval(t->info))
+    if (!t || !needsUser(*t) || readOnly(*t) || awaitsApproval(t->info))
         return {};
     return t->info.suggestedReply;
 }

@@ -413,13 +413,15 @@ std::vector<model::Block> markdownBlocks(std::string_view markdown) {
 }
 
 model::Message toMessage(const TranscriptItem &item, model::UserRef me, model::UserRef claude) {
-    model::Message m;
-    m.ts = item.ts;
+    model::Message    m;
+    bool              markdown = false;
+    const std::string source   = messageSource(item, &markdown);
+    m.ts                       = item.ts;
+    m.text                     = markdown ? renderMarkdown(source) : source;
     switch (item.kind) {
     case TranscriptItem::Kind::UserPrompt:
         m.user = me;
-        m.text = renderMarkdown(item.text);
-        if (auto blocks = markdownBlocks(item.text); !blocks.empty())
+        if (auto blocks = markdownBlocks(source); !blocks.empty())
             m.extras().blocks = std::move(blocks);
         for (size_t i = 0; i < item.images.size(); ++i) {
             const std::string &path = item.images[i];
@@ -440,16 +442,13 @@ model::Message toMessage(const TranscriptItem &item, model::UserRef me, model::U
             m.extras().files.push_back(std::move(f));
         }
         break;
-    case TranscriptItem::Kind::AssistantText: {
-        m.user                 = claude;
-        const std::string text = item.loginError ? std::string(notLoggedInMessage()) : item.text;
-        m.text                 = renderMarkdown(text);
-        if (auto blocks = markdownBlocks(text); !blocks.empty())
+    case TranscriptItem::Kind::AssistantText:
+        m.user = claude;
+        if (auto blocks = markdownBlocks(source); !blocks.empty())
             m.extras().blocks = std::move(blocks);
         if (item.state == TranscriptItem::State::Progress)
             m.extras().subtype = kProgressSubtype;
         break;
-    }
     case TranscriptItem::Kind::ToolGroup: {
         m.user                      = claude;
         m.extras().subtype          = kProgressSubtype;
@@ -478,24 +477,41 @@ model::Message toMessage(const TranscriptItem &item, model::UserRef me, model::U
                 body += '\n';
         }
         card.text = std::move(body);
-        // No text of its own: the card says it all.
         m.extras().attachments.push_back(std::move(card));
         break;
     }
-    case TranscriptItem::Kind::Subagent: {
+    case TranscriptItem::Kind::Subagent:
         m.user             = claude;
         m.extras().subtype = kProgressSubtype;
+        break;
+    case TranscriptItem::Kind::PeerMessage:
+        m.user             = claude;
+        m.extras().subtype = kProgressSubtype; // what the session says next notifies
+        break;
+    }
+    return m;
+}
+
+std::string messageSource(const TranscriptItem &item, bool *markdown) {
+    *markdown = true;
+    switch (item.kind) {
+    case TranscriptItem::Kind::UserPrompt:
+        return item.text;
+    case TranscriptItem::Kind::AssistantText:
+        return item.loginError ? std::string(notLoggedInMessage()) : item.text;
+    case TranscriptItem::Kind::ToolGroup:
+        *markdown = false;
+        return {}; // no text of its own: the card says it all
+    case TranscriptItem::Kind::Subagent: {
+        *markdown = false;
         const std::string what =
             item.text.empty() && !item.tools.empty() ? item.tools.front().name : item.text;
-        m.text = str::concat({"_", i18n::arg(tr("Subagent: %1"), escapeMrkdwn(what)), "_"});
-        break;
+        return str::concat({"_", i18n::arg(tr("Subagent: %1"), escapeMrkdwn(what)), "_"});
     }
     case TranscriptItem::Kind::PeerMessage: {
         // Said to the session, not by the user: shown as what it is. A report
         // from a subagent with a thread here is a pointer to that thread
         // instead (Backend::visibleList).
-        m.user             = claude;
-        m.extras().subtype = kProgressSubtype; // what the session says next notifies
         std::string header;
         if (!item.agentId.empty())
             header = tr("Subagent report");
@@ -503,11 +519,10 @@ model::Message toMessage(const TranscriptItem &item, model::UserRef me, model::U
             header = i18n::arg(tr("Message from session “%1”"), item.peerName);
         else
             header = tr("Message from another session");
-        m.text = renderMarkdown(str::concat({"_", header, "_\n\n", item.text}));
-        break;
+        return str::concat({"_", header, "_\n\n", item.text});
     }
     }
-    return m;
+    return {};
 }
 
 } // namespace claude

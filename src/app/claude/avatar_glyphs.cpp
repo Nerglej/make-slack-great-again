@@ -71,24 +71,24 @@ const Glyph kGlyphs[] = {
 
 } // namespace
 
-const std::vector<Glyph> &glyphs() {
-    static const std::vector<Glyph> all(std::begin(kGlyphs), std::end(kGlyphs));
-    return all;
+constexpr uint32_t kColors[] = {
+    0xD97757, // Claude orange
+    0x2F6FDB, // blue
+    0xC2417A, // pink
+    0x1F8A5B, // green
+    0x6D4FC9, // violet
+    0x0E8C9A, // teal
+    0xC28A12, // amber
+    0xB83A3A, // red
+    0x5F6B7A, // slate
+};
+
+std::span<const Glyph> glyphs() {
+    return kGlyphs;
 }
 
-const std::vector<uint32_t> &colors() {
-    static const std::vector<uint32_t> all = {
-        0xD97757, // Claude orange
-        0x2F6FDB, // blue
-        0xC2417A, // pink
-        0x1F8A5B, // green
-        0x6D4FC9, // violet
-        0x0E8C9A, // teal
-        0xC28A12, // amber
-        0xB83A3A, // red
-        0x5F6B7A, // slate
-    };
-    return all;
+std::span<const uint32_t> colors() {
+    return kColors;
 }
 
 bool hasGlyph(std::string_view id) {

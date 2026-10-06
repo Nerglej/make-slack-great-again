@@ -358,9 +358,12 @@ Mention mentionAt(std::string_view text, size_t i) {
     return m;
 }
 
+namespace {
+// "# Your role: <name> (msga: <id>)".
 std::string roleHeader(std::string_view name, std::string_view id) {
     return str::concat({kHeaderPrefix, name, " (msga: ", id, ")"});
 }
+} // namespace
 
 std::string appendedPrompt(const Role &role) {
     const std::string_view body = str::trimSpace(role.prompt);
@@ -576,8 +579,8 @@ const std::vector<Role> &builtInRoles() {
         return out;
     }();
     static std::string picturesIn = "\x01"; // never a directory: the first call fills them
-    if (picturesIn != avatarsDir()) {
-        picturesIn = avatarsDir();
+    if (std::string dir = avatarsDir(); picturesIn != dir) {
+        picturesIn = std::move(dir);
         for (size_t i = 0; i < all.size(); ++i)
             all[i].avatar = builtInPicture(i);
     }
@@ -654,14 +657,10 @@ void Team::load() {
     });
     for (auto &r : added)
         _roles.push_back(std::move(r));
-}
-
-std::vector<Role> Team::listed() const {
-    std::vector<Role> out;
+    _listed.clear();
     for (const Role &r : _roles)
         if (!r.removed)
-            out.push_back(r);
-    return out;
+            _listed.push_back(r);
 }
 
 const Role *Team::find(std::string_view id) const {

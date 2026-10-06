@@ -8,6 +8,7 @@
 #include "app/claude/catalog.h"
 #include "app/claude/common.h"
 #include "app/claude/outputs.h"
+#include "app/claude/render.h"
 #include "app/claude/worktrees.h"
 #include "app/model/jobs.h"
 #include "base/file.h"
@@ -17,6 +18,7 @@
 #include "base/str.h"
 
 #include <algorithm>
+#include <mutex>
 #include <utility>
 
 namespace claude {
@@ -26,6 +28,7 @@ using model::ConvRef;
 using model::kNoConv;
 using model::Message;
 using model::Ts;
+using model::UserRef;
 
 // ── Remove from msga ────────────────────────────────────────────────────────
 
@@ -83,6 +86,7 @@ void Backend::hideSession(const std::string &convId, const std::shared_ptr<Clean
         h.transcript              = transcript;
         h.seenSize                = file::size(transcript);
         _hidden[t.info.sessionId] = h;
+        _dropped.erase(t.info.sessionId); // here again: saved again
         _convOf.erase(t.info.sessionId);
         removeIfOwned(
             t.info.sessionId,
@@ -121,9 +125,55 @@ void Backend::hideSession(const std::string &convId, const std::shared_ptr<Clean
 
 namespace {
 
-// Whether a transcript, or one of its subagents', has `needle` (read in
-// chunks, each overlapping the last by the needle's length).
-bool transcriptHas(const std::string &path, std::string_view needle) {
+// Claude Code records no parent: a session a session started with `claude
+// --bg` has the CLI's answer in its parent's transcript, the Bash tool's
+// output "backgrounded · <short id>" — the session id's first 8 characters.
+constexpr std::string_view kBackgrounded = "backgrounded \xc2\xb7 ";
+constexpr size_t           kShortId      = 8;
+
+// The short ids a file names so, as far as it was read (transcripts only
+// grow: each look reads what was added since). Kept across removals: a
+// removal asks about every session msga knows, hundreds of MB of them.
+struct BackgroundedScan {
+    int64_t                  size = 0;
+    std::vector<std::string> ids;
+};
+std::mutex                                        gScansLock;
+std::unordered_map<std::string, BackgroundedScan> gScans; // by file
+
+// gScansLock held.
+const std::vector<std::string> &backgroundedIn(const std::string &path) {
+    BackgroundedScan &s    = gScans[path];
+    const int64_t     size = file::size(path);
+    if (size < s.size)
+        s = {}; // rewritten (or gone): read anew
+    constexpr size_t kChunk = 1 << 20, kSpan = kBackgrounded.size() + kShortId;
+    std::string      bytes;
+    // From a little before where the last look ended: a mark it saw cut off.
+    for (int64_t at = std::max<int64_t>(0, s.size - int64_t(kSpan)); at < size;
+         at += int64_t(kChunk)) {
+        if (!file::readRange(path, at, kChunk + kSpan, &bytes))
+            break;
+        const bool end = bytes.size() <= kChunk; // the file's end is in it
+        for (size_t p = bytes.find(kBackgrounded); p != std::string::npos;
+             p        = bytes.find(kBackgrounded, p + 1)) {
+            if (p + kSpan > bytes.size() && !end)
+                break; // whole in the next read
+            // (At the file's end, as much of it as there is.)
+            std::string id = bytes.substr(p + kBackgrounded.size(), kShortId);
+            if (std::find(s.ids.begin(), s.ids.end(), id) == s.ids.end())
+                s.ids.push_back(std::move(id));
+        }
+        if (bytes.size() <= kChunk)
+            break;
+    }
+    s.size = std::max<int64_t>(size, 0);
+    return s.ids;
+}
+
+// Whether a transcript, or one of its subagents', names session `shortId`
+// as backgrounded. gScansLock held.
+bool transcriptNames(const std::string &path, std::string_view shortId) {
     if (path.empty())
         return false;
     std::vector<std::string>    files{path};
@@ -133,17 +183,10 @@ bool transcriptHas(const std::string &path, std::string_view needle) {
         for (const auto &e : entries)
             if (!e.isDir && str::endsWith(e.name, ".jsonl"))
                 files.push_back(subagents + "/" + e.name);
-    constexpr size_t kChunk = 1 << 20;
-    std::string      bytes;
     for (const std::string &f : files)
-        for (int64_t at = 0;; at += int64_t(kChunk)) {
-            if (!file::readRange(f, at, kChunk + needle.size(), &bytes))
-                break;
-            if (bytes.find(needle) != std::string::npos)
+        for (const std::string &id : backgroundedIn(f))
+            if (str::startsWith(id, shortId)) // an id shorter than 8: what it starts with
                 return true;
-            if (bytes.size() <= kChunk)
-                break;
-        }
     return false;
 }
 
@@ -168,17 +211,21 @@ bool startedByMsga(
     if (seen.count(sessionId) || seen.size() > 16)
         return false;
     seen.insert(sessionId);
-    // Claude Code records no parent either: a session a session of msga's
-    // started with `claude --bg` has the CLI's answer in its parent's
-    // transcript, the Bash tool's output "backgrounded · <short id>".
-    const std::string needle = "backgrounded \xc2\xb7 " + sessionId.substr(0, 8);
-    for (const Candidate &c : candidates)
-        if (c.sessionId != sessionId &&
-            transcriptHas(
-                c.transcript.empty() ? paths.findTranscript(c.sessionId) : c.transcript, needle
-            ) &&
-            startedByMsga(c.sessionId, candidates, launchedHere, paths, seen))
+    // Its parent: a session whose transcript says it backgrounded this one.
+    const std::string_view shortId = std::string_view(sessionId).substr(0, kShortId);
+    for (const Candidate &c : candidates) {
+        if (c.sessionId == sessionId)
+            continue;
+        bool named;
+        {
+            const std::lock_guard<std::mutex> hold(gScansLock);
+            named = transcriptNames(
+                c.transcript.empty() ? paths.findTranscript(c.sessionId) : c.transcript, shortId
+            );
+        }
+        if (named && startedByMsga(c.sessionId, candidates, launchedHere, paths, seen))
             return true;
+    }
     return false;
 }
 
@@ -244,6 +291,7 @@ void Backend::removeIfOwned(
 Backend::Hidden &Backend::hide(const std::string &sessionId) {
     auto [it, added] = _hidden.try_emplace(sessionId);
     if (added) {
+        _dropped.erase(sessionId); // here again: saved again
         it->second.atMs       = nowMs();
         it->second.transcript = _paths.findTranscript(sessionId);
         it->second.seenSize   = file::size(it->second.transcript);
@@ -887,40 +935,144 @@ void Backend::react(ConvRef conv, Ts ts, std::string_view name, bool add) {
 
 // ── Search ──────────────────────────────────────────────────────────────────
 
+void Backend::searchTexts(Tracked &t, std::vector<SearchText> &out) {
+    const bool thread = asThread(t);
+    tail(t);
+    if (thread && t.forkAt < 0)
+        return;
+    const auto &items  = t.parser.items();
+    const bool  isBusy = busy(t);
+    // Item i's text as renderedAt makes it — the one made already, if any.
+    const auto  add    = [&out](Tracked &s, size_t i, Ts threadTs) {
+        SearchText x;
+        x.ts     = s.parser.items()[i].ts;
+        x.thread = threadTs;
+        if (i < s.rendered.size() && s.rendered[i].rev == s.parser.revision(i))
+            x.text = s.rendered[i].msg.text;
+        else if (int(i) == s.forkAt && !s.branchLabel.empty())
+            x.text = escapeMrkdwn(s.branchLabel);
+        else
+            x.text = messageSource(s.parser.items()[i], &x.markdown);
+        out.push_back(std::move(x));
+    };
+    const auto outgoing = [&out](const Tracked &s, Ts threadRoot) {
+        const auto one = [&](const Tracked::Outgoing &o) {
+            out.push_back(
+                {o.ts,
+                 o.threadRoot ? o.threadRoot : threadRoot,
+                 takeAttachments(o.shown.empty() ? o.text : o.shown, nullptr),
+                 true}
+            );
+        };
+        if (s.flying)
+            one(*s.flying);
+        for (const auto &o : s.outbox)
+            one(o);
+    };
+    const auto shown = [&](const TranscriptItem &item) {
+        return isVisible(item, isBusy) && !(_zen && item.kind == TranscriptItem::Kind::ToolGroup);
+    };
+    if (thread) { // as threadList
+        for (size_t i = size_t(t.forkAt) + 1; i < items.size(); ++i)
+            if (shown(items[i]))
+                add(t, i, t.forkRoot);
+        outgoing(t, t.forkRoot);
+        return;
+    }
+    // As visibleList: hand-backs point to their subagent's thread, replies
+    // relayed to a subagent are in its thread.
+    std::unordered_map<std::string, size_t> subagentItem; // by agentId
+    for (size_t i = 0; i < items.size(); ++i)
+        if (items[i].kind == TranscriptItem::Kind::Subagent && !items[i].agentId.empty())
+            subagentItem[items[i].agentId] = i;
+    const UserRef assistant = roleUser(roleOf(t));
+    Ts            last      = 0;
+    for (size_t i = 0; i < items.size(); ++i) {
+        const auto &item = items[i];
+        if (!shown(item))
+            continue;
+        last = item.ts;
+        if (item.kind == TranscriptItem::Kind::PeerMessage)
+            if (const auto r = subagentItem.find(item.agentId); r != subagentItem.end()) {
+                out.push_back(
+                    {item.ts, 0, handbackPointer(t, items[r->second], item.ts, assistant).text}
+                );
+                continue;
+            }
+        Ts threadTs = 0;
+        if (!item.relayTo.empty())
+            if (const auto r = subagentItem.find(item.relayTo); r != subagentItem.end())
+                threadTs = items[r->second].ts;
+        add(t, i, threadTs);
+    }
+    if (const Ts waitTs = waitingTs(t, last))
+        out.push_back({waitTs, 0, waitingMessage(t, waitTs).text});
+    outgoing(t, 0);
+    for (auto &[id, fp] : _sessions) { // the /btw threads' roots
+        Tracked &f = *fp;
+        if (f.forkOf != t.convId || !asThread(f))
+            continue;
+        tail(f);
+        if (f.forkAt < 0)
+            continue;
+        add(f, size_t(f.forkAt), 0);
+    }
+}
+
 void Backend::search(std::string query, std::function<void(std::vector<SearchHit>)> done) {
-    std::vector<std::pair<Ts, SearchHit>> hits;
-    const std::string                     q = str::asciiLower(str::trim(query));
-    if (!q.empty()) {
+    // What every session shows is gathered here, unrendered; its Markdown is
+    // rendered (as the lists render it) and matched on a worker.
+    struct Session {
+        ConvRef                 conv = kNoConv;
+        std::vector<SearchText> texts;
+    };
+    struct Job {
+        std::string            q;
+        std::vector<Session>   sessions;
+        std::vector<SearchHit> hits;
+    };
+    auto job = std::make_shared<Job>();
+    job->q   = str::asciiLower(str::trim(query));
+    if (!job->q.empty())
         for (auto &[id, tp] : _sessions) {
-            if (hits.size() >= 200)
-                break;
-            Tracked       &t      = *tp;
-            const bool     thread = asThread(t);
-            const Tracked *owner  = thread ? find(t.forkOf) : &t;
+            Tracked       &t     = *tp;
+            const Tracked *owner = asThread(t) ? find(t.forkOf) : &t;
             if (!owner || owner->ref == kNoConv)
                 continue;
-            for (const auto &v : thread ? threadList(t) : visibleList(t))
-                if (const std::string &text = v.base().text;
-                    str::asciiLower(text).find(q) != std::string::npos) {
-                    SearchHit h;
-                    h.conv   = owner->ref;
-                    h.ts     = v.ts;
-                    h.thread = v.threadTs;
-                    h.text   = text;
-                    hits.emplace_back(v.ts, h);
-                }
+            job->sessions.push_back({owner->ref, {}});
+            searchTexts(t, job->sessions.back().texts);
         }
-        std::sort(hits.begin(), hits.end(), [](const auto &a, const auto &b) {
-            return a.first > b.first;
-        });
-    }
-    std::vector<SearchHit> out;
-    for (auto &[ts, h] : hits)
-        out.push_back(h);
-    post([done = std::move(done), out = std::move(out)]() mutable {
-        if (done)
-            done(std::move(out));
-    });
+    model::runInBackground(
+        _app,
+        [job] {
+            std::vector<std::pair<Ts, SearchHit>> hits;
+            for (Session &s : job->sessions) {
+                if (hits.size() >= 200)
+                    break;
+                for (SearchText &x : s.texts) {
+                    if (x.markdown)
+                        x.text = renderMarkdown(x.text);
+                    if (str::asciiLower(x.text).find(job->q) == std::string::npos)
+                        continue;
+                    SearchHit h;
+                    h.conv   = s.conv;
+                    h.ts     = x.ts;
+                    h.thread = x.thread;
+                    h.text   = std::move(x.text);
+                    hits.emplace_back(x.ts, std::move(h));
+                }
+            }
+            std::sort(hits.begin(), hits.end(), [](const auto &a, const auto &b) {
+                return a.first > b.first;
+            });
+            for (auto &[ts, h] : hits)
+                job->hits.push_back(std::move(h));
+        },
+        [alive = _alive, job, done = std::move(done)] {
+            if (*alive && done)
+                done(std::move(job->hits));
+        }
+    );
 }
 
 } // namespace claude

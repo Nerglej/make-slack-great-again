@@ -53,8 +53,6 @@ struct Role {
 // What --append-system-prompt gets for `role`: the header line, then its
 // prompt; "" when the role adds nothing (the plain Generalist).
 std::string appendedPrompt(const Role &role);
-// "# Your role: <name> (msga: <id>)".
-std::string roleHeader(std::string_view name, std::string_view id);
 // What --agents gets: `roles` (the listed team) as Claude Code subagent types,
 // one per role that adds a prompt, named by its id — so "use @Engineer", which
 // reaches Claude as "@claude:role:engineer", finds subagent_type "engineer".
@@ -125,7 +123,7 @@ public:
     // included) in the order they were added.
     const std::vector<Role> &roles() const { return _roles; }
     // The team as listed: without the removed ones.
-    std::vector<Role>        listed() const;
+    const std::vector<Role> &listed() const { return _listed; }
     const Role              &generalist() const { return _roles.front(); }
     // nullptr when unknown.
     const Role              *find(std::string_view id) const;
@@ -155,6 +153,7 @@ private:
 
     std::string                                   _dir;
     std::vector<Role>                             _roles;
+    std::vector<Role>                             _listed; // _roles but the removed (load)
     std::unordered_map<std::string, std::string>  _formers;
     // Former teammates as resolve() made them, by id + '\n' + name hint
     // (node-based: references stay valid as more are added).

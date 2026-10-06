@@ -37,10 +37,34 @@
 #include <vector>
 
 namespace json {
+class Document;
 class Value;
-}
+} // namespace json
 
 namespace claude {
+
+// What a transcript line says at its top, read without making a document of
+// it — a tool's output, most of a transcript's bytes, runs to megabytes of
+// escaped text that is only skipped here. Each field is the first member of
+// that name, "" when it isn't a string (as json::Value::str() reads it).
+struct RecordSkim {
+    std::string_view type, uuid, timestamp, version, permissionMode, cwd;
+    size_t           members = 0;     // the record's
+    bool             origin  = false; // an "origin" object
+    bool             isMeta = false, isCompactSummary = false, isSidechain = false;
+    bool             contentArray = false; // message.content is an array…
+    bool             image        = false; // …with an "image" block
+    struct ToolResult {
+        std::string_view id; // tool_use_id
+        bool             error = false;
+    };
+    std::vector<ToolResult> toolResults;     // …its "tool_result" blocks, in order
+    std::string_view        agentId, status; // toolUseResult's
+};
+// Fills *out from `line`; false when it isn't one valid JSON object, or has a
+// string this can't hand out as is (one of the fields above, or a member name
+// on the way to them, with escapes) — then json::Document reads it.
+bool skimRecord(std::string_view line, RecordSkim *out);
 
 struct ToolCall {
     std::string toolUseId;
@@ -59,7 +83,6 @@ struct TranscriptItem {
     // Epoch micros, unique and increasing within the parser: the record's own
     // time, bumped past the previous item's when it isn't later (see nextTs).
     int64_t               ts    = 0;
-    int64_t               date  = 0; // epoch micros (the same value as ts)
     std::string           text;      // prompt / markdown answer / subagent description
     std::vector<ToolCall> tools;     // ToolGroup: the calls; Subagent: the one call
     std::string           agentId;   // Subagent: set once the call's result arrives;
@@ -125,7 +148,7 @@ public:
     // subagent: its agentId) stopped; 0 = none yet. One arrives each time it
     // stops — it may start again, on its own or for a relayed reply. A
     // foreground subagent's stop is its Agent call's result.
-    int64_t                     taskStoppedAt(std::string_view taskId) const;
+    int64_t                     taskStoppedAt(const std::string &taskId) const;
 
     // As of the newest record that says: the Claude Code version that wrote
     // it, the model that answered, the permission mode of the last prompt.
@@ -144,7 +167,27 @@ public:
     bool                                   hasRecord(std::string_view uuid) const;
 
 private:
-    void    handleLine(std::string_view line);
+    // One line; `doc` and `skim` are the feed's, reused line after line.
+    void handleLine(std::string_view line, json::Document &doc, RecordSkim &skim);
+    // A record of tool results alone, read off its skim; false when it takes
+    // the whole document (handleUser).
+    bool handleToolResults(const RecordSkim &r);
+    // Where the record's fields go before its type is looked at; false when
+    // it was read already (a copy's repeat).
+    bool beginRecord(
+        std::string_view uuid,
+        std::string_view timestamp,
+        std::string_view version,
+        std::string_view permissionMode,
+        int64_t         *micros
+    );
+    void toolResult(
+        std::string_view id,
+        bool             failed,
+        std::string_view agentId,
+        std::string_view status,
+        int64_t          micros
+    );
     void    touch(size_t index); // _items[index] changed (see revision)
     void    handleUser(const json::Value &o, const json::Value &content, int64_t micros);
     void    handleAssistant(const json::Value &o, const json::Value &message, int64_t micros);

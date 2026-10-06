@@ -74,6 +74,10 @@ uint64_t fingerprint(
 );
 uint64_t fingerprint(const model::Message &m);
 
+// The key an answer's output files are kept under (OutputContext::messageKey);
+// a subagent's (`agentId`) apart from the session's.
+std::string outputKey(const TranscriptItem &item, const std::string &agentId);
+
 // How many items two transcripts start with in common (a fork's copy).
 size_t      sharedStart(const std::vector<TranscriptItem> &a, const std::vector<TranscriptItem> &b);
 std::string knownSessionsPath();
@@ -114,6 +118,10 @@ struct Backend::Visible {
 struct Backend::SubagentFeed {
     TranscriptParser      parser;
     int64_t               offset     = 0;
+    // Its first read, a long one, under way on a worker (the one numbered
+    // parseToken): nothing is read here meanwhile.
+    bool                  parsing    = false;
+    uint64_t              parseToken = 0;
     int                   zenCount   = 0; // items but the tool-call cards
     uint64_t              counted    = 0; // the parser revision zenCount is of
     model::UserRef        renderedMe = model::kNoUser, renderedAuthor = model::kNoUser;
@@ -222,6 +230,7 @@ struct Backend::Tracked {
     int         forkAt     = -1; // parser.items() index of the thread's first prompt; -1 = none yet
     model::Ts   forkRoot   = 0;  // that prompt's ts: the root message in the parent
     bool        standalone = false;   // "Open as session": listed as a session of its own
+    bool        inFamily   = false;   // others start as it does (detectForks' last look)
     bool        awaitingRoot = false; // msga launched it: its first prompt settles the send
     // An agent branch's (startAgentBranch): the tools it was started without.
     // Each turn of msga's goes typed into its live worker, or else as a fork
@@ -243,6 +252,12 @@ struct Backend::Tracked {
         bool                        held  = false; // until the branch's start is told
     };
     std::unique_ptr<TurnWatch> watch;
+};
+
+struct Backend::SearchText {
+    model::Ts   ts = 0, thread = 0;
+    std::string text;
+    bool        markdown = false; // `text` is Markdown, rendered before it's matched
 };
 
 struct Backend::Cleanup {

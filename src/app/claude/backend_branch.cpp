@@ -374,10 +374,10 @@ void Backend::watchTurn(Tracked &t) {
     // once, on a worker.
     OutputContext ctx;
     ctx.convId       = t.convId;
-    ctx.messageKey   = answer->uuid.empty() ? model::formatTs(answer->ts) : answer->uuid;
+    ctx.messageKey   = outputKey(*answer, {});
     ctx.cwd          = t.info.cwd;
-    ctx.date         = answer->date;
-    ctx.turnStart    = items[prompt].date;
+    ctx.date         = answer->ts;
+    ctx.turnStart    = items[prompt].ts;
     auto result      = std::make_shared<Turn>();
     result->done     = true;
     result->phase    = Phase(std::max(done->phase, 0));

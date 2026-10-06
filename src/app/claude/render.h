@@ -37,5 +37,9 @@ std::string escapeMrkdwn(std::string_view text);
 // The message msga shows for `item`: prompts are `me`'s, the rest `claude`'s
 // (the session's teammate, or the subagent's).
 model::Message toMessage(const TranscriptItem &item, model::UserRef me, model::UserRef claude);
+// What its text is made of: Markdown to render (*markdown; renderMarkdown
+// makes the text of it), else the text itself. Translated here: on the UI
+// thread, while renderMarkdown may run anywhere.
+std::string    messageSource(const TranscriptItem &item, bool *markdown);
 
 } // namespace claude
