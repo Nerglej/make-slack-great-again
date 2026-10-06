@@ -235,7 +235,7 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
         if (!emoji::toUnicode(n).empty() && !consider(n, false))
             break;
     if (tiers[0].size() < kMax)
-        emoji::forEach([&](std::string_view n, const std::string &) { return consider(n, false); });
+        emoji::forEachName([&](std::string_view n) { return consider(n, false); });
     for (std::string_view n : store.customEmojiNames())
         if (tiers[0].size() >= kMax || !consider(n, true))
             break;
@@ -359,7 +359,7 @@ private:
         auto line = [k](std::string_view s, text::Style st) {
             text::AttributedText t;
             t.append(s, st);
-            return text::Layout::build(t, {}, k);
+            return text::Layout::build(std::move(t), {}, k);
         };
         const text::Style base = ui::pxFont(12, text::Weight::Regular, ui::color(C::TooltipText));
         text::Style       dim = base, bold = base;
@@ -455,12 +455,11 @@ bool looksLikeText(std::string_view path) {
 // A name longer than 18 characters: its first 15, "…", its extension.
 std::string chipName(std::string_view path) {
     const std::string name(file::baseName(path));
-    if (utf8::countCodePoints(name) <= 18)
+    if (utf8::prefixBytes(name, 18) == name.size())
         return name;
-    size_t cut = 0;
-    for (int k = 0; k < 15 && cut < name.size(); ++k)
-        cut = utf8::nextBoundary(name, cut);
-    return str::concat({name.substr(0, cut), "\xE2\x80\xA6", file::extension(path)});
+    return str::concat(
+        {name.substr(0, utf8::prefixBytes(name, 15)), "\xE2\x80\xA6", file::extension(path)}
+    );
 }
 
 // The name and size, bottom-left on translucent plates.

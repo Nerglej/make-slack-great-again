@@ -872,6 +872,27 @@ TEST("settings: System and Storage controls persist at once") {
     file::remove(path);
 }
 
+TEST("settings: the last update check reads as a relative time") {
+    Harness h;
+    h.settings.lastUpdateCheck = 0;
+    SettingsDialog &d          = h.open();
+    d.showPage(SettingsDialog::Page::System);
+    pump();
+    CHECK(d.find("Last checked: Never checked") != nullptr);
+    h.key(plat::Key::Escape);
+    h.settings.lastUpdateCheck = base::nowSecs() - 5 * 60 - 10;
+    SettingsDialog &d2         = h.open();
+    d2.showPage(SettingsDialog::Page::System);
+    pump();
+    CHECK(d2.find("Last checked: 5 minutes ago") != nullptr);
+    h.key(plat::Key::Escape);
+    h.settings.lastUpdateCheck = base::nowSecs() - 86400 - 10;
+    SettingsDialog &d3         = h.open();
+    d3.showPage(SettingsDialog::Page::System);
+    pump();
+    CHECK(d3.find("Last checked: 1 day ago") != nullptr);
+}
+
 TEST("settings: Send with Ctrl+Enter makes Enter a new line") {
     Harness h;
     h.settings.ctrlEnterSends = true;

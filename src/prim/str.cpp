@@ -11,6 +11,22 @@ std::string asciiLower(std::string_view s) {
     return out;
 }
 
+bool iequals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (asciiLower(a[i]) != asciiLower(b[i]))
+            return false;
+    return true;
+}
+
+bool icontains(std::string_view hay, std::string_view needle) {
+    for (size_t i = 0; i + needle.size() <= hay.size(); ++i)
+        if (iequals(hay.substr(i, needle.size()), needle))
+            return true;
+    return false;
+}
+
 std::string_view trim(std::string_view s, std::string_view chars) {
     const size_t b = s.find_first_not_of(chars);
     if (b == std::string_view::npos)
@@ -53,9 +69,11 @@ std::string escapeHtml(std::string_view s, bool quotes) {
     return out;
 }
 
+const char kHexLower[17] = "0123456789abcdef";
+const char kHexUpper[17] = "0123456789ABCDEF";
+
 std::string percentEncode(std::string_view s, std::string_view keep) {
-    static const char kHex[] = "0123456789ABCDEF";
-    std::string       out;
+    std::string out;
     out.reserve(s.size());
     for (const char ch : s) {
         const auto c = uint8_t(ch);
@@ -65,8 +83,8 @@ std::string percentEncode(std::string_view s, std::string_view keep) {
             out += ch;
         } else {
             out += '%';
-            out += kHex[c >> 4];
-            out += kHex[c & 15];
+            out += kHexUpper[c >> 4];
+            out += kHexUpper[c & 15];
         }
     }
     return out;

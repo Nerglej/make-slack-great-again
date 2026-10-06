@@ -13,4 +13,4 @@ add_library(msga_app_llm STATIC
     voice_input.cpp
 )
 target_include_directories(msga_app_llm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-target_link_libraries(msga_app_llm PUBLIC msga_base msga_net plat msga_app_core msga_flags)
+target_link_libraries(msga_app_llm PUBLIC msga_base msga_net plat msga_app_core msga_app_spell msga_flags)

@@ -1,5 +1,7 @@
 #include "app/model/image_size.h"
 
+#include "prim/bytes.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -7,18 +9,11 @@ namespace model {
 
 namespace {
 
-uint32_t be16(const unsigned char *p) {
-    return uint32_t(p[0]) << 8 | p[1];
-}
-uint32_t be32(const unsigned char *p) {
-    return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
-}
-uint32_t le16(const unsigned char *p) {
-    return uint32_t(p[1]) << 8 | p[0];
-}
-uint32_t le24(const unsigned char *p) {
-    return uint32_t(p[2]) << 16 | uint32_t(p[1]) << 8 | p[0];
-}
+using prim::be16;
+using prim::be32;
+using prim::le16;
+using prim::le24;
+using prim::le32;
 
 // A small window onto the file. The header formats need its first bytes
 // only; a JPEG's frame header may sit past big EXIF / ICC segments, which
@@ -72,8 +67,7 @@ bool imageSize(const std::string &path, int32_t *w, int32_t *h) {
             *w = int32_t(le24(p + 24) + 1);
             *h = int32_t(le24(p + 27) + 1);
         } else if (std::memcmp(p + 12, "VP8L", 4) == 0 && n >= 25) {
-            const uint32_t b = uint32_t(p[21]) | uint32_t(p[22]) << 8 | uint32_t(p[23]) << 16 |
-                               uint32_t(p[24]) << 24;
+            const uint32_t b = le32(p + 21);
             *w               = int32_t((b & 0x3FFF) + 1);
             *h               = int32_t(((b >> 14) & 0x3FFF) + 1);
         } else if (std::memcmp(p + 12, "VP8 ", 4) == 0) {

@@ -9,6 +9,7 @@
 #include "base/str.h"
 #include "base/utf8.h"
 #include "gfx/gfx.h"
+#include "prim/bytes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -98,14 +99,9 @@ bool bmpSize(const std::string &path, int32_t *w, int32_t *h) {
     if (!str::endsWith(str::asciiLower(path), ".bmp") || !file::readAll(path, &data) ||
         data.size() < 26 || data[0] != 'B' || data[1] != 'M')
         return false;
-    const auto le32 = [&](size_t at) {
-        const auto *p = reinterpret_cast<const unsigned char *>(data.data() + at);
-        return int32_t(
-            uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24
-        );
-    };
-    *w = le32(18);
-    *h = std::abs(le32(22)); // negative: top-down rows
+    const auto le32 = [&](size_t at) { return int32_t(prim::le32(data.data() + at)); };
+    *w              = le32(18);
+    *h              = std::abs(le32(22)); // negative: top-down rows
     return *w > 0 && *h > 0;
 }
 

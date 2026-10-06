@@ -317,7 +317,7 @@ private:
         o.maxLines = 1;
         o.ellipsis = true;
         o.maxWidth = maxW;
-        return text::Layout::build(t, o, windowScale());
+        return text::Layout::build(std::move(t), o, windowScale());
     }
     // The texts at their natural width, shaped once per style and scale.
     void build() {
@@ -798,8 +798,8 @@ public:
                 _file.prettyType.empty() ? std::string(tr("Canvas")) : _file.prettyType,
                 ui::pxFont(15 * 0.85f, text::Weight::Regular, ui::color(C::TextMuted))
             );
-            _title = text::Layout::build(t, o, scale);
-            _sub   = text::Layout::build(s, o, scale);
+            _title = text::Layout::build(std::move(t), o, scale);
+            _sub   = text::Layout::build(std::move(s), o, scale);
         }
         const float blockH = _title->height() + 2 + _sub->height();
         const float ty     = std::floor((kHdr - blockH) / 2);

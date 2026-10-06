@@ -173,7 +173,7 @@ private:
         if (!_layout || _scale != scale || _fg != fg) {
             text::AttributedText t;
             t.append(_text, font(_font, C::BadgeText));
-            _layout = text::Layout::build(t, {}, scale);
+            _layout = text::Layout::build(std::move(t), {}, scale);
             _ink    = _layout->inkBounds();
             _lean   = _layout->inkLean();
             _scale  = scale;

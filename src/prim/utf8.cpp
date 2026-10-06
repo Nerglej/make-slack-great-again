@@ -73,6 +73,21 @@ void append(std::string &out, uint32_t cp) {
     out.append(b, encode(b, cp));
 }
 
+size_t truncateAt(std::string_view s, size_t maxBytes) {
+    if (maxBytes >= s.size())
+        return s.size();
+    // Only a sequence that starts up to three bytes back can span maxBytes;
+    // a byte that isn't a continuation byte always starts one.
+    size_t lead = maxBytes;
+    for (int k = 0; k < 3 && lead > 0 && (uint8_t(s[lead]) & 0xC0) == 0x80; ++k)
+        --lead;
+    if ((uint8_t(s[lead]) & 0xC0) == 0x80)
+        return maxBytes; // a stray continuation byte: a sequence of its own
+    size_t end = lead;
+    decode(s, end);
+    return end > maxBytes ? lead : maxBytes;
+}
+
 // A decoded U+FFFD is only an error when the input did not literally hold
 // EF BF BD — the one thing decode() cannot tell its caller.
 static bool isLiteralReplacement(std::string_view s, size_t start, size_t end) {

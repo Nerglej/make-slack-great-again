@@ -1800,26 +1800,6 @@ msgid "key"
 msgstr "キー"
 
 #: src/app/screens/settings/settings_pages.cpp
-msgid "Never checked"
-msgstr "未確認"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "Just now"
-msgstr "たった今"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "%1 min ago"
-msgstr "%1 分前"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "%1 h ago"
-msgstr "%1 時間前"
-
-#: src/app/screens/settings/settings_pages.cpp
-msgid "%1 days ago"
-msgstr "%1 日前"
-
-#: src/app/screens/settings/settings_pages.cpp
 msgid "AI provider"
 msgstr "AIプロバイダー"
 
@@ -2071,6 +2051,10 @@ msgstr "アップデートを確認"
 #: src/app/screens/settings/settings_pages.cpp
 msgid "Last checked: %1"
 msgstr "最終確認: %1"
+
+#: src/app/screens/settings/settings_pages.cpp
+msgid "Never checked"
+msgstr "未確認"
 
 #: src/app/screens/settings/settings_pages.cpp
 msgid "Update checks not available."
@@ -3924,6 +3908,18 @@ msgstr "ダウンロードに失敗しました: %1"
 #: src/app/update/updater.cpp
 msgid "Downloaded update is corrupt (checksum mismatch)."
 msgstr "ダウンロードした更新ファイルが破損しています（チェックサム不一致）。"
+
+#~ msgid "Just now"
+#~ msgstr "たった今"
+
+#~ msgid "%1 min ago"
+#~ msgstr "%1 分前"
+
+#~ msgid "%1 h ago"
+#~ msgstr "%1 時間前"
+
+#~ msgid "%1 days ago"
+#~ msgstr "%1 日前"
 
 #~ msgid "AI reply on behalf of %1:"
 #~ msgstr "%1 に代わる AI の返信："

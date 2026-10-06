@@ -23,6 +23,9 @@ size_t   encode(char *out, uint32_t cp);
 // Appends cp as UTF-8 (U+FFFD for surrogates / out of range).
 void     append(std::string &out, uint32_t cp);
 
+// Largest boundary <= maxBytes: truncating there never splits a sequence.
+size_t truncateAt(std::string_view s, size_t maxBytes);
+
 bool        isValid(std::string_view s);
 // Copy with every invalid sequence replaced by U+FFFD.
 std::string sanitize(std::string_view s);

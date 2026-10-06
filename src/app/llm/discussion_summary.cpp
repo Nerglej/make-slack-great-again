@@ -1,5 +1,6 @@
 #include "app/llm/discussion_summary.h"
 
+#include "app/spell/spell.h"
 #include "base/i18n.h"
 #include "base/str.h"
 #include "base/utf8.h"
@@ -49,34 +50,17 @@ std::string entryLine(const SummaryEntry &e) {
     return line + text;
 }
 
-const struct {
-    const char *code, *name;
-} kLanguages[] = {
-    {"de", "German"},
-    {"en", "English"},
-    {"es", "Spanish"},
-    {"fr", "French"},
-    {"hi", "Hindi"},
-    {"it", "Italian"},
-    {"ja", "Japanese"},
-    {"ko", "Korean"},
-    {"nl", "Dutch"},
-    {"pl", "Polish"},
-    {"pt", "Portuguese"},
-    {"ru", "Russian"},
-    {"sv", "Swedish"},
-    {"tr", "Turkish"},
-    {"uk", "Ukrainian"},
-    {"zh", "Chinese"},
-};
-
 } // namespace
+
+const char *const kAiLanguages[16] = {
+    "de", "en", "es", "fr", "hi", "it", "ja", "ko", "nl", "pl", "pt", "ru", "sv", "tr", "uk", "zh"
+};
 
 const char *languageName(std::string_view code) {
     code = code.substr(0, code.find_first_of("-_")); // "pt-BR" → "pt"
-    for (const auto &l : kLanguages)
-        if (code == l.code)
-            return l.name;
+    for (const char *c : kAiLanguages)
+        if (code == c)
+            return spell::englishName(c);
     return "English";
 }
 

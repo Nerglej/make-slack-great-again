@@ -33,7 +33,7 @@ std::string homeRelative(std::string_view path);
 bool showsAsPicture(std::string_view path, std::string_view mime);
 
 // `s` cut to at most `max` code points, the last of them "…" when it's cut.
-std::string ellipsized(std::string s, size_t max);
+std::string ellipsized(std::string_view s, size_t max);
 
 // The lines of a file (a transcript runs to tens of MB) from byte `from` on,
 // read a megabyte at a time: only an unfinished line is carried from one read

@@ -145,7 +145,7 @@ void VoiceStrip::paint(gfx::Painter &p) {
             o.ellipsis   = elide;
             o.maxWidth   = maxW;
             o.lineHeight = 1.2f;
-            st.layout    = text::Layout::build(t, o, k);
+            st.layout    = text::Layout::build(std::move(t), o, k);
             st.text      = s;
             st.color     = col;
             st.maxWidth  = maxW;
@@ -243,8 +243,7 @@ buildVoiceContext(screens::Context &ctx, model::ConvRef conv, model::Ts thread, 
             std::string text(str::trim(screens::plainText(ctx.store(), m.text)));
             if (text.empty())
                 continue;
-            if (utf8::countCodePoints(text) > kMaxMessageChars)
-                text = text.substr(0, utf8::truncateAt(text, kMaxMessageChars)) + "\xE2\x80\xA6";
+            text = utf8::ellipsize(text, kMaxMessageChars);
             const std::string who(screens::authorName(st, m));
             lines.push_back(who.empty() ? text : who + ": " + text);
             addUnique(authors, who);

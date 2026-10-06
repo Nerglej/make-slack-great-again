@@ -668,6 +668,18 @@ struct Rig {
 
 // ── Rendering: transcript items → messages ──────────────────────────────────
 
+TEST("render: bare URLs are linked outside code only, in the one line pass") {
+    const std::string out = renderMarkdown(
+        "see https://a.b/c and `https://x.y/z`\n```\nhttps://in.fence/x\n```\n"
+        "| a |\n| https://t.b/l |\n## On https://h.d/e\n~4 MB & <tag>"
+    );
+    CHECK(contains(out, "see <https://a.b/c> and `https://x.y/z`\n"));
+    CHECK(contains(out, "```\nhttps://in.fence/x\n```\n"));
+    CHECK(contains(out, "```\n| a |\n| https://t.b/l |\n```\n"));
+    CHECK(contains(out, "<https://h.d/e>"));
+    CHECK(contains(out, "&#126;4 MB &amp; &lt;tag&gt;"));
+}
+
 TEST("render: a lone tilde is literal, a double one strikes") {
     const mrkdwn::Rich approx =
         mrkdwn::parse(renderMarkdown("It covers ~4 MB on Linux, ~3 MB on Windows and ~2 MB."));

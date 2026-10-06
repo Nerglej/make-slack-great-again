@@ -10,6 +10,8 @@ add_library(prim STATIC
 )
 if(WIN32)
     target_sources(prim PRIVATE winstr.cpp)
+else()
+    target_sources(prim PRIVATE posix_file.cpp)
 endif()
 target_include_directories(prim PUBLIC include)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

@@ -4,35 +4,24 @@
 
 namespace plat::core {
 
-namespace {
-
-bool ieq(std::string_view a, std::string_view lowerB) {
-    if (a.size() != lowerB.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (asciiLower(a[i]) != lowerB[i])
-            return false;
-    return true;
-}
-
-} // namespace
+using prim::iequals;
 
 bool isTextMime(std::string_view m) {
     if (m == "UTF8_STRING" || m == "STRING" || m == "TEXT")
         return true;
     const size_t semi = m.find(';');
-    if (!ieq(trim(m.substr(0, semi)), "text/plain"))
+    if (!iequals(trim(m.substr(0, semi)), "text/plain"))
         return false;
     if (semi == std::string_view::npos)
         return true;
     const std::string_view param = trim(m.substr(semi + 1));
     const size_t           eq    = param.find('=');
-    if (eq == std::string_view::npos || !ieq(trim(param.substr(0, eq)), "charset"))
+    if (eq == std::string_view::npos || !iequals(trim(param.substr(0, eq)), "charset"))
         return false;
     std::string_view cs = trim(param.substr(eq + 1));
     if (cs.size() >= 2 && cs.front() == '"' && cs.back() == '"')
         cs = cs.substr(1, cs.size() - 2);
-    return ieq(cs, "utf-8") || ieq(cs, "utf8");
+    return iequals(cs, "utf-8") || iequals(cs, "utf8");
 }
 
 std::vector<std::string> parseUriList(std::string_view list) {

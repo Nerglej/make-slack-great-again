@@ -145,61 +145,61 @@ std::string linkPlain(std::string_view part) {
 
 // Slack's server turns every bare URL into a <url> link before a client sees
 // it; Claude's text comes raw. Wrap them the same way (in already-escaped
-// text), outside code, and leave markdown [label](url) links to the
-// converter. A teammate mention ("@claude:role:engineer") is how the
+// text, one line outside code fences), and leave markdown [label](url) links
+// to the converter. A teammate mention ("@claude:role:engineer") is how the
 // composer's pill reaches Claude; shown, it becomes a <@…> mention again.
-std::string linkBareUrls(std::string_view escaped) {
-    std::string out;
-    out.reserve(escaped.size() + 32);
-    bool       inFence = false;
-    const auto lines   = str::split(escaped, '\n');
-    for (size_t li = 0; li < lines.size(); ++li) {
-        const std::string_view line = lines[li];
-        if (li > 0)
-            out += '\n';
-        if (str::startsWith(str::trim(line), "```")) {
-            inFence = !inFence;
-            out.append(line);
-            continue;
-        }
-        if (inFence) {
-            out.append(line);
-            continue;
-        }
-        std::vector<std::string_view> spans;
-        for (size_t i = 0;;) {
-            const size_t j = line.find('`', i);
-            spans.push_back(
-                line.substr(i, j == std::string_view::npos ? std::string_view::npos : j - i)
-            );
-            if (j == std::string_view::npos)
-                break;
-            i = j + 1;
-        }
-        for (size_t i = 0; i < spans.size(); ++i) {
-            // Odd pieces sit between backticks — unless the last backtick is
-            // unpaired, then that tail is plain text.
-            const bool code = i % 2 == 1 && (i < spans.size() - 1 || spans.size() % 2 == 1);
-            // Claude likes to quote a teammate's id as `@claude:role:x`; a span
-            // that is nothing but one is a mention, not code.
-            if (code && wholeTeammate(spans[i])) {
-                out += '<';
-                out.append(spans[i]);
-                out += '>';
-                ++i;
-                if (i < spans.size())
-                    out += linkPlain(spans[i]);
-                continue;
-            }
-            if (i > 0)
-                out += '`';
-            if (code)
-                out.append(spans[i]);
-            else
-                out += linkPlain(spans[i]);
-        }
+void linkBareUrls(std::string &out, std::string_view line) {
+    std::vector<std::string_view> spans;
+    for (size_t i = 0;;) {
+        const size_t j = line.find('`', i);
+        spans.push_back(
+            line.substr(i, j == std::string_view::npos ? std::string_view::npos : j - i)
+        );
+        if (j == std::string_view::npos)
+            break;
+        i = j + 1;
     }
-    return out;
+    for (size_t i = 0; i < spans.size(); ++i) {
+        // Odd pieces sit between backticks — unless the last backtick is
+        // unpaired, then that tail is plain text.
+        const bool code = i % 2 == 1 && (i < spans.size() - 1 || spans.size() % 2 == 1);
+        // Claude likes to quote a teammate's id as `@claude:role:x`; a span
+        // that is nothing but one is a mention, not code.
+        if (code && wholeTeammate(spans[i])) {
+            out += '<';
+            out.append(spans[i]);
+            out += '>';
+            ++i;
+            if (i < spans.size())
+                out += linkPlain(spans[i]);
+            continue;
+        }
+        if (i > 0)
+            out += '`';
+        if (code)
+            out.append(spans[i]);
+        else
+            out += linkPlain(spans[i]);
+    }
+}
+
+// Claude's text is plain markdown, never Slack tokens: escape what mrkdwn
+// would read as a token or entity (the parser decodes these back). Markdown
+// strikes only with "~~": a lone '~' is "approximately" ("~4 MB on Linux,
+// ~3 MB"), which mrkdwn would pair into a strike.
+void appendEscaped(std::string &out, std::string_view line) {
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (c == '&' || c == '<' || c == '>')
+            str::appendEscapedHtml(&out, line.substr(i, 1));
+        else if (
+            c == '~' && (i == 0 || line[i - 1] != '~') &&
+            (i + 1 == line.size() || line[i + 1] != '~')
+        )
+            out += "&#126;";
+        else
+            out += c;
+    }
 }
 
 std::string mimeFor(std::string_view path) {
@@ -274,13 +274,9 @@ std::string escapeMrkdwn(std::string_view text) {
         const char c = text[i];
         switch (c) {
         case '&':
-            out += "&amp;";
-            break;
         case '<':
-            out += "&lt;";
-            break;
         case '>':
-            out += "&gt;";
+            str::appendEscapedHtml(&out, text.substr(i, 1));
             break;
         // Marks meant literally (mrkdwn's "&#42;").
         case '*':
@@ -300,30 +296,35 @@ std::string escapeMrkdwn(std::string_view text) {
 }
 
 std::string renderMarkdown(std::string_view markdown) {
-    // Pre-pass on whole lines, outside code fences: headings have no mrkdwn
-    // form, so bold them; a table is only readable aligned, so fence it
-    // (monospace).
+    // One pass over whole lines: headings have no mrkdwn form, so bold them;
+    // a table is only readable aligned, so fence it (monospace). Every line
+    // is escaped; bare URLs are linked outside code fences.
     const auto  lines = str::split(markdown, '\n');
-    std::string text;
-    text.reserve(markdown.size() + 16);
+    std::string text, escaped;
+    text.reserve(markdown.size() + 32);
     bool first   = true;
     bool inFence = false;
-    auto put     = [&](std::string_view l) {
+    auto put     = [&](std::string_view l, bool code) {
         if (!first)
             text += '\n';
         first = false;
-        text.append(l);
+        escaped.clear();
+        appendEscaped(escaped, l);
+        if (code)
+            text += escaped;
+        else
+            linkBareUrls(text, escaped);
     };
     for (size_t i = 0; i < lines.size(); ++i) {
         const std::string_view line    = lines[i];
         const std::string_view trimmed = str::trim(line);
         if (str::startsWith(trimmed, "```")) {
             inFence = !inFence;
-            put(line);
+            put(line, true);
             continue;
         }
         if (inFence) {
-            put(line);
+            put(line, true);
             continue;
         }
         if (str::startsWith(trimmed, "|")) {
@@ -331,36 +332,21 @@ std::string renderMarkdown(std::string_view markdown) {
             while (end + 1 < lines.size() && str::startsWith(str::trim(lines[end + 1]), "|"))
                 ++end;
             if (end > i) {
-                put("```");
+                put("```", true);
                 for (size_t k = i; k <= end; ++k)
-                    put(lines[k]);
-                put("```");
+                    put(lines[k], true);
+                put("```", true);
                 i = end;
                 continue;
             }
         }
         if (const std::string_view h = headingText(trimmed); !h.empty()) {
-            put(str::concat({"**", h, "**"}));
+            put(str::concat({"**", h, "**"}), false);
             continue;
         }
-        put(line);
+        put(line, false);
     }
-    // Claude's text is plain markdown, never Slack tokens: escape what mrkdwn
-    // would read as a token or entity. The parser decodes these back.
-    text = mrkdwn::escapeEntities(text);
-    // Markdown strikes only with "~~": a lone '~' is "approximately" ("~4 MB
-    // on Linux, ~3 MB"), which mrkdwn would pair into a strike.
-    std::string marked;
-    marked.reserve(text.size());
-    for (size_t i = 0; i < text.size(); ++i) {
-        const bool lone = text[i] == '~' && (i == 0 || text[i - 1] != '~') &&
-                          (i + 1 == text.size() || text[i + 1] != '~');
-        if (lone)
-            marked += "&#126;";
-        else
-            marked += text[i];
-    }
-    return mrkdwn::convertOutgoing(linkBareUrls(marked));
+    return mrkdwn::convertOutgoing(text);
 }
 
 std::vector<model::Block> markdownBlocks(std::string_view markdown) {

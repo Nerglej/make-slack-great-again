@@ -175,7 +175,25 @@ bool asciiLetters(std::string_view s) {
     return !s.empty();
 }
 
+// The table's row for a bare language code; null when it has none.
+const auto *rowOf(std::string_view code) {
+    for (const auto &l : kLanguages)
+        if (code == l.code)
+            return &l;
+    return static_cast<decltype(&kLanguages[0])>(nullptr);
+}
+
 } // namespace
+
+const char *englishName(std::string_view code) {
+    const auto *l = rowOf(code);
+    return l ? l->english : nullptr;
+}
+
+const char *nativeName(std::string_view code) {
+    const auto *l = rowOf(code);
+    return l ? l->native : nullptr;
+}
 
 std::string languageName(std::string_view code) {
     // "de_DE_frami", "en-US", "pt_BR": language, territory, the rest.
@@ -202,9 +220,8 @@ std::string languageName(std::string_view code) {
     // Without a territory the language itself is named, in English: a bare
     // "en" is no one's regional English.
     if (!name)
-        for (const auto &l : kLanguages)
-            if (lang == l.code)
-                name = terr.empty() ? l.english : l.native;
+        if (const auto *l = rowOf(lang))
+            name = terr.empty() ? l->english : l->native;
     if (!name)
         return std::string(code);
     return str::concat({name, " (", code, ")"});

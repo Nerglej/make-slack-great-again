@@ -91,14 +91,8 @@ std::string httpFailure(const net::Response &r, Route route = Route::Chat) {
             "No chat endpoint at this URL (HTTP 404) \xE2\x80\x94 most servers expect it to "
             "end in /v1"
         );
-    std::string snippet = str::simplified(r.body);
-    if (utf8::countCodePoints(snippet) > 200) {
-        size_t i = 0;
-        for (int n = 0; n < 200; ++n)
-            i = utf8::nextBoundary(snippet, i);
-        snippet = snippet.substr(0, i) + "\xE2\x80\xA6";
-    }
-    const std::string status = str::number(r.status);
+    const std::string snippet = utf8::ellipsize(str::simplified(r.body), 200);
+    const std::string status  = str::number(r.status);
     return snippet.empty() ? arg(tr("HTTP %1"), status) : arg(tr("HTTP %1: %2"), status, snippet);
 }
 

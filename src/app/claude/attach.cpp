@@ -512,14 +512,6 @@ bool contains(std::string_view s, std::string_view part) {
     return s.find(part) != std::string_view::npos;
 }
 
-// The start of `s` up to `n` characters.
-std::string_view leftChars(std::string_view s, size_t n) {
-    size_t i = 0;
-    for (size_t k = 0; k < n && i < s.size(); ++k)
-        i = utf8::nextBoundary(s, i);
-    return s.substr(0, i);
-}
-
 } // namespace
 
 bool questionIsFor(std::string_view needs, const PermissionQuestion &q) {
@@ -548,7 +540,8 @@ bool questionIsFor(std::string_view needs, const PermissionQuestion &q) {
         }
         return false;
     }
-    if (contains(text, leftChars(squash(arg), 40)))
+    const std::string sq = squash(arg); // its first 40 characters
+    if (contains(text, std::string_view(sq).substr(0, utf8::prefixBytes(sq, 40))))
         return true;
     const std::string_view name = file::baseName(arg);
     return file::isAbsolute(arg) && !name.empty() && contains(text, squash(name));

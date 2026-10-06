@@ -28,18 +28,6 @@ void escape(std::string &out, std::string_view s, bool attr) {
     }
 }
 
-bool icontains(std::string_view hay, const char *needle) {
-    const size_t n = std::strlen(needle);
-    for (size_t i = 0; i + n <= hay.size(); ++i) {
-        size_t k = 0;
-        while (k < n && str::asciiLower(hay[i + k]) == needle[k])
-            ++k;
-        if (k == n)
-            return true;
-    }
-    return false;
-}
-
 // Decodes entities in s (text or an attribute value); &nbsp; is a plain space.
 std::string decode(std::string_view s) {
     return str::decodeEntities(s, true);
@@ -283,17 +271,19 @@ void fromHtml(
             // Inline styles (Google Docs wraps everything in <b style="font-weight:normal">).
             const std::string st = attr(tag, "style");
             if (!st.empty()) {
-                if (icontains(st, "font-weight:normal") || icontains(st, "font-weight: normal") ||
-                    icontains(st, "font-weight:400"))
+                if (str::icontains(st, "font-weight:normal") ||
+                    str::icontains(st, "font-weight: normal") ||
+                    str::icontains(st, "font-weight:400"))
                     o.formats &= uint16_t(~kBold);
                 else if (
-                    icontains(st, "font-weight:bold") || icontains(st, "font-weight: bold") ||
-                    icontains(st, "font-weight:700") || icontains(st, "font-weight:600")
+                    str::icontains(st, "font-weight:bold") ||
+                    str::icontains(st, "font-weight: bold") ||
+                    str::icontains(st, "font-weight:700") || str::icontains(st, "font-weight:600")
                 )
                     o.formats |= kBold;
-                if (icontains(st, "italic"))
+                if (str::icontains(st, "italic"))
                     o.formats |= kItalic;
-                if (icontains(st, "line-through"))
+                if (str::icontains(st, "line-through"))
                     o.formats |= kStrike;
             }
             stack.push_back(o);

@@ -4,6 +4,7 @@
 #include "base/process.h"
 #include "base/str.h"
 #include "base/utf8.h"
+#include "prim/bytes.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -103,13 +104,9 @@ std::vector<std::string> listNames(const std::string &dir) {
 struct Buf {
     const uint8_t *p = nullptr;
     size_t         n = 0;
-    uint32_t       u16(size_t o) const { return o + 2 <= n ? uint32_t(p[o] << 8 | p[o + 1]) : 0; }
-    uint32_t       u32(size_t o) const {
-        return o + 4 <= n ? uint32_t(p[o]) << 24 | uint32_t(p[o + 1]) << 16 |
-                                uint32_t(p[o + 2]) << 8 | p[o + 3]
-                          : 0;
-    }
-    Buf sub(size_t o, size_t len) const {
+    uint32_t       u16(size_t o) const { return o + 2 <= n ? prim::be16(p + o) : 0; }
+    uint32_t       u32(size_t o) const { return o + 4 <= n ? prim::be32(p + o) : 0; }
+    Buf            sub(size_t o, size_t len) const {
         if (o > n)
             return {};
         return {p + o, std::min(len, n - o)};

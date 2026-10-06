@@ -31,14 +31,8 @@ constexpr size_t kMaxBody            = 100;
 constexpr int    kNotifyTimeoutMs    = 5000;
 
 // The body's cap: 97 characters and "…".
-std::string capped(std::string s) {
-    if (utf8::countCodePoints(s) <= kMaxBody)
-        return s;
-    size_t at = 0;
-    for (size_t n = 0; n < kMaxBody - 3 && at < s.size(); ++n)
-        at = utf8::nextBoundary(s, at);
-    s.resize(at);
-    return s + "\xE2\x80\xA6";
+std::string capped(std::string_view s) {
+    return utf8::ellipsize(s, kMaxBody, kMaxBody - 3);
 }
 
 // The preview: the text, else what the attachments say.
@@ -253,7 +247,7 @@ void Shell::maybeNotify(
         body    = str::concat({sender, ": ", body});
     }
     n.title = teamTitle(st, key, std::move(n.title));
-    n.body  = capped(std::move(body));
+    n.body  = capped(body);
     // DMs: the author's picture as the chat shows it (else a bot post's
     // own); channels: the workspace's.
     std::vector<std::string> pics;
@@ -377,17 +371,12 @@ void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef 
         backendFor(st).resolveUser(it->author);
     // The snippet: the text simplified, at most 120 characters.
     std::string snippet = str::simplified(screens::plainText(st, it->text));
-    if (utf8::countCodePoints(snippet) > 120) {
-        size_t at = 0;
-        for (size_t k = 0; k < 120; ++k)
-            at = utf8::nextBoundary(snippet, at);
-        snippet.resize(at);
-    }
+    snippet.resize(utf8::prefixBytes(snippet, 120));
     std::string body =
         snippet.empty() ? std::string(tr("You asked to be reminded about a message.")) : snippet;
     if (!author.empty() && !snippet.empty())
         body = str::concat({author, ": ", body});
-    n.body = capped(std::move(body));
+    n.body = capped(body);
     // The author's picture, a bot's, the DM peer's, the workspace's: the
     // first that has one.
     std::vector<std::string> pics;

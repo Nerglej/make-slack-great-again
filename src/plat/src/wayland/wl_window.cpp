@@ -1,6 +1,8 @@
 // Wayland windows: xdg-shell toplevel, decorations, scale and shm present.
 #include "wayland/wl_internal.h"
 
+#include "prim/utf8.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -94,12 +96,7 @@ const zxdg_exported_v1_listener kExportedV1Listener = {
 
 // Wire messages are capped at 4 KiB; a title is not worth a protocol error.
 std::string truncateUtf8(std::string_view s, size_t max) {
-    if (s.size() <= max)
-        return std::string(s);
-    size_t n = max;
-    while (n > 0 && (static_cast<unsigned char>(s[n]) & 0xC0) == 0x80)
-        --n;
-    return std::string(s.substr(0, n));
+    return std::string(s.substr(0, prim::utf8::truncateAt(s, max)));
 }
 
 Rect clip(Rect r, int w, int h) {

@@ -202,3 +202,16 @@ TEST("utf8: containsPrefolded") {
     CHECK_FALSE(utf8::containsPrefolded("abc", "abcd"));
     CHECK_FALSE(utf8::containsPrefolded("", "a"));
 }
+
+TEST("utf8: prefixBytes and ellipsize count code points, not bytes") {
+    const std::string s = "a\xC3\xA4\xE2\x82\xAC\xF0\x9F\x98\x80z"; // a ä € 😀 z
+    CHECK(utf8::prefixBytes(s, 0) == 0);
+    CHECK(utf8::prefixBytes(s, 2) == 3);
+    CHECK(utf8::prefixBytes(s, 4) == 10);
+    CHECK(utf8::prefixBytes(s, 99) == s.size());
+    CHECK_STR(utf8::ellipsize(s, 5), s);
+    CHECK_STR(utf8::ellipsize(s, 4), "a\xC3\xA4\xE2\x82\xAC\xF0\x9F\x98\x80\xE2\x80\xA6");
+    CHECK_STR(utf8::ellipsize(s, 4, 2), "a\xC3\xA4\xE2\x80\xA6");
+    CHECK_STR(utf8::ellipsize(s, 0), "\xE2\x80\xA6");
+    CHECK_STR(utf8::ellipsize("", 0), "");
+}

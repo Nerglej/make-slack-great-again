@@ -34,15 +34,8 @@ std::string homeRelative(std::string_view path) {
     return out;
 }
 
-std::string ellipsized(std::string s, size_t max) {
-    if (utf8::countCodePoints(s) > max) {
-        size_t i = 0;
-        for (size_t n = 0; n + 1 < max && i < s.size(); ++n)
-            i = utf8::nextBoundary(s, i);
-        s.resize(i);
-        s += "…";
-    }
-    return s;
+std::string ellipsized(std::string_view s, size_t max) {
+    return utf8::ellipsize(s, max, max - 1);
 }
 
 bool LineReader::next(std::string_view *line) {

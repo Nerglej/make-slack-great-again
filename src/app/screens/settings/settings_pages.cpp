@@ -4,9 +4,11 @@
 
 #include "app/cache/workspace_cache.h"
 #include "app/diag/mem_stats.h"
+#include "app/llm/discussion_summary.h"
 #include "app/llm/service.h"
 #include "app/llm/wire.h"
 #include "app/screens/common/remote_images.h"
+#include "app/spell/spell.h"
 #include "app/update/updater.h"
 #include "base/i18n.h"
 #include "base/str.h"
@@ -92,32 +94,6 @@ bool cleartextRemote(std::string_view url) {
     return llm::isCleartextRemote(llm::normalizeOpenAiBaseUrl(url));
 }
 
-// Language names stay in their own language.
-const struct {
-    const char *code, *name;
-} kAiLanguages[] = {
-    {"de", "Deutsch"},
-    {"en", "English"},
-    {"es", "Espa\xC3\xB1ol"},
-    {"fr",
-     "Fran\xC3\xA7"
-     "ais"},
-    {"hi", "\xE0\xA4\xB9\xE0\xA4\xBF\xE0\xA4\xA8\xE0\xA5\x8D\xE0\xA4\xA6\xE0\xA5\x80"},
-    {"it", "Italiano"},
-    {"ja", "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E"},
-    {"ko", "\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4"},
-    {"nl", "Nederlands"},
-    {"pl", "Polski"},
-    {"pt", "Portugu\xC3\xAAs"},
-    {"ru", "\xD0\xA0\xD1\x83\xD1\x81\xD1\x81\xD0\xBA\xD0\xB8\xD0\xB9"},
-    {"sv", "Svenska"},
-    {"tr",
-     "T\xC3\xBCrk\xC3\xA7"
-     "e"},
-    {"uk", "\xD0\xA3\xD0\xBA\xD1\x80\xD0\xB0\xD1\x97\xD0\xBD\xD1\x81\xD1\x8C\xD0\xBA\xD0\xB0"},
-    {"zh", "\xE4\xB8\xAD\xE6\x96\x87"},
-};
-
 // The process's private memory, the number each OS's task manager shows; 0
 // when unknown.
 uint64_t privateBytes() {
@@ -157,19 +133,6 @@ uint64_t privateBytes() {
 // "412.3 MB", "1.2 GB"; a dash when unknown.
 std::string formatRam(uint64_t b) {
     return b ? str::byteSize(int64_t(b), str::ByteSize::Exact) : std::string("\xE2\x80\x94");
-}
-
-std::string timeAgo(int64_t secs) {
-    if (secs <= 0)
-        return tr("Never checked");
-    const int64_t ago = int64_t(std::time(nullptr)) - secs;
-    if (ago < 60)
-        return tr("Just now");
-    if (ago < 3600)
-        return arg(tr("%1 min ago"), str::number(ago / 60));
-    if (ago < 86400)
-        return arg(tr("%1 h ago"), str::number(ago / 3600));
-    return arg(tr("%1 days ago"), str::number(ago / 86400));
 }
 
 } // namespace
@@ -294,17 +257,18 @@ void SettingsDialog::buildAi() {
         const std::string        code = _s.effectiveAiLanguage();
         std::vector<std::string> names;
         int                      sel = -1, en = 0;
-        for (size_t i = 0; i < std::size(kAiLanguages); ++i) {
-            names.push_back(kAiLanguages[i].name);
-            if (code == kAiLanguages[i].code)
+        // Language names stay in their own language.
+        for (size_t i = 0; i < std::size(llm::kAiLanguages); ++i) {
+            names.push_back(spell::nativeName(llm::kAiLanguages[i]));
+            if (code == llm::kAiLanguages[i])
                 sel = int(i);
-            if (std::strcmp(kAiLanguages[i].code, "en") == 0)
+            if (std::strcmp(llm::kAiLanguages[i], "en") == 0)
                 en = int(i);
         }
         auto *lang = r->add<Dropdown>(std::move(names), sel < 0 ? en : sel);
         lang->style().width(180);
         lang->onChange = [this](int i) {
-            _s.aiLanguage = kAiLanguages[i].code;
+            _s.aiLanguage = llm::kAiLanguages[i];
             changed();
         };
     }
@@ -736,13 +700,18 @@ void SettingsDialog::buildSystem() {
             tr("When off, msga never contacts the update server on its own \xE2\x80\x94 use "
                "the\nbutton below to look for a new version.")
         );
-        auto *checkBtn = button(g, tr("Check for updates"), Button::Kind::Primary);
-        _p->updStatus  = caption(g, {});
-        auto *last     = g->add<Label>(
-            arg(tr("Last checked: %1"), timeAgo(_s.lastUpdateCheck)),
-            Font::Caption,
-            C::FormTextFaint
-        );
+        auto *checkBtn         = button(g, tr("Check for updates"), Button::Kind::Primary);
+        _p->updStatus          = caption(g, {});
+        auto      *last        = g->add<Label>("", Font::Caption, C::FormTextFaint);
+        // "Last checked: 5 minutes ago"; "Never checked" before the first check.
+        const auto lastChecked = [this, last] {
+            const int64_t at = _s.lastUpdateCheck;
+            last->setText(arg(
+                tr("Last checked: %1"),
+                at <= 0 ? std::string(tr("Never checked")) : base::relativeTime(at, base::nowSecs())
+            ));
+        };
+        lastChecked();
         // The update status now, then again on each of the updater's changes.
         update::Updater *u      = _hooks.updater;
         const auto       status = [this, checkBtn](bool enabled, std::string text) {
@@ -762,13 +731,10 @@ void SettingsDialog::buildSystem() {
             checkBtn->onClick = [u] { u->checkNow(); };
             u->unlisten(_updListener);
             std::weak_ptr<char> alive = _p->alive;
-            _updListener = u->listen([this, alive, status, last](const update::Updater::Event &e) {
+            _updListener = u->listen([alive, status, lastChecked](const update::Updater::Event &e) {
                 if (alive.expired())
                     return; // another page is up
-                using K                = update::Updater::Event::Kind;
-                const auto lastChecked = [this, last] {
-                    last->setText(arg(tr("Last checked: %1"), timeAgo(_s.lastUpdateCheck)));
-                };
+                using K = update::Updater::Event::Kind;
                 switch (e.kind) {
                 case K::Started:
                     status(false, tr("Checking for updates\xE2\x80\xA6"));

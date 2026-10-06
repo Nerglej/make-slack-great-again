@@ -176,7 +176,7 @@ std::string unescapeKey(std::string_view k) {
 
 // iniEscapedKey.
 std::string escapeKey(std::string_view k) {
-    static const char hex[] = "0123456789ABCDEF";
+    const char *const hex = str::kHexUpper;
     std::string       out;
     for (size_t i = 0; i < k.size();) {
         const unsigned char c = static_cast<unsigned char>(k[i]);
@@ -205,8 +205,8 @@ std::string escapeKey(std::string_view k) {
 void hexEscape(std::string &out, uint32_t c) {
     out += "\\x";
     if (c >= 16)
-        out.push_back("0123456789abcdef"[c >> 4]);
-    out.push_back("0123456789abcdef"[c & 15]);
+        out.push_back(str::kHexLower[c >> 4]);
+    out.push_back(str::kHexLower[c & 15]);
 }
 
 // A string value escaped for the INI file (UTF-8 in and out).

@@ -65,11 +65,8 @@ std::string GifSearch::requestUrl(std::string_view query, int limit, std::string
     url += net::percentEncode(key);
     if (!trending) {
         // GIPHY caps the search term at 50 characters and answers 400 past it.
-        size_t cut = 0;
-        for (int n = 0; n < 50 && cut < q.size(); ++n)
-            cut = utf8::nextBoundary(q, cut);
         url += "&q=";
-        url += net::percentEncode(q.substr(0, cut));
+        url += net::percentEncode(q.substr(0, utf8::prefixBytes(q, 50)));
     }
     url += "&limit=";
     url += str::number(int64_t(std::min(50, std::max(1, limit))));

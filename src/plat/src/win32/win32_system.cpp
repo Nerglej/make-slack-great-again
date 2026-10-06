@@ -16,6 +16,7 @@
 
 #include "core/hash.h"
 #include "core/wire.h"
+#include "prim/str.h"
 
 #include <aclapi.h>
 #include <dwmapi.h>
@@ -292,8 +293,8 @@ bool decodeInstanceMessage(
 std::wstring instancePipeName(std::wstring_view sid, DWORD session, std::string_view key) {
     // Keys are app ids ("org.nisdos.msga"), but nothing stops a caller from
     // passing a path; '\' and friends are not allowed in the name.
-    static const char *hex = "0123456789abcdef";
-    std::wstring       safe;
+    const char *const hex = prim::kHexLower;
+    std::wstring      safe;
     for (unsigned char c : key) {
         if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
             c == '.' || c == '-' || c == '_') {

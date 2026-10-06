@@ -384,16 +384,7 @@ std::vector<std::string> split(const std::string &s, char sep) {
     return out;
 }
 
-// mkdir -p; true when `dir` exists afterwards.
-bool makeDirs(const std::string &dir) {
-    struct stat st;
-    if (stat(dir.c_str(), &st) == 0)
-        return S_ISDIR(st.st_mode);
-    const size_t slash = dir.find_last_of('/');
-    if (slash != std::string::npos && slash > 0 && !makeDirs(dir.substr(0, slash)))
-        return false;
-    return mkdir(dir.c_str(), 0755) == 0 || errno == EEXIST;
-}
+using prim::file::makeDirs;
 
 // Write via a temp file + rename, so a crash never leaves a half-written
 // mimeapps.list. A symlinked file (dotfile managers) is written through.
@@ -406,25 +397,7 @@ bool writeAtomically(std::string path, const std::string &data) {
         path = real;
         free(real);
     }
-    const std::string tmp = path + ".plat-" + std::to_string(getpid()) + ".tmp";
-    const int         fd  = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-    if (fd < 0)
-        return false;
-    bool ok = true;
-    for (size_t off = 0; ok && off < data.size();) {
-        const ssize_t n = write(fd, data.data() + off, data.size() - off);
-        if (n < 0 && errno == EINTR)
-            continue;
-        ok = n > 0;
-        off += n > 0 ? size_t(n) : 0;
-    }
-    ok = (fsync(fd) == 0) && ok;
-    close(fd);
-    if (!ok || rename(tmp.c_str(), path.c_str()) != 0) {
-        unlink(tmp.c_str());
-        return false;
-    }
-    return true;
+    return prim::file::writeAtomic(path, data);
 }
 
 std::string trim(std::string_view s) {

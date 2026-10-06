@@ -1,6 +1,7 @@
 #include "base/i18n.h"
 
 #include "base/str.h"
+#include "prim/bytes.h"
 
 #include <cstring>
 #include <memory>
@@ -28,17 +29,13 @@ struct Active {
 };
 Active g_active;
 
-uint32_t rd32(const char *p) {
-    uint32_t v;
-    std::memcpy(&v, p, 4);
-    return v; // every target msga builds for is little-endian
-}
+using prim::le32;
 
 // Validates and indexes a table; false leaves `a` untouched.
 bool parse(const Language &l, std::string blob, Active &a) {
     if (blob.size() < 4 || l.formCount < 1)
         return false;
-    const uint32_t count = rd32(blob.data());
+    const uint32_t count = le32(blob.data());
     const size_t   base  = 4 + size_t(count) * 4;
     if (base > blob.size() || blob.back() != '\0')
         return false;
@@ -67,7 +64,7 @@ const char *lookup(const char *msgid, int f) {
     size_t         lo = 0, hi = g_active.count;
     while (lo < hi) {
         const size_t   mid = (lo + hi) / 2;
-        const uint32_t v   = rd32(hs + mid * 4);
+        const uint32_t v   = le32(hs + mid * 4);
         if (v == h) {
             const char *s =
                 g_active.blob.data() + g_active.offsets[mid * g_active.lang->formCount + f];

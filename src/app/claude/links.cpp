@@ -61,22 +61,6 @@ std::string firstLine(std::string_view s, size_t max) {
     return std::string(s.substr(0, utf8::truncateAt(s, max))) + "\xE2\x80\xA6";
 }
 
-// & < > as mrkdwn wants them: a name or a line taken as text.
-std::string escapeText(std::string_view s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '&')
-            out += "&amp;";
-        else if (c == '<')
-            out += "&lt;";
-        else if (c == '>')
-            out += "&gt;";
-        else
-            out += c;
-    }
-    return out;
-}
-
 // The asker's text can't close the frame it is given in.
 std::string defused(std::string s) {
     for (size_t at = 0; (at = s.find("pasted_content", at)) != std::string::npos; at += 17)
@@ -984,7 +968,7 @@ void Links::failTurn(Link &l, const std::string &error) {
         onError(arg(tr("The agent couldn't answer in %1: %2"), place(l), line));
     // Said in the thread at once, in place of the status line.
     l.lastEditMs = 0;
-    setStatus(l, kBot + arg(tr("Couldn't answer: %1"), escapeText(line)));
+    setStatus(l, kBot + arg(tr("Couldn't answer: %1"), str::escapeHtml(line)));
     // The questions stay unanswered context: the next turn tells them again.
     l.asked.clear();
     endTurn(l);

@@ -2,6 +2,8 @@
 // Windows, where they are converted to wide strings at the OS boundary).
 #pragma once
 
+#include "prim/file.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -14,7 +16,11 @@ bool readAll(std::string_view path, std::string *out);
 // Up to `maxBytes` from byte `offset` on (fewer at the end of the file; none
 // past it) — the tail a growing log appended, or a bounded read of a file
 // that should be small. False (and *out empty) when it can't be read.
+#ifdef _WIN32
 bool readRange(std::string_view path, int64_t offset, size_t maxBytes, std::string *out);
+#else
+using prim::file::readRange; // the POSIX body is prim's, shared with plat
+#endif
 // Replaces an existing file's content in place (truncate, then write): the
 // same file, so a process holding it open keeps appending to it. Not atomic;
 // prefer writeAtomic unless that matters.
@@ -26,15 +32,24 @@ bool overwrite(std::string_view path, std::string_view data);
 // `durable` false skips the flush to disk (5-50 ms): still never torn for a
 // reader, but a power loss may leave the old content or an empty file. For
 // data that can be rebuilt (caches, downloaded images).
+#ifdef _WIN32
 bool writeAtomic(
     std::string_view path, std::string_view data, int mode = 0644, bool durable = true
 );
+#else
+using prim::file::writeAtomic;
+#endif
 
 bool    exists(std::string_view path);
-bool    isDir(std::string_view path);
 int64_t size(std::string_view path); // -1 when missing
+#ifdef _WIN32
+bool isDir(std::string_view path);
 // mkdir -p. True if the directory exists afterwards.
-bool    makeDirs(std::string_view path);
+bool makeDirs(std::string_view path);
+#else
+using prim::file::isDir;
+using prim::file::makeDirs; // mkdir -p; true if the directory exists afterwards
+#endif
 bool    remove(std::string_view path); // a file or an empty directory
 // rm -r: a file, or a directory with everything in it. Links (and Windows
 // junctions) are removed as themselves, never followed. True when nothing

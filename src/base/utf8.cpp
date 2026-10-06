@@ -1,5 +1,7 @@
 #include "base/utf8.h"
 
+#include <algorithm>
+
 namespace utf8 {
 
 int encodedLength(uint32_t cp) {
@@ -41,19 +43,24 @@ size_t prevBoundary(std::string_view s, size_t i) {
     return probe == i ? j : i - 1;
 }
 
-size_t truncateAt(std::string_view s, size_t maxBytes) {
-    if (maxBytes >= s.size())
-        return s.size();
-    // Only a sequence that starts up to three bytes back can span maxBytes;
-    // a byte that isn't a continuation byte always starts one.
-    size_t lead = maxBytes;
-    for (int k = 0; k < 3 && lead > 0 && (uint8_t(s[lead]) & 0xC0) == 0x80; ++k)
-        --lead;
-    if ((uint8_t(s[lead]) & 0xC0) == 0x80)
-        return maxBytes; // a stray continuation byte: a sequence of its own
-    size_t end = lead;
-    decode(s, end);
-    return end > maxBytes ? lead : maxBytes;
+size_t prefixBytes(std::string_view s, size_t n) {
+    size_t i = 0;
+    for (size_t k = 0; k < n && i < s.size(); ++k)
+        decode(s, i);
+    return i;
+}
+
+std::string ellipsize(std::string_view s, size_t maxCodePoints, size_t keep) {
+    keep       = std::min(keep, maxCodePoints);
+    size_t cut = 0;
+    for (size_t i = 0, n = 0; i < s.size(); ++n) {
+        if (n == keep)
+            cut = i;
+        if (n == maxCodePoints) // a code point past the cap
+            return std::string(s.substr(0, cut)) + "\xE2\x80\xA6";
+        decode(s, i);
+    }
+    return std::string(s);
 }
 
 bool isSpace(uint32_t cp) {

@@ -69,7 +69,7 @@ oneLine(std::string_view s, const text::Style &st, float maxW, float scale) {
     o.ellipsis   = true;
     o.maxWidth   = std::max(1.f, maxW);
     o.lineHeight = kLine;
-    return text::Layout::build(t, o, scale);
+    return text::Layout::build(std::move(t), o, scale);
 }
 
 // One line kept between paints: shaped again only when its text, width,

@@ -42,10 +42,9 @@ bool parseHexColor(std::string_view s, Color *out) {
 }
 
 std::string hexColor(Color c) {
-    static const char kHex[] = "0123456789abcdef";
-    std::string       s      = "#";
+    std::string s = "#";
     for (int shift = 20; shift >= 0; shift -= 4)
-        s += kHex[(c >> shift) & 0xf];
+        s += str::kHexLower[(c >> shift) & 0xf];
     return s;
 }
 

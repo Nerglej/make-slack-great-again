@@ -39,7 +39,12 @@ size_t countCodePoints(std::string_view s);
 size_t nextBoundary(std::string_view s, size_t i);
 size_t prevBoundary(std::string_view s, size_t i);
 // Largest boundary <= maxBytes: truncating there never splits a sequence.
-size_t truncateAt(std::string_view s, size_t maxBytes);
+using prim::utf8::truncateAt;
+// Byte length of the first `n` code points (all of `s` when it has fewer).
+size_t      prefixBytes(std::string_view s, size_t n);
+// `s` when it has at most `maxCodePoints` code points; else its first `keep`
+// (at most maxCodePoints) and "…". One pass.
+std::string ellipsize(std::string_view s, size_t maxCodePoints, size_t keep = size_t(-1));
 
 // ── Classification (compact approximations of the Unicode properties) ────────
 bool isSpace(uint32_t cp); // White_Space

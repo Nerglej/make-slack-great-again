@@ -1173,7 +1173,7 @@ std::string MessageList::itemLabel(size_t i) const {
         const model::Message              *root = message(_root);
         const std::vector<model::Message> *r    = _ctx.store().replies(_conv, _root);
         const size_t                       n    = r ? r->size() : root ? root->replyCount : 0;
-        return n == 1 ? std::string(tr("1 reply")) : arg(tr("%1 replies"), std::to_string(n));
+        return n == 1 ? std::string(tr("1 reply")) : arg(tr("%1 replies"), str::number(int64_t(n)));
     }
     return {};
 }

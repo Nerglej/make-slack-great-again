@@ -72,15 +72,6 @@ std::string simplified(std::string_view s) {
     return out;
 }
 
-bool iequals(std::string_view a, std::string_view b) {
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (asciiLower(a[i]) != asciiLower(b[i]))
-            return false;
-    return true;
-}
-
 std::vector<std::string_view> split(std::string_view s, char sep) {
     std::vector<std::string_view> out;
     Splitter                      parts(s, sep);

@@ -9,6 +9,7 @@
 #include "app/crash/crash_handler.h"
 
 #include "base/file.h"
+#include "base/str.h"
 #include "plat/plat.h"
 
 #include <cstdint>
@@ -98,7 +99,7 @@ void writeStr(int fd, const char *s) {
 void hexDigits(char *out, const void *p) {
     auto v = reinterpret_cast<uintptr_t>(p);
     for (int i = int(2 * sizeof(void *)) - 1; i >= 0; --i, v >>= 4)
-        out[i] = "0123456789abcdef"[v & 0xf];
+        out[i] = str::kHexLower[v & 0xf];
 }
 
 void writePtr(int fd, const void *p) {

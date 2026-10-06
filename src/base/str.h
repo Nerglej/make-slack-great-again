@@ -32,13 +32,18 @@ std::string_view trimSpace(std::string_view s);
 // plat.
 using prim::asciiLower;
 std::string asciiUpper(std::string_view s);
-// ASCII case-insensitive equality (header names, tokens).
-bool        iequals(std::string_view a, std::string_view b);
+// ASCII case-insensitive equality and containment (header names, tokens,
+// CSS): prim's, shared with plat.
+using prim::icontains;
+using prim::iequals;
 // Every run of Unicode whitespace (utf8::isSpace) becomes
 // one space, none at the ends.
 std::string simplified(std::string_view s);
 // A hex digit's value (either case); -1 for any other character.
 using prim::hexDigit;
+// "0123456789abcdef" and "0123456789ABCDEF" (one copy each).
+using prim::kHexLower;
+using prim::kHexUpper;
 
 // The parts of `s` between `sep`s, empty ones included: "a,,b" → "a", "",
 // "b"; "a\n" → "a", ""; "" → one empty part.

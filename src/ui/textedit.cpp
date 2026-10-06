@@ -23,14 +23,6 @@ inline bool isSpace(char c) {
 // Menu ids for the built-in context menu.
 enum : int { kCut = 1, kCopy, kPaste, kSelectAll };
 
-// Bytes of the first n code points of s.
-size_t codePointBytes(std::string_view s, size_t n) {
-    size_t i = 0;
-    for (; n > 0 && i < s.size(); --n)
-        i = utf8::nextBoundary(s, i);
-    return i;
-}
-
 } // namespace
 
 TextEdit::TextEdit() : _alive(std::make_shared<char>(0)) {
@@ -573,7 +565,7 @@ void TextEdit::replace(
         const std::string_view t(_text);
         const size_t           kept =
             utf8::countCodePoints(t.substr(0, from)) + utf8::countCodePoints(t.substr(to));
-        ins = ins.substr(0, codePointBytes(ins, kept < _maxLength ? _maxLength - kept : 0));
+        ins = ins.substr(0, utf8::prefixBytes(ins, kept < _maxLength ? _maxLength - kept : 0));
         if (ins.empty() && from == to)
             return;
     }
@@ -700,7 +692,7 @@ void TextEdit::moveTo(uint32_t c, bool extend) {
 void TextEdit::setText(std::string_view plain) {
     _squiggles.clear();
     _wavesValid = false;
-    _text.assign(_maxLength ? plain.substr(0, codePointBytes(plain, _maxLength)) : plain);
+    _text.assign(_maxLength ? plain.substr(0, utf8::prefixBytes(plain, _maxLength)) : plain);
     _fmt.assign(_text.size(), 0);
     _links.clear();
     _undo.clear();

@@ -12,12 +12,19 @@ inline char asciiLower(char c) {
     return c >= 'A' && c <= 'Z' ? char(c + 32) : c;
 }
 std::string asciiLower(std::string_view s);
+// ASCII case-insensitive equality and containment (header names, tokens,
+// CSS); other bytes compare as they are.
+bool        iequals(std::string_view a, std::string_view b);
+bool        icontains(std::string_view hay, std::string_view needle);
 
 // `s` without leading and trailing bytes from `chars`.
 std::string_view trim(std::string_view s, std::string_view chars);
 
 // A hex digit's value (either case); -1 for any other character.
-int hexDigit(char c);
+int               hexDigit(char c);
+// The hex digits by value, "0123456789abcdef" and upper case: one copy each.
+extern const char kHexLower[17];
+extern const char kHexUpper[17];
 
 // '&', '<' and '>' as &amp; &lt; &gt; (and '"' as &quot; with `quotes`, for
 // an attribute value) appended to *out; every other byte as it is.

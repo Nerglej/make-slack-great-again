@@ -92,10 +92,7 @@ std::string searchPreview(const model::Store &store, std::string_view text) {
     // parser's label is kept for anyone unknown).
     std::string out = screens::plainText(store, text);
     // The first 120 characters, newlines as spaces.
-    size_t      end = 0;
-    for (size_t n = 0; n < kPreviewChars && end < out.size(); ++n)
-        end = utf8::nextBoundary(out, end);
-    out.resize(end);
+    out.resize(utf8::prefixBytes(out, kPreviewChars));
     std::replace(out.begin(), out.end(), '\n', ' ');
     return out;
 }

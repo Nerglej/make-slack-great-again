@@ -7,6 +7,7 @@
 #include "base/utf8.h"
 #include "plat/audio.h"
 #include "plat/plat.h"
+#include "prim/bytes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,11 +22,10 @@ using i18n::tr;
 namespace {
 
 uint32_t le32(std::string_view s, size_t at) {
-    return uint32_t(uint8_t(s[at])) | uint32_t(uint8_t(s[at + 1])) << 8 |
-           uint32_t(uint8_t(s[at + 2])) << 16 | uint32_t(uint8_t(s[at + 3])) << 24;
+    return prim::le32(s.data() + at);
 }
 uint16_t le16(std::string_view s, size_t at) {
-    return uint16_t(uint8_t(s[at]) | uint8_t(s[at + 1]) << 8);
+    return uint16_t(prim::le16(s.data() + at));
 }
 
 // A plausible ISO 639-1 code ("sv"): two ASCII letters.

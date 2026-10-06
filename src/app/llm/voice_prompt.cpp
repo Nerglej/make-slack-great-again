@@ -52,10 +52,10 @@ bool isLower(uint32_t c) {
 // Simplified, and at most `max` characters (the last one an ellipsis).
 std::string clip(std::string_view text, size_t max) {
     std::string s = str::simplified(text);
-    if (utf8::countCodePoints(s) <= max)
+    if (utf8::prefixBytes(s, max) == s.size())
         return s;
-    const Cps cps = utf8::codePoints(s);
-    return std::string(str::trim(encode(cps, 0, max - 1))) + "\xE2\x80\xA6";
+    return std::string(str::trim(std::string_view(s).substr(0, utf8::prefixBytes(s, max - 1)))) +
+           "\xE2\x80\xA6";
 }
 
 // "#backend" → "backend"; DM names stay as they are.

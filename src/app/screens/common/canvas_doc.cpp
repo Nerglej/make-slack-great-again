@@ -176,7 +176,7 @@ editorHtml(std::string_view h, const std::vector<std::string> &titles, std::stri
                                  ? "- [x] "
                                  : "- [ ] ";
                     else if (l.ordered)
-                        p += std::to_string(++l.n) + ". ";
+                        (p += str::number(++l.n)) += ". ";
                     else
                         p += "- ";
                 } else {

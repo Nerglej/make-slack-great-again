@@ -478,7 +478,7 @@ bool Document::parseFile(std::string_view path, std::string *error) {
 // ── Writer ──────────────────────────────────────────────────────────────────
 
 void escapeString(std::string &out, std::string_view s) {
-    static const char kHex[] = "0123456789abcdef";
+    const char *const kHex = str::kHexLower;
     out += '"';
     size_t run = 0; // start of the pending unescaped run
     for (size_t i = 0; i < s.size(); ++i) {

@@ -274,10 +274,7 @@ ProfileDialog::ProfileDialog(screens::Context &ctx, Avatars &avatars)
     _name->edit().onChange = [this, left] {
         size_t n = utf8::countCodePoints(_name->text());
         if (n > 80) { // Slack's cap: keep the first 80
-            size_t cut = 0;
-            for (int k = 0; k < 80; ++k)
-                cut = utf8::nextBoundary(_name->text(), cut);
-            _name->setText(_name->text().substr(0, cut));
+            _name->setText(_name->text().substr(0, utf8::prefixBytes(_name->text(), 80)));
             n = 80;
         }
         left->setText(str::number(int64_t(80) - int64_t(n)));

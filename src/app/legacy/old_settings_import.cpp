@@ -6,6 +6,7 @@
 #include "base/log.h"
 #include "base/str.h"
 #include "base/time.h"
+#include "prim/bytes.h"
 #include "screens/settings/settings_dialog.h"
 #include "screens/shell/settings.h"
 
@@ -95,10 +96,7 @@ void customTheme(const std::string &text, ui::CustomPalette *c) {
 }
 
 int32_t be32(std::string_view b, size_t at) {
-    return int32_t(
-        uint32_t(uint8_t(b[at])) << 24 | uint32_t(uint8_t(b[at + 1])) << 16 |
-        uint32_t(uint8_t(b[at + 2])) << 8 | uint32_t(uint8_t(b[at + 3]))
-    );
+    return int32_t(prim::be32(b.data() + at));
 }
 
 // window/geometry: the saved window geometry's bytes (big-endian):

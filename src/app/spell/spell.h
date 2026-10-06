@@ -68,6 +68,10 @@ Span              wordAt(std::string_view text, uint32_t pos);
 // its speakers whatever the app language — and the code that tells variants
 // apart ("de_DE", "de_DE_frami"); the bare code for one it doesn't know.
 std::string languageName(std::string_view code);
+// A language's English ("German") and own ("Deutsch") name by its bare
+// ISO 639 code ("de"); null for one the table doesn't have.
+const char *englishName(std::string_view code);
+const char *nativeName(std::string_view code);
 
 // ── The platform checker (backend_{linux,mac,win}.cpp) ──────────────────────
 class Backend {

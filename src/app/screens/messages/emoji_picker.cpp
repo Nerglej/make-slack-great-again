@@ -234,7 +234,7 @@ public:
                         t.append(g_tone && c.skinnable ? c.glyph + tg : c.glyph, st);
                         text::LayoutOptions o;
                         o.lineHeight = 1.0f;
-                        l            = text::Layout::build(t, o, scale);
+                        l            = text::Layout::build(std::move(t), o, scale);
                     }
                     l->paint(
                         p,

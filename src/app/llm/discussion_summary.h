@@ -20,9 +20,12 @@ struct SummaryEntry {
 };
 
 // languageCode: ISO 639-1 (Service::language()); unknown → English.
-Request     summaryRequest(const std::vector<SummaryEntry> &entries, std::string_view languageCode);
+Request summaryRequest(const std::vector<SummaryEntry> &entries, std::string_view languageCode);
+// The languages AI features can address the user in (ISO 639-1, in the
+// order Settings lists them); their names are spell's language table.
+extern const char *const kAiLanguages[16];
 // The language's English name ("ja" → "Japanese"): the model is told in
 // English, with the language named, which works better than a bare code.
-const char *languageName(std::string_view code);
+const char              *languageName(std::string_view code);
 
 } // namespace llm
