@@ -212,6 +212,12 @@ void RtmPresence::onClosed(int code, const std::string &reason) {
 }
 
 void RtmPresence::onText(const std::string &text) {
+    // The socket carries every event of the workspace; only hello, pong and
+    // error are ours, and a frame without one of the words is none of them
+    // (no parse for the rest).
+    const std::string_view t(text);
+    if (t.find("hello") == t.npos && t.find("pong") == t.npos && t.find("error") == t.npos)
+        return;
     json::Document doc;
     if (!doc.parse(std::string_view(text), nullptr))
         return;

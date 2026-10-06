@@ -3,6 +3,7 @@
 // it before any answer and then merges the network's, cached history meets
 // the head page without holes or ghosts, the wipes, and damaged files.
 #include "app/cache/workspace_cache.h"
+#include "app/model/jobs.h"
 #include "app/slack/slack_backend.h"
 #include "support/fake_slack_server.h"
 #include "base/file.h"
@@ -221,16 +222,22 @@ TEST("slack cache: a presence flip doesn't re-serialise users.json; a profile ch
     REQUIRE(file::readAll(path, &after));
     CHECK(after == before);
 
-    // A profile change is written (with the presence it carries).
+    // A profile change waits for the slow cadence (shortened here), not
+    // the 1 s throttle; then it is written (with the presence it carries).
+    cache::WorkspaceCache::setSlowDelayForTest(2500);
     e.store.user(mira).displayName = "Mira O.";
     e.store.usersChanged();
+    fakeslack::pumpFor(1500);
+    REQUIRE(file::readAll(path, &after));
+    CHECK(after == before);
     REQUIRE(pumpUntil(
         [&] {
             std::string now;
             return file::readAll(path, &now) && now != before;
         },
-        3000
+        5000
     ));
+    cache::WorkspaceCache::setSlowDelayForTest(0);
     std::string profile;
     REQUIRE(file::readAll(path, &profile));
     CHECK(profile.find("Mira O.") != std::string::npos);
@@ -375,6 +382,111 @@ TEST("slack cache: a roster record is written when it changed, not for every Met
     REQUIRE(warm.warm);
     CHECK_STR(warm.c("C1").localName, "General (renamed here)");
     CHECK_STR(warm.c("C1").topic, "Company news");
+}
+
+TEST("slack cache: read cursors and badges wait for the slow cadence, or a flush") {
+    wipe();
+    const std::string roster = file::join(cacheDir(), "roster.json");
+    const auto        read   = [&] {
+        std::string text;
+        file::readAll(roster, &text);
+        return text;
+    };
+    {
+        model::Store          s;
+        cache::WorkspaceCache wc(app(), s, cacheDir());
+        REQUIRE(!wc.load(nullptr)); // cold: observing from here
+        model::Conversation c;
+        c.id     = "C1";
+        c.name   = "general";
+        c.member = true;
+        s.addConversation(std::move(c));
+        wc.flush();
+        model::waitBackground(); // the worker's write landed
+        const std::string before = read();
+        REQUIRE(before.find("general") != std::string::npos);
+
+        // What every new message moves: not on the 1 s throttle.
+        const ConvRef ref = s.findConversation("C1");
+        s.updateConversation(ref, [](model::Conversation &x) {
+            x.latest = model::parseTs("1700000005.000000");
+            x.unread = 3;
+        });
+        fakeslack::pumpFor(1500);
+        model::waitBackground();
+        CHECK(read() == before);
+        // A record change is (and takes the cursors along).
+        s.updateConversation(ref, [](model::Conversation &x) { x.topic = "News"; });
+        REQUIRE(pumpUntil([&] { return read().find("News") != std::string::npos; }, 3000));
+
+        // The slow cadence writes cursors by themselves too.
+        cache::WorkspaceCache::setSlowDelayForTest(300);
+        const std::string topic = read();
+        s.updateConversation(ref, [](model::Conversation &x) { x.mentions = 2; });
+        REQUIRE(pumpUntil([&] { return read() != topic; }, 3000));
+        cache::WorkspaceCache::setSlowDelayForTest(0);
+
+        // And close() writes what is pending, itself.
+        s.updateConversation(ref, [](model::Conversation &x) { x.unread = 4; });
+    }
+    model::Store          s;
+    cache::WorkspaceCache wc(app(), s, cacheDir());
+    REQUIRE(wc.load(nullptr));
+    const model::Conversation &c = s.conversation(s.findConversation("C1"));
+    CHECK_STR(c.topic, "News");
+    CHECK(c.unread == 4);
+    CHECK(c.mentions == 2);
+    CHECK(c.latest == model::parseTs("1700000005.000000"));
+    wc.close(false);
+    wipe();
+}
+
+TEST("slack cache: user groups keep whether I am in them, not their members") {
+    wipe();
+    const std::string dir    = cacheDir();
+    const std::string groups = file::join(dir, "usergroups.json");
+    const auto        put    = [&](const char *name, const char *text) {
+        REQUIRE(file::writeAtomic(file::join(dir, name), text));
+    };
+    // A cache from before: members, not the bit.
+    put("roster.json", R"({"v":1,"c":[["C1","general"]]})");
+    put("meta.json", R"({"v":1,"me":"UME","groups":["S7"]})");
+    put("usergroups.json",
+        R"({"v":1,"g":[["S7","eng","Eng",["UX","UME"]],["S8","ops","Ops",["UX"]]]})");
+    {
+        model::Store          s;
+        cache::WorkspaceCache wc(app(), s, dir);
+        REQUIRE(wc.load(nullptr));
+        REQUIRE(s.myGroups.size() == 1);
+        CHECK_STR(s.myGroups[0], "S7");
+        REQUIRE(s.findUsergroup("S7"));
+        CHECK(s.findUsergroup("S7")->mine);
+        CHECK(s.findUsergroup("S7")->users.empty());
+        CHECK(!s.findUsergroup("S8")->mine);
+        s.setUsergroups(s.usergroups()); // a reload: written in the new form
+    }
+    std::string text;
+    REQUIRE(file::readAll(groups, &text));
+    CHECK(text.find("\"UX\"") == std::string::npos);
+    CHECK(text.find("\"eng\"") != std::string::npos);
+    {
+        model::Store          s;
+        cache::WorkspaceCache wc(app(), s, dir);
+        REQUIRE(wc.load(nullptr));
+        REQUIRE(s.myGroups.size() == 1);
+        CHECK_STR(s.myGroups[0], "S7");
+        CHECK_STR(s.findUsergroup("S8")->handle, "ops");
+    }
+    // Junk records read as nothing, never a crash.
+    put("usergroups.json", R"({"v":1,"g":[[1,2,3,4,5],7,[]]})");
+    {
+        model::Store          s;
+        cache::WorkspaceCache wc(app(), s, dir);
+        REQUIRE(wc.load(nullptr));
+        CHECK(s.usergroups().empty()); // meta.json's own list stays
+        wc.close(false);
+    }
+    wipe();
 }
 
 TEST("slack cache: the Settings walks run on a worker") {

@@ -391,6 +391,10 @@ public:
     // it to one call per 20 s): the WhileUsing idle clock and the service's
     // own activity signal.
     virtual void         noteUserActivity() {}
+    // Whether the main window shows (false: hidden to the tray or
+    // minimised). Hidden, a backend polls only what notifies; true until
+    // told otherwise.
+    virtual void         setWindowVisible(bool visible) { (void)visible; }
     // My status: emoji shortcode (no colons, "" = none), text, expiry (epoch
     // secs, 0 = never). Success updates my User in the Store.
     virtual void         setStatus(std::string emoji, std::string text, int64_t expiry, Done done) {

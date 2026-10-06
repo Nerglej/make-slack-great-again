@@ -99,6 +99,7 @@ public:
     void         setNamesMode(NamesMode mode) override;
     PresenceLink presenceLink() const override;
     void         noteUserActivity() override;
+    void         setWindowVisible(bool visible) override;
     void         setStatus(std::string emoji, std::string text, int64_t expiry, Done d) override;
     void         loadMyProfile(std::function<void(MyProfile)> done) override;
     void updateProfile(std::string name, std::string email, std::string phone, Done d) override;

@@ -50,6 +50,10 @@ constexpr int64_t     kCountsPollGapMs        = 10'000;
 constexpr int64_t     kThreadsPollGapMs       = 20'000;
 constexpr int64_t     kBackgroundPollGapMs    = 2 * 60'000;
 constexpr int64_t     kPresencePollGapMs      = 60'000;
+constexpr int64_t     kAwayProbeGapMs         = 5 * 60'000; // a posting "away" author, per user
+// The open chat of a session workspace while the window is hidden: client.counts
+// still brings it forward the moment it moves (applyActivity).
+constexpr int64_t     kHiddenOpenPollGapMs    = 60'000;
 constexpr int64_t     kSelfPresenceGapMs      = 60'000; // _selfPresenceTimer
 constexpr int64_t     kStarredGapMs           = 5 * 60'000;
 constexpr int64_t     kSavedGapMs             = 5 * 60'000; // kRemindersRefreshGapMs
@@ -60,7 +64,7 @@ constexpr int64_t     kLookupRetryTransientMs = 10 * 60'000; // a failed users.i
 constexpr int64_t     kDmSweepGapSecs         = 12 * 3600;   // across restarts, via the cache
 constexpr int         kOffRosterProbeMs       = 90'000;
 constexpr int         kPacedMs                = 1200; // the _infoApi background lane
-constexpr int         kPresenceHot = 12, kPresenceRotate = 8;
+constexpr int         kPresenceHot = 8, kPresenceRotate = 4;
 constexpr int         kMaxDiffPolls = 8, kCountsFailureLimit = 3;
 constexpr int         kMaxThreadInjects = 12, kMaxThreadBacklog = 3;
 // Lost connections and gateway pages: 10 tries back off 0, 1, 2 … 60 s, about
@@ -221,6 +225,7 @@ struct SlackBackend::Read {
     std::unordered_map<std::string, int64_t> lookupRetryAt;
     SelfPresence                             self;
     size_t                                   presenceIdx = 0;
+    std::vector<int64_t> awayProbeAt; // by UserRef: now() of the last away-author probe
 
     void fetchUserIfNeeded(UserRef u);
     void fetchMissingDmUsers();
@@ -274,18 +279,22 @@ struct SlackBackend::Read {
     Ts                          newestHeldReply(ConvRef c, Ts root) const;
 
     // ── Polling (the realtime health check) ─────────────────────────────────
-    ConvRef openConv   = kNoConv;
-    Ts      openThread = 0;
-    int64_t lastRoster = 0, lastCounts = 0, lastThreads = 0, lastFg = 0, lastBg = 0;
-    int64_t lastPresence = 0, lastSelf = 0, lastStarred = 0, lastSaved = 0, lastUsers = 0;
-    std::unordered_map<ConvRef, Ts>       pollBaseline;
-    std::unordered_map<ConvRef, uint64_t> completedPoll;
-    uint64_t                              pollRevision = 0;
-    ConvRef                               snapshotConv = kNoConv;
-    std::vector<Ts>                       snapshotTs;
-    size_t                                bgIdx = 0;
-    bool countsUnavailable = false, countsDisabled = false, activityPrimed = false;
-    int  countsFailures = 0;
+    ConvRef         openConv   = kNoConv;
+    Ts              openThread = 0;
+    int64_t         lastRoster = 0, lastCounts = 0, lastThreads = 0, lastFg = 0, lastBg = 0;
+    int64_t         lastPresence = 0, lastSelf = 0, lastStarred = 0, lastSaved = 0, lastUsers = 0;
+    bool            visible = true; // the window shows (setWindowVisible)
+    // By ConvRef (0: none yet): the newest ts a poll saw (baselineOf), and
+    // the revision of the last poll that landed.
+    std::vector<Ts> pollBaseline;
+    std::vector<uint64_t> completedPoll;
+    uint64_t              pollRevision = 0;
+    Ts                   &baselineOf(ConvRef c);
+    ConvRef               snapshotConv = kNoConv;
+    std::vector<Ts>       snapshotTs;
+    size_t                bgIdx             = 0;
+    bool                  countsUnavailable = false, countsDisabled = false, activityPrimed = false;
+    int                   countsFailures = 0;
     std::unordered_map<std::string, mapjson::Counts> activity;
     // A counts snapshot named a conversation the roster lacks, or dropped
     // a member one: reload the roster soon. rosterAsked: the unknown ids
@@ -1096,6 +1105,9 @@ void SlackBackend::Read::loadUsergroups() {
         [this](const json::Document &doc, const std::string &err) {
             if (!err.empty()) // missing_scope on an older OAuth token: the cache stays
                 return;
+            // Only whether I am in each: the member lists themselves are
+            // not kept (a big org's run to millions of ids).
+            const std::string                   &meId = s.user(s.me).id;
             std::vector<model::Store::Usergroup> groups;
             for (const json::Value g : doc.root()["usergroups"]) {
                 model::Store::Usergroup x;
@@ -1103,7 +1115,10 @@ void SlackBackend::Read::loadUsergroups() {
                 x.handle = std::string(g["handle"].str());
                 x.name   = std::string(g["name"].str());
                 for (const json::Value u : g["users"])
-                    x.users.emplace_back(u.str());
+                    if (!meId.empty() && u.str() == meId) {
+                        x.mine = true;
+                        break;
+                    }
                 if (!x.id.empty())
                     groups.push_back(std::move(x));
             }
@@ -1314,8 +1329,8 @@ void SlackBackend::Read::requestPresence(UserRef ref, bool background) {
     );
 }
 
-// The 12 most recently active DM partners every
-// round, plus a rotating window of 8 over the rest.
+// The 8 most recently active DM partners every
+// round, plus a rotating window of 4 over the rest.
 void SlackBackend::Read::pollDmPresence() {
     std::vector<std::pair<Ts, UserRef>> dms;
     for (ConvRef r = 0; r < s.conversationCount(); ++r) {
@@ -1721,9 +1736,7 @@ SlackBackend::Read::mapPage(ConvRef c, const json::Value &arr, bool topLevel) {
             m.saved = serverSaved.count(threadKey(c, m.ts)) > 0;
         page.push_back(std::move(m));
     }
-    std::sort(page.begin(), page.end(), [](const model::Message &a, const model::Message &b) {
-        return a.ts < b.ts;
-    });
+    model::sortByTs(page);
     return page;
 }
 
@@ -2060,7 +2073,7 @@ void SlackBackend::Read::refreshCachedHead(ConvRef c, Ts cachedNewest) {
                 s.removeMessage(c, ts);
             resolveAuthors(page);
             if (!page.empty()) {
-                Ts &base = pollBaseline[c];
+                Ts &base = baselineOf(c);
                 base     = std::max(base, page.back().ts);
             }
             s.addPage(c, std::move(page));
@@ -2102,8 +2115,10 @@ void SlackBackend::Read::tick() {
     // (0d) Watched threads (agent thread links): the backstop polls.
     if (!watches.empty())
         pollWatches();
-    // (2) The open chat.
-    if (openConv != kNoConv && t - lastFg >= (session ? 5'000 : 60'000)) {
+    // (2) The open chat; hidden, client.counts brings it forward when it
+    // moves (applyActivity).
+    const int64_t fgGap = !session ? 60'000 : visible ? 5'000 : kHiddenOpenPollGapMs;
+    if (openConv != kNoConv && t - lastFg >= fgGap) {
         lastFg = t;
         pollConversation(openConv, true);
     }
@@ -2124,7 +2139,9 @@ void SlackBackend::Read::tick() {
         refreshScheduled();
     if (t - lastStarred >= kStarredGapMs)
         refreshStarred();
-    if (t - lastPresence >= kPresencePollGapMs) {
+    // Others' presence draws only in the window: none while it is hidden
+    // (showing it again asks at once: setWindowVisible).
+    if (visible && t - lastPresence >= kPresencePollGapMs) {
         lastPresence = t;
         pollDmPresence();
     }
@@ -2267,15 +2284,28 @@ void SlackBackend::Read::applyActivity(
         const model::Conversation *c = m.conv == kNoConv ? nullptr : &s.conversation(m.conv);
         const bool mutedQuiet = c && (c->muted || c->notify == model::NotifyLevel::Nothing) &&
                                 m.now.mentions <= m.prev.mentions;
-        if (!c || !c->member || mutedQuiet || m.conv == openConv) {
+        // The open chat has its own poll; hidden, that one is slow, so it
+        // comes forward instead.
+        if (!c || !c->member || mutedQuiet || (m.conv == openConv && visible)) {
             activity[m.now.id] = m.now;
             continue;
         }
         if (budget-- <= 0)
             break; // left stale on purpose: still "moved" next time
         activity[m.now.id] = m.now;
-        pollConversation(m.conv, false, m.prev.latest);
+        if (m.conv == openConv) {
+            lastFg = now();
+            pollConversation(m.conv, true);
+        } else {
+            pollConversation(m.conv, false, m.prev.latest);
+        }
     }
+}
+
+Ts &SlackBackend::Read::baselineOf(ConvRef c) {
+    if (pollBaseline.size() <= c)
+        pollBaseline.resize(c + 1, 0);
+    return pollBaseline[c];
 }
 
 // The head page of a conversation; what is
@@ -2285,9 +2315,7 @@ void SlackBackend::Read::applyActivity(
 void SlackBackend::Read::pollConversation(ConvRef c, bool foreground, Ts hint) {
     if (c >= s.conversationCount())
         return;
-    Ts lastKnown = 0;
-    if (const auto it = pollBaseline.find(c); it != pollBaseline.end())
-        lastKnown = it->second;
+    Ts lastKnown = c < pollBaseline.size() ? pollBaseline[c] : 0;
     if (!lastKnown)
         lastKnown = hint;
     if (!lastKnown)
@@ -2307,13 +2335,15 @@ void SlackBackend::Read::pollConversation(ConvRef c, bool foreground, Ts hint) {
             // became the open chat (the foreground poll covers it now).
             if (foreground ? openConv != c : openConv == c)
                 return;
+            if (completedPoll.size() <= c)
+                completedPoll.resize(c + 1, 0);
             if (revision < completedPoll[c])
                 return;
             completedPoll[c]                 = revision;
             std::vector<model::Message> page = mapPage(c, doc.root()["messages"], true);
             applyHuddleRoom(c, doc.root()["messages"]);
             if (!page.empty())
-                pollBaseline[c] = page.back().ts;
+                baselineOf(c) = page.back().ts;
             if (priming && !foreground)
                 return;
             resolveAuthors(page);
@@ -2617,9 +2647,10 @@ void SlackBackend::Read::readReplies(ConvRef c, Ts root, Ts after, Lane lane, Re
                 return;
             }
             std::vector<ThreadReply> &rs = *acc;
-            std::sort(rs.begin(), rs.end(), [](const ThreadReply &x, const ThreadReply &y) {
-                return x.message.ts < y.message.ts;
-            });
+            // Oldest first as the pages come: an insertion sort is a pass.
+            for (size_t i = 1; i < rs.size(); ++i)
+                for (size_t j = i; j > 0 && rs[j].message.ts < rs[j - 1].message.ts; --j)
+                    std::swap(rs[j], rs[j - 1]);
             rs.erase(
                 std::unique(
                     rs.begin(),
@@ -2788,9 +2819,18 @@ bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
     // is followed whether or not its root is loaded.
     if (root && (own || parentIsMe))
         follow(key);
-    // Someone held as away just posted: one probe instead of waiting a round.
-    if (!own && author != kNoUser && !s.user(author).active)
-        requestPresence(author, true);
+    // Someone held as away just posted: one probe instead of waiting a round
+    // (at most one per user per kAwayProbeGapMs: a busy channel's away
+    // poster would ask on every message).
+    if (!own && author != kNoUser && !s.user(author).active) {
+        if (awayProbeAt.size() <= author)
+            awayProbeAt.resize(author + 1, 0);
+        int64_t &at = awayProbeAt[author];
+        if (!at || now() - at >= kAwayProbeGapMs) {
+            at = now();
+            requestPresence(author, true);
+        }
+    }
 
     const model::Conversation &cv      = s.conversation(c);
     uint32_t                   unread0 = cv.unread, mentions0 = cv.mentions;
@@ -2848,6 +2888,16 @@ bool SlackBackend::Read::inject(ConvRef c, model::Message m, bool parentIsMe) {
             x.latest   = std::max(x.latest, ts); // replies too: list relevance
         });
     return true;
+}
+
+void SlackBackend::setWindowVisible(bool v) {
+    Read &r = *_read;
+    if (r.visible == v)
+        return;
+    r.visible = v;
+    // Shown again: the open chat and the presence dots at the next tick.
+    if (v)
+        r.lastFg = r.lastPresence = 0;
 }
 
 // ── For the realtime half ───────────────────────────────────────────────────

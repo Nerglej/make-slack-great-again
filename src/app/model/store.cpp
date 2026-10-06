@@ -238,7 +238,7 @@ uint64_t mixHash(uint64_t h, std::string_view v) {
 // users.json).
 void Store::noteUserRevisions() {
     const size_t n       = _users.size();
-    bool         profile = n < _profileHash.size(), presence = false;
+    bool         profile = n < _profileHash.size(), named = profile, presence = false;
     // Many touched (a users.list load): one pass over all is as cheap.
     const bool   all = _allUsersDirty || profile || _touchedUsers.size() > n / 2;
     _profileHash.resize(n, 0);
@@ -281,6 +281,7 @@ void Store::noteUserRevisions() {
             _profileHash[i] = h;
             _userRev[i]     = next;
             profile         = true;
+            named           = named || !u.placeholder;
         }
         const uint64_t p = 2 | uint64_t(u.active) | uint64_t(u.dnd) << 2;
         if (p != _presenceHash[i]) {
@@ -292,6 +293,8 @@ void Store::noteUserRevisions() {
     _allUsersDirty = false;
     if (profile)
         _profileRev = next;
+    if (named)
+        ++_namedRev;
     if (presence)
         ++_presenceRev;
 }
@@ -494,7 +497,7 @@ std::vector<Message> *Store::listFor(Conversation &c, Ts thread, bool create) {
 // (conversations.history): reverse the latter, insertion-sort anything else.
 // Pages are ≤ 200 messages, and this avoids std::sort's ~1.5 KB introsort
 // instantiation for a move-only type.
-static void sortByTs(std::vector<Message> &v) {
+void sortByTs(std::vector<Message> &v) {
     if (v.size() > 1 && v.front().ts > v.back().ts)
         std::reverse(v.begin(), v.end());
     for (size_t i = 1; i < v.size(); ++i)
@@ -985,9 +988,13 @@ const Store::Usergroup *Store::findUsergroup(std::string_view id) const {
 void Store::setUsergroups(std::vector<Usergroup> groups) {
     std::vector<std::string> mine;
     const std::string       &meId = user(me).id;
-    for (const Usergroup &g : groups)
-        if (!meId.empty() && std::find(g.users.begin(), g.users.end(), meId) != g.users.end())
+    for (Usergroup &g : groups) {
+        if (!g.mine && !meId.empty())
+            g.mine = std::find(g.users.begin(), g.users.end(), meId) != g.users.end();
+        std::vector<std::string>().swap(g.users);
+        if (g.mine)
             mine.push_back(g.id);
+    }
     myGroups = std::move(mine);
     ++_textRev;
     ++_groupRev;

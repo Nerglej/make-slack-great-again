@@ -517,6 +517,127 @@ TEST("slack realtime: a reconnect backfills the roster and the DM badges") {
     CHECK(e.store.conversation(e.conv("D1")).lastRead == model::parseTs("1700000000.000000"));
 }
 
+TEST("slack realtime: a reconnect soon after a full DM sweep asks only the most active") {
+    if (!haveServer())
+        return;
+    // 30 DMs: more than a short sweep takes.
+    std::string list = R"({"conversations.list": {"ok": true, "channels": [)";
+    for (int i = 0; i < 30; ++i)
+        list += str::concat(
+            {i ? "," : "",
+             R"({"id": "D)",
+             str::number(100 + i),
+             R"(", "is_im": true, "user": "U)",
+             str::number(100 + i),
+             "\"}"}
+        );
+    list += R"(], "response_metadata": {"next_cursor": ""}}})";
+    Env e(false, true, {}, list.c_str());
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const auto reconnect = [&](int opens) {
+        ctl("POST", "/_ctl/ws/close", R"({"code": 1001})");
+        REQUIRE(pumpUntil([&] { return count("ws-open") == opens && e.socket->connected(); }));
+    };
+    // The DM activity sweep after connect first; then nothing more asks.
+    const auto settled = [] {
+        int n = count("conversations.info");
+        for (int now = -1; now != n;) {
+            if (now >= 0)
+                n = now;
+            pumpFor(300);
+            now = count("conversations.info");
+        }
+        return n;
+    };
+    int infos = settled();
+    reconnect(2);
+    CHECK(settled() - infos == 30); // the first: every DM
+    // Past the 2 min gap (1.2 s here), inside the full sweep's 10 min (6 s).
+    pumpFor(1000);
+    infos = settled();
+    reconnect(3);
+    CHECK(settled() - infos == 24);
+}
+
+TEST("slack realtime: user group events patch the groups; only the unclear reload them") {
+    if (!haveServer())
+        return;
+    Env e(false, true, {}, R"({"usergroups.list": {"ok": true, "usergroups": [
+        {"id": "S1", "handle": "eng", "name": "Eng", "users": ["UMIRA"]}]}})");
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    REQUIRE(pumpUntil([&] { return e.store.findUsergroup("S1") != nullptr; }, 3000));
+    CHECK(e.store.myGroups.empty());
+    const int lists = count("usergroups.list");
+    REQUIRE(push(envelope("a", R"({"type":"subteam_self_added","subteam_id":"S1"})")));
+    REQUIRE(pumpUntil([&] { return e.store.myGroups.size() == 1; }));
+    REQUIRE(push(envelope(
+        "b",
+        R"({"type":"subteam_updated","subteam":{"id":"S1","handle":"core","name":"Core","date_delete":0}})"
+    )));
+    REQUIRE(pumpUntil([&] { return e.store.findUsergroup("S1")->handle == "core"; }));
+    CHECK(e.store.findUsergroup("S1")->mine); // no member list in it: kept
+    REQUIRE(push(envelope(
+        "c",
+        R"({"type":"subteam_created","subteam":{"id":"S9","handle":"ops","name":"Ops","date_delete":0,"users":["UME"]}})"
+    )));
+    REQUIRE(pumpUntil([&] { return e.store.myGroups.size() == 2; }));
+    REQUIRE(push(envelope(
+        "d",
+        R"({"type":"subteam_members_changed","subteam_id":"S9","added_users":[],"removed_users":["UME"]})"
+    )));
+    REQUIRE(pumpUntil([&] { return e.store.myGroups.size() == 1; }));
+    REQUIRE(push(envelope("e", R"({"type":"subteam_self_removed","subteam_id":"S1"})")));
+    REQUIRE(pumpUntil([&] { return e.store.myGroups.empty(); }));
+    pumpFor(200); // past the reload's debounce (20 ms here)
+    CHECK(count("usergroups.list") == lists);
+    // A group we don't hold: read them all again.
+    REQUIRE(push(envelope("f", R"({"type":"subteam_self_added","subteam_id":"S5"})")));
+    REQUIRE(pumpUntil([&] { return count("usergroups.list") > lists; }, 3000));
+}
+
+TEST("slack realtime: an away author posting is probed once, not per message") {
+    if (!haveServer())
+        return;
+    Env e;
+    e.be->setWindowVisible(false); // no presence rounds: only the probes count
+    REQUIRE(e.connect());
+    REQUIRE(e.live());
+    const auto probes = [] {
+        int       n = 0;
+        const Log l;
+        for (json::Value r : l.doc.root())
+            n += r["method"].str() == "users.getPresence" && r["form"]["user"].str() == "UMIRA";
+        return n;
+    };
+    pumpFor(200);
+    const int before = probes();
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(push(envelope(
+            str::concat({"m", str::number(i)}),
+            str::concat(
+                {R"({"type":"message","channel":"C1","user":"UMIRA","text":"hi","ts":"18000000)",
+                 str::number(10 + i),
+                 R"(.000100"})"}
+            )
+        )));
+        pumpFor(100);
+    }
+    REQUIRE(pumpUntil([&] {
+        return e.store.findMessage(e.conv("C1"), model::parseTs("1800000012.000100")) != nullptr;
+    }));
+    CHECK(probes() - before == 1);
+    // Another workspace's message is not mapped: its author stays unknown here.
+    REQUIRE(push(envelope(
+        "x",
+        R"({"type":"message","channel":"CZ","user":"UFOREIGN","text":"x","ts":"1800000020.000100"})",
+        "T2"
+    )));
+    pumpFor(200);
+    CHECK(e.store.findUser("UFOREIGN") == model::kNoUser);
+}
+
 TEST("slack realtime: a push workspace polls only as a safety net") {
     if (!haveServer())
         return;

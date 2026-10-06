@@ -45,6 +45,11 @@ struct Change {
     uint32_t   count  = 0; // Append / Prepend
 };
 
+// Oldest first: a newest-first page (conversations.history) is reversed,
+// anything else insertion-sorted (pages are small; one sort for every
+// caller, not an introsort each).
+void sortByTs(std::vector<Message> &v);
+
 class Store {
 public:
     struct Mark { // a flag or time attached to a message (reminders, muted threads)
@@ -104,6 +109,9 @@ public:
     //   textRevision: custom emoji, user groups or channel names changed
     //     (they draw in names and messages too).
     uint64_t    profileRevision() const { return _profileRev; }
+    //   namedRevision: the same, but a placeholder (known by id only)
+    //     appearing or changing doesn't move it.
+    uint64_t    namedRevision() const { return _namedRev; }
     uint64_t    userRevision(UserRef u) const {
         return u < _userRev.size() ? _userRev[u] : _profileRev;
     }
@@ -196,7 +204,11 @@ public:
     // Users (mentions repaint).
     struct Usergroup {
         std::string              id, handle, name; // handle without '@'
-        std::vector<std::string> users;            // user ids (not interned: groups can be huge)
+        // Member ids, from an importer that has no `mine` of its own:
+        // setUsergroups folds them into it and drops them (groups can be
+        // huge, and nothing else reads them).
+        std::vector<std::string> users;
+        bool                     mine                                = false; // "me" is a member
         bool                     operator==(const Usergroup &) const = default;
     };
     const std::vector<Usergroup> &usergroups() const { return _usergroups; }
@@ -377,7 +389,8 @@ private:
     // noteUserRevisions' memory: per user, the hashes last seen and the
     // profile revision of its last change.
     std::vector<uint64_t> _profileHash, _presenceHash, _userRev;
-    uint64_t              _profileRev = 0, _presenceRev = 0, _textRev = 0, _metaRev = 0;
+    uint64_t              _profileRev = 0, _namedRev = 0, _presenceRev = 0, _textRev = 0;
+    uint64_t              _metaRev  = 0;
     uint64_t              _localRev = 0, _groupRev = 0;
     // Users touched since the last Users emit (addUser, usersChanged(u));
     // _allUsersDirty: changed in place without saying who (re-hash all).

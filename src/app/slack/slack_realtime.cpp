@@ -29,15 +29,20 @@ using model::UserRef;
 namespace {
 
 // The reconnect throttles and the token refresh window.
-constexpr int64_t kReconnectReloadGapMs = 2 * 60'000;
-constexpr int64_t kUnreadResyncGapMs    = 2 * 60'000;
-constexpr int64_t kReestablishGapMs     = 60'000;
-constexpr int64_t kContentionNoticeGap  = 5 * 60'000;
-constexpr int     kRefreshCheckMs       = 60'000;
-constexpr int64_t kRefreshAheadSecs     = 3600;
-constexpr int     kPresenceRefreshMs    = 2'000; // Slack registers the socket a beat after hello
-constexpr int     kUsergroupsDebounceMs = 2'000;
-constexpr int     kUnreadPatchMs        = 300;
+constexpr int64_t kReconnectReloadGapMs  = 2 * 60'000;
+constexpr int64_t kUnreadResyncGapMs     = 2 * 60'000;
+// Every DM and group DM at most this often; a reconnect in between sweeps
+// only the kUnreadResyncTop most recently active (a flapping socket would
+// otherwise keep the paced lane sweeping without end).
+constexpr int64_t kUnreadFullResyncGapMs = 10 * 60'000;
+constexpr size_t  kUnreadResyncTop       = 24;
+constexpr int64_t kReestablishGapMs      = 60'000;
+constexpr int64_t kContentionNoticeGap   = 5 * 60'000;
+constexpr int     kRefreshCheckMs        = 60'000;
+constexpr int64_t kRefreshAheadSecs      = 3600;
+constexpr int     kPresenceRefreshMs     = 2'000; // Slack registers the socket a beat after hello
+constexpr int     kUsergroupsDebounceMs  = 2'000;
+constexpr int     kUnreadPatchMs         = 300;
 
 // oauth.v2.access answers worth trying again later.
 bool transientRefreshError(const json::Document &doc, const std::string &e) {
@@ -73,6 +78,7 @@ struct SlackBackend::Live {
     std::shared_ptr<SocketMode> socket;
     uint32_t                    sink       = 0;
     int64_t                     lastReload = -1, lastResync = -1, lastReestablish = -1;
+    int64_t                     lastFullResync = -1;
     int64_t                     lastContention = -1;
     plat::TimerId               groupsTimer    = 0;
     struct Pending {
@@ -85,6 +91,7 @@ struct SlackBackend::Live {
     void onPayload(const json::Value &payload);
     void apply(const json::Value &ev, bool ours);
     void onMessage(const json::Value &ev, bool ours);
+    bool patchUsergroup(std::string_view type, const json::Value &ev);
     void fetchUnknown(const std::string &id, model::Message m, bool parentIsMe);
     void fetchJoined(const std::string &id);
     // conversations.info (with the member count the header shows), mapped:
@@ -335,9 +342,10 @@ void SlackBackend::Live::apply(const json::Value &ev, bool ours) {
     if (type == "subteam_created" || type == "subteam_updated" ||
         type == "subteam_members_changed" || type == "subteam_self_added" ||
         type == "subteam_self_removed") {
-        if (!ours)
+        if (!ours || patchUsergroup(type, ev))
             return;
-        // Debounced: a bulk membership change is one event per edit.
+        // Not enough said to patch: all of them again, debounced (a bulk
+        // membership change is one event per edit).
         if (groupsTimer)
             b._app.cancelTimer(groupsTimer);
         groupsTimer = b._app.addTimer(int(kUsergroupsDebounceMs / speed), false, [this] {
@@ -345,6 +353,60 @@ void SlackBackend::Live::apply(const json::Value &ev, bool ours) {
             b.reloadUsergroups();
         });
     }
+}
+
+// A user group event into the Store: only whether I am in a group is kept
+// (and its handle and name), and the events say that much. False when one
+// doesn't (a group we don't hold, a payload without the fields): the caller
+// reads them all again.
+bool SlackBackend::Live::patchUsergroup(std::string_view type, const json::Value &ev) {
+    const std::string     &me = s.user(s.me).id;
+    const json::Value      g  = ev["subteam"];
+    const std::string_view id = g.has("id") ? g["id"].str() : ev["subteam_id"].str();
+    if (me.empty() || id.empty())
+        return false;
+    std::vector<model::Store::Usergroup> groups = s.usergroups();
+    auto                                 it     = groups.begin();
+    while (it != groups.end() && it->id != id)
+        ++it;
+    const auto has = [&me](const json::Value &ids) {
+        for (const json::Value u : ids)
+            if (u.str() == me)
+                return true;
+        return false;
+    };
+    if (type == "subteam_created" || type == "subteam_updated") {
+        if (g["handle"].str().empty())
+            return false;
+        if (g["date_delete"].integer() != 0) { // disabled: usergroups.list leaves it out
+            if (it != groups.end())
+                groups.erase(it);
+        } else {
+            if (it == groups.end()) {
+                groups.emplace_back();
+                it     = groups.end() - 1;
+                it->id = std::string(id);
+            }
+            it->handle = std::string(g["handle"].str());
+            it->name   = std::string(g["name"].str());
+            if (g.has("users"))
+                it->mine = has(g["users"]);
+        }
+    } else if (it == groups.end()) {
+        return false;
+    } else if (type == "subteam_members_changed") {
+        if (!ev.has("added_users") && !ev.has("removed_users"))
+            return false;
+        if (has(ev["added_users"]))
+            it->mine = true;
+        else if (has(ev["removed_users"]))
+            it->mine = false;
+    } else {
+        it->mine = type == "subteam_self_added";
+    }
+    if (groups != s.usergroups())
+        s.setUsergroups(std::move(groups));
+    return true;
 }
 
 void SlackBackend::Live::onMessage(const json::Value &ev, bool ours) {
@@ -377,7 +439,8 @@ void SlackBackend::Live::onMessage(const json::Value &ev, bool ours) {
             b.setHuddle(c, h.active, std::move(h.link), std::move(h.participants));
     }
     if (sub == "message_changed" || sub == "message_replied") {
-        if (c == kNoConv)
+        // Only a message we hold changes: anything else isn't worth mapping.
+        if (c == kNoConv || !s.findMessage(c, model::parseTs(ev["message"]["ts"].str())))
             return;
         // The new shape of a message we may hold: replace what the server
         // says, keep where it sits and what only we know.
@@ -394,6 +457,10 @@ void SlackBackend::Live::onMessage(const json::Value &ev, bool ours) {
         });
         return;
     }
+    // Another workspace's (the socket is shared): not mapped, so its users
+    // don't land in this Store as placeholders.
+    if (c == kNoConv && (!ours || id.empty()))
+        return;
     model::Message m = mapjson::toMessage(ev, s);
     if (!m.ts)
         return;
@@ -505,10 +572,28 @@ void SlackBackend::Live::onContended() {
 void SlackBackend::Live::resyncUnreads() {
     if (resyncInFlight > 0 || (lastResync >= 0 && now() - lastResync < kUnreadResyncGapMs))
         return;
-    const std::vector<std::string> ids = b.directConversationIds();
+    std::vector<std::string> ids = b.directConversationIds();
     if (ids.empty())
         return;
-    lastResync     = now();
+    lastResync = now();
+    if (lastFullResync >= 0 && now() - lastFullResync < kUnreadFullResyncGapMs &&
+        ids.size() > kUnreadResyncTop) {
+        // The most recently active (a selection: K passes, no sort).
+        std::vector<Ts> latest(ids.size());
+        for (size_t i = 0; i < ids.size(); ++i)
+            latest[i] = s.conversation(s.findConversation(ids[i])).latest;
+        for (size_t i = 0; i < kUnreadResyncTop; ++i) {
+            size_t best = i;
+            for (size_t j = i + 1; j < ids.size(); ++j)
+                if (latest[j] > latest[best])
+                    best = j;
+            std::swap(ids[i], ids[best]);
+            std::swap(latest[i], latest[best]);
+        }
+        ids.resize(kUnreadResyncTop);
+    } else {
+        lastFullResync = now();
+    }
     resyncInFlight = int(ids.size());
     LOG_INFO("slack", "resyncUnreads: recovering unread for %zu DMs/MPDMs", ids.size());
     for (const std::string &id : ids)

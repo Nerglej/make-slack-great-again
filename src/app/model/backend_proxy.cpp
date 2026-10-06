@@ -112,6 +112,10 @@ Backend::PresenceLink BackendProxy::presenceLink() const {
 void BackendProxy::noteUserActivity() {
     _t->noteUserActivity();
 }
+
+void BackendProxy::setWindowVisible(bool visible) {
+    _t->setWindowVisible(visible);
+}
 void BackendProxy::setStatus(std::string emoji, std::string text, int64_t expiry, Done d) {
     _t->setStatus(std::move(emoji), std::move(text), expiry, std::move(d));
 }

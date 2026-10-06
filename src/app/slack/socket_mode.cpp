@@ -133,7 +133,7 @@ void SocketMode::connectWs(const std::string &url) {
     _pending             = std::make_unique<net::WebSocket>(_app);
     net::WebSocket *sock = _pending.get();
     sock->onOpen         = [this, sock] { onOpen(sock); };
-    sock->onText         = [this](std::string text) { onText(text); };
+    sock->onText         = [this](std::string text) { onText(std::move(text)); };
     sock->onClosed       = [this, sock](int code, std::string reason) {
         if (code)
             LOG_INFO("slack", "Socket Mode: closed — code %d %s", code, reason.c_str());
@@ -281,9 +281,9 @@ void SocketMode::onClosed(net::WebSocket *sock, int code) {
 
 // ── Envelopes ───────────────────────────────────────────────────────────────
 
-void SocketMode::onText(const std::string &text) {
+void SocketMode::onText(std::string text) {
     json::Document doc;
-    if (!doc.parse(std::string_view(text), nullptr))
+    if (!doc.parse(std::move(text)))
         return;
     const json::Value      env  = doc.root();
     const std::string_view type = env["type"].str();
@@ -308,18 +308,8 @@ void SocketMode::onText(const std::string &text) {
         if (_otherConnections > 0)
             maybeNotifyContention();
         // A later hello: re-established after a gap Slack won't replay.
-        if (_hadHello) {
-            std::vector<SinkId> ids;
-            for (const Slot &s : _sinks)
-                ids.push_back(s.id);
-            for (SinkId id : ids)
-                for (const Slot &s : _sinks)
-                    if (s.id == id && s.sink.reconnected) {
-                        auto fn = s.sink.reconnected;
-                        fn();
-                        break;
-                    }
-        }
+        if (_hadHello)
+            notifySinks(kReconnected, env, 0);
         _hadHello = true;
         return;
     }
@@ -357,26 +347,39 @@ void SocketMode::onText(const std::string &text) {
             ack += '}';
             _ws->sendText(ack);
         }
-        const json::Value   payload = env["payload"];
-        std::vector<SinkId> ids;
-        for (const Slot &s : _sinks)
-            ids.push_back(s.id);
-        // A copy per call: a sink may remove itself (or another) meanwhile.
-        for (SinkId id : ids)
-            for (const Slot &s : _sinks)
-                if (s.id == id && s.sink.event) {
-                    auto fn = s.sink.event;
-                    fn(payload);
-                    break;
-                }
+        notifySinks(kEvent, env["payload"], 0);
     }
+}
+
+// One handler of every sink, over a copy of the ids and a copy of each
+// handler: a sink may remove itself (or another) meanwhile.
+void SocketMode::notifySinks(Notice what, const json::Value &payload, int others) {
+    std::vector<SinkId> ids;
+    for (const Slot &s : _sinks)
+        ids.push_back(s.id);
+    for (SinkId id : ids)
+        for (const Slot &s : _sinks) {
+            if (s.id != id)
+                continue;
+            if (what == kEvent && s.sink.event) {
+                auto fn = s.sink.event;
+                fn(payload);
+            } else if (what == kReconnected && s.sink.reconnected) {
+                auto fn = s.sink.reconnected;
+                fn();
+            } else if (what == kContended && s.sink.contended) {
+                auto fn = s.sink.contended;
+                fn(others);
+            }
+            break;
+        }
 }
 
 void SocketMode::noteBareClose() {
     const int64_t now = wallMs();
     _bareCloses.push_back(now);
     while (!_bareCloses.empty() && now - _bareCloses.front() > kContentionWindowMs)
-        _bareCloses.pop_front();
+        _bareCloses.erase(_bareCloses.begin()); // a handful: a vector will do
     if (int(_bareCloses.size()) >= kContentionThreshold)
         maybeNotifyContention();
 }
@@ -401,17 +404,7 @@ void SocketMode::maybeNotifyContention() {
         "Socket Mode: connection-pool contention — %d other connection(s) on this app's keys",
         _otherConnections
     );
-    std::vector<SinkId> ids;
-    for (const Slot &s : _sinks)
-        ids.push_back(s.id);
-    const int others = _otherConnections;
-    for (SinkId id : ids)
-        for (const Slot &s : _sinks)
-            if (s.id == id && s.sink.contended) {
-                auto fn = s.sink.contended;
-                fn(others);
-                break;
-            }
+    notifySinks(kContended, json::Value(), _otherConnections);
 }
 
 } // namespace slack

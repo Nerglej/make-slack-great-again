@@ -40,7 +40,6 @@
 #include "net/net.h"
 
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -102,7 +101,9 @@ private:
     void checkLiveness();
     void onOpen(net::WebSocket *sock);
     void onClosed(net::WebSocket *sock, int code);
-    void onText(const std::string &text);
+    void onText(std::string text);
+    enum Notice : uint8_t { kEvent, kReconnected, kContended };
+    void notifySinks(Notice what, const json::Value &payload, int others);
     void noteBareClose();
     void maybeNotifyContention();
 
@@ -132,7 +133,7 @@ private:
     std::shared_ptr<bool>           _alive;
 
     // Contention detection (see the header comment).
-    std::deque<int64_t>  _bareCloses; // wall ms, pruned to the window
+    std::vector<int64_t> _bareCloses; // wall ms, pruned to the window
     bool                 _serverRequestedClose = false;
     int64_t              _lastNotice           = 0;
     int                  _otherConnections     = 0;

@@ -219,6 +219,7 @@ public:
     void                                     setNamesMode(NamesMode mode) override;
     PresenceLink                             presenceLink() const override;
     void                                     noteUserActivity() override;
+    void                                     setWindowVisible(bool visible) override;
     RtmPresence                             *presenceLinkForTest() const; // null: OAuth
     // readCall, for the tests of the lanes.
     void readCallForTest(std::string method, std::string form, ApiDone done, bool background) {

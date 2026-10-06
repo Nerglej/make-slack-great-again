@@ -439,6 +439,43 @@ TEST("slack read: the open chat's poll delivers new messages and deletions") {
     REQUIRE(pumpUntil([&] { return e.store.findMessage(c, hi) == nullptr; }, 3000));
 }
 
+TEST("slack read: hidden, the open chat polls slowly, client.counts brings it forward") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(e.history(c, 0));
+    e.be->setActiveConversation(c, 0);
+    e.be->setWindowVisible(false);
+    fakeslack::pumpFor(100);
+    // The open chat: 60 s instead of 5 s (600 ms here), and no presence rounds.
+    Log before;
+    fakeslack::pumpFor(1500);
+    Log l;
+    CHECK(l.count("conversations.history") - before.count("conversations.history") <= 4);
+    CHECK(
+        l.count("users.getPresence", "user", "UMIRA") ==
+        before.count("users.getPresence", "user", "UMIRA")
+    );
+    // Something lands there: the counts snapshot moves and the chat is polled.
+    set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
+              {"type": "message", "ts": "1700000300.000000", "user": "UMIRA", "text": "news"}]},
+            "client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000300.000000",
+                            "last_read": "1700000000.000000", "has_unreads": true}],
+              "ims": [], "mpims": []}})");
+    REQUIRE(pumpUntil(
+        [&] { return e.store.findMessage(c, model::parseTs("1700000300.000000")) != nullptr; }, 3000
+    ));
+    // Shown again: the dots are asked for at once.
+    const int presence = Log().count("users.getPresence", "user", "UMIRA");
+    e.be->setWindowVisible(true);
+    REQUIRE(pumpUntil(
+        [&] { return Log().count("users.getPresence", "user", "UMIRA") > presence; }, 1000
+    ));
+}
+
 TEST("slack read: a failed author lookup is not re-asked on every poll") {
     if (!haveServer())
         return;

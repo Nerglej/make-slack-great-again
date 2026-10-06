@@ -8,8 +8,10 @@
 #include "base/str.h"
 #include "plat/plat.h"
 
+#include <atomic>
 #include <initializer_list>
 #include <memory>
+#include <mutex>
 
 namespace cache {
 
@@ -22,8 +24,19 @@ namespace {
 
 constexpr int64_t kVersion = 1;
 
-// clearAll() calls so far: a cache opened before the last one writes nothing.
-uint32_t g_clearGen = 0;
+// clearAll() calls so far: a cache opened before the last one writes nothing
+// (workers check it too).
+std::atomic<uint32_t> g_clearGen{0};
+int                   g_slowDelayMs = WorkspaceCache::kSlowDelayMs;
+
+// Held around every cache file write and every wipe: a wipe never races a
+// write under way on a worker (it would bring the directory back), and two
+// writes of one file never cross. Never destroyed: a worker may still hold
+// it as the process exits.
+std::mutex &diskMutex() {
+    static std::mutex *m = new std::mutex;
+    return *m;
+}
 
 // ── Field lists ─────────────────────────────────────────────────────────────
 //
@@ -31,38 +44,52 @@ uint32_t g_clearGen = 0;
 // appends each field to a JSON array; reading, it takes them back in the
 // same order (a missing trailing field reads as its default, so a record can
 // only grow at the end). Change a list in the middle and bump kVersion. One
-// IO with a direction flag, not two IO types: every list exists once in
-// the binary.
+// IO with a mode, not one IO type per direction: every list exists once in
+// the binary. The third mode only hashes the fields (has a record changed?).
 
 class IO {
 public:
     IO(json::Writer &w, const model::Store &s) : _w(&w), _s(const_cast<model::Store *>(&s)) {}
-    IO(model::Store &s, json::Value record) : _s(&s) {
+    // Reading: start() each record (one IO for a whole file: its stack is
+    // allocated once).
+    explicit IO(model::Store &s) : _s(&s) {}
+    // Hashing into hash[0], or hash[1] between cursors(true) and
+    // cursors(false).
+    IO(const model::Store &s, bool) : _s(const_cast<model::Store *>(&s)), _hashing(true) {}
+
+    void start(json::Value record) {
+        _stack.clear();
         _stack.push_back({record.begin(), record.end()});
     }
-
-    bool   reading() const { return !_w; }
-    void   str(std::string &v);
-    void   num(int64_t &v);
-    void   num(int32_t &v);
-    void   num(uint32_t &v);
-    void   byte(uint8_t &v);
-    void   flags(std::initializer_list<bool *> f);
-    void   user(UserRef &r);
+    bool     reading() const { return !_w && !_hashing; }
+    void     cursors(bool on) { _part = on; }
+    uint64_t hash[2] = {crypto::kFnvOffset, crypto::kFnvOffset};
+    void     str(std::string &v);
+    void     num(int64_t &v);
+    void     num(int32_t &v);
+    void     num(uint32_t &v);
+    void     byte(uint8_t &v);
+    void     flags(std::initializer_list<bool *> f);
+    void     user(UserRef &r);
     // A nested array: its element count when reading, `n` when writing.
-    size_t open(size_t n);
-    void   close();
+    size_t   open(size_t n);
+    void     close();
     // A part that may be absent (null): true if present.
-    bool   optional(bool present);
+    bool     optional(bool present);
 
 private:
     struct Level {
         json::Value::Iterator it, end;
     };
-    json::Value        next();
-    int64_t            integer(int64_t v); // writes v, or reads the next one
+    json::Value next();
+    int64_t     integer(int64_t v); // writes v, or reads the next one
+    void        fold(int64_t v) {
+        hash[_part] =
+            crypto::fnv1a(std::string_view(reinterpret_cast<const char *>(&v), 8), hash[_part]);
+    }
     json::Writer      *_w = nullptr;
     model::Store      *_s;
+    bool               _hashing = false, _part = false;
     std::vector<Level> _stack;
 };
 
@@ -80,14 +107,22 @@ int64_t IO::integer(int64_t v) {
         _w->value(v);
         return v;
     }
+    if (_hashing) {
+        fold(v);
+        return v;
+    }
     return next().integer();
 }
 
 void IO::str(std::string &v) {
-    if (_w)
+    if (_w) {
         _w->value(v);
-    else
+    } else if (_hashing) {
+        fold(int64_t(v.size()));
+        hash[_part] = crypto::fnv1a(v, hash[_part]);
+    } else {
         v = std::string(next().str());
+    }
 }
 
 void IO::num(int64_t &v) {
@@ -122,13 +157,20 @@ void IO::user(UserRef &r) {
         _w->value(_s->user(r).id);
         return;
     }
+    if (_hashing) { // a ref names the same user for the Store's life
+        fold(r);
+        return;
+    }
     const std::string_view id = next().str();
     r                         = id.empty() ? kNoUser : _s->internUser(id);
 }
 
 size_t IO::open(size_t n) {
-    if (_w) {
-        _w->beginArray();
+    if (_w || _hashing) {
+        if (_w)
+            _w->beginArray();
+        else
+            fold(int64_t(n));
         return n;
     }
     const json::Value v = next();
@@ -139,13 +181,15 @@ size_t IO::open(size_t n) {
 void IO::close() {
     if (_w)
         _w->endArray();
-    else
+    else if (!_hashing)
         _stack.pop_back();
 }
 
 bool IO::optional(bool present) {
-    if (_w) {
-        if (!present)
+    if (_w || _hashing) {
+        if (_hashing)
+            fold(present);
+        else if (!present)
             _w->null();
         return present;
     }
@@ -329,10 +373,12 @@ void fields(IO &io, model::Conversation &c) {
     io.user(c.dmUser);
     users(io, c.members);
     io.num(c.memberCount);
+    io.cursors(true); // what every new message moves (WorkspaceCache::noteRecord)
     io.num(c.unread);
     io.num(c.mentions);
     io.num(c.lastRead);
     io.num(c.latest);
+    io.cursors(false);
     io.flags({&c.starred, &c.muted, &c.member});
     io.byte(reinterpret_cast<uint8_t &>(c.notify));
     io.str(c.canvasTitle);
@@ -370,22 +416,28 @@ std::string safeName(std::string_view s) {
     return out == "." || out == ".." ? std::string("_") : out;
 }
 
-// One conversation's roster record, as roster.json holds it.
-std::string conversationRecord(const model::Store &s, ConvRef c) {
-    json::Writer w;
-    IO           io(w, s);
-    io.open(0);
+// One conversation's roster record hashed: [0] all but the read cursors
+// and badges, [1] those.
+struct RecordHash {
+    uint64_t stable, cursors;
+};
+RecordHash hashRecord(const model::Store &s, ConvRef c) {
+    IO io(s, true);
     fields(io, const_cast<model::Conversation &>(s.conversation(c)));
-    io.close();
-    return w.take();
+    return {io.hash[0], io.hash[1]};
 }
 
-// usergroups.json's records ([id, handle, name, [user ids]]); meta.json's
-// "x"."ug" held the same before the groups had a file of their own.
+// usergroups.json's records: [id, handle, name, [], mine]. Before, [id,
+// handle, name, [user ids]] (meta.json's "x"."ug" held those): the members
+// say whether I am in it (setUsergroups), a record can only grow at the end.
 void readUsergroups(const json::Value &arr, std::vector<model::Store::Usergroup> *out) {
     for (const json::Value v : arr) {
         model::Store::Usergroup g{
-            std::string(v[0].str()), std::string(v[1].str()), std::string(v[2].str()), {}
+            std::string(v[0].str()),
+            std::string(v[1].str()),
+            std::string(v[2].str()),
+            {},
+            v[4].boolean()
         };
         for (const json::Value u : v[3])
             g.users.emplace_back(u.str());
@@ -396,10 +448,61 @@ void readUsergroups(const json::Value &arr, std::vector<model::Store::Usergroup>
 
 } // namespace
 
+// ── The write queue ─────────────────────────────────────────────────────────
+//
+// flush() queues each file's bytes here and has a worker drain the queue;
+// close() drains what is left itself, so nothing of a closed cache is written
+// later (a sign-out removes the directory right after). Shared with the
+// workers: the cache may go while one runs.
+
+struct WorkspaceCache::Disk {
+    struct File {
+        std::string name, data;
+    };
+    std::string              dir;
+    uint32_t                 clearGen = 0;
+    std::mutex               mutex; // the members below (never held while writing)
+    std::vector<File>        queue; // oldest first; one entry per file
+    std::vector<std::string> failed;
+    bool                     draining = false; // a worker is asked to drain
+
+    // Writes the queue out, oldest first.
+    void drain() {
+        std::lock_guard<std::mutex> io(diskMutex());
+        for (;;) {
+            File f;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (queue.empty()) {
+                    draining = false;
+                    return;
+                }
+                f = std::move(queue.front());
+                queue.erase(queue.begin());
+            }
+            if (clearGen != g_clearGen.load())
+                continue; // Clear cache ran since: nothing more
+            if (!file::writeAtomic(file::join(dir, f.name), f.data, 0600, false)) {
+                LOG_WARN("cache", "can't write %s/%s", dir.c_str(), f.name.c_str());
+                std::lock_guard<std::mutex> lock(mutex);
+                failed.push_back(std::move(f.name));
+            }
+        }
+    }
+};
+
 // ── WorkspaceCache ──────────────────────────────────────────────────────────
 
 WorkspaceCache::WorkspaceCache(plat::App &app, model::Store &store, std::string dir)
-    : _app(app), _store(store), _dir(std::move(dir)), _clearGen(g_clearGen) {}
+    : _app(app), _store(store), _dir(std::move(dir)), _clearGen(g_clearGen),
+      _disk(std::make_shared<Disk>()) {
+    _disk->dir      = _dir;
+    _disk->clearGen = _clearGen;
+}
+
+void WorkspaceCache::setSlowDelayForTest(int ms) {
+    g_slowDelayMs = ms > 0 ? ms : kSlowDelayMs;
+}
 
 WorkspaceCache::~WorkspaceCache() {
     close(true);
@@ -423,6 +526,7 @@ int64_t WorkspaceCache::diskBytes(plat::App &app) {
 
 void WorkspaceCache::clearAll(plat::App &app) {
     ++g_clearGen;
+    std::lock_guard<std::mutex> io(diskMutex());
     if (const std::string r = root(app); !r.empty())
         file::removeTree(r);
 }
@@ -444,6 +548,7 @@ void WorkspaceCache::clearAllAsync(plat::App &app, std::function<void()> done) {
     model::runInBackground(
         app,
         [r = root(app)] {
+            std::lock_guard<std::mutex> io(diskMutex());
             if (!r.empty())
                 file::removeTree(r);
         },
@@ -452,6 +557,7 @@ void WorkspaceCache::clearAllAsync(plat::App &app, std::function<void()> done) {
 }
 
 void WorkspaceCache::remove(plat::App &app, std::string_view key) {
+    std::lock_guard<std::mutex> io(diskMutex());
     if (const std::string d = dirFor(app, key); !d.empty())
         file::removeTree(d);
 }
@@ -481,9 +587,10 @@ bool WorkspaceCache::load(json::Document *meta) {
     // Users before conversations: their refs resolve to the real records.
     if (readDoc(file::join(_dir, "users.json"), &users, &hUsers)) {
         _written["users.json"] = hUsers;
+        IO io(_store);
         for (const json::Value rec : users.root()["u"]) {
             model::User u;
-            IO          io(_store, rec);
+            io.start(rec);
             fields(io, u);
             if (!u.id.empty())
                 _store.addUser(std::move(u));
@@ -491,9 +598,10 @@ bool WorkspaceCache::load(json::Document *meta) {
     }
     std::vector<model::Conversation> convs;
     convs.reserve(roster.root()["c"].size());
+    IO io(_store);
     for (const json::Value rec : roster.root()["c"]) {
         model::Conversation c;
-        IO                  io(_store, rec);
+        io.start(rec);
         fields(io, c);
         if (c.id.empty())
             continue;
@@ -509,10 +617,12 @@ bool WorkspaceCache::load(json::Document *meta) {
     }
     _store.addConversations(std::move(convs)); // one Roster emit
     if (readDoc(file::join(_dir, "emoji.json"), &emoji, &hEmoji)) {
-        _written["emoji.json"] = hEmoji;
+        _written["emoji.json"]                           = hEmoji;
+        std::unordered_map<std::string, std::string> all = _store.customEmoji();
         for (const json::Value e : emoji.root()["e"])
             if (!e.key().empty())
-                _store.setCustomEmoji(std::string(e.key()), std::string(e.str()));
+                all[std::string(e.key())] = std::string(e.str());
+        _store.replaceCustomEmoji(std::move(all)); // one change, not one per emoji
     }
     json::Document m;
     const bool     haveMeta = readDoc(file::join(_dir, "meta.json"), &m, &hMeta);
@@ -550,11 +660,20 @@ bool WorkspaceCache::load(json::Document *meta) {
         _store.setUsergroups(std::move(ug));
     if (meta && haveMeta)
         *meta = std::move(m);
-    _store.usersChanged();                        // one repaint for the whole roster
-    _usersProfileRev  = _store.profileRevision(); // what users.json holds
+    _store.usersChanged();                      // one repaint for the whole roster
+    _usersNamedRev    = _store.namedRevision(); // what users.json holds
     _usersPresenceRev = _store.presenceRevision();
     _localRev         = _store.localRevision(); // what meta.json holds
     _groupsRev        = _store.usergroupRevision();
+    // What roster.json holds: the first Meta of each conversation compares
+    // with it, not with nothing.
+    _convHash.resize(_store.conversationCount());
+    _cursorHash.resize(_store.conversationCount());
+    for (ConvRef c = 0; c < _store.conversationCount(); ++c) {
+        const RecordHash h = hashRecord(_store, c);
+        _convHash[c]       = h.stable;
+        _cursorHash[c]     = h.cursors;
+    }
     observe();
     if (migrate) // the new file now; meta.json drops them with its next write
         mark(kGroups | kMeta);
@@ -588,9 +707,10 @@ Ts WorkspaceCache::loadMessages(ConvRef c) {
         return 0;
     _written[name] = hash;
     std::vector<model::Message> page;
+    IO                          io(_store);
     for (const json::Value rec : doc.root()["m"]) {
         model::Message m;
-        IO             io(_store, rec);
+        io.start(rec);
         fields(io, m);
         if (m.ts <= 0)
             continue;
@@ -634,13 +754,22 @@ void WorkspaceCache::emojiChanged() {
     mark(kEmoji);
 }
 
-// Whether conversation c's roster record differs from the one last written.
-bool WorkspaceCache::conversationChanged(ConvRef c) {
-    if (c >= _store.conversationCount())
-        return false;
-    if (_convHash.size() <= c)
+// After a Meta of conversation c: its record changed (written within a
+// second), or only its read cursors and badges did (every new message moves
+// them: the slow cadence, else each message would cost the UI thread a
+// pass over every conversation).
+void WorkspaceCache::noteRecord(ConvRef c) {
+    if (c >= _store.conversationCount() || (_dirty & kConvs))
+        return;
+    if (_convHash.size() <= c) {
         _convHash.resize(c + 1, 0);
-    return crypto::fnv1a(conversationRecord(_store, c)) != _convHash[c];
+        _cursorHash.resize(c + 1, 0);
+    }
+    const RecordHash h = hashRecord(_store, c);
+    if (h.stable != _convHash[c])
+        mark(kConvs);
+    else if (h.cursors != _cursorHash[c] && !(_slow & kConvs))
+        slow(kConvs);
 }
 
 void WorkspaceCache::onChange(const model::Change &ch) {
@@ -656,17 +785,21 @@ void WorkspaceCache::onChange(const model::Change &ch) {
         mark(kConvs);
         return;
     case K::Meta:
-        // Most Meta emits (a new message's `latest`, a huddle, paging) leave
-        // what roster.json holds alone: re-serialising every conversation for
-        // them would cost the UI thread a full pass each time.
-        if (ch.conv != model::kNoConv && !(_dirty & kConvs) && conversationChanged(ch.conv))
-            mark(kConvs);
+        // Most Meta emits (a huddle, paging) leave what roster.json holds
+        // alone.
+        if (ch.conv != model::kNoConv)
+            noteRecord(ch.conv);
         return;
     case K::Users:
-        // Only a profile change: presence/DND flips, emoji and channel names
-        // don't change what the next start needs at once.
-        if (_store.profileRevision() != _usersProfileRev)
-            mark(kUsers);
+        // Only a profile change: presence/DND flips, placeholders, emoji and
+        // channel names don't change what the next start needs at once. The
+        // first users.json is written at once, later ones slowly.
+        if (_store.namedRevision() != _usersNamedRev) {
+            if (_written.count("users.json"))
+                slow(kUsers);
+            else
+                mark(kUsers);
+        }
         if (_store.usergroupRevision() != _groupsRev) {
             _groupsRev = _store.usergroupRevision();
             mark(kGroups | kMeta); // meta.json: my groups
@@ -691,6 +824,18 @@ void WorkspaceCache::mark(uint8_t what) {
     schedule();
 }
 
+void WorkspaceCache::slow(uint8_t what) {
+    _slow |= what;
+    if (_slowTimer || !writable())
+        return;
+    _slowTimer = _app.addTimer(g_slowDelayMs, false, [this] {
+        _slowTimer       = 0;
+        const uint8_t sl = _slow;
+        _slow            = 0;
+        mark(sl);
+    });
+}
+
 // At most one write per kWriteDelayMs: a throttle, not a debounce, so a
 // workspace that changes every second still gets written.
 void WorkspaceCache::schedule() {
@@ -698,22 +843,47 @@ void WorkspaceCache::schedule() {
         return;
     _timer = _app.addTimer(kWriteDelayMs, false, [this] {
         _timer = 0;
-        flush();
+        writePending();
     });
 }
 
+// Queues a file's new bytes for a worker, unless they are what it holds.
 void WorkspaceCache::write(const char *name, std::string data) {
     const uint64_t h  = crypto::fnv1a(data);
     const auto     it = _written.find(name);
     if (it != _written.end() && it->second == h)
         return; // unchanged since we read or wrote it
-    if (file::writeAtomic(file::join(_dir, name), data, 0600, false))
-        _written[name] = h;
-    else
-        LOG_WARN("cache", "can't write %s/%s", _dir.c_str(), name);
+    _written[name] = h;
+    Disk &d        = *_disk;
+    {
+        std::lock_guard<std::mutex> lock(d.mutex);
+        bool                        queued = false;
+        for (Disk::File &f : d.queue)
+            if (f.name == name) { // still waiting: the newer bytes instead
+                f.data = std::move(data);
+                queued = true;
+                break;
+            }
+        if (!queued)
+            d.queue.push_back({name, std::move(data)});
+        if (d.draining)
+            return;
+        d.draining = true;
+    }
+    model::runInBackground(_app, [disk = _disk] { disk->drain(); }, nullptr);
 }
 
 void WorkspaceCache::flush() {
+    if (_slowTimer) {
+        _app.cancelTimer(_slowTimer);
+        _slowTimer = 0;
+    }
+    _dirty |= _slow;
+    _slow = 0;
+    writePending();
+}
+
+void WorkspaceCache::writePending() {
     if (_timer) {
         _app.cancelTimer(_timer);
         _timer = 0;
@@ -724,37 +894,54 @@ void WorkspaceCache::flush() {
     msgs.swap(_msgDirty);
     if (!writable())
         return;
+    {
+        // A write that failed is tried again with the next bytes, same or not.
+        Disk                       &d = *_disk;
+        std::lock_guard<std::mutex> lock(d.mutex);
+        for (const std::string &name : d.failed)
+            _written.erase(name);
+        d.failed.clear();
+    }
     const model::Store &s = _store;
     if (dirty & kConvs) {
         // {"v":1,"c":[record,…]}, each record hashed as it goes: a later
         // Meta that leaves a record as it is writes nothing.
-        std::string out = str::concat({R"({"v":)", str::number(kVersion), R"(,"c":[)"});
+        json::Writer w;
+        IO           io(w, s);
+        begin(w, "c");
         _convHash.assign(s.conversationCount(), 0);
+        _cursorHash.assign(s.conversationCount(), 0);
         for (ConvRef c = 0; c < s.conversationCount(); ++c) {
-            const std::string rec = conversationRecord(s, c);
-            _convHash[c]          = crypto::fnv1a(rec);
-            if (c)
-                out += ',';
-            out += rec;
+            io.open(0);
+            fields(io, const_cast<model::Conversation &>(s.conversation(c)));
+            io.close();
+            const RecordHash h = hashRecord(s, c);
+            _convHash[c]       = h.stable;
+            _cursorHash[c]     = h.cursors;
         }
-        out += "]}";
-        write("roster.json", std::move(out));
+        w.endArray().endObject();
+        write("roster.json", w.take());
+        _slow &= uint8_t(~kConvs); // the cursors went with it
     }
     if (dirty & kGroups) {
         json::Writer w;
         begin(w, "g");
-        for (const model::Store::Usergroup &g : s.usergroups()) {
-            w.beginArray().value(g.id).value(g.handle).value(g.name).beginArray();
-            for (const std::string &u : g.users)
-                w.value(u);
-            w.endArray().endArray();
-        }
+        for (const model::Store::Usergroup &g : s.usergroups())
+            w.beginArray()
+                .value(g.id)
+                .value(g.handle)
+                .value(g.name)
+                .beginArray()
+                .endArray()
+                .value(g.mine)
+                .endArray();
         w.endArray().endObject();
         write("usergroups.json", w.take());
     }
     if (dirty & kUsers) {
-        _usersProfileRev  = s.profileRevision();
+        _usersNamedRev    = s.namedRevision();
         _usersPresenceRev = s.presenceRevision();
+        _slow &= uint8_t(~kUsers);
         json::Writer w;
         IO           io(w, s);
         begin(w, "u");
@@ -835,25 +1022,32 @@ void WorkspaceCache::flush() {
         w.endArray().endObject();
         write(messagesFile(c).c_str(), w.take());
     }
+    if (!_slow && _slowTimer) {
+        _app.cancelTimer(_slowTimer);
+        _slowTimer = 0;
+    }
 }
 
 void WorkspaceCache::close(bool keep) {
     if (!_observer)
         return;
     // The presence dots the next start shows until its first poll.
-    if (_store.profileRevision() != _usersProfileRev ||
-        _store.presenceRevision() != _usersPresenceRev)
+    if (_store.namedRevision() != _usersNamedRev || _store.presenceRevision() != _usersPresenceRev)
         _dirty |= kUsers;
     if (keep)
         flush();
-    if (_timer) {
-        _app.cancelTimer(_timer);
-        _timer = 0;
-    }
+    for (uint64_t *t : {&_timer, &_slowTimer})
+        if (*t) {
+            _app.cancelTimer(*t);
+            *t = 0;
+        }
     _store.unobserve(_observer);
     _observer = 0;
-    _dirty    = 0;
+    _dirty = _slow = 0;
     _msgDirty.clear();
+    // What is still queued is written now, here: nothing of this cache is
+    // written after close() (a sign-out removes the directory next).
+    _disk->drain();
 }
 
 } // namespace cache
