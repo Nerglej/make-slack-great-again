@@ -89,7 +89,9 @@ void OAuthFlow::start(Done done) {
 
 bool OAuthFlow::handleCallback(std::string_view url) {
     static constexpr std::string_view kPrefix = "msga://oauth/callback";
-    if (!_done || !str::startsWith(url, kPrefix))
+    // _pending: the code is already being exchanged; a second exchange
+    // would race the first (and fail as invalid_code).
+    if (!_done || _pending || !str::startsWith(url, kPrefix))
         return false;
     std::string_view query = url.substr(kPrefix.size());
     if (!query.empty() && query[0] == '/')

@@ -355,6 +355,12 @@ public:
         emit({.type = EventType::OpenUrls, .strings = {std::string(url)}});
         return true;
     }
+    bool lastOpenedUrl(std::string *out) override {
+        if (openedUrls.empty())
+            return false;
+        *out = openedUrls.back();
+        return true;
+    }
 
     std::set<std::string>    claimedKeys;
     std::vector<std::string> schemes;

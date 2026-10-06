@@ -82,6 +82,8 @@ public:
     // real kAEGetURL Apple Event to ourselves). False where a URL can only
     // arrive through a new process (use a second instance instead).
     virtual bool deliverUrl(std::string_view url) { return false; }
+    // The last URL App::openUrl() was asked to open (headless records them).
+    virtual bool lastOpenedUrl(std::string *out) { return false; }
 };
 
 } // namespace plat

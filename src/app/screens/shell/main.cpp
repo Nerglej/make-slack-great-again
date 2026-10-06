@@ -440,9 +440,9 @@ int main(int argc, char **argv) {
     std::optional<shell::Accounts> accounts;
     app->onEvent = [&](const plat::Event &e) {
         // msga:// URLs (the OAuth callback): opened by the OS, or handed over
-        // by a second launch.
-        if (accounts &&
-            (e.type == plat::EventType::OpenUrls || e.type == plat::EventType::InstanceActivated))
+        // by a second launch — which also comes as InstanceActivated with the
+        // same URL among its args, so only OpenUrls counts.
+        if (accounts && e.type == plat::EventType::OpenUrls)
             for (const std::string &s : e.strings)
                 if (str::startsWith(s, "msga://"))
                     accounts->handleUrl(s);

@@ -3,9 +3,10 @@
 // commands.list, chat.command), DND snooze, bot buttons (blocks.actions),
 // the account's Slack theme, message reminders going off, the Threads
 // entry's unread state, the dead-conversation cache, the rate-limit and
-// send-failure banners, mentioned channels and user groups. Nothing here
-// talks to the real Slack.
+// send-failure banners, mentioned channels and user groups, the app-keys
+// OAuth sign-in. Nothing here talks to the real Slack.
 #include "app/cache/workspace_cache.h"
+#include "app/slack/oauth.h"
 #include "app/slack/slack_backend.h"
 #include "app/slack/slack_json.h"
 #include "support/fake_slack_server.h"
@@ -13,6 +14,7 @@
 #include "base/str.h"
 #include "support/test.h"
 #include "base/time.h"
+#include "plat/testing.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -528,6 +530,47 @@ TEST("slack features: mentioned channels and user groups resolve; dead ids persi
     CHECK_STR(again.store.findUsergroup("S2")->name, "Ops");
     again.be.reset();
     cache::WorkspaceCache::remove(app(), "slack:T1");
+}
+
+TEST("slack features: an OAuth callback delivered twice exchanges the code once") {
+    if (!haveServer())
+        return;
+    plat::TestHooks *hooks = app().testHooks();
+    if (!hooks)
+        return;
+    ctl("POST", "/_ctl/reset");
+    // The first exchange answers late; a second one (the same code again)
+    // would fail at once, end the flow — and the late answer would then land
+    // on a destroyed flow (issue #96).
+    set(R"({"oauth.v2.access": [
+              {"ok": true, "authed_user": {"access_token": "xoxp-new"},
+               "team": {"id": "T9", "name": "Nine"}, "__delay": 0.3},
+              {"ok": false, "error": "invalid_code"}]})");
+    net::Client client{app()};
+    auto        flow = std::make_unique<slack::OAuthFlow>(
+        app(), client, slack::AppConfig{"cid", "secret", "xapp-1"}
+    );
+    int         called = 0;
+    std::string token, error;
+    flow->start([&](slack::Credentials c, std::string err) {
+        ++called;
+        token = c.token;
+        error = std::move(err);
+        app().post([&] { flow.reset(); }); // as Accounts does (releaseLater)
+    });
+    std::string opened;
+    REQUIRE(hooks->lastOpenedUrl(&opened));
+    const std::string state = net::queryValue(opened.substr(opened.find('?')), "state");
+    REQUIRE(!state.empty());
+    const std::string url = "msga://oauth/callback?code=c1&state=" + state;
+    CHECK(flow->handleCallback(url));
+    CHECK_FALSE(flow->handleCallback(url)); // a second launch's copy
+    REQUIRE(pumpUntil([&] { return called > 0; }));
+    pumpFor(500);
+    CHECK(called == 1);
+    CHECK_STR(error, "");
+    CHECK_STR(token, "xoxp-new");
+    CHECK(count("oauth.v2.access") == 1);
 }
 
 #endif // !_WIN32
