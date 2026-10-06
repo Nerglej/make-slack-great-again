@@ -345,8 +345,23 @@ void View::paint(gfx::Painter &p) {
 // ── Measuring ───────────────────────────────────────────────────────────────
 
 SizeF View::measure(float aw, float ah) {
-    if (flag(MeasureValid) && aw == _mcW && ah == _mcH)
-        return _mc;
+    // Two answers kept: a flex pass asks at the room offered, then at the
+    // size it resolved, and the layout that follows asks both again.
+    if (flag(MeasureValid)) {
+        if (aw == _mcW && ah == _mcH)
+            return _mc;
+        if (aw == _mc2W && ah == _mc2H) {
+            std::swap(_mc, _mc2);
+            std::swap(_mcW, _mc2W);
+            std::swap(_mcH, _mc2H);
+            return _mc;
+        }
+        _mc2  = _mc; // the newer one stays second
+        _mc2W = _mcW;
+        _mc2H = _mcH;
+    } else {
+        _mc2W = _mc2H = -1e30f; // no width or height asks this
+    }
     const Style &s = _style;
     float        w = s.w, h = s.h;
     if (w < 0 || h < 0) {

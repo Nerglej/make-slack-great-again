@@ -60,13 +60,15 @@ struct FaceMetrics {
 };
 const FaceMetrics &metrics(FontKey k);
 
-// One rasterised glyph. For masks `a8` points at `h` rows of `pitch` bytes;
-// for colour glyphs `argb` points at premultiplied pixels (pitch in pixels).
-// Valid until the next rasterize() call.
+// One rasterised glyph. For masks `a8` points at `h` rows of `pitch` bytes
+// of linear coverage, mapped through `gamma` (256 entries) as they are
+// copied out; for colour glyphs `argb` points at premultiplied pixels (pitch
+// in pixels). Valid until the next rasterize() call.
 struct Raster {
     int             w = 0, h = 0, left = 0, top = 0, pitch = 0; // top: above the baseline
     bool            color = false;
     const uint8_t  *a8    = nullptr;
+    const uint8_t  *gamma = nullptr;
     const uint32_t *argb  = nullptr;
 };
 // ppem64: physical pixel size in 26.6; phase: horizontal subpixel offset in

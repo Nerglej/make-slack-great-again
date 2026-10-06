@@ -17,7 +17,6 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
-#include <functional>
 
 namespace text {
 
@@ -26,8 +25,22 @@ using fonts::kNoFont;
 
 namespace {
 
+// The test diagnostics layoutBuilds()/layoutTextOwned(): counted only in
+// test and demo builds (MSGA_TEXT_COUNTERS), so release builds pay nothing.
+#ifdef MSGA_TEXT_COUNTERS
 std::atomic<size_t> gBuilds{0};
 std::atomic<size_t> gOwned{0};
+#endif
+void countBuild() {
+#ifdef MSGA_TEXT_COUNTERS
+    gBuilds.fetch_add(1, std::memory_order_relaxed);
+#endif
+}
+void countOwned([[maybe_unused]] size_t n) {
+#ifdef MSGA_TEXT_COUNTERS
+    gOwned.fetch_add(n, std::memory_order_relaxed);
+#endif
+}
 
 // Same primary font at the same size.
 bool sameFont(const Style &a, const Style &b) {
@@ -148,8 +161,9 @@ public:
         for (Style &st : _styles)
             st.color = color;
     }
-    gfx::RectF                    inkBounds() const override;
-    float                         inkLean() const override;
+    void       setUnderlinedLink(uint32_t linkId) override { _underlinedLink = linkId; }
+    gfx::RectF inkBounds() const override;
+    float      inkLean() const override;
     std::vector<gfx::RectF>       selectionRects(uint32_t from, uint32_t to) const override;
     gfx::RectF                    lineRect(int line) const override;
     HitResult                     hitTest(gfx::PointF p) const override;
@@ -161,7 +175,7 @@ public:
 
     // The layout's own copy of the text, when it is not borrowed.
     void adopt(std::string text) {
-        gOwned.fetch_add(text.size(), std::memory_order_relaxed);
+        countOwned(text.size());
         _own = std::move(text);
     }
     const std::string &own() const { return _own; }
@@ -198,7 +212,12 @@ private:
     // (caret moves, double-click words), so stepping back is no rescan.
     mutable std::vector<uint64_t> _graphemeStarts;
     float                         _scale = 1, _width = 0, _height = 0, _maxW = 1e9f;
-    bool                          _truncated = false;
+    uint32_t                      _underlinedLink = 0; // setUnderlinedLink()
+    bool                          _truncated      = false;
+
+    bool underlined(const Style &st) const {
+        return st.underline || (_underlinedLink && st.linkId == _underlinedLink);
+    }
 };
 
 // Spans that differ only in colour, links or decoration shape as one run,
@@ -874,9 +893,15 @@ void LayoutImpl::paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color
     // Absolute physical → logical in the painter's current coordinates.
     auto              toLx = [&](float X) { return (X - base.x) / s; };
     auto              toLy = [&](float Y) { return (Y - base.y) / s; };
-    for (const Line &l : _lines) {
-        if ((l.top + l.height) / s < top0 || l.top / s > bot0)
-            continue;
+    // Lines stack top down: from the first that reaches into the clip to
+    // the last that starts above its bottom.
+    const auto first       = std::partition_point(_lines.begin(), _lines.end(), [&](const Line &l) {
+        return (l.top + l.height) / s < top0;
+    });
+    for (auto it = first; it != _lines.end(); ++it) {
+        const Line &l = *it;
+        if (l.top / s > bot0)
+            break;
         const float lineX = phys.x + l.x;
         const float blY   = std::round(phys.y + l.baseline);
         // Backgrounds first (merged across adjacent pieces of one span).
@@ -935,7 +960,7 @@ void LayoutImpl::paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color
                         {toLx(barX0), toLy(y), (barX1 - barX0) / s, th / s}, tint ? *tint : bs.color
                     );
                 };
-                if (bs.underline)
+                if (underlined(bs))
                     bar(std::max(1.f, std::round(m.underlinePos * sz)), m.underlineThick);
                 if (bs.strike)
                     bar(-std::round(m.strikePos * sz), m.strikeThick);
@@ -954,7 +979,7 @@ void LayoutImpl::paintImpl(gfx::Painter &p, gfx::PointF origin, const gfx::Color
                         spanA = 0, spanB = ~0u;
                 }
                 const float cellX = lineX + pc.x + (g.x - gx0);
-                if (st->underline || st->strike) {
+                if (underlined(*st) || st->strike) {
                     if (barSpan != span) {
                         flushBar();
                         barSpan = span;
@@ -1001,7 +1026,7 @@ int LayoutImpl::lineOf(uint32_t off) const {
 }
 
 // segments() output for hitTest/caretRect/selectionRects: they run per
-// mouse move, so the vector is reused (per thread, as measure's memo is).
+// mouse move, so the vector is reused (per thread: no locking).
 std::vector<Seg> &segScratch() {
     static thread_local std::vector<Seg> segs;
     return segs;
@@ -1054,7 +1079,10 @@ void LayoutImpl::segments(int li, std::vector<Seg> &out) const {
             }
             bounds[nb]     = ce;
             const float gw = (x1 - x0) / float(nb);
-            for (int k = 0; k < nb; ++k) {
+            // Left to right, like everything else here: a right-to-left
+            // cluster's last grapheme is its leftmost.
+            for (int j = 0; j < nb; ++j) {
+                const int   k = rtl ? nb - 1 - j : j;
                 const float a = rtl ? x1 - gw * float(k + 1) : x0 + gw * float(k);
                 out.push_back({bounds[k], bounds[k + 1], a, a + gw, uint16_t(spanAt(cl)), rtl});
             }
@@ -1070,14 +1098,17 @@ std::vector<gfx::RectF> LayoutImpl::selectionRects(uint32_t from, uint32_t to) c
     if (from == to)
         return out;
     std::vector<Seg> &segs = segScratch();
-    for (int li = 0; li < int(_lines.size()); ++li) {
+    if (_lines.empty())
+        return out;
+    // From the first line that reaches past `from` (else the last).
+    const auto first = std::partition_point(_lines.begin(), _lines.end() - 1, [&](const Line &l) {
+        return l.next <= from;
+    });
+    for (int li = int(first - _lines.begin()); li < int(_lines.size()); ++li) {
         const Line &l = _lines[li];
-        if (l.next <= from && li + 1 < int(_lines.size()))
-            continue;
         if (l.start >= to)
             break;
-        segments(li, segs);
-        std::sort(segs.begin(), segs.end(), [](const Seg &a, const Seg &b) { return a.x0 < b.x0; });
+        segments(li, segs); // already in visual order, left to right
         float x0 = 0, x1 = -1;
         auto  flush = [&] {
             if (x1 > x0)
@@ -1325,7 +1356,7 @@ void shutdown() {
 
 std::unique_ptr<Layout>
 Layout::build(const AttributedText &t, const LayoutOptions &o, float scale) {
-    gBuilds.fetch_add(1, std::memory_order_relaxed);
+    countBuild();
     auto l = std::make_unique<LayoutImpl>();
     l->adopt(t.text);
     l->build(l->own(), t.spans, o, scale);
@@ -1333,7 +1364,7 @@ Layout::build(const AttributedText &t, const LayoutOptions &o, float scale) {
 }
 
 std::unique_ptr<Layout> Layout::build(AttributedText &&t, const LayoutOptions &o, float scale) {
-    gBuilds.fetch_add(1, std::memory_order_relaxed);
+    countBuild();
     auto l = std::make_unique<LayoutImpl>();
     l->adopt(std::move(t.text));
     l->build(l->own(), t.spans, o, scale);
@@ -1343,7 +1374,7 @@ std::unique_ptr<Layout> Layout::build(AttributedText &&t, const LayoutOptions &o
 std::unique_ptr<Layout> Layout::buildBorrowed(
     std::string_view utf8, const std::vector<Span> &spans, const LayoutOptions &o, float scale
 ) {
-    gBuilds.fetch_add(1, std::memory_order_relaxed);
+    countBuild();
     auto l = std::make_unique<LayoutImpl>();
     l->build(utf8, spans, o, scale);
     return l;
@@ -1359,55 +1390,28 @@ layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth) 
 }
 
 size_t layoutBuilds() {
+#ifdef MSGA_TEXT_COUNTERS
     return gBuilds.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
 }
 
 size_t layoutTextOwned() {
+#ifdef MSGA_TEXT_COUNTERS
     return gOwned.load(std::memory_order_relaxed);
+#else
+    return 0;
+#endif
 }
 
-// measure()'s memo: direct-mapped on a hash of everything that shapes (the
-// colour and link id don't), per thread so no locking. Sidebar names,
-// badges and buttons ask the same few hundred questions on every pass.
+// The layout lives only for this call: it borrows the text. Callers keep
+// the width (they ask once per scale or text).
 float measure(std::string_view utf8, const Style &s, float scale) {
-    struct Slot {
-        std::string text;
-        Style       style;
-        float       scale = 0, width = 0;
-        bool        used = false;
-    };
-    static constexpr size_t  kSlots = 512;
-    static thread_local Slot memo[kSlots];
-    const auto               same = [&](const Slot &m) {
-        const Style &a = m.style;
-        return m.used && m.scale == scale && sameFont(a, s) && a.underline == s.underline &&
-               a.strike == s.strike && (a.background != 0) == (s.background != 0) &&
-               a.inlineBoxId == s.inlineBoxId && a.boxWidth == s.boxWidth &&
-               a.boxHeight == s.boxHeight && m.text == utf8;
-    };
-    size_t h = std::hash<std::string_view>{}(utf8);
-    for (float f : {s.size, scale, s.boxWidth, s.boxHeight}) {
-        uint32_t bits;
-        std::memcpy(&bits, &f, 4);
-        h = (h ^ bits) * 0x100000001b3ull;
-    }
-    h       = (h ^ (uint32_t(s.weight) << 8 | uint32_t(s.italic) << 1 | uint32_t(s.mono) << 2 |
-                    uint32_t(s.underline) << 3 | uint32_t(s.strike) << 4 |
-                    uint32_t(s.background != 0) << 5 | uint64_t(s.inlineBoxId) << 24)) *
-              0x100000001b3ull;
-    Slot &m = memo[(h ^ (h >> 29)) % kSlots];
-    if (same(m))
-        return m.width;
-    // The layout lives only for this line: it borrows the text.
     std::vector<Span> spans;
     if (!utf8.empty())
         spans.push_back({0, uint32_t(utf8.size()), s});
-    m.width = Layout::buildBorrowed(utf8, spans, {}, scale)->width();
-    m.text.assign(utf8);
-    m.style = s;
-    m.scale = scale;
-    m.used  = true;
-    return m.width;
+    return Layout::buildBorrowed(utf8, spans, {}, scale)->width();
 }
 
 Metrics metrics(const Style &s, float scale) {

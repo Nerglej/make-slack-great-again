@@ -16,7 +16,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <unordered_map>
 
 namespace text::fonts {
 
@@ -99,19 +98,21 @@ struct Resolved {
 };
 
 struct State {
-    Index                                  ix;
-    std::vector<Family>                    fams;
-    std::vector<uint16_t>                  famOfFace;
-    std::vector<uint16_t>                  fallbackOrder; // family indices by rank
-    std::vector<Loaded>                    loaded;
-    std::vector<FileMap>                   maps;
-    FT_Library                             ft = nullptr;
-    int                                    ui = -1, mono = -1, emoji = -1;
-    std::unordered_map<uint32_t, uint16_t> fbCache; // cp → family (0xFFFF = none)
-    std::vector<Resolved>                  resolved;
-    std::vector<uint8_t>                   scratch8;
-    gfx::Bitmap                            scratchColor;
-    uint8_t                                gamma[256];
+    Index                 ix;
+    std::vector<Family>   fams;
+    std::vector<uint16_t> famOfFace;
+    std::vector<uint16_t> fallbackOrder; // family indices by rank
+    std::vector<Loaded>   loaded;
+    std::vector<FileMap>  maps;
+    FT_Library            ft = nullptr;
+    int                   ui = -1, mono = -1, emoji = -1;
+    // fallback()'s answers, open-addressed: (cp + 1) << 16 | family
+    // (0xFFFF = none); 0 is an empty slot. At most half full.
+    std::vector<uint64_t> fbCache;
+    size_t                fbCount = 0;
+    std::vector<Resolved> resolved;
+    gfx::Bitmap           scratchColor;
+    uint8_t               gamma[256];
 };
 State *g = nullptr;
 
@@ -184,11 +185,13 @@ void buildFamilies() {
     const char *cjk = cjkFamily();
     for (auto &f : g->fams)
         f.rank = rankFamily(f, cjk);
-    for (size_t i = 0; i < g->fams.size(); ++i)
-        g->fallbackOrder.push_back(uint16_t(i));
-    std::sort(g->fallbackOrder.begin(), g->fallbackOrder.end(), [](uint16_t a, uint16_t b) {
-        return g->fams[a].rank != g->fams[b].rank ? g->fams[a].rank < g->fams[b].rank : a < b;
-    });
+    // By rank, then index: packed as rank << 16 | index, a plain number sort.
+    std::vector<uint32_t> byRank(g->fams.size());
+    for (size_t i = 0; i < byRank.size(); ++i)
+        byRank[i] = uint32_t(g->fams[i].rank) << 16 | uint32_t(i);
+    std::sort(byRank.begin(), byRank.end());
+    for (uint32_t k : byRank)
+        g->fallbackOrder.push_back(uint16_t(k));
 }
 
 template <size_t N>
@@ -308,6 +311,43 @@ FontKey resolveIn(uint32_t fam, uint16_t weight, bool italic) {
     return key;
 }
 
+size_t fbSlot(uint32_t cp, size_t mask) {
+    return size_t((cp * 0x9E3779B97F4A7C15ull) >> 32) & mask;
+}
+
+// The cached fallback family for cp, or -1 when not asked yet.
+int fbFind(uint32_t cp) {
+    const std::vector<uint64_t> &t = g->fbCache;
+    if (t.empty())
+        return -1;
+    const size_t mask = t.size() - 1;
+    for (size_t i = fbSlot(cp, mask); t[i]; i = (i + 1) & mask)
+        if (t[i] >> 16 == uint64_t(cp) + 1)
+            return int(t[i] & 0xFFFF);
+    return -1;
+}
+
+void fbPut(std::vector<uint64_t> &t, uint64_t e) {
+    const size_t mask = t.size() - 1;
+    size_t       i    = fbSlot(uint32_t((e >> 16) - 1), mask);
+    while (t[i])
+        i = (i + 1) & mask;
+    t[i] = e;
+}
+
+void fbInsert(uint32_t cp, uint16_t fam) {
+    std::vector<uint64_t> &t = g->fbCache;
+    if ((g->fbCount + 1) * 2 > t.size()) { // grow (a power of two), at most half full
+        std::vector<uint64_t> grown(std::max<size_t>(256, t.size() * 2), 0);
+        for (uint64_t e : t)
+            if (e)
+                fbPut(grown, e);
+        t.swap(grown);
+    }
+    fbPut(t, (uint64_t(cp) + 1) << 16 | fam);
+    ++g->fbCount;
+}
+
 } // namespace
 
 bool init(std::string *error) {
@@ -376,10 +416,10 @@ FontKey emoji() {
 }
 
 FontKey fallback(uint32_t cp, const Style &s) {
-    auto     it = g->fbCache.find(cp);
-    uint16_t fam;
-    if (it != g->fbCache.end()) {
-        fam = it->second;
+    const int found = fbFind(cp);
+    uint16_t  fam;
+    if (found >= 0) {
+        fam = uint16_t(found);
     } else {
         fam = 0xFFFF;
         for (uint16_t f : g->fallbackOrder) {
@@ -394,7 +434,7 @@ FontKey fallback(uint32_t cp, const Style &s) {
         if (fam == 0xFFFF && g->emoji >= 0 &&
             g->ix.covers(g->ix.faces[g->fams[g->emoji].faces[0]], cp))
             fam = uint16_t(g->emoji);
-        g->fbCache.emplace(cp, fam);
+        fbInsert(cp, fam);
     }
     if (fam == 0xFFFF)
         return kNoFont;
@@ -535,15 +575,9 @@ bool rasterize(FontKey k, uint32_t glyph, uint32_t ppem64, int phase, Raster *ou
     }
     if (bm.pixel_mode != FT_PIXEL_MODE_GRAY)
         return false;
-    g->scratch8.resize(size_t(bm.width) * bm.rows);
-    for (unsigned y = 0; y < bm.rows; ++y) {
-        const uint8_t *s = bm.buffer + ptrdiff_t(y) * bm.pitch;
-        uint8_t       *d = g->scratch8.data() + size_t(y) * bm.width;
-        for (unsigned x = 0; x < bm.width; ++x)
-            d[x] = g->gamma[s[x]];
-    }
-    out->a8    = g->scratch8.data();
-    out->pitch = int(bm.width);
+    out->a8    = bm.buffer; // FreeType's own: the reader applies the gamma
+    out->pitch = bm.pitch;
+    out->gamma = g->gamma;
     return true;
 }
 

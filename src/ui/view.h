@@ -414,8 +414,10 @@ private:
     std::vector<std::unique_ptr<View>> _children;
     RectF                              _frame;
     Style                              _style;
-    float                              _mcW = -1, _mcH = -1; // measure cache key
-    SizeF                              _mc;                  // … and value
+    float                              _mcW = -1, _mcH = -1;           // measure cache key
+    SizeF                              _mc;                            // … and value
+    float                              _mc2W = -1e30f, _mc2H = -1e30f; // the one before
+    SizeF                              _mc2;
     uint32_t                           _flags  = Visible;
     uint8_t                            _cursor = kCursorInherit;
     uint8_t                            _outset = 0;
@@ -507,6 +509,7 @@ public:
     // the backend as changed (see onFrame), only its painting is saved.
     void scrollBlit(View *area, int dyPhys);
 
+#ifdef MSGA_UI_VERIFY // test and demo builds only
     // Debug: after every frame, check that what a damage-only presenter
     // shows (a shadow copy updated only through the rects handed to
     // endPaint, as X11/Wayland/Win32 do) equals a full repaint of the tree.
@@ -516,6 +519,7 @@ public:
     // Debug: the whole window painted from scratch, written as a binary PPM
     // (to compare with a screenshot of what the compositor shows).
     bool dumpFullRepaint(const std::string &path);
+#endif
 
     // Callbacks. onCloseRequested defaults to App::quit() when unset.
     std::function<void()>                    onCloseRequested;
@@ -574,8 +578,10 @@ private:
     void  showTooltip();
     void  hideTooltip();
     void  flushGraveyard();
-    void  verifyFrame(const plat::Canvas &c, const std::vector<plat::Rect> &presented);
-    void  resized();
+#ifdef MSGA_UI_VERIFY
+    void verifyFrame(const plat::Canvas &c, const std::vector<plat::Rect> &presented);
+#endif
+    void resized();
 
     std::unique_ptr<plat::Window>      _native;
     std::unique_ptr<View>              _root, _overlay;
@@ -604,14 +610,17 @@ private:
     bool                               _active = true, _frameRequested = false, _inFrame = false;
     bool                               _dying = false, _textInput = false, _buttonHeld = false;
     bool                               _focusVisible = false, _frameAgain = false;
-    bool                               _hoverDirty = false, _pointerInside = false, _verify = false;
+    bool                               _hoverDirty = false, _pointerInside = false;
     gfx::PaintScratch                  _paintScratch; // the frame painters' working memory
-    std::vector<uint32_t>              _shadow; // setVerify(): what a damage-only presenter shows
-    int                                _shadowW = 0, _shadowH = 0;
-    double                             _verifyMs = 0;
-    int                                _depth    = 0; // handle() nesting, for the graveyard
-    RectF                              _textCaret;
-    Stats                              _stats;
+#ifdef MSGA_UI_VERIFY
+    bool                  _verify = false;
+    std::vector<uint32_t> _shadow; // setVerify(): what a damage-only presenter shows
+    int                   _shadowW = 0, _shadowH = 0;
+    double                _verifyMs = 0;
+#endif
+    int   _depth = 0; // handle() nesting, for the graveyard
+    RectF _textCaret;
+    Stats _stats;
 };
 
 // ── App ─────────────────────────────────────────────────────────────────────

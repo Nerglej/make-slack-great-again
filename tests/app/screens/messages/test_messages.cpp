@@ -1299,7 +1299,7 @@ TEST("actions: link hover underlines without copying the text") {
     label->onEvent(ev);
     CHECK_STR(label->tooltip(), "https://x.example/a");
     label->measureContent(400, 100);
-    CHECK(text::layoutBuilds() == builds + 1);
+    CHECK(text::layoutBuilds() == builds); // the underline is paint time only
     CHECK(text::layoutTextOwned() == copied);
     // The label's own spans stay as set: the underline is the layout's.
     REQUIRE(label->richText() != nullptr);

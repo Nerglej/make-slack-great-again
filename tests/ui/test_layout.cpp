@@ -186,6 +186,39 @@ TEST("layout: measure cache — unchanged views are not re-measured") {
     CHECK(b->frame().y == 30);
 }
 
+// A row measures a child at the room offered, then at its resolved width,
+// and lays it out asking both again: both answers stay cached.
+TEST("layout: measure cache — a row's two questions are both kept") {
+    struct Counting : Box {
+        int measures = 0;
+        using Box::Box;
+        ui::SizeF measureContent(float a, float b) override {
+            ++measures;
+            return Box::measureContent(a, b);
+        }
+    };
+    Win   w(400, 300);
+    auto *row = w.root().add<ui::View>();
+    row->style().row().items(Align::Center);
+    auto *a = row->add<Counting>(10, 10);
+    auto *b = row->add<Counting>(10, 10);
+    w.frame();
+    const int b0 = b->measures;
+    for (int i = 0; i < 3; ++i) {
+        a->content = {10, float(20 + i)};
+        a->invalidateLayout();
+        w.frame();
+    }
+    CHECK(b->measures == b0);
+    CHECK(a->frame().h == 22);
+    // A change of its own is measured again.
+    b->content = {12, 10};
+    b->invalidateLayout();
+    w.frame();
+    CHECK(b->measures > b0);
+    CHECK(b->frame().w == 12);
+}
+
 TEST("layout: per-view footprint stays small") {
     // Every live row of a list is a handful of these; keep them lean.
     std::printf(
@@ -409,9 +442,11 @@ TEST("label: the layout borrows the text, building and re-wrapping copy none") {
     rich->style().width(300);
     w.frame();
     CHECK(rich->textLayout()->lineCount() > lines);
-    rich->setUnderlinedLink(1);
+    const size_t wrapped = text::layoutBuilds();
+    rich->setUnderlinedLink(1); // hover: paint time only, nothing reshaped
     w.frame();
-    CHECK(text::layoutBuilds() >= builds + 5);
+    CHECK(text::layoutBuilds() == wrapped);
+    CHECK(text::layoutBuilds() >= builds + 4);
     CHECK(text::layoutTextOwned() == copied);
     // The layout reads the label's own bytes.
     CHECK(rich->textLayout()->wordEnd(0) == 3);

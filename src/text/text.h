@@ -111,6 +111,9 @@ public:
     // reshaped). For one-colour text whose colour follows state (hover,
     // enabled, focus).
     virtual void       setColor(gfx::Color color)                                           = 0;
+    // The spans of this link id paint underlined as well (0: none). Paint
+    // time only, like setColor: underline doesn't change the shaping.
+    virtual void       setUnderlinedLink(uint32_t linkId)                                   = 0;
     // The ink box of the rasterised glyphs (pixels of at least 1/8 coverage;
     // logical, relative to the origin) as painted at an origin on a whole
     // device pixel; empty when nothing draws. For centring a few glyphs by
@@ -141,12 +144,13 @@ public:
 std::unique_ptr<Layout>
 layoutPlain(std::string_view utf8, const Style &s, float scale, float maxWidth = 1e9f);
 
-// Single-line width (sidebar names, badges). Answers repeated questions from
-// a small per-thread cache; a miss builds one layout.
+// Single-line width. Builds one layout per call: callers keep the answer
+// (per scale and text) rather than asking on every pass.
 float measure(std::string_view utf8, const Style &s, float scale);
 
 // How many layouts Layout::build has made in this process (all threads): a
-// diagnostic for tests proving that a path does not reshape.
+// diagnostic for tests proving that a path does not reshape. Counted in test
+// and demo builds only (0 otherwise), as is layoutTextOwned().
 size_t layoutBuilds();
 // How many text bytes Layout::build has stored in layouts of their own
 // (copied or moved in; all threads). Borrowed text is not counted: a

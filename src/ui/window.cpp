@@ -60,7 +60,7 @@ public:
             st.weight               = text::Weight::Medium;
             st.color                = color(C::TooltipText); // text.onDark
             t.append(_text, st);
-            _l = text::Layout::build(t, {}, windowScale());
+            _l = text::Layout::build(std::move(t), {}, windowScale());
         }
         return {std::ceil(_l->width()) + 2 * kPadH, std::ceil(_l->height()) + 2 * kPadV + kArrowH};
     }
@@ -117,8 +117,10 @@ Window::Window(const plat::WindowDesc &desc) {
     _root->setWindow(this);
     _overlay->setWindow(this);
     app()->addWindow(this);
+#ifdef MSGA_UI_VERIFY
     if (const char *v = std::getenv("UI_VERIFY"); v && *v && *v != '0')
         _verify = true;
+#endif
     resized();
 }
 
@@ -1121,19 +1123,24 @@ void Window::onFrame(bool requested) {
         }
         _stats.lastDamage.assign(rects.begin() + ptrdiff_t(shifted), rects.end());
         double verifyMs = 0;
+#ifdef MSGA_UI_VERIFY
         if (_verify) {
             const double tv = app()->nowMs();
             verifyFrame(c, rects);
             verifyMs = app()->nowMs() - tv;
         }
+        _verifyMs = verifyMs;
+#endif
         _native->endPaint(rects);
         _stats.lastPaintMs = app()->nowMs() - tp - verifyMs; // the check is not the cost
-        _verifyMs          = verifyMs;
         ++_stats.frames;
     }
     _inFrame           = false;
-    _stats.lastFrameMs = app()->nowMs() - t0 - _verifyMs;
-    _verifyMs          = 0;
+    _stats.lastFrameMs = app()->nowMs() - t0;
+#ifdef MSGA_UI_VERIFY
+    _stats.lastFrameMs -= _verifyMs;
+    _verifyMs = 0;
+#endif
     if (_frameAgain || !_ticking.empty() || !_damage.empty()) {
         _frameAgain     = false;
         _frameRequested = true;
@@ -1143,6 +1150,7 @@ void Window::onFrame(bool requested) {
 
 // ── Frame verification (debug) ──────────────────────────────────────────────
 
+#ifdef MSGA_UI_VERIFY
 namespace {
 void writePpm(const std::string &path, const uint32_t *px, int w, int h, int stride) {
     FILE *f = std::fopen(path.c_str(), "wb");
@@ -1272,6 +1280,7 @@ void Window::verifyFrame(const plat::Canvas &c, const std::vector<plat::Rect> &p
     // Resynchronise, so one bug is reported once rather than every frame after.
     std::memcpy(_shadow.data(), full.pixels(), _shadow.size() * 4);
 }
+#endif // MSGA_UI_VERIFY
 
 // ── App ─────────────────────────────────────────────────────────────────────
 

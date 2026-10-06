@@ -278,8 +278,10 @@ SizeF Menu::measureContent(float, float) {
                                                                  : std::string_view();
                 h.append(right, menuFont(Font::Small, Dim));
             }
-            _labels.push_back(text::Layout::build(t, {}, scale));
-            _hints.push_back(h.text.empty() ? nullptr : text::Layout::build(h, {}, scale));
+            _labels.push_back(text::Layout::build(std::move(t), {}, scale));
+            _hints.push_back(
+                h.text.empty() ? nullptr : text::Layout::build(std::move(h), {}, scale)
+            );
         }
     }
     const float check = anyChecked() ? kCheckW : 0;

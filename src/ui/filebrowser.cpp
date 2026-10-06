@@ -130,7 +130,7 @@ public:
                     t.append(
                         str::byteSize(e.size, str::ByteSize::Exact), font(Font::Small, C::TextMuted)
                     );
-                    _sizes[i] = text::Layout::build(t, {}, scale);
+                    _sizes[i] = text::Layout::build(std::move(t), {}, scale);
                 }
                 sizeW = std::ceil(_sizes[i]->width());
                 _sizes[i]->paint(
@@ -149,7 +149,7 @@ public:
                 o.maxWidth = std::max(20.f, nameW);
                 o.maxLines = 1;
                 o.ellipsis = true;
-                _names[i]  = text::Layout::build(t, o, scale);
+                _names[i]  = text::Layout::build(std::move(t), o, scale);
             }
             _names[i]->paint(p, snapPx({nameX, y + std::floor((kRowH - _names[i]->height()) / 2)}));
         }
@@ -161,7 +161,7 @@ public:
                                                       : tr("This folder is empty"),
                     font(Font::Body, C::TextMuted)
                 );
-                _empty = text::Layout::build(t, {}, scale);
+                _empty = text::Layout::build(std::move(t), {}, scale);
             }
             _empty->paint(p, snapPx({std::floor((width() - _empty->width()) / 2), 24}));
         }

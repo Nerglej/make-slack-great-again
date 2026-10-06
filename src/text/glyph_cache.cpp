@@ -216,10 +216,12 @@ const Glyph *get(fonts::FontKey font, uint32_t glyph, uint32_t ppem64, int phase
                     r.argb + size_t(row) * r.pitch,
                     size_t(r.w) * 4
                 );
-            else
-                std::memcpy(
-                    &p.a8[size_t(y + row) * p.w + x], r.a8 + size_t(row) * r.pitch, size_t(r.w)
-                );
+            else { // the gamma applied on the way in: one pass, no scratch copy
+                const uint8_t *src = r.a8 + ptrdiff_t(row) * r.pitch;
+                uint8_t       *dst = &p.a8[size_t(y + row) * p.w + x];
+                for (int k = 0; k < r.w; ++k)
+                    dst[k] = r.gamma[src[k]];
+            }
         }
         p.lastUse = c.epoch;
         e.g       = {

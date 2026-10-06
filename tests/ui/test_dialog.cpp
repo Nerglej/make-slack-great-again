@@ -221,6 +221,30 @@ TEST("popup: date and time fields step, type and clamp") {
     CHECK(!on && !cb->checked());
 }
 
+// A check box label that fits is not reshaped for every width it is offered
+// (a flex pass asks at the room, then at the width it got); one that has to
+// wrap is, and wraps.
+TEST("controls: a check box label reshapes only when its wrapping changes") {
+    Win   w(600, 300);
+    auto *col = w.root().add<ui::View>();
+    col->style().items(ui::Align::Start);
+    auto *cb = col->add<ui::CheckBox>("Remember my choice");
+    w.frame();
+    const float  h0 = cb->frame().h;
+    const size_t n0 = text::layoutBuilds();
+    for (float width : {500.f, 450.f, 300.f, 560.f}) {
+        col->style().width(width);
+        col->invalidateLayout();
+        w.frame();
+    }
+    CHECK(text::layoutBuilds() == n0);
+    col->style().width(80); // too narrow: wraps
+    col->invalidateLayout();
+    w.frame();
+    CHECK(text::layoutBuilds() > n0);
+    CHECK(cb->frame().h > h0);
+}
+
 TEST("controls: StyledLineEdit's sizes, leading icon and length counter") {
     Win   w(500, 300);
     auto *col = w.root().add<ui::View>();

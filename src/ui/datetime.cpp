@@ -145,7 +145,7 @@ private:
         auto        make = [&](std::string_view s, float px, text::Weight w, C c) {
             text::AttributedText t;
             t.append(s, ui::pxFont(px, w, ui::color(c)));
-            return text::Layout::build(t, {}, k);
+            return text::Layout::build(std::move(t), {}, k);
         };
         if (_days.empty() || _scale != k || _body != body) {
             _scale = k;
@@ -437,7 +437,7 @@ void DateTimeField::paint(gfx::Painter &p) {
         for (const Part &pt : ps) {
             text::AttributedText t;
             t.append(pt.text, ui::pxFont(13, text::Weight::Regular, ui::color(C::FormText)));
-            _layouts.push_back(text::Layout::build(t, {}, k));
+            _layouts.push_back(text::Layout::build(std::move(t), {}, k));
             _xs.push_back(x);
             x += _layouts.back()->width();
         }

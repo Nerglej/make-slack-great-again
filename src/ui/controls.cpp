@@ -106,7 +106,13 @@ void CheckBox::styleChanged() {
 
 const text::Layout *CheckBox::labelFor(float w) {
     const float tw = std::max(1.f, w - kBox - kBoxGap);
-    if (!_l || _builtW != tw) {
+    // Wrapped text that fits lays out the same at any width between its own
+    // and the one it was built for (wider too, as a single line).
+    const bool  same =
+        _l && _builtW >= 0 &&
+        (tw == _builtW ||
+         (_l->width() + 0.01f < tw && (tw <= _builtW || _l->lineCount() <= 1) && !_l->truncated()));
+    if (!same) {
         _builtW = tw;
         _l = layoutText(_label, _font, enabled() ? _color : C::FormTextFaint, windowScale(), tw);
     }

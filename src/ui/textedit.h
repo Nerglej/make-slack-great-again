@@ -198,7 +198,9 @@ private:
     uint32_t                      docMoveCaret(uint32_t d, int dx, int dy) const;
     uint32_t                      docWordStart(uint32_t d) const;
     uint32_t                      docWordEnd(uint32_t d) const;
-    std::vector<RectF>            docSelectionRects(uint32_t from, uint32_t to) const;
+    // Only paragraphs that reach between top and bottom (document y).
+    std::vector<RectF>
+    docSelectionRects(uint32_t from, uint32_t to, float top = -1e30f, float bottom = 1e30f) const;
 
     void        layoutFor(float contentWidth);
     void        currentLayout();
@@ -242,6 +244,7 @@ private:
     int                           _preeditCursor = -1;
     plat::TimerId                 _blinkTimer    = 0;
     uint16_t                      _typing        = 0;
+    uint16_t                      _blinkFlips    = 0; // since startBlink()
     uint8_t                       _minLines = 1, _maxLines = 8;
     uint8_t                       _selMode   = 0; // 0 char, 1 word, 2 line (drag granularity)
     Font                          _font      = Font::Body;

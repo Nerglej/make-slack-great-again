@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 #include <iterator>
 
 namespace ui {
@@ -488,68 +490,53 @@ bool parseHexColor(std::string_view s, Color *out) {
     return (n == 3 || n == 6) && gfx::parseHexColor(s, out);
 }
 
+// The tokens the sidebar palette paints: each one's PaletteColors member,
+// as a byte offset + 1 per token (0: a fixed token from kLight/kDark).
+struct PaletteSlots {
+    uint8_t at[size_t(C::Count)];
+};
+constexpr PaletteSlots paletteSlots() {
+    struct Pick {
+        C      c;
+        size_t off;
+    };
+    constexpr Pick picks[] = {
+        {C::Rail, offsetof(PaletteColors, rail)},
+        {C::Sidebar, offsetof(PaletteColors, sidebar)},
+        {C::SidebarText, offsetof(PaletteColors, text)},
+        {C::SidebarTextMuted, offsetof(PaletteColors, textDim)},
+        {C::SidebarHover, offsetof(PaletteColors, hover)},
+        {C::SidebarSelected, offsetof(PaletteColors, pill)},
+        {C::SidebarSelectedText, offsetof(PaletteColors, pillInk)},
+        {C::SidebarScrollbar, offsetof(PaletteColors, scrollThumb)},
+        {C::Accent, offsetof(PaletteColors, accent)},
+        {C::AccentHover, offsetof(PaletteColors, accentHover)},
+        {C::AccentPressed, offsetof(PaletteColors, accentPressed)},
+        {C::AccentSubtle, offsetof(PaletteColors, accentSubtle)},
+        {C::Online, offsetof(PaletteColors, online)},
+        {C::Badge, offsetof(PaletteColors, badge)},
+        {C::TitleBar, offsetof(PaletteColors, titleBar)},
+        {C::TitleBarControl, offsetof(PaletteColors, titleBarControl)},
+    };
+    PaletteSlots t{};
+    for (const Pick &p : picks)
+        t.at[size_t(p.c)] = uint8_t(p.off + 1);
+    return t;
+}
+constexpr PaletteSlots kPaletteSlots = paletteSlots();
+
 Color colorIn(C c, bool dark) {
     const size_t i = size_t(c) < size_t(C::Count) ? size_t(c) : 0;
-    switch (c) {
-    case C::Rail:
-    case C::Sidebar:
-    case C::SidebarText:
-    case C::SidebarTextMuted:
-    case C::SidebarHover:
-    case C::SidebarSelected:
-    case C::SidebarSelectedText:
-    case C::SidebarScrollbar:
-    case C::Accent:
-    case C::AccentHover:
-    case C::AccentPressed:
-    case C::AccentSubtle:
-    case C::Online:
-    case C::Badge:
-    case C::TitleBar:
-    case C::TitleBarControl: {
+    if (const uint8_t at = kPaletteSlots.at[i]) {
         if (!g_cached[dark]) {
             g_cache[dark]  = paletteColors(g_palette[dark], dark);
             g_cached[dark] = true;
         }
-        const PaletteColors &p = g_cache[dark];
-        switch (c) {
-        case C::Rail:
-            return p.rail;
-        case C::Sidebar:
-            return p.sidebar;
-        case C::SidebarText:
-            return p.text;
-        case C::SidebarTextMuted:
-            return p.textDim;
-        case C::SidebarHover:
-            return p.hover;
-        case C::SidebarSelected:
-            return p.pill;
-        case C::SidebarSelectedText:
-            return p.pillInk;
-        case C::SidebarScrollbar:
-            return p.scrollThumb;
-        case C::Accent:
-            return p.accent;
-        case C::AccentHover:
-            return p.accentHover;
-        case C::AccentPressed:
-            return p.accentPressed;
-        case C::AccentSubtle:
-            return p.accentSubtle;
-        case C::Online:
-            return p.online;
-        case C::TitleBar:
-            return p.titleBar;
-        case C::TitleBarControl:
-            return p.titleBarControl;
-        default:
-            return p.badge;
-        }
+        Color v;
+        std::memcpy(&v, reinterpret_cast<const char *>(&g_cache[dark]) + (at - 1), sizeof v);
+        return v;
     }
-    default:
-        return (dark ? kDark : kLight)[i];
-    }
+    return (dark ? kDark : kLight)[i];
 }
 
 Color color(C c) {

@@ -141,8 +141,11 @@ void Label::setUnderlinedLink(uint32_t linkId) {
     if (linkId == _underlinedLink)
         return;
     _underlinedLink = linkId;
-    if (_rich) {
-        dropLayout();
+    if (_rich) { // paint time only: the shaped layouts stay
+        if (_layout)
+            _layout->setUnderlinedLink(linkId);
+        if (_x && _x->alt)
+            _x->alt->setUnderlinedLink(linkId);
         update();
     }
 }
@@ -198,15 +201,13 @@ void Label::styleChanged() {
 
 std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale) const {
     // The layout borrows the label's text (held once); only the spans are
-    // copied, to resolve sentinel colours and the hovered link per build.
+    // copied, to resolve sentinel colours per build.
     std::vector<text::Span> spans;
     if (_rich) {
         spans = _rich->spans;
         for (text::Span &sp : spans) {
             sp.style.color      = resolve(sp.style.color);
             sp.style.background = resolve(sp.style.background);
-            if (_underlinedLink && sp.style.linkId == _underlinedLink)
-                sp.style.underline = true;
         }
     } else if (!_text.empty()) {
         spans.push_back({0, uint32_t(_text.size()), font(_font, _color)});
@@ -220,7 +221,10 @@ std::unique_ptr<text::Layout> Label::buildLayout(float w, float scale) const {
     o.ellipsis   = _maxLines > 0;
     o.align      = _align;
     o.lineHeight = _lineHeight;
-    return text::Layout::buildBorrowed(text(), spans, o, scale);
+    auto l       = text::Layout::buildBorrowed(text(), spans, o, scale);
+    if (_rich && _underlinedLink) // the hovered link
+        l->setUnderlinedLink(_underlinedLink);
+    return l;
 }
 
 const text::Layout *Label::layoutFor(float w) {

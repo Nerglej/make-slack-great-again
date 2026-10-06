@@ -396,8 +396,9 @@ bool sameAsRaster(FontKey f, uint32_t gid, uint32_t ppem, int phase) {
     } else {
         const gfx::Mask8 m = cache::mask(copy);
         for (int y = 0; y < r.h; ++y)
-            if (std::memcmp(m.data + size_t(y) * m.stride, r.a8 + size_t(y) * r.pitch, size_t(r.w)))
-                return false;
+            for (int x = 0; x < r.w; ++x)
+                if (m.data[size_t(y) * m.stride + size_t(x)] != r.gamma[r.a8[y * r.pitch + x]])
+                    return false;
     }
     return true;
 }
@@ -732,21 +733,17 @@ void recolor() {
     }
 }
 
-// M8: the same measure() question again builds nothing; another size,
-// weight, scale or text is another question (and gets the right answer).
+// M8: measure() answers what a layout of the same text would: another size,
+// weight, scale or text is another answer; colour changes nothing.
 void measureCache() {
     Style s;
     s.size                = 13;
     const std::string txt = "measure-cache-" + std::to_string(std::rand());
-    const size_t      n0  = layoutBuilds();
     const float       w1  = measure(txt, s, 1.25f);
-    CHECK(layoutBuilds() == n0 + 1);
-    for (int i = 0; i < 100; ++i)
-        CHECK(measure(txt, s, 1.25f) == w1);
+    CHECK(measure(txt, s, 1.25f) == w1);
     Style red = s;
-    red.color = 0xffff0000; // colour doesn't shape: still a hit
+    red.color = 0xffff0000; // colour doesn't shape
     CHECK(measure(txt, red, 1.25f) == w1);
-    CHECK(layoutBuilds() == n0 + 1);
     CHECK(w1 == lay(txt, 1e9f, 1.25f, s)->width());
     Style bold  = s;
     bold.weight = Weight::Bold;
@@ -754,6 +751,74 @@ void measureCache() {
     CHECK(measure(txt, s, 2.f) == lay(txt, 1e9f, 2.f, s)->width());
     CHECK(measure(txt + "x", s, 1.25f) == lay(txt + "x", 1e9f, 1.25f, s)->width());
     CHECK(measure(txt, bold, 1.25f) != w1);
+}
+
+// A hovered link's underline is paint-time only: setUnderlinedLink paints
+// exactly what a layout built with that span underlined paints, and 0 (or
+// another id) paints the plain text again.
+void underlineLink() {
+    Style a, link;
+    link.color  = 0xff1264a3;
+    link.linkId = 7;
+    AttributedText t;
+    t.append("see the ", a);
+    t.append("docs", link);
+    t.append(" here", a);
+    AttributedText u = t;
+    for (Span &sp : u.spans)
+        if (sp.style.linkId == 7)
+            sp.style.underline = true;
+    for (float scale : {1.f, 1.5f}) {
+        auto         l     = Layout::build(t, {}, scale);
+        const auto   plain = pixels(*l, scale);
+        const size_t n0    = layoutBuilds();
+        l->setUnderlinedLink(7);
+        const auto under = pixels(*l, scale);
+        CHECK(under != plain);
+        CHECK(under == pixels(*Layout::build(u, {}, scale), scale));
+        const gfx::Color white = 0xffffffff;
+        CHECK(pixels(*l, scale, &white) == pixels(*Layout::build(u, {}, scale), scale, &white));
+        l->setUnderlinedLink(8);
+        CHECK(pixels(*l, scale) == plain);
+        l->setUnderlinedLink(0);
+        CHECK(pixels(*l, scale) == plain);
+        CHECK(layoutBuilds() == n0 + 2); // only the two reference layouts
+    }
+}
+
+// Selection rects come out left to right with adjacent graphemes merged,
+// also inside a right-to-left ligature (lam-alef: two graphemes, one glyph)
+// and when wrapped; selecting from a later line skips the earlier ones.
+void selectionOrder() {
+    const std::string la = "\xD9\x84\xD8\xA7"; // لا
+    auto              l  = lay(la + " " + la);
+    const auto        r1 = l->selectionRects(0, 2), r2 = l->selectionRects(2, 4);
+    const auto        both = l->selectionRects(0, 4);
+    CHECK(r1.size() == 1 && r2.size() == 1);
+    if (r1.size() != 1 || r2.size() != 1)
+        return;
+    CHECK(both.size() == 1);
+    const float x0 = std::min(r1[0].x, r2[0].x);
+    const float x1 = std::max(r1[0].x + r1[0].w, r2[0].x + r2[0].w);
+    CHECK(std::fabs(both[0].x - x0) < 0.01f && std::fabs(both[0].x + both[0].w - x1) < 0.01f);
+    // Mixed text, wrapped: per line, rects ascend and don't overlap.
+    const std::string heb = "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D";
+    std::string       s;
+    for (int i = 0; i < 12; ++i)
+        s += "word " + heb + " " + la + " 123 ";
+    auto w = lay(s, 160);
+    CHECK(w->lineCount() > 3);
+    for (uint32_t from : {0u, 7u, uint32_t(s.size() / 2)}) {
+        const auto rs = w->selectionRects(from, uint32_t(s.size()));
+        CHECK(!rs.empty());
+        for (size_t i = 1; i < rs.size(); ++i)
+            if (rs[i].y == rs[i - 1].y)
+                CHECK(rs[i].x >= rs[i - 1].x + rs[i - 1].w - 0.01f);
+            else
+                CHECK(rs[i].y > rs[i - 1].y);
+        // Nothing above the line the selection starts on.
+        CHECK(rs.front().y >= w->caretRect(from).y - 0.5f);
+    }
 }
 
 // Long lines: stepping back (prevGrapheme) and word starts land where
@@ -822,6 +887,8 @@ constexpr Case kCases[] = {
     {"build_move", buildMove},
     {"measure_cache", measureCache},
     {"caret_long_line", caretLongLine},
+    {"underline_link", underlineLink},
+    {"selection_order", selectionOrder},
 };
 
 } // namespace

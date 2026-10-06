@@ -385,14 +385,16 @@ uint32_t TextEdit::docWordEnd(uint32_t d) const {
     return s + _paras[i].layout->wordEnd(d - s);
 }
 
-std::vector<RectF> TextEdit::docSelectionRects(uint32_t from, uint32_t to) const {
+std::vector<RectF>
+TextEdit::docSelectionRects(uint32_t from, uint32_t to, float top, float bottom) const {
     std::vector<RectF> out;
     if (from > to)
         std::swap(from, to);
     if (from == to)
         return out;
-    const size_t last = paraAt(to);
-    for (size_t i = paraAt(from); i <= last; ++i) {
+    // The selected paragraphs that reach between top and bottom.
+    const size_t last = std::min(paraAt(to), paraAtY(bottom));
+    for (size_t i = std::max(paraAt(from), paraAtY(top)); i <= last; ++i) {
         const Para    &p = _paras[i];
         const uint32_t s = paraStart(i), len = paraLen(i);
         const uint32_t a = std::min(from - std::min(from, s), len);
@@ -504,15 +506,27 @@ void TextEdit::updateIme() {
 
 // ── Caret blink ─────────────────────────────────────────────────────────────
 
+// The caret blinks for kBlinkForMs after the last edit, move or focus, then
+// stays on: an idle field wakes nothing.
+constexpr int kBlinkForMs = 10000;
+
 void TextEdit::startBlink() {
     stopBlink();
     _caretOn     = true;
+    _blinkFlips  = 0;
     const int ms = app()->settings().caretBlinkMs;
     if (ms > 0 && focused())
-        _blinkTimer = app()->addTimer(ms, true, [this] {
-            _caretOn = !_caretOn;
-            RectF r  = caretRect();
-            update({r.x - 1, r.y - 1, r.w + 2, r.h + 2});
+        _blinkTimer = app()->addTimer(ms, true, [this, ms] {
+            const bool done = ++_blinkFlips >= std::max(1, kBlinkForMs / ms);
+            const bool was  = _caretOn;
+            _caretOn        = done || !_caretOn;
+            if (done)
+                stopBlink();
+            // With a selection the caret isn't drawn: nothing to repaint.
+            if (_caretOn != was && !hasSelection()) {
+                const RectF r = caretRect();
+                update({r.x - 1, r.y - 1, r.w + 2, r.h + 2});
+            }
         });
 }
 
@@ -1144,19 +1158,19 @@ void TextEdit::paint(gfx::Painter &p) {
             o.maxWidth         = contentWidth();
             o.maxLines         = _maxLines; // a multi-line field may show a list of examples
             o.ellipsis         = true;
-            _placeholderLayout = text::Layout::build(t, o, windowScale());
+            _placeholderLayout = text::Layout::build(std::move(t), o, windowScale());
         }
         _placeholderLayout->paint(p, {0, 0});
     }
+    // Only the paragraphs in view.
+    const float view = height() - s.pad.t - s.pad.b;
     if (hasSelection()) {
         const uint32_t a = toDisplay(std::min(_caret, _anchor));
         const uint32_t b = toDisplay(std::max(_caret, _anchor));
         const Color c = focused() ? color(C::Selection) : gfx::withAlpha(color(C::Selection), 0.5f);
-        for (const RectF &r : docSelectionRects(a, b))
+        for (const RectF &r : docSelectionRects(a, b, _scrollY, _scrollY + view))
             p.fillRect(r, c);
     }
-    // Only the paragraphs in view.
-    const float view = height() - s.pad.t - s.pad.b;
     for (size_t i = paraAtY(_scrollY); i < _paras.size() && _paras[i].top <= _scrollY + view; ++i)
         _paras[i].layout->paint(p, {0, _paras[i].top});
     if (!_squiggles.empty())

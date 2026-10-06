@@ -1,5 +1,7 @@
 #include "harness.h"
 
+#include <cmath>
+
 using namespace uitest;
 using K = plat::Key;
 
@@ -250,6 +252,41 @@ TEST("textedit: caret blinks on the system period while focused") {
     // Within ~2 periods the caret toggles at least once, repainting its rect only.
     CHECK(t.until([&] { return t.w->stats().frames > f0; }, 3000));
     CHECK(t.damageArea() < 20 * 40);
+}
+
+// An idle field stops waking the window: after ~10 s the caret stays on.
+TEST("textedit: the caret stops blinking after a while idle, shown") {
+    EditWin   t;
+    const int ms = app().settings().caretBlinkMs;
+    if (ms <= 0)
+        return;
+    t.frame();
+    const double t0     = app().nowMs();
+    int          frames = t.w->stats().frames, blinks = 0;
+    double       quiet = t0; // since the last frame
+    while (app().nowMs() < t0 + 13000 && app().nowMs() - quiet < 3.0 * ms) {
+        app().pump(5);
+        if (t.w->stats().frames != frames) {
+            frames = t.w->stats().frames;
+            quiet  = app().nowMs();
+            ++blinks;
+        }
+    }
+    CHECK(blinks >= 4);                       // it did blink
+    CHECK(app().nowMs() - quiet >= 3.0 * ms); // and then went quiet
+    CHECK(quiet - t0 > 8000);
+    // Stopped on: the caret is painted.
+    const ui::RectF r = t.edit->caretRect();
+    gfx::Bitmap     bmp(int(t.edit->width()), int(t.edit->height()));
+    gfx::Painter    p(bmp.view(), 1);
+    t.edit->paint(p);
+    const int x = int(std::round(r.x)), y = int(r.y + r.h / 2);
+    REQUIRE(x >= 0 && x < bmp.width() && y >= 0 && y < bmp.height());
+    CHECK(bmp.pixels()[size_t(y) * size_t(bmp.width()) + size_t(x)] == ui::color(ui::C::Caret));
+    // Typing blinks again.
+    t.text("x");
+    const int f0 = t.w->stats().frames;
+    CHECK(t.until([&] { return t.w->stats().frames > f0 + 1; }, 3000));
 }
 
 TEST("textedit: a popup that closes when its field loses focus survives deactivation") {

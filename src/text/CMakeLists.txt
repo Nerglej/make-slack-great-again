@@ -34,6 +34,10 @@ add_library(msga_text STATIC
 target_include_directories(msga_text PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(msga_text PUBLIC msga_gfx msga_flags
     PRIVATE msga_base ${MSGA_FT_TARGET} ${MSGA_HB_TARGET})
+# The layoutBuilds()/layoutTextOwned() test counters: test and demo builds only.
+if(PLAT_TEST_HOOKS)
+    target_compile_definitions(msga_text PRIVATE MSGA_TEXT_COUNTERS)
+endif()
 
 # ── Gallery ─────────────────────────────────────────────────────────────────
 # A dev binary; the tests are in tests/text.
