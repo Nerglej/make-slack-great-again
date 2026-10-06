@@ -51,6 +51,12 @@ enum class Wait : uint8_t { Ready, Timeout, Cancelled, Woken };
 // returnOnWake; otherwise a wake just re-checks the cancel flag.
 Wait waitFd(int fd, short events, const Waiter &w, bool returnOnWake = false);
 
+// One non-blocking send()/recv() on a socket (EINTR retried; a closed peer
+// never raises SIGPIPE): the byte count, Stream::Again when it would block,
+// or Stream::Fail with *err = errno.
+long sockSend(int fd, const void *buf, size_t n, int *err);
+long sockRecv(int fd, void *buf, size_t n, int *err);
+
 struct TlsConn; // tls.cpp
 
 // A connected TCP stream, TLS on top for https/wss. The socket is
@@ -105,8 +111,6 @@ struct Head {
 long readHead(
     Stream &s, std::string *buf, const Waiter &w, Head *head, std::string *error, bool *gotAny
 );
-// "Host" header value: IPv6 literals in brackets, the port unless default.
-std::string hostHeader(const Url &url);
 
 // For tests: name lookups that went to the resolver (not answered by the
 // DNS cache), and TLS handshakes that resumed a cached session.

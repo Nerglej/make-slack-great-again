@@ -7,25 +7,38 @@ namespace plat::core {
 TimerId LoopCore::addTimer(int intervalMs, bool repeat, std::function<void()> fn) {
     const auto    iv = std::chrono::milliseconds(std::max(0, intervalMs));
     const TimerId id = _nextTimer++;
-    _timers.emplace(id, Timer{Clock::now() + iv, iv, repeat, std::move(fn)});
+    _timers.push_back(Timer{id, Clock::now() + iv, iv, repeat, std::move(fn)});
+    _nextDue = std::min(_nextDue, _timers.back().due);
     return id;
 }
 
 void LoopCore::cancelTimer(TimerId id) {
-    _timers.erase(id);
+    for (size_t i = 0; i < _timers.size(); ++i)
+        if (_timers[i].id == id) {
+            // Destroyed after the erase: its destructor may add or cancel timers.
+            const auto fn       = std::move(_timers[i].fn);
+            const bool earliest = _timers[i].due <= _nextDue;
+            _timers.erase(_timers.begin() + ptrdiff_t(i));
+            if (earliest)
+                this->earliest();
+            return;
+        }
+}
+
+void LoopCore::earliest() {
+    _nextDue = Clock::time_point::max();
+    for (const auto &t : _timers)
+        _nextDue = std::min(_nextDue, t.due);
 }
 
 int LoopCore::msUntilNextTimer() const {
     if (_timers.empty())
         return -1;
-    auto due = Clock::time_point::max();
-    for (const auto &[id, t] : _timers)
-        due = std::min(due, t.due);
     const auto now = Clock::now();
-    if (due <= now)
+    if (_nextDue <= now)
         return 0;
     // Round up: waking a millisecond early just spins the loop once more.
-    return int(std::chrono::ceil<std::chrono::milliseconds>(due - now).count());
+    return int(std::chrono::ceil<std::chrono::milliseconds>(_nextDue - now).count());
 }
 
 int LoopCore::clampTimeout(int timeoutMs) const {
@@ -36,30 +49,39 @@ int LoopCore::clampTimeout(int timeoutMs) const {
 }
 
 void LoopCore::runDueTimers() {
-    const auto                                         now = Clock::now();
-    // Collect first: a callback may add or cancel timers (including itself).
-    std::vector<std::pair<Clock::time_point, TimerId>> due;
-    for (const auto &[id, t] : _timers)
-        if (t.due <= now)
-            due.emplace_back(t.due, id);
-    std::sort(due.begin(), due.end());
-    for (const auto &[when, id] : due) {
-        auto it = _timers.find(id);
-        if (it == _timers.end())
-            continue; // cancelled by an earlier callback this round
-        auto fn = it->second.fn;
-        if (it->second.repeat) {
+    const auto now = Clock::now();
+    if (_nextDue > now)
+        return;
+    // A callback may add or cancel timers (including itself), so each round
+    // looks for the earliest due timer again (ties: the older one first).
+    // Timers added by this round's callbacks wait for the next call.
+    const TimerId fresh = _nextTimer;
+    for (;;) {
+        const size_t n    = _timers.size();
+        size_t       best = n;
+        for (size_t i = 0; i < n; ++i) {
+            const Timer &t = _timers[i];
+            if (t.id < fresh && t.due <= now && (best == n || t.due < _timers[best].due))
+                best = i;
+        }
+        if (best == n)
+            break;
+        Timer                &t = _timers[best];
+        std::function<void()> fn;
+        if (t.repeat) {
+            fn = t.fn; // a copy: the callback may cancel its own timer
             // Re-arm from the scheduled time, not from now, so a repeating
             // timer does not drift; skip missed ticks rather than bursting.
-            auto &t = it->second;
             do
                 t.due += std::max(t.interval, std::chrono::milliseconds(1));
             while (t.due <= now);
         } else {
-            _timers.erase(it);
+            fn = std::move(t.fn);
+            _timers.erase(_timers.begin() + ptrdiff_t(best));
         }
         fn();
     }
+    earliest();
 }
 
 void LoopCore::post(std::function<void()> fn) {
@@ -86,7 +108,10 @@ bool LoopCore::hasPosted() {
 }
 
 void LoopCore::runPosted() {
+    // The queue takes over the last batch's emptied buffer, so the posts
+    // that follow do not reallocate it.
     std::vector<std::function<void()>> batch;
+    batch.swap(_spare);
     {
         std::lock_guard lock(_postMutex);
         batch.swap(_posted);
@@ -95,6 +120,9 @@ void LoopCore::runPosted() {
     // re-posts itself cannot starve input.
     for (auto &fn : batch)
         fn();
+    batch.clear();
+    if (_spare.capacity() < batch.capacity())
+        _spare.swap(batch);
 }
 
 void LoopCore::shutdown() {
@@ -102,9 +130,10 @@ void LoopCore::shutdown() {
     // closure holding a retired net::WebSocket joins its reader thread, which
     // posts its close event while we are still destroying the batch.
     for (;;) {
-        std::map<TimerId, Timer>           timers;
+        std::vector<Timer>                 timers;
         std::vector<std::function<void()>> posted;
         timers.swap(_timers);
+        _nextDue = Clock::time_point::max();
         std::lock_guard lock(_postMutex);
         posted.swap(_posted);
         if (timers.empty() && posted.empty()) {

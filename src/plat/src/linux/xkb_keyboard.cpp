@@ -177,15 +177,21 @@ Key keyFromKeysym(xkb_keysym_t sym) {
 
 XkbKeyboard::XkbKeyboard() {
     _ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-    if (_ctx) {
-        _compose = xkb_compose_table_new_from_locale(
-            _ctx, localeForCompose(), XKB_COMPOSE_COMPILE_NO_FLAGS
-        );
-        if (!_compose)
-            _compose = xkb_compose_table_new_from_locale(_ctx, "C", XKB_COMPOSE_COMPILE_NO_FLAGS);
-        if (_compose)
-            _composeState = xkb_compose_state_new(_compose, XKB_COMPOSE_STATE_NO_FLAGS);
-    }
+}
+
+void XkbKeyboard::loadCompose() {
+    // Deferred to the first key press: compiling the locale table costs ~3 ms
+    // and ~140 KB, and which keysyms start a sequence is only known from the
+    // table itself (locales and ~/.XCompose start them with arbitrary keys).
+    _composeTried = true;
+    if (!_ctx)
+        return;
+    _compose =
+        xkb_compose_table_new_from_locale(_ctx, localeForCompose(), XKB_COMPOSE_COMPILE_NO_FLAGS);
+    if (!_compose)
+        _compose = xkb_compose_table_new_from_locale(_ctx, "C", XKB_COMPOSE_COMPILE_NO_FLAGS);
+    if (_compose)
+        _composeState = xkb_compose_state_new(_compose, XKB_COMPOSE_STATE_NO_FLAGS);
 }
 
 XkbKeyboard::~XkbKeyboard() {
@@ -292,6 +298,8 @@ XkbKeyboard::Result XkbKeyboard::key(uint32_t keycode, bool down, bool updateSta
     if (down) {
         const xkb_keysym_t sym      = xkb_state_key_get_one_sym(_state, keycode);
         bool               composed = false;
+        if (!_composeTried && sym != XKB_KEY_NoSymbol)
+            loadCompose();
         if (_composeState && sym != XKB_KEY_NoSymbol &&
             xkb_compose_state_feed(_composeState, sym) == XKB_COMPOSE_FEED_ACCEPTED) {
             switch (xkb_compose_state_get_status(_composeState)) {

@@ -79,6 +79,29 @@ void testRepeatingTimerRearmsAndSelfCancels() {
     CHECK(core.msUntilNextTimer() == -1);
 }
 
+void testTimersAddedByCallbacksWaitAndTiesKeepOrder() {
+    core::LoopCore   core;
+    std::vector<int> order;
+    // Same interval: due together, run in creation order.
+    core.addTimer(0, false, [&] {
+        order.push_back(1);
+        core.addTimer(0, false, [&] { order.push_back(3); }); // next round
+    });
+    core.addTimer(0, false, [&] { order.push_back(2); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    core.runDueTimers();
+    CHECK((order == std::vector<int>{1, 2}));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    core.runDueTimers();
+    CHECK((order == std::vector<int>{1, 2, 3}));
+    // Cancelling the earliest moves the wait out to the next one.
+    const TimerId early = core.addTimer(5, false, [] {});
+    core.addTimer(1000, false, [] {});
+    CHECK(core.msUntilNextTimer() <= 5);
+    core.cancelTimer(early);
+    CHECK(core.msUntilNextTimer() > 900);
+}
+
 void testClampTimeout() {
     core::LoopCore core;
     CHECK(core.clampTimeout(-1) == -1);
@@ -595,6 +618,10 @@ int main() {
     runCase("timers fire in due order, cancel works", testTimersOrderAndCancel);
     runCase(
         "repeating timer re-arms and can cancel itself", testRepeatingTimerRearmsAndSelfCancels
+    );
+    runCase(
+        "timers added by callbacks wait; ties keep order",
+        testTimersAddedByCallbacksWaitAndTiesKeepOrder
     );
     runCase("wait timeout clamps to next timer", testClampTimeout);
     runCase("shutdown drains closures that post as they go", testShutdownDrainsClosuresThatPost);

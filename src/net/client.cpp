@@ -9,9 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
-#include <deque>
 #include <mutex>
-#include <unordered_map>
 
 namespace net {
 
@@ -154,24 +152,32 @@ base::WorkerPool::Options poolOptions() {
 struct Client::Impl : std::enable_shared_from_this<Client::Impl> {
     explicit Impl(plat::App &a) : app(a), pool(poolOptions()) {}
 
-    plat::App                                                           &app;
-    // UI thread only.
-    RequestId                                                            nextId = 1;
-    std::unordered_map<RequestId, std::function<void(Response)>>         done;
-    std::unordered_map<RequestId, std::shared_ptr<detail::Cancel>>       flags;
-    std::unordered_map<RequestId, std::function<void(int64_t, int64_t)>> progress;
+    // A request the caller is still waiting for (UI thread only).
+    struct Pending {
+        RequestId                             id = 0;
+        std::function<void(Response)>         done;
+        std::shared_ptr<detail::Cancel>       flag;
+        std::function<void(int64_t, int64_t)> progress; // null: the caller set none
+    };
+
+    plat::App           &app;
+    // UI thread only: a handful in flight, so a plain vector.
+    RequestId            nextId = 1;
+    std::vector<Pending> pending;
 
     // Shared with the workers. The queue is ours, not the pool's, so that
     // cancel() can take a request out: a worker takes the oldest per task.
     std::mutex       mutex;
-    std::deque<Job>  queue;
+    std::vector<Job> queue;
     bool             stopping = false;
     base::WorkerPool pool;
 
-    void runNext();
-    void run(Job &job);
-    void deliver(RequestId id, Response resp);
-    void report(RequestId id, int64_t received, int64_t total);
+    Pending *find(RequestId id);
+    void     forget(Pending *p);
+    void     runNext();
+    void     run(Job &job);
+    void     deliver(RequestId id, Response resp);
+    void     report(RequestId id, int64_t received, int64_t total);
 };
 
 namespace detail {
@@ -236,6 +242,19 @@ std::string_view Response::header(std::string_view name) const {
     return detail::headerValue(headers, name);
 }
 
+Client::Impl::Pending *Client::Impl::find(RequestId id) {
+    for (auto &p : pending)
+        if (p.id == id)
+            return &p;
+    return nullptr;
+}
+
+void Client::Impl::forget(Pending *p) {
+    if (p != &pending.back())
+        *p = std::move(pending.back());
+    pending.pop_back();
+}
+
 void Client::Impl::runNext() {
     Job job;
     {
@@ -243,7 +262,7 @@ void Client::Impl::runNext() {
         if (stopping || queue.empty())
             return; // cancelled meanwhile: its task has nothing to do
         job = std::move(queue.front());
-        queue.pop_front();
+        queue.erase(queue.begin());
     }
     run(job);
 }
@@ -352,10 +371,10 @@ void Client::Impl::report(RequestId id, int64_t received, int64_t total) {
         auto self = weak.lock();
         if (!self)
             return;
-        auto it = self->progress.find(id);
-        if (it == self->progress.end())
-            return;           // cancelled or answered
-        auto fn = it->second; // it may cancel itself
+        Pending *p = self->find(id);
+        if (!p || !p->progress)
+            return;            // cancelled or answered
+        auto fn = p->progress; // it may cancel itself
         fn(received, total);
     });
 }
@@ -371,13 +390,11 @@ void Client::Impl::deliver(RequestId id, Response resp) {
         auto self = weak.lock();
         if (!self)
             return;
-        auto it = self->done.find(id);
-        if (it == self->done.end())
+        Pending *p = self->find(id);
+        if (!p)
             return; // cancelled
-        auto fn = std::move(it->second);
-        self->done.erase(it);
-        self->flags.erase(id);
-        self->progress.erase(id);
+        auto fn = std::move(p->done);
+        self->forget(p);
         if (fn)
             fn(std::move(resp));
     });
@@ -400,27 +417,24 @@ Client::~Client() {
     {
         std::lock_guard<std::mutex> lock(_impl->mutex);
         _impl->stopping = true;
-        for (auto &[id, flag] : _impl->flags)
-            flag->set();
+        for (auto &p : _impl->pending)
+            p.flag->set();
         _impl->queue.clear();
     }
     _impl->pool.stop(); // joins the workers
-    _impl->done.clear();
-    _impl->progress.clear();
+    _impl->pending.clear();
     if (g_liveClients.fetch_sub(1, std::memory_order_acq_rel) == 1)
         detail::closeIdleConnections();
 }
 
 RequestId Client::send(Request req, std::function<void(Response)> done) {
-    Impl           &d    = *_impl;
-    const RequestId id   = d.nextId++;
-    auto            flag = std::make_shared<detail::Cancel>();
-    d.done.emplace(id, std::move(done));
-    d.flags.emplace(id, flag);
-    // The callback stays on the UI thread; the worker only knows it exists.
-    const bool progress = bool(req.onProgress);
-    if (progress)
-        d.progress.emplace(id, std::move(req.onProgress));
+    Impl           &d        = *_impl;
+    const RequestId id       = d.nextId++;
+    auto            flag     = std::make_shared<detail::Cancel>();
+    // The callbacks stay on the UI thread; the worker only knows whether
+    // there is a progress one.
+    const bool      progress = bool(req.onProgress);
+    d.pending.push_back({id, std::move(done), flag, std::move(req.onProgress)});
     req.onProgress = nullptr;
     {
         std::lock_guard<std::mutex> lock(d.mutex);
@@ -432,20 +446,21 @@ RequestId Client::send(Request req, std::function<void(Response)> done) {
 }
 
 void Client::cancel(RequestId id) {
-    Impl &d = *_impl;
-    if (auto it = d.flags.find(id); it != d.flags.end()) {
-        it->second->set();
-        d.flags.erase(it);
-        // Still queued: it goes now (run() would skip it anyway).
-        std::lock_guard<std::mutex> lock(d.mutex);
-        for (auto q = d.queue.begin(); q != d.queue.end(); ++q)
-            if (q->id == id) {
-                d.queue.erase(q);
-                break;
-            }
-    }
-    d.done.erase(id);
-    d.progress.erase(id);
+    Impl          &d = *_impl;
+    Impl::Pending *p = d.find(id);
+    if (!p)
+        return;
+    p->flag->set();
+    // Destroyed after the bookkeeping: a callback's captures may cancel more.
+    Impl::Pending gone = std::move(*p);
+    d.forget(p);
+    // Still queued: it goes now (run() would skip it anyway).
+    std::lock_guard<std::mutex> lock(d.mutex);
+    for (auto q = d.queue.begin(); q != d.queue.end(); ++q)
+        if (q->id == id) {
+            d.queue.erase(q);
+            break;
+        }
 }
 
 } // namespace net

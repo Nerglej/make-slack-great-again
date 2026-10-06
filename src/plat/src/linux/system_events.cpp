@@ -272,11 +272,7 @@ void SystemMonitor::prepareForSleep(bool sleeping) {
 }
 
 void SystemMonitor::postEmit(Event e) {
-    std::weak_ptr<int> weak = _alive;
-    _app.post([weak, &app = _app, e] {
-        if (!weak.expired())
-            app.emit(e);
-    });
+    linux_services::postEmit(_app, _alive, std::move(e));
 }
 
 } // namespace plat::linux_services

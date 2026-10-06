@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace plat::audio {
@@ -178,8 +179,9 @@ private:
 // ── Capture ─────────────────────────────────────────────────────────────────
 
 // Core Audio's WAV writer may add chunks (FLLR padding) before "data"; hand
-// out the same plain 44-byte-header file as the other platforms.
-std::string normalizedWav(const std::string &file) {
+// out the same plain 44-byte-header file as the other platforms, rewritten
+// in place (the audio moves down over the extra chunks, no second copy).
+std::string normalizedWav(std::string file) {
     auto le32 = [&](size_t at) {
         const auto *p = reinterpret_cast<const unsigned char *>(file.data() + at);
         return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
@@ -191,11 +193,16 @@ std::string normalizedWav(const std::string &file) {
         const uint32_t len = le32(pos + 4);
         if (file.compare(pos, 4, "data") == 0) {
             const size_t n = std::min<size_t>(len, file.size() - pos - 8) & ~size_t(1);
-            return wavFromPcm16(
-                std::string_view(file).substr(pos + 8, n),
-                Recorder::kSampleRate,
-                Recorder::kChannels
-            );
+            if (pos + 8 < kWavHeader) // no room for the header: not a file we wrote
+                return wavFromPcm16(
+                    std::string_view(file).substr(pos + 8, n),
+                    Recorder::kSampleRate,
+                    Recorder::kChannels
+                );
+            file.resize(pos + 8 + n);
+            file.erase(0, pos + 8 - kWavHeader);
+            wavInPlace(file, Recorder::kSampleRate, Recorder::kChannels);
+            return file;
         }
         pos += 8 + size_t(len) + (len & 1);
     }
@@ -264,16 +271,17 @@ public:
         std::string file;
         bool        ok = false;
         if (FILE *f = std::fopen(_path.c_str(), "rb")) {
-            char   buf[16384];
-            size_t n;
-            while ((n = std::fread(buf, 1, sizeof buf, f)) > 0)
-                file.append(buf, n);
+            // Sized up front, read straight into place.
+            struct stat st{};
+            if (::fstat(::fileno(f), &st) == 0 && st.st_size > 0)
+                file.resize(size_t(st.st_size));
+            file.resize(std::fread(file.data(), 1, file.size(), f));
             ok = !std::ferror(f);
             std::fclose(f);
         }
         teardown();
         if (ok)
-            post(gen, [wav = normalizedWav(file)](MacRecorder &r) mutable {
+            post(gen, [wav = normalizedWav(std::move(file))](MacRecorder &r) mutable {
                 if (r.onFinished)
                     r.onFinished(std::move(wav));
             });

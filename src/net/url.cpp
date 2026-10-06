@@ -6,10 +6,6 @@ namespace net {
 
 namespace {
 
-int defaultPort(std::string_view scheme) {
-    return scheme == "https" || scheme == "wss" ? 443 : 80;
-}
-
 // "/a/b/../c/./d" → "/a/c/d" (RFC 3986 remove_dot_segments, path only).
 std::string removeDots(std::string_view path) {
     std::vector<std::string_view> segs;
@@ -76,7 +72,7 @@ bool Url::parse(std::string_view u) {
     }
     if (host.empty())
         return false;
-    port = defaultPort(scheme);
+    port = defaultPort();
     if (!portStr.empty()) {
         int p = 0;
         for (char ch : portStr) {
@@ -94,17 +90,15 @@ bool Url::parse(std::string_view u) {
     return true;
 }
 
+std::string Url::authority() const {
+    std::string out = host.find(':') != std::string::npos ? str::concat({"[", host, "]"}) : host;
+    if (port != defaultPort())
+        out += str::concat({":", str::number(port)});
+    return out;
+}
+
 std::string Url::str() const {
-    std::string out = scheme + "://";
-    if (host.find(':') != std::string::npos)
-        out += '[' + host + ']';
-    else
-        out += host;
-    if (port != defaultPort(scheme)) {
-        out += ':';
-        out += str::number(port);
-    }
-    return out + target;
+    return str::concat({scheme, "://", authority(), target});
 }
 
 std::string Url::resolve(std::string_view ref) const {

@@ -1,5 +1,6 @@
 #include "linux/notifications.h"
 
+#include "core/image_util.h"
 #include "core/strings.h"
 
 #include <algorithm>
@@ -161,7 +162,7 @@ void Notifier::send(uint64_t id, const Notification &n) {
     w.u32(0);  // replaces_id
     w.str(""); // app_icon: the desktop-entry hint names our icon
     w.str(n.title);
-    w.str(_markup ? core::escapeMarkup(sanitizeUtf8(n.body)) : n.body);
+    w.str(_markup ? core::escapeMarkup(n.body) : n.body); // str() sanitizes either way
     w.array("s", [&](MsgWriter &a) {
         // "default" is the body click; servers do not draw it as a button.
         a.str("default");
@@ -184,14 +185,11 @@ void Notifier::send(uint64_t id, const Notification &n) {
             std::vector<uint8_t> rgba(size_t(img.width) * img.height * 4);
             uint8_t             *o = rgba.data();
             for (size_t i = 0; i < size_t(img.width) * img.height; ++i) {
-                const uint32_t px = img.pixels[i], a = px >> 24;
-                auto           straight = [a](uint32_t c) -> uint8_t {
-                    return a ? uint8_t(std::min<uint32_t>(255, (c * 255 + a / 2) / a)) : 0;
-                };
-                *o++ = straight((px >> 16) & 0xff);
-                *o++ = straight((px >> 8) & 0xff);
-                *o++ = straight(px & 0xff);
-                *o++ = uint8_t(a);
+                const uint32_t px = core::unpremultiply(img.pixels[i]);
+                *o++              = uint8_t(px >> 16);
+                *o++              = uint8_t(px >> 8);
+                *o++              = uint8_t(px);
+                *o++              = uint8_t(px >> 24);
             }
             h.entry("image-data", "(iiibiiay)", [&](MsgWriter &v) {
                 v.structure([&](MsgWriter &s) {
@@ -302,11 +300,7 @@ void Notifier::forget(uint64_t id) {
 }
 
 void Notifier::postEmit(Event e) {
-    std::weak_ptr<int> weak = _alive;
-    _app.post([weak, &app = _app, e] {
-        if (!weak.expired())
-            app.emit(e);
-    });
+    linux_services::postEmit(_app, _alive, std::move(e));
 }
 
 } // namespace plat::linux_services

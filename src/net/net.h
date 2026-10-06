@@ -139,11 +139,14 @@ struct Url {
     int         port = 0;
     std::string target; // path + query, "/" when empty; never a fragment
     bool        secure() const { return scheme == "https" || scheme == "wss"; }
+    int         defaultPort() const { return secure() ? 443 : 80; }
     // Parses an absolute URL; false when it is not one of the four schemes.
     bool        parse(std::string_view url);
     // An absolute or relative reference (a Location header) against this URL.
     std::string resolve(std::string_view ref) const;
-    std::string str() const; // "scheme://host[:port]target"
+    std::string str() const;       // "scheme://host[:port]target"
+    std::string authority() const; // "host[:port]" (the Host header): IPv6 in brackets,
+                                   // the port only when not the scheme's default
 };
 
 // RFC 3986 unreserved characters pass, everything else becomes %XX; and

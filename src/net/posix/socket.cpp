@@ -391,44 +391,60 @@ bool Stream::open(const Url &url, const Waiter &w, std::string *error) {
     }
 }
 
-long Stream::tryRead(char *buf, size_t n) {
-    if (_tls)
-        return tlsRead(_tls, buf, n, &_want, &_error);
-    for (;;) {
-        const ssize_t r = ::recv(_fd, buf, n, 0);
-        if (r >= 0)
-            return long(r);
-        if (errno == EINTR)
-            continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            _want = POLLIN;
-            return Again;
-        }
-        _error = sysError("connect", errno);
-        return Fail;
-    }
-}
-
-long Stream::tryWrite(const char *buf, size_t n) {
-    if (_tls)
-        return tlsWrite(_tls, buf, n, &_want, &_error);
+long sockSend(int fd, const void *buf, size_t n, int *err) {
     for (;;) {
 #ifdef MSG_NOSIGNAL
-        const ssize_t r = ::send(_fd, buf, n, MSG_NOSIGNAL); // a closed peer must not SIGPIPE us
+        const ssize_t r = ::send(fd, buf, n, MSG_NOSIGNAL); // a closed peer must not SIGPIPE us
 #else
-        const ssize_t r = ::send(_fd, buf, n, 0);
+        const ssize_t r = ::send(fd, buf, n, 0);
 #endif
         if (r >= 0)
             return long(r);
         if (errno == EINTR)
             continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            _want = POLLOUT;
-            return Again;
-        }
-        _error = sysError("connect", errno);
-        return Fail;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return Stream::Again;
+        *err = errno;
+        return Stream::Fail;
     }
+}
+
+long sockRecv(int fd, void *buf, size_t n, int *err) {
+    for (;;) {
+        const ssize_t r = ::recv(fd, buf, n, 0);
+        if (r >= 0)
+            return long(r);
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return Stream::Again;
+        *err = errno;
+        return Stream::Fail;
+    }
+}
+
+long Stream::tryRead(char *buf, size_t n) {
+    if (_tls)
+        return tlsRead(_tls, buf, n, &_want, &_error);
+    int        err = 0;
+    const long r   = sockRecv(_fd, buf, n, &err);
+    if (r == Again)
+        _want = POLLIN;
+    else if (r == Fail)
+        _error = sysError("connect", err);
+    return r;
+}
+
+long Stream::tryWrite(const char *buf, size_t n) {
+    if (_tls)
+        return tlsWrite(_tls, buf, n, &_want, &_error);
+    int        err = 0;
+    const long r   = sockSend(_fd, buf, n, &err);
+    if (r == Again)
+        _want = POLLOUT;
+    else if (r == Fail)
+        _error = sysError("connect", err);
+    return r;
 }
 
 bool Stream::pending() const {

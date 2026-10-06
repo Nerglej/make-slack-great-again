@@ -21,12 +21,36 @@ struct WebSocket::Impl : std::enable_shared_from_this<WebSocket::Impl> {
     std::unique_ptr<detail::WsConn> conn;
     base::Thread                    reader;
 
-    void post(uint64_t ep, std::function<void(WebSocket &)> fn) {
+    // Every reader event goes through this one closure type: a single heap
+    // allocation per message and a single handler body.
+    enum Kind : uint8_t { Opened, Text, Binary, Closed };
+    void post(uint64_t ep, Kind kind, int code = 0, std::string data = {}) {
         std::weak_ptr<Impl> weak = weak_from_this();
-        app.post([weak, ep, fn = std::move(fn)] {
+        app.post([weak, ep, kind, code, data = std::move(data)]() mutable {
             auto self = weak.lock();
-            if (self && self->owner && self->epoch == ep)
-                fn(*self->owner);
+            if (!self || !self->owner || self->epoch != ep)
+                return;
+            WebSocket &ws = *self->owner;
+            switch (kind) {
+            case Opened:
+                self->open = true;
+                if (auto f = ws.onOpen)
+                    f();
+                break;
+            case Text:
+                if (auto f = ws.onText)
+                    f(std::move(data));
+                break;
+            case Binary:
+                if (auto f = ws.onBinary)
+                    f(std::move(data));
+                break;
+            case Closed:
+                self->open = false;
+                if (auto f = ws.onClosed)
+                    f(code, std::move(data));
+                break;
+            }
         });
     }
     void stop() {
@@ -57,10 +81,7 @@ void WebSocket::open(std::string url, std::vector<Header> headers, int timeoutMs
     const uint64_t ep = ++d.epoch;
     Url            u;
     if (!u.parse(url) || (u.scheme != "ws" && u.scheme != "wss")) {
-        d.post(ep, [](WebSocket &ws) {
-            if (auto f = ws.onClosed)
-                f(0, "url");
-        });
+        d.post(ep, Impl::Closed, 0, "url");
         return;
     }
     {
@@ -72,39 +93,19 @@ void WebSocket::open(std::string url, std::vector<Header> headers, int timeoutMs
     auto read = [raw, conn, ep, u = std::move(u), headers = std::move(headers), timeoutMs] {
         std::string err;
         if (!conn->connect(u, headers, timeoutMs, &err)) {
-            raw->post(ep, [err](WebSocket &ws) {
-                if (auto f = ws.onClosed)
-                    f(0, err);
-            });
+            raw->post(ep, Impl::Closed, 0, std::move(err));
             return;
         }
-        raw->post(ep, [raw](WebSocket &ws) {
-            raw->open = true;
-            if (auto f = ws.onOpen)
-                f();
-        });
+        raw->post(ep, Impl::Opened);
         detail::WsMessage msg;
         while (conn->recv(msg)) {
             if (msg.kind == detail::WsMessage::Text)
-                raw->post(ep, [data = std::move(msg.data)](WebSocket &ws) mutable {
-                    if (auto f = ws.onText)
-                        f(std::move(data));
-                });
+                raw->post(ep, Impl::Text, 0, std::move(msg.data));
             else if (msg.kind == detail::WsMessage::Binary)
-                raw->post(ep, [data = std::move(msg.data)](WebSocket &ws) mutable {
-                    if (auto f = ws.onBinary)
-                        f(std::move(data));
-                });
+                raw->post(ep, Impl::Binary, 0, std::move(msg.data));
             msg = detail::WsMessage();
         }
-        raw->post(
-            ep,
-            [raw, code = msg.code ? msg.code : 1006, reason = std::move(msg.data)](WebSocket &ws) {
-                raw->open = false;
-                if (auto f = ws.onClosed)
-                    f(code, reason);
-            }
-        );
+        raw->post(ep, Impl::Closed, msg.code ? msg.code : 1006, std::move(msg.data));
     };
     d.reader.start(std::move(read), detail::kThreadStack);
 }

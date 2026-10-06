@@ -204,15 +204,6 @@ constexpr int kBufferBytes = Recorder::kSampleRate * Recorder::kChannels * 2 * k
 constexpr int kPollMs      = 50;   // also the onLevel cadence
 constexpr int kFirstDataMs = 4000; // device open but silent this long = broken
 
-float peakOf(const char *p, DWORD bytes) {
-    int peak = 0;
-    for (DWORD i = 0; i + 1 < bytes; i += 2) {
-        const auto s = int16_t(uint16_t(uint8_t(p[i]) | uint8_t(p[i + 1]) << 8));
-        peak         = std::max(peak, std::abs(int(s)));
-    }
-    return std::min(1.0f, float(peak) / 32767.0f);
-}
-
 class WinRecorder final : public Recorder {
 public:
     explicit WinRecorder(App &app) : _app(app) {}
@@ -259,7 +250,7 @@ public:
             post([f = openError(r)](WinRecorder &rec) { rec.fail(f); });
             return;
         }
-        _pcm.clear();
+        _pcm.assign(kWavHeader, '\0'); // room for the WAV header
         _next      = 0;
         _gotData   = false;
         _recording = true;
@@ -275,9 +266,10 @@ public:
         waveInReset(_in);
         collect(false);
         close();
-        std::string pcm;
-        pcm.swap(_pcm);
-        post([wav = wavFromPcm16(pcm, kSampleRate, kChannels)](WinRecorder &r) mutable {
+        std::string wav;
+        wav.swap(_pcm);
+        wavInPlace(wav, kSampleRate, kChannels);
+        post([wav = std::move(wav)](WinRecorder &r) mutable {
             if (r.onFinished)
                 r.onFinished(std::move(wav));
         });
@@ -310,7 +302,7 @@ private:
     void poll() {
         const float peak = collect(true);
         if (!_gotData) {
-            if (_pcm.empty()) {
+            if (_pcm.size() <= kWavHeader) {
                 if (GetTickCount64() - _startTick > kFirstDataMs) {
                     cancel();
                     fail({Error::NoAudio, {}});
@@ -388,7 +380,7 @@ private:
     HWAVEIN               _in    = nullptr;
     WAVEHDR               _hdr[kBuffers]{};
     char                  _data[kBuffers][kBufferBytes]{};
-    std::string           _pcm;
+    std::string           _pcm; // kWavHeader bytes of room, then the take
     TimerId               _poll       = 0;
     ULONGLONG             _startTick  = 0;
     uint64_t              _generation = 0;

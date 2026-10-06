@@ -132,7 +132,7 @@ bool wanted(const std::vector<std::string> &props, std::string_view name) {
     return props.empty() || std::find(props.begin(), props.end(), name) != props.end();
 }
 
-void replyMessage(Bus &bus, DBusMessage *call, const std::function<void(MsgWriter &)> &fill) {
+void replyMessage(Bus &bus, DBusMessage *call, Fill fill) {
     if (dbus_message_get_no_reply(call))
         return;
     MessageRef r(dbus_message_new_method_return(call));
@@ -209,14 +209,8 @@ void SniTray::queryHost() {
 }
 
 void SniTray::postEmit(Event e) {
-    e.tray                  = this;
-    std::weak_ptr<int> weak = _alive;
-    // Deferred: the handler may destroy this tray, and with it the connection
-    // that is dispatching the call right now.
-    _app.post([weak, &app = _app, e] {
-        if (!weak.expired())
-            app.emit(e);
-    });
+    e.tray = this;
+    linux_services::postEmit(_app, _alive, std::move(e));
 }
 
 // ── icon / tooltip ──────────────────────────────────────────────────────────

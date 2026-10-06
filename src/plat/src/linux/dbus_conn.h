@@ -13,7 +13,6 @@
 
 #include <functional>
 #include <map>
-#include <set>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -32,9 +31,31 @@ std::string sessionBusAddress();
 // else the well-known socket.
 std::string systemBusAddress();
 
+// Emits e on a later loop turn, unless `alive` has expired by then: a D-Bus
+// handler may destroy its owner, and with it the connection that is
+// dispatching the call right now.
+void postEmit(BackendApp &app, const std::shared_ptr<int> &alive, Event e);
+
 // file:// URI <-> local path: core/transfer.h.
 using core::fileUri;
 using core::pathFromFileUri;
+
+class MsgWriter;
+
+// What fills a container: a non-owning view of a callable (usually a lambda
+// at the call site), called before the call that took it returns. Unlike a
+// std::function it never allocates and adds no manager per lambda.
+class Fill {
+public:
+    template <class F>
+    Fill(const F &f)
+        : _obj(&f), _call([](const void *o, MsgWriter &w) { (*static_cast<const F *>(o))(w); }) {}
+    void operator()(MsgWriter &w) const { _call(_obj, w); }
+
+private:
+    const void *_obj;
+    void (*_call)(const void *, MsgWriter &);
+};
 
 // Appends arguments to a message. Containers take a callback that fills them.
 class MsgWriter {
@@ -53,23 +74,14 @@ public:
     void i32(int32_t v) { dbus_message_iter_append_basic(&_it, DBUS_TYPE_INT32, &v); }
     void u32(uint32_t v) { dbus_message_iter_append_basic(&_it, DBUS_TYPE_UINT32, &v); }
     void i64(int64_t v) { dbus_message_iter_append_basic(&_it, DBUS_TYPE_INT64, &v); }
-    void f64(double v) { dbus_message_iter_append_basic(&_it, DBUS_TYPE_DOUBLE, &v); }
     void bytes(const uint8_t *data, size_t n); // "ay"
 
-    void array(const char *elemSig, const std::function<void(MsgWriter &)> &fill) {
-        container(DBUS_TYPE_ARRAY, elemSig, fill);
-    }
-    void structure(const std::function<void(MsgWriter &)> &fill) {
-        container(DBUS_TYPE_STRUCT, nullptr, fill);
-    }
-    void dictEntry(const std::function<void(MsgWriter &)> &fill) {
-        container(DBUS_TYPE_DICT_ENTRY, nullptr, fill);
-    }
-    void variant(const char *sig, const std::function<void(MsgWriter &)> &fill) {
-        container(DBUS_TYPE_VARIANT, sig, fill);
-    }
+    void array(const char *elemSig, Fill fill) { container(DBUS_TYPE_ARRAY, elemSig, fill); }
+    void structure(Fill fill) { container(DBUS_TYPE_STRUCT, nullptr, fill); }
+    void dictEntry(Fill fill) { container(DBUS_TYPE_DICT_ENTRY, nullptr, fill); }
+    void variant(const char *sig, Fill fill) { container(DBUS_TYPE_VARIANT, sig, fill); }
     // One "{sv}" entry of an a{sv} dictionary.
-    void entry(const char *key, const char *sig, const std::function<void(MsgWriter &)> &fill) {
+    void entry(const char *key, const char *sig, Fill fill) {
         dictEntry([&](MsgWriter &e) {
             e.str(key);
             e.variant(sig, fill);
@@ -84,7 +96,7 @@ public:
 
 private:
     MsgWriter() = default;
-    void container(int type, const char *sig, const std::function<void(MsgWriter &)> &fill);
+    void container(int type, const char *sig, Fill fill);
 
     DBusMessageIter _it;
 };
@@ -102,12 +114,10 @@ public:
     bool      boolean(bool *out);
     bool      i32(int32_t *out);
     bool      u32(uint32_t *out);
-    bool      i64(int64_t *out);
     bool      f64(double *out);
     bool      unixFd(int *out); // "h": a new fd the caller owns
     // Any integer type, widened (portal values have been u and i over time).
     bool      integer(int64_t *out);
-    bool      bytes(std::vector<uint8_t> *out);       // "ay"
     bool      strings(std::vector<std::string> *out); // "as"
     // Enter the container at the cursor (array, struct, dict entry, variant)
     // and step past it in this reader. The child is empty on a mismatch.
@@ -231,21 +241,29 @@ private:
     void               syncWatch(DBusWatch *w);
     void               syncTimeout(DBusTimeout *t);
 
-    BackendApp                      &_app;
-    std::string                      _address;
-    DBusConnection                  *_conn  = nullptr;
-    bool                             _ready = false;
-    std::string                      _unique;
-    std::shared_ptr<Bus *>           _alive; // posted closures check it
-    bool                             _dispatchQueued = false;
-    bool                             _dispatching    = false;
-    bool                             _lostPending    = false;
-    std::set<DBusPendingCall *>      _pending; // in flight
-    std::map<DBusWatch *, uint64_t>  _watches;
-    std::map<DBusTimeout *, TimerId> _timeouts;
-    std::map<std::string, MethodFn>  _objects;
-    std::map<uint64_t, Sub>          _subs;
-    uint64_t                         _nextSub = 1;
+    // A libdbus watch or timeout and our loop id for it (0 while disabled):
+    // a few of each, so plain vectors.
+    struct Slot {
+        const void *key;
+        uint64_t    id;
+    };
+    static Slot *slot(std::vector<Slot> &v, const void *key);
+
+    BackendApp                     &_app;
+    std::string                     _address;
+    DBusConnection                 *_conn  = nullptr;
+    bool                            _ready = false;
+    std::string                     _unique;
+    std::shared_ptr<Bus *>          _alive; // posted closures check it
+    bool                            _dispatchQueued = false;
+    bool                            _dispatching    = false;
+    bool                            _handling       = false; // in dbus_{watch,timeout}_handle
+    bool                            _lostPending    = false;
+    std::vector<DBusPendingCall *>  _pending; // in flight
+    std::vector<Slot>               _watches, _timeouts;
+    std::map<std::string, MethodFn> _objects;
+    std::map<uint64_t, Sub>         _subs;
+    uint64_t                        _nextSub = 1;
     std::map<std::string, std::vector<std::function<void(const std::string &)>>> _names;
     TimerId _reconnectTimer = 0;
     int     _backoffMs      = 1000;

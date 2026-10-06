@@ -40,12 +40,18 @@ void PosixLoop::wakeUp() {
 
 uint64_t PosixLoop::watch(int fd, uint32_t events, std::function<void(uint32_t)> fn) {
     const uint64_t id = _nextWatch++;
-    _watches.emplace(id, Watch{fd, events, std::move(fn)});
+    _watches.push_back(Watch{id, fd, events, std::move(fn)});
     return id;
 }
 
 void PosixLoop::unwatch(uint64_t id) {
-    _watches.erase(id);
+    for (size_t i = 0; i < _watches.size(); ++i)
+        if (_watches[i].id == id) {
+            // Destroyed after the erase: the closure's destructor may unwatch.
+            const auto fn = std::move(_watches[i].fn);
+            _watches.erase(_watches.begin() + ptrdiff_t(i));
+            return;
+        }
 }
 
 void PosixLoop::iterate(int timeoutMs) {
@@ -62,14 +68,14 @@ void PosixLoop::iterate(int timeoutMs) {
     pfds.clear();
     ids.clear();
     pfds.push_back({_wakeRead, POLLIN, 0});
-    for (const auto &[id, w] : _watches) {
+    for (const auto &w : _watches) {
         short ev = 0;
         if (w.events & FdRead)
             ev |= POLLIN;
         if (w.events & FdWrite)
             ev |= POLLOUT;
         pfds.push_back({w.fd, ev, 0});
-        ids.push_back(id);
+        ids.push_back(w.id);
     }
 
     const int timeout = mayBlock ? core.clampTimeout(timeoutMs) : 0;
@@ -90,15 +96,18 @@ void PosixLoop::iterate(int timeoutMs) {
         for (size_t i = 1; i < pfds.size(); ++i) {
             if (!pfds[i].revents)
                 continue;
-            auto it = _watches.find(ids[i - 1]);
-            if (it == _watches.end())
+            const Watch *w = nullptr;
+            for (const auto &x : _watches)
+                if (x.id == ids[i - 1])
+                    w = &x;
+            if (!w)
                 continue; // unwatched by an earlier callback
             uint32_t ready = 0;
             if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR))
                 ready |= FdRead;
             if (pfds[i].revents & POLLOUT)
                 ready |= FdWrite;
-            auto fn = it->second.fn; // copy: the callback may unwatch itself
+            auto fn = w->fn; // copy: the callback may unwatch itself
             fn(ready);
         }
     }

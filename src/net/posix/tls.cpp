@@ -368,38 +368,19 @@ int onVerify(void *ctx, mbedtls_x509_crt *, int, uint32_t *) {
     return 0; // the flags stay as mbedTLS found them
 }
 
+// mbedTLS's I/O callbacks: a byte count, WANT_* when it would block.
+int bioResult(long r, int want) {
+    return r >= 0 ? int(r) : r == Stream::Again ? want : MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+}
+
 int bioSend(void *ctx, const unsigned char *buf, size_t len) {
     auto *c = static_cast<TlsConn *>(ctx);
-    for (;;) {
-#ifdef MSG_NOSIGNAL
-        const ssize_t r = ::send(c->fd, buf, len, MSG_NOSIGNAL);
-#else
-        const ssize_t r = ::send(c->fd, buf, len, 0);
-#endif
-        if (r >= 0)
-            return int(r);
-        if (errno == EINTR)
-            continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return MBEDTLS_ERR_SSL_WANT_WRITE;
-        c->sysErr = errno;
-        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
-    }
+    return bioResult(sockSend(c->fd, buf, len, &c->sysErr), MBEDTLS_ERR_SSL_WANT_WRITE);
 }
 
 int bioRecv(void *ctx, unsigned char *buf, size_t len) {
     auto *c = static_cast<TlsConn *>(ctx);
-    for (;;) {
-        const ssize_t r = ::recv(c->fd, buf, len, 0);
-        if (r >= 0)
-            return int(r);
-        if (errno == EINTR)
-            continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return MBEDTLS_ERR_SSL_WANT_READ;
-        c->sysErr = errno;
-        return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
-    }
+    return bioResult(sockRecv(c->fd, buf, len, &c->sysErr), MBEDTLS_ERR_SSL_WANT_READ);
 }
 
 // Our short reasons for mbedTLS codes (MBEDTLS_ERROR_C, its string table, is

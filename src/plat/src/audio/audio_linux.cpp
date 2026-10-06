@@ -855,15 +855,6 @@ const char *captureArgs(int i, std::vector<std::string> *args) {
     }
 }
 
-// Peak |sample| of the s16le samples in [from, to), 0..1.
-float peakOf(const std::string &buf, size_t from, size_t to) {
-    int                  peak = 0;
-    const unsigned char *p    = reinterpret_cast<const unsigned char *>(buf.data());
-    for (size_t i = from; i + 1 < to; i += 2)
-        peak = std::max(peak, std::abs(int(int16_t(uint16_t(p[i] | p[i + 1] << 8)))));
-    return std::min(1.0f, float(peak) / 32767.0f);
-}
-
 class LinuxRecorder;
 
 struct RecorderShared {
@@ -1006,7 +997,7 @@ private:
         // of audio): each burst is cut into 50 ms windows played out one by
         // one on a steady clock, at most ~200 ms behind.
         for (; _levelFrom + kLevelWindowBytes <= _pcm.size(); _levelFrom += kLevelWindowBytes)
-            _levels.push_back(peakOf(_pcm, _levelFrom, _levelFrom + kLevelWindowBytes));
+            _levels.push_back(peakOf(_pcm.data() + _levelFrom, kLevelWindowBytes));
         while (_levels.size() > 4)
             _levels.erase(_levels.begin());
     }
@@ -1015,10 +1006,9 @@ private:
     // False when this recording is over.
     bool exited() {
         if (_stopping) {
-            _pcm.resize(_pcm.size() & ~size_t(1)); // whole samples only
-            post(
-                RecEv::Finished, 0, wavFromPcm16(_pcm, Recorder::kSampleRate, Recorder::kChannels)
-            );
+            _pcm.resize(_pcm.size() & ~size_t(1)); // whole samples only (the header is even)
+            wavInPlace(_pcm, Recorder::kSampleRate, Recorder::kChannels);
+            post(RecEv::Finished, 0, std::move(_pcm));
             return false;
         }
         // Before any audio this is a helper that can't reach its sound server;
@@ -1037,9 +1027,10 @@ private:
 
     std::shared_ptr<RecorderShared> _s;
     Child                           _c;
-    std::string                     _pcm, _stderr;
+    std::string                     _pcm = std::string(kWavHeader, '\0'); // WAV header room first
+    std::string                     _stderr;
     std::vector<float>              _levels; // pending onLevel values, oldest first
-    size_t                          _levelFrom = 0;
+    size_t                          _levelFrom = kWavHeader;
     Clock::time_point               _firstDataAt, _graceAt, _levelAt;
     int                             _attempt  = 0;
     bool                            _gotData  = false;

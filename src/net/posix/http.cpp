@@ -148,18 +148,23 @@ struct Body {
                 return false;
         }
     }
-    // A Content-Length body into *out (empty): what is buffered, then read
-    // straight into its place, with no staging copy.
-    bool exact(size_t n, std::string *out) {
+    // n body bytes appended to *out: what is buffered, then read straight
+    // into its place, with no staging copy (a Content-Length body or a chunk).
+    bool take(size_t n, std::string *out) {
         const size_t have = std::min(n, buf->size() - pos);
-        out->resize(n);
-        std::memcpy(out->data(), buf->data() + pos, have);
+        if (out->empty())
+            out->reserve(n); // later chunks grow it geometrically
+        out->append(*buf, pos, have);
         pos += have;
-        size_t got = have;
-        if (got)
+        size_t got = out->size();
+        if (have)
             report(got);
-        while (got < n) {
-            const long r = s.read(&(*out)[got], n - got, w, error);
+        if (have == n)
+            return true;
+        const size_t end = got + (n - have);
+        out->resize(end);
+        while (got < end) {
+            const long r = s.read(&(*out)[got], end - got, w, error);
             if (r <= 0) {
                 if (r == 0)
                     *error = "protocol: truncated body";
@@ -168,18 +173,6 @@ struct Body {
             }
             got += size_t(r);
             report(got);
-        }
-        return true;
-    }
-    bool take(size_t n, std::string *out) {
-        while (n > 0) {
-            if (pos == buf->size() && !more())
-                return false;
-            const size_t k = std::min(n, buf->size() - pos);
-            out->append(*buf, pos, k);
-            pos += k;
-            n -= k;
-            report(out->size());
         }
         return true;
     }
@@ -295,7 +288,7 @@ Outcome exchange(
             *error = "protocol: body too large";
             return Outcome::Failed;
         }
-        if (!body.exact(size_t(n), &resp.body))
+        if (!body.take(size_t(n), &resp.body))
             return Outcome::Failed;
     } else {
         // Neither: the body runs until the server closes.
@@ -327,7 +320,7 @@ std::string requestHead(const Url &url, const Request &req) {
         length = length || iequals(h.name, "content-length");
     }
     if (!host)
-        head += str::concat({"Host: ", hostHeader(url), "\r\n"});
+        head += str::concat({"Host: ", url.authority(), "\r\n"});
     if (!conn)
         head += "Connection: keep-alive\r\n";
     // Servers answer 411 to a body-less POST without a length.
@@ -369,15 +362,6 @@ long readHead(
         }
         *gotAny = true;
     }
-}
-
-std::string hostHeader(const Url &url) {
-    std::string host =
-        url.host.find(':') != std::string::npos ? str::concat({"[", url.host, "]"}) : url.host;
-    const int def = url.secure() ? 443 : 80;
-    if (url.port != def)
-        host += str::concat({":", str::number(url.port)});
-    return host;
 }
 
 void perform(

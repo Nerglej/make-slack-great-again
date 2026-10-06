@@ -6,7 +6,6 @@
 
 #include "core/loop_core.h"
 
-#include <map>
 #include <vector>
 
 #include <poll.h>
@@ -41,16 +40,17 @@ public:
 
 private:
     struct Watch {
+        uint64_t                      id;
         int                           fd;
         uint32_t                      events;
         std::function<void(uint32_t)> fn;
     };
-    std::map<uint64_t, Watch> _watches;
-    uint64_t                  _nextWatch = 1;
-    std::vector<pollfd>       _pfds; // iterate()'s scratch
-    std::vector<uint64_t>     _ids;
-    int                       _wakeRead = -1, _wakeWrite = -1;
-    bool                      _quit = false;
+    std::vector<Watch>    _watches; // a few, in id order
+    uint64_t              _nextWatch = 1;
+    std::vector<pollfd>   _pfds; // iterate()'s scratch
+    std::vector<uint64_t> _ids;
+    int                   _wakeRead = -1, _wakeWrite = -1;
+    bool                  _quit = false;
 };
 
 } // namespace plat::posix

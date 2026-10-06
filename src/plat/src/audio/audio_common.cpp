@@ -5,6 +5,7 @@
 
 #include "plat/plat.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -117,11 +118,10 @@ private:
 
 } // namespace
 
-std::string wavFromPcm16(std::string_view pcm, int sampleRate, int channels) {
-    const auto     dataSize   = uint32_t(pcm.size());
+void wavInPlace(std::string &buf, int sampleRate, int channels) {
+    const auto     dataSize   = uint32_t(buf.size() - kWavHeader);
     const uint32_t blockAlign = uint32_t(channels) * 2;
-    std::string    wav(44, '\0');
-    char          *h = wav.data();
+    char          *h          = buf.data();
     std::memcpy(h, "RIFF", 4);
     putLe32(h + 4, 36 + dataSize);
     std::memcpy(h + 8, "WAVEfmt ", 8);
@@ -134,8 +134,23 @@ std::string wavFromPcm16(std::string_view pcm, int sampleRate, int channels) {
     putLe16(h + 34, 16); // bits per sample
     std::memcpy(h + 36, "data", 4);
     putLe32(h + 40, dataSize);
+}
+
+std::string wavFromPcm16(std::string_view pcm, int sampleRate, int channels) {
+    std::string wav;
+    wav.reserve(kWavHeader + pcm.size());
+    wav.assign(kWavHeader, '\0');
     wav.append(pcm);
+    wavInPlace(wav, sampleRate, channels);
     return wav;
+}
+
+float peakOf(const char *pcm, size_t bytes) {
+    int         peak = 0;
+    const auto *p    = reinterpret_cast<const unsigned char *>(pcm);
+    for (size_t i = 0; i + 1 < bytes; i += 2)
+        peak = std::max(peak, std::abs(int(int16_t(uint16_t(p[i] | p[i + 1] << 8)))));
+    return std::min(1.0f, float(peak) / 32767.0f);
 }
 
 std::unique_ptr<Recorder> Recorder::create(App &app) {

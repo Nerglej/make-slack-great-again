@@ -55,11 +55,14 @@ public:
     Key keyFor(uint32_t keycode) const;
 
 private:
+    void loadCompose();
+
     xkb_context       *_ctx          = nullptr;
     xkb_keymap        *_keymap       = nullptr;
     xkb_state         *_state        = nullptr;
     xkb_compose_table *_compose      = nullptr;
     xkb_compose_state *_composeState = nullptr;
+    bool               _composeTried = false;
     xkb_mod_index_t    _shift = XKB_MOD_INVALID, _ctrl = XKB_MOD_INVALID, _alt = XKB_MOD_INVALID,
                        _super = XKB_MOD_INVALID, _caps = XKB_MOD_INVALID, _num = XKB_MOD_INVALID;
 };

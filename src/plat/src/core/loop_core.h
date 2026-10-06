@@ -6,7 +6,6 @@
 #include "plat/plat.h"
 
 #include <chrono>
-#include <map>
 #include <mutex>
 #include <vector>
 
@@ -46,16 +45,24 @@ public:
 
 private:
     struct Timer {
+        TimerId                   id;
         Clock::time_point         due;
         std::chrono::milliseconds interval;
         bool                      repeat;
         std::function<void()>     fn;
     };
-    std::map<TimerId, Timer> _timers;
-    TimerId                  _nextTimer = 1;
+    void earliest(); // recomputes _nextDue
+
+    // A handful of timers: a vector in id (= creation) order, with the
+    // earliest due time cached (never later than the real one) so an idle
+    // loop turn does not walk it.
+    std::vector<Timer> _timers;
+    Clock::time_point  _nextDue   = Clock::time_point::max();
+    TimerId            _nextTimer = 1;
 
     std::mutex                         _postMutex;
     std::vector<std::function<void()>> _posted;
+    std::vector<std::function<void()>> _spare;          // loop thread: a drained batch's buffer
     bool                               _closed = false; // guarded by _postMutex
 };
 

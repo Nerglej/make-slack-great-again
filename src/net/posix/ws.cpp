@@ -191,7 +191,7 @@ bool PosixWs::connect(
         {"GET ",
          url.target,
          " HTTP/1.1\r\nHost: ",
-         hostHeader(url),
+         url.authority(),
          "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
          "Sec-WebSocket-Key: ",
          key,
@@ -305,6 +305,7 @@ bool PosixWs::flushBlocking(int64_t until) {
     Waiter w;
     w.deadline = until;
     w.cancel   = &_aborted;
+    w.wakeFd   = _wake[0]; // abort() interrupts at once, not at a 250 ms slice
     while (!_out.empty()) {
         if (!flush())
             return false;

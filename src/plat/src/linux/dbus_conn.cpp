@@ -4,7 +4,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <set>
 #include <sys/stat.h>
 
 namespace plat::linux_services {
@@ -20,8 +19,8 @@ bool debugEnabled() {
 // flight can cancel them (their notify would otherwise never run and the
 // callbacks, with whatever they captured, would leak).
 struct PendingData {
-    Bus::ReplyFn                 fn;
-    std::set<DBusPendingCall *> *owner;
+    Bus::ReplyFn                    fn;
+    std::vector<DBusPendingCall *> *owner;
 };
 
 void freePending(void *p) {
@@ -78,7 +77,7 @@ void MsgWriter::bytes(const uint8_t *data, size_t n) {
     dbus_message_iter_close_container(&_it, &sub);
 }
 
-void MsgWriter::container(int type, const char *sig, const std::function<void(MsgWriter &)> &fill) {
+void MsgWriter::container(int type, const char *sig, Fill fill) {
     MsgWriter child;
     dbus_message_iter_open_container(&_it, type, sig, &child._it);
     fill(child);
@@ -120,10 +119,6 @@ bool MsgReader::i32(int32_t *out) {
 bool MsgReader::u32(uint32_t *out) {
     return basic(DBUS_TYPE_UINT32, out);
 }
-bool MsgReader::i64(int64_t *out) {
-    return basic(DBUS_TYPE_INT64, out);
-}
-
 bool MsgReader::f64(double *out) {
     return basic(DBUS_TYPE_DOUBLE, out);
 }
@@ -176,19 +171,6 @@ bool MsgReader::integer(int64_t *out) {
     }
 }
 
-bool MsgReader::bytes(std::vector<uint8_t> *out) {
-    if (type() != DBUS_TYPE_ARRAY || dbus_message_iter_get_element_type(&_it) != DBUS_TYPE_BYTE)
-        return false;
-    DBusMessageIter sub;
-    dbus_message_iter_recurse(&_it, &sub);
-    const uint8_t *data = nullptr;
-    int            n    = 0;
-    dbus_message_iter_get_fixed_array(&sub, &data, &n);
-    out->assign(data, data + n);
-    dbus_message_iter_next(&_it);
-    return true;
-}
-
 bool MsgReader::strings(std::vector<std::string> *out) {
     if (type() != DBUS_TYPE_ARRAY)
         return false;
@@ -238,7 +220,7 @@ Bus::~Bus() {
     // Posted dispatches check _alive; cancel what is in flight so the reply
     // callbacks (which capture their owners) are freed now, not leaked.
     _alive.reset();
-    for (auto *p : std::set<DBusPendingCall *>(_pending)) {
+    for (auto *p : std::vector<DBusPendingCall *>(_pending)) {
         dbus_pending_call_cancel(p);
         dbus_pending_call_unref(p);
     }
@@ -249,12 +231,12 @@ Bus::~Bus() {
         dbus_connection_unref(_conn);
         _conn = nullptr;
     }
-    for (auto &[w, id] : _watches)
-        if (id)
-            _app.unwatchFd(id);
-    for (auto &[t, id] : _timeouts)
-        if (id)
-            _app.cancelTimer(id);
+    for (const auto &w : _watches)
+        if (w.id)
+            _app.unwatchFd(w.id);
+    for (const auto &t : _timeouts)
+        if (t.id)
+            _app.cancelTimer(t.id);
 }
 
 bool Bus::start() {
@@ -340,12 +322,12 @@ void Bus::call(MessageRef msg, ReplyFn fn, int timeoutMs) {
     if (!dbus_connection_send_with_reply(_conn, msg.get(), &pending, timeoutMs) || !pending)
         return failLater();
     auto *data = new PendingData{std::move(fn), &_pending};
-    _pending.insert(pending);
+    _pending.push_back(pending);
     dbus_pending_call_set_notify(
         pending,
         [](DBusPendingCall *p, void *ud) {
             auto *d = static_cast<PendingData *>(ud);
-            d->owner->erase(p);
+            std::erase(*d->owner, p);
             DBusMessage *reply = dbus_pending_call_steal_reply(p);
             // Move the callback out: unref below may free `d`.
             ReplyFn      fn    = std::move(d->fn);
@@ -495,7 +477,9 @@ DBusHandlerResult Bus::filter(DBusMessage *m) {
 }
 
 void Bus::scheduleDispatch() {
-    if (_dispatchQueued)
+    // Inside a watch or timeout handler the dispatch follows right after it,
+    // in the same loop turn, with no closure to post.
+    if (_dispatchQueued || _handling)
         return;
     _dispatchQueued           = true;
     std::weak_ptr<Bus *> weak = _alive;
@@ -537,13 +521,13 @@ void Bus::lost() {
     _lostPending = false;
     dbus_connection_unref(_conn);
     _conn = nullptr;
-    for (auto &[w, id] : _watches)
-        if (id)
-            _app.unwatchFd(id);
+    for (const auto &w : _watches)
+        if (w.id)
+            _app.unwatchFd(w.id);
     _watches.clear();
-    for (auto &[t, id] : _timeouts)
-        if (id)
-            _app.cancelTimer(id);
+    for (const auto &t : _timeouts)
+        if (t.id)
+            _app.cancelTimer(t.id);
     _timeouts.clear();
     const bool wasReady = _ready;
     _ready              = false;
@@ -563,15 +547,29 @@ void Bus::scheduleReconnect() {
     });
 }
 
+void postEmit(BackendApp &app, const std::shared_ptr<int> &alive, Event e) {
+    app.post([weak = std::weak_ptr<int>(alive), &app, e = std::move(e)] {
+        if (!weak.expired())
+            app.emit(e);
+    });
+}
+
 // ── loop integration ────────────────────────────────────────────────────────
 
+Bus::Slot *Bus::slot(std::vector<Slot> &v, const void *key) {
+    for (auto &s : v)
+        if (s.key == key)
+            return &s;
+    return nullptr;
+}
+
 void Bus::syncWatch(DBusWatch *w) {
-    auto it = _watches.find(w);
-    if (it == _watches.end())
+    Slot *it = slot(_watches, w);
+    if (!it)
         return;
-    if (it->second) {
-        _app.unwatchFd(it->second);
-        it->second = 0;
+    if (it->id) {
+        _app.unwatchFd(it->id);
+        it->id = 0;
     }
     if (!dbus_watch_get_enabled(w))
         return;
@@ -582,7 +580,7 @@ void Bus::syncWatch(DBusWatch *w) {
     if (flags & DBUS_WATCH_WRITABLE)
         events |= FdWrite;
     std::weak_ptr<Bus *> weak = _alive;
-    it->second = _app.watchFd(dbus_watch_get_unix_fd(w), events, [weak, w](uint32_t ready) {
+    it->id = _app.watchFd(dbus_watch_get_unix_fd(w), events, [weak, w](uint32_t ready) {
         auto p = weak.lock();
         if (!p)
             return;
@@ -591,27 +589,30 @@ void Bus::syncWatch(DBusWatch *w) {
             f |= DBUS_WATCH_READABLE;
         if (ready & FdWrite)
             f |= DBUS_WATCH_WRITABLE;
-        Bus *self = *p;
+        Bus *self       = *p;
+        self->_handling = true;
         dbus_watch_handle(w, f); // may remove this very watch
-        self->scheduleDispatch();
+        self->_handling = false;
+        self->dispatch();
     });
 }
 
 dbus_bool_t Bus::addWatch(DBusWatch *w, void *self) {
-    auto *bus        = static_cast<Bus *>(self);
-    bus->_watches[w] = 0;
+    auto *bus = static_cast<Bus *>(self);
+    if (!slot(bus->_watches, w))
+        bus->_watches.push_back({w, 0});
     bus->syncWatch(w);
     return TRUE;
 }
 
 void Bus::removeWatch(DBusWatch *w, void *self) {
     auto *bus = static_cast<Bus *>(self);
-    auto  it  = bus->_watches.find(w);
-    if (it == bus->_watches.end())
+    Slot *it  = slot(bus->_watches, w);
+    if (!it)
         return;
-    if (it->second)
-        bus->_app.unwatchFd(it->second);
-    bus->_watches.erase(it);
+    if (it->id)
+        bus->_app.unwatchFd(it->id);
+    bus->_watches.erase(bus->_watches.begin() + (it - bus->_watches.data()));
 }
 
 void Bus::toggleWatch(DBusWatch *w, void *self) {
@@ -619,41 +620,44 @@ void Bus::toggleWatch(DBusWatch *w, void *self) {
 }
 
 void Bus::syncTimeout(DBusTimeout *t) {
-    auto it = _timeouts.find(t);
-    if (it == _timeouts.end())
+    Slot *it = slot(_timeouts, t);
+    if (!it)
         return;
-    if (it->second) {
-        _app.cancelTimer(it->second);
-        it->second = 0;
+    if (it->id) {
+        _app.cancelTimer(it->id);
+        it->id = 0;
     }
     if (!dbus_timeout_get_enabled(t))
         return;
     std::weak_ptr<Bus *> weak = _alive;
-    it->second                = _app.addTimer(dbus_timeout_get_interval(t), true, [weak, t] {
+    it->id                    = _app.addTimer(dbus_timeout_get_interval(t), true, [weak, t] {
         auto p = weak.lock();
         if (!p)
             return;
-        Bus *self = *p;
+        Bus *self       = *p;
+        self->_handling = true;
         dbus_timeout_handle(t); // may remove this very timeout
-        self->scheduleDispatch();
+        self->_handling = false;
+        self->dispatch();
     });
 }
 
 dbus_bool_t Bus::addTimeout(DBusTimeout *t, void *self) {
-    auto *bus         = static_cast<Bus *>(self);
-    bus->_timeouts[t] = 0;
+    auto *bus = static_cast<Bus *>(self);
+    if (!slot(bus->_timeouts, t))
+        bus->_timeouts.push_back({t, 0});
     bus->syncTimeout(t);
     return TRUE;
 }
 
 void Bus::removeTimeout(DBusTimeout *t, void *self) {
     auto *bus = static_cast<Bus *>(self);
-    auto  it  = bus->_timeouts.find(t);
-    if (it == bus->_timeouts.end())
+    Slot *it  = slot(bus->_timeouts, t);
+    if (!it)
         return;
-    if (it->second)
-        bus->_app.cancelTimer(it->second);
-    bus->_timeouts.erase(it);
+    if (it->id)
+        bus->_app.cancelTimer(it->id);
+    bus->_timeouts.erase(bus->_timeouts.begin() + (it - bus->_timeouts.data()));
 }
 
 void Bus::toggleTimeout(DBusTimeout *t, void *self) {
