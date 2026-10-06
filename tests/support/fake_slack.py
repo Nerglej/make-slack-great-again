@@ -10,7 +10,8 @@ it. Nothing here ever reaches the real Slack.
     POST /api/<method>      a Web API call: answered from the method's script
                             queue if one is queued, else by a default handler
                             (chat.postMessage keeps a per-channel history that
-                            conversations.history / .replies serve)
+                            conversations.history / .replies serve, with a
+                            post's metadata under include_all_metadata=true)
     POST /upload/<file_id>  the pre-signed upload URL files.getUploadURLExternal
                             hands out
     POST /_ctl/script       {"method": m, "responses": [answer, ...]} queues
@@ -122,8 +123,14 @@ def post_message(form):
            'ts': next_ts()}
     if form.get('thread_ts'):
         msg['thread_ts'] = form['thread_ts']
+    if form.get('metadata'):
+        msg['metadata'] = json.loads(form['metadata'])
     state['history'].setdefault(ch, []).append(msg)
-    return {'ok': True, 'channel': ch, 'ts': msg['ts'], 'message': msg}
+    return {'ok': True, 'channel': ch, 'ts': msg['ts'], 'message': without_metadata(msg)}
+
+
+def without_metadata(msg):  # Slack lists metadata only when include_all_metadata asks
+    return {k: v for k, v in msg.items() if k != 'metadata'}
 
 
 def history(form, replies):
@@ -135,6 +142,8 @@ def history(form, replies):
     else:
         msgs = [m for m in msgs if not m.get('thread_ts')]
     msgs = [m for m in msgs if float(m['ts']) > oldest]
+    if form.get('include_all_metadata') != 'true':
+        msgs = [without_metadata(m) for m in msgs]
     return {'ok': True, 'messages': sorted(msgs, key=lambda m: m['ts'], reverse=not replies)}
 
 

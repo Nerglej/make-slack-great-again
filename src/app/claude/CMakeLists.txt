@@ -25,6 +25,9 @@ add_library(msga_app_claude STATIC
     backend.cpp
     backend_send.cpp
     backend_manage.cpp
+    backend_branch.cpp
+    # agent thread links: Slack threads answered by sessions
+    links.cpp
 )
 target_link_libraries(msga_app_claude PUBLIC msga_app_core msga_flags PRIVATE msga_gfx)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)

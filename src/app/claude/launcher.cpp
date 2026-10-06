@@ -441,11 +441,25 @@ void Launcher::attachCommand(
 }
 
 void Launcher::fork(
-    const std::string &sessionId, const std::string &cwd, const std::string &prompt, Done done
+    const std::string              &sessionId,
+    const std::string              &cwd,
+    const std::string              &prompt,
+    Done                            done,
+    const std::vector<std::string> &deniedTools
 ) {
-    runNewSession(
-        {"--bg", "--resume", sessionId, "--fork-session", "--", prompt}, cwd, std::move(done)
-    );
+    std::vector<std::string> args = {"--bg", "--resume", sessionId, "--fork-session"};
+    if (!deniedTools.empty()) {
+        // Saved with the branch like any start option (its job's respawnFlags,
+        // seen 2.1.289): a flag-free resume or a fork of it keeps them.
+        args.emplace_back("--disallowedTools");
+        args.emplace_back("AskUserQuestion");
+        for (const std::string &t : deniedTools)
+            if (t != "AskUserQuestion")
+                args.push_back(t);
+    }
+    args.emplace_back("--");
+    args.push_back(prompt);
+    runNewSession(std::move(args), cwd, std::move(done));
 }
 
 void Launcher::resume(

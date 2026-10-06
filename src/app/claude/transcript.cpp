@@ -12,6 +12,7 @@
 #include "base/utf8.h"
 
 #include <algorithm>
+#include <functional>
 #include <mutex>
 
 namespace claude {
@@ -470,6 +471,10 @@ void TranscriptParser::noteTaskNotification(std::string_view text, int64_t micro
             noteTaskStopped(str::trimSpace(text.substr(at, end - at)), micros);
         at = end;
     }
+}
+
+bool TranscriptParser::hasRecord(std::string_view uuid) const {
+    return !uuid.empty() && _seenUuids.count(crypto::fnv1a(uuid));
 }
 
 void TranscriptParser::handleLine(std::string_view line) {
@@ -1123,6 +1128,93 @@ bool hasTurnSince(std::string_view path, int64_t from, int64_t afterMs) {
             return true;
     }
     return false;
+}
+
+namespace {
+
+// What a line of a transcript says, read from the end: its record's uuid,
+// and whether it's a prompt or an answer.
+struct LineRecord {
+    std::string uuid;
+    bool        turn = false; // a user or assistant record
+};
+
+// Each line of the file at `path`, last to first (one still being written
+// too), into `fn` until it returns false: 64 KB read at a time from the end,
+// a line's bytes kept only until it's whole. False when it can't be read.
+bool readBackwards(std::string_view path, const std::function<bool(const LineRecord &)> &fn) {
+    constexpr int64_t kChunk = 64 * 1024;
+    int64_t           pos    = file::size(path);
+    if (pos < 0)
+        return false;
+    std::string carry; // a line's end, its start still to be read
+    while (pos > 0) {
+        const int64_t from = std::max<int64_t>(0, pos - kChunk);
+        std::string   chunk;
+        if (!file::readRange(path, from, size_t(pos - from), &chunk))
+            return false;
+        pos        = from;
+        carry      = chunk + carry;
+        // Every line in it, last first — but the first, whose start may be
+        // in the bytes before (unless they're the file's start).
+        size_t end = carry.size();
+        for (;;) {
+            const size_t nl = end ? carry.rfind('\n', end - 1) : std::string::npos;
+            if (nl == std::string::npos && pos > 0)
+                break;
+            const size_t   start = nl == std::string::npos ? 0 : nl + 1;
+            json::Document doc;
+            if (end > start && doc.parse(carry.substr(start, end - start), nullptr) &&
+                doc.root().isObject()) {
+                const std::string_view type = doc.root()["type"].str();
+                if (!fn(
+                        {std::string(doc.root()["uuid"].str()),
+                         type == "user" || type == "assistant"}
+                    ))
+                    return true;
+            }
+            if (nl == std::string::npos)
+                break;
+            end = nl;
+        }
+        carry.resize(end);
+    }
+    return true;
+}
+
+} // namespace
+
+bool hasTurnAfter(std::string_view path, std::string_view uuid) {
+    bool after = true; // the record not found: nothing says the session didn't go on
+    if (uuid.empty())
+        return after;
+    readBackwards(path, [&](const LineRecord &r) {
+        if (r.uuid == uuid) {
+            after = false;
+            return false;
+        }
+        // A turn before the record turns up: whether the record is further
+        // back or not there at all, the answer is yes.
+        return !r.turn;
+    });
+    return after;
+}
+
+std::vector<std::string> recordsBefore(std::string_view path, std::string_view uuid, size_t max) {
+    std::vector<std::string> out;
+    bool                     found = false;
+    if (uuid.empty() || max == 0)
+        return out;
+    readBackwards(path, [&](const LineRecord &r) {
+        if (!found) {
+            found = r.uuid == uuid;
+            return true;
+        }
+        if (!r.uuid.empty())
+            out.push_back(r.uuid);
+        return out.size() < max;
+    });
+    return out;
 }
 
 bool removeFromTranscript(std::string_view path, std::string_view uuid, std::string *error) {

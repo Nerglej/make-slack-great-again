@@ -519,8 +519,8 @@ MessageList::MessageList(Context &ctx)
     };
     _typing = add<ui::Label>("", Font::Small, C::TextMuted);
     _typing->setMaxLines(1);
-    // The hover toolbar: Add reaction, Forward message, Save for later,
-    // More actions.
+    // The hover toolbar: Add reaction, Forward message, Save for later, Ask
+    // agent (agent thread links), More actions.
     _toolbar          = add<ToolbarCard>();
     _tbEmoji          = _toolbar->add<ActionButton>(gfx::Icon::Smile, tr("Add reaction"));
     _tbEmoji->onClick = [this] {
@@ -538,6 +538,11 @@ MessageList::MessageList(Context &ctx)
     _tbSave->onClick = [this] {
         if (_toolbarRow)
             toggleSaved(_toolbarRow->ts());
+    };
+    _tbAgent          = _toolbar->add<ActionButton>(gfx::Icon::Bot, tr("Ask agent"));
+    _tbAgent->onClick = [this] {
+        if (_toolbarRow && _ctx.agentLinkAction)
+            _ctx.agentLinkAction(_conv, _toolbarRow->ts(), Context::AgentLinkAction::Ask);
     };
     _tbMore          = _toolbar->add<ActionButton>(gfx::Icon::MoreHorizontal, tr("More actions"));
     _tbMore->onClick = [this] {
@@ -1291,6 +1296,13 @@ void MessageList::placeToolbar() {
     const bool saved = m->saved || _ctx.store().reminderAt(_conv, m->ts) != 0;
     _tbSave->setIcon(saved ? gfx::Icon::BookmarkFilled : gfx::Icon::Bookmark);
     _tbSave->setTooltip(saved ? tr("Remove from saved") : tr("Save for later"));
+    // Ask agent: where a Claude Code session can be asked; on a linked
+    // thread it shows active and opens the agent's thread.
+    const Context::AgentLink link =
+        _ctx.agentLink ? _ctx.agentLink(_conv, *m) : Context::AgentLink{};
+    _tbAgent->setVisible(link.offered);
+    _tbAgent->setInk(link.linked ? C::Accent : C::FormIconStrong);
+    _tbAgent->setTooltip(link.linked ? tr("Open agent thread") : tr("Ask agent"));
     const ui::SizeF  sz = _toolbar->measure(ui::kInf, ui::kInf);
     const ui::RectF  rr = _toolbarRow->windowRect();
     const ui::PointF o  = mapFromWindow({rr.x, rr.y});
@@ -1615,6 +1627,12 @@ constexpr ui::MenuDef kItemDefs[] = {
     {MessageList::kCopyImage, uint16_t(gfx::Icon::Copy), N_("Copy full image"), nullptr, nullptr},
     {MessageList::kPreview, uint16_t(gfx::Icon::Eye), N_("Preview"), nullptr, nullptr},
     {MessageList::kDeleteFile, uint16_t(gfx::Icon::Trash2), N_("Delete file…"), nullptr, nullptr},
+    {MessageList::kAllowAsker,
+     uint16_t(gfx::Icon::Users),
+     N_("Allow %1 to ask agent"),
+     nullptr,
+     nullptr},
+    {MessageList::kUnlinkAgent, uint16_t(gfx::Icon::X), N_("Unlink agent"), nullptr, nullptr},
 };
 
 // Reminder presets, no icons.
@@ -1720,6 +1738,17 @@ std::vector<ui::MenuItem> MessageList::menuItems(Ts ts) const {
     // Always offered where AI is wired: without a provider it says so (and
     // links to Settings → AI assistance).
     addItem(items, kSummarize, _ctx.ai != nullptr);
+    // Agent thread links (asking is the toolbar's robot): let the author
+    // ask too, unlink from the root.
+    if (const Context::AgentLink link =
+            _ctx.agentLink && !isSystem(*m) ? _ctx.agentLink(_conv, *m) : Context::AgentLink{};
+        link.offered) {
+        if (link.canAllow)
+            addItem(items, kAllowAsker).label =
+                arg(tr("Allow %1 to ask agent"), std::string(st.user(m->user).label()));
+        if (link.root)
+            addItem(items, kUnlinkAgent);
+    }
     if (canDelete) {
         ui::addMenuSeparator(items);
         addItem(items, kDelete);
@@ -1903,6 +1932,16 @@ void MessageList::runMenuAction(Ts ts, int id, const std::string &path, ui::Poin
         summarizeDown(_ctx, conv, std::move(span), threadMode());
         break;
     }
+    case kAllowAsker:
+    case kUnlinkAgent:
+        if (_ctx.agentLinkAction)
+            _ctx.agentLinkAction(
+                conv,
+                ts,
+                id == kAllowAsker ? Context::AgentLinkAction::Allow
+                                  : Context::AgentLinkAction::Unlink
+            );
+        break;
     case kPreview:
         if (const model::File *f = fileAt(msg, path))
             openCsvPreview(*f);

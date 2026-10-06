@@ -15,6 +15,8 @@ public:
 
     void      setIcon(gfx::Icon icon); // repaints
     gfx::Icon icon() const { return _icon; }
+    void      setInk(ui::C ink); // repaints
+    ui::C     ink() const { return _ink; }
 
     void paint(gfx::Painter &p) override; // the look, then the icon
 

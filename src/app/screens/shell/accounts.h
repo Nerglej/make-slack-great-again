@@ -19,6 +19,9 @@
 #include <string>
 #include <vector>
 
+namespace claude {
+class Links;
+}
 namespace net {
 class Client;
 }
@@ -79,6 +82,9 @@ public:
     int  oauthSlackWorkspaces() const;
 
     auth::WorkspaceStore &store() { return _store; }
+    // Agent thread links: every running workspace is handed to them (the
+    // shell's robot, menus and chips read and drive them).
+    claude::Links        &links() { return *_links; }
 
 private:
     struct Running; // a signed-in workspace's backend and Store, open or not
@@ -140,6 +146,7 @@ private:
     std::unique_ptr<slack::OAuthFlow>     _oauth;
     std::unique_ptr<slack::TokenDeriver>  _remint;
     std::weak_ptr<slack::SocketMode>      _socketMode; // held by the Slack backends
+    std::unique_ptr<claude::Links>        _links;
 };
 
 } // namespace shell

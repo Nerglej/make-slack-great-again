@@ -140,6 +140,8 @@ public:
     // ("agent_listing_delta" records): a session started without --agents has
     // none of the team's (see teammateNote).
     const std::unordered_set<std::string> &agentTypes() const { return _agentTypes; }
+    // Whether a record `uuid` was read (a copy's repeats are recognised by it).
+    bool                                   hasRecord(std::string_view uuid) const;
 
 private:
     void    handleLine(std::string_view line);
@@ -232,6 +234,19 @@ std::vector<std::string> promptHistory(
     std::string_view sessionId,
     int              max = 100
 );
+
+// Whether the transcript at `path` has a prompt or an answer (any user or
+// assistant record) after the record `uuid` — whether a session went on
+// since the record a branch of it was forked at. True when that record isn't
+// there (or `uuid` is ""): nothing says it didn't. Read from the end, only
+// as far back as the answer needs. Blocking: a worker's.
+bool hasTurnAfter(std::string_view path, std::string_view uuid);
+
+// The uuids of up to `max` records just before the record `uuid` in the
+// transcript at `path`, newest first (none when `uuid` isn't there) — of a
+// branch, the records it copied from its session end there. Read from the
+// end. Blocking: a worker's.
+std::vector<std::string> recordsBefore(std::string_view path, std::string_view uuid, size_t max);
 
 // Takes the record `uuid` (a prompt or an answer: TranscriptItem::uuid) out of
 // the transcript at `path`, so the session no longer has it when it resumes.

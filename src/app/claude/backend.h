@@ -23,6 +23,8 @@
 //   backend_manage.cpp  "Remove from msga" (and the worktrees of sessions msga
 //                       started), finding sessions, the team, your profile,
 //                       commands, prompt history, deleting, reactions, search
+//   backend_branch.cpp  agent branches: forks of a session run with tools
+//                       off, their turns followed for others (thread links)
 //
 // Nothing runs until this backend is constructed, i.e. until a Claude Code
 // workspace exists.
@@ -120,6 +122,29 @@ public:
         const std::string                                       &role,
         std::function<void(model::ConvRef, const std::string &)> done
     ) override;
+
+    // ── Agent branches (backend_branch.cpp) ─────────────────────────────────
+    // Forks of a session (--fork-session) with tools turned off, shown as its
+    // /btw threads are; each turn followed from the branch's transcript.
+    void startAgentBranch(
+        const std::string       &session,
+        std::string              prompt,
+        std::vector<std::string> files,
+        std::vector<std::string> deniedTools,
+        AgentBranchDone          started,
+        AgentTurnFn              turn
+    ) override;
+    void continueAgentBranch(
+        const std::string       &branch,
+        std::string              prompt,
+        std::vector<std::string> files,
+        AgentTurnFn              turn
+    ) override;
+    void watchAgentBranch(const std::string &branch, AgentTurnFn turn) override;
+    void agentSessionMovedOn(
+        const std::string &session, const std::string &forkPoint, std::function<void(bool)> done
+    ) override;
+    void setAgentBranchLabel(const std::string &branch, std::string label) override;
 
     // ── Managing (backend_manage.cpp) ───────────────────────────────────────
     // "Remove from msga": hides the session here — Claude Code keeps it — and
@@ -327,12 +352,39 @@ private:
     void        readApproval(Tracked &t);
     void        stopWorker(Tracked &t);
     void        adoptCopy(Tracked &t, const std::string &copyId);
-    void        startFork(Tracked &parent, const std::string &question, Done done);
-    void        launchFork(Tracked &parent, const std::string &question, Done done);
     void        settleTurn(Tracked &t); // msga's turn: ended, or given up on
     std::string cannotStartIn(const std::string &dir) const;
     Tracked &
     createSession(const std::string &dir, bool skipPermissionChecks, const std::string &role);
+    // A branch of the session (a /btw, or an agent branch): `opts` says
+    // which tools it goes without and who follows its first turn. Its
+    // `started`, given, takes the place of `done`.
+    struct ForkOptions {
+        std::vector<std::string> deniedTools;
+        AgentTurnFn              turn;
+        AgentBranchDone          started;
+    };
+    void startFork(Tracked &parent, const std::string &question, Done done, ForkOptions opts = {});
+    void launchFork(Tracked &parent, const std::string &question, Done done, ForkOptions opts = {});
+    // Files copied into the cache on a worker (sending them): then(copies,
+    // ""), or then({}, the path that couldn't be read).
+    void uploadFiles(
+        std::vector<std::string>                                                 files,
+        std::function<void(std::vector<std::string> copies, std::string failed)> then
+    );
+    // msga's copy of a message to `target` (a reply relayed to a subagent of
+    // it: relayRoot, shown as `shown`), queued; it goes when Claude is free.
+    void enqueue(Tracked &target, std::string text, model::Ts relayRoot, std::string shown);
+
+    // ── backend_branch.cpp ──────────────────────────────────────────────────
+    // The branch's turn followed (Tracked::watch): its phase told as it
+    // changes, then its end — once per refresh, after the turn is settled.
+    void watchTurn(Tracked &t);
+    // The followed turn failed (or the branch is gone): told, and no more.
+    void endWatch(Tracked &t, const std::string &error);
+    // The branch `branchConv`'s first prompt landed: where it was forked,
+    // looked for on a worker, then `started`.
+    void branchStarted(const std::string &branchConv, AgentBranchDone started);
 
     // ── backend_manage.cpp ──────────────────────────────────────────────────
     void hideSession(const std::string &convId, const std::shared_ptr<Cleanup> &cleanup);
@@ -503,5 +555,11 @@ private:
     // The typing indicators set in the Store: (conv, user, thread) → since.
     std::map<std::tuple<model::ConvRef, model::UserRef, model::Ts>, int64_t> _typing;
 };
+
+// What a turn calling tool `name` ("Read", "Bash", "mcp__x__y"…) is doing,
+// for an agent branch's status line.
+model::Backend::AgentPhase toolPhase(std::string_view name);
+// The phase as that line, translated: "Reading files…".
+std::string                phaseStatus(model::Backend::AgentPhase phase);
 
 } // namespace claude

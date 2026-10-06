@@ -184,8 +184,10 @@ public:
         kCopyImageLink, // the image / file menu
         kCopyFileLink,
         kCopyImage,
-        kPreview,           // CSV files; shown disabled (no table viewer yet)
-        kDeleteFile,        // "Delete image…" / "Delete file…"
+        kPreview,    // CSV files; shown disabled (no table viewer yet)
+        kDeleteFile, // "Delete image…" / "Delete file…"
+        kAllowAsker, // agent thread links (Context::agentLink)
+        kUnlinkAgent,
         kRemindPreset = 40, // + 0…4: in 20 minutes … next week
         kRemindCustom = 45,
     };
@@ -232,6 +234,9 @@ public:
     // A canvas card's preview HTML (null while loading, *state -1 if it
     // failed); the cards showing it are bound again when it arrives.
     const std::string *canvasPreview(const std::string &fileId, int *state);
+
+    // Something the toolbar shows changed elsewhere (an agent link came).
+    void refreshToolbar() { placeToolbar(); }
 
     void      layout() override;
     bool      onEvent(ui::Event &e) override;
@@ -307,7 +312,7 @@ private:
     float                      _typingH = 22; // 0: no typing row (setTypingRow)
     ui::View                  *_toolbar = nullptr;
     ui::Clickable             *_tbEmoji = nullptr, *_tbForward = nullptr, *_tbMore = nullptr;
-    class ActionButton        *_tbSave  = nullptr;
+    class ActionButton        *_tbSave = nullptr, *_tbAgent = nullptr;
     ui::View                  *_fileBar = nullptr, *_fileView = nullptr; // the hovered file
     Ts                         _fileTs = 0;
     std::string                _filePath;

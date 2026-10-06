@@ -3,7 +3,7 @@
 # (../../support/fake_slack.py). Suites of msga_app_tests (../CMakeLists.txt),
 # ctest test core_<suite> each.
 set(core_suites mrkdwn markdown_compose emoji store jobs fixture languages slack slack_write
-    slack_read slack_cache slack_realtime slack_features update)
+    slack_read slack_cache slack_realtime slack_features slack_links update)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND core_suites local_import)
 endif()

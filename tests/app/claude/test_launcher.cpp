@@ -409,6 +409,28 @@ TEST("launcher: start, then stop + resume per turn, a copy, a fork") {
     CHECK_STR(calls[8], std::string("--bg --resume ") + kSid3 + " -- sixth");
 }
 
+TEST("launcher: a fork can go without tools, the question tool too") {
+    auto app = headlessApp();
+    REQUIRE(app);
+    FakeCli    f;
+    Launcher   launcher(*app, f.cli, f.paths);
+    DoneResult forked;
+    launcher.fork(
+        kSid1, f.work, "@/c/a.png what?", collect(forked), {"Bash", "Edit", "AskUserQuestion"}
+    );
+    REQUIRE(waitFor(*app, [&] { return forked.called; }));
+    CHECK_STR(forked.error, "");
+    CHECK_STR(forked.id, kSid1); // the fake's first new session
+    const auto calls = f.calls();
+    REQUIRE(calls.size() == 1);
+    // A list option: the prompt comes after "--", its mention first.
+    CHECK_STR(
+        calls[0],
+        std::string("--bg --resume ") + kSid1 +
+            " --fork-session --disallowedTools AskUserQuestion Bash Edit -- @/c/a.png what?"
+    );
+}
+
 TEST("launcher: stop waits for the worker; remove says why it kept a job") {
     auto app = headlessApp();
     REQUIRE(app);

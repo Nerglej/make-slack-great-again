@@ -70,6 +70,7 @@ void Backend::hideSession(const std::string &convId, const std::shared_ptr<Clean
     t.flying.reset();
     if (auto done = std::exchange(t.inFlight, {}))
         done(false, tr("The session was removed from msga."));
+    endWatch(t, tr("The session was removed from msga."));
     // A message being typed is taken back once the session is gone, so its
     // done (run at once by cancel) finds nothing to put back.
     const std::weak_ptr<AttachInput> typing = std::exchange(t.typing, {});

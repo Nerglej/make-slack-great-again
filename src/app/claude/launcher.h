@@ -132,8 +132,15 @@ public:
     // A new background session branched off session `sessionId` — a copy of its
     // conversation so far — whose first turn is `prompt`. The original isn't
     // touched: no stop, and its worker (or terminal) goes on as it was.
+    // `deniedTools` (with the multiple-choice question tool, as start() turns
+    // it off) are turned off in the branch, which keeps that from then on;
+    // none: the branch starts with no options of its own.
     void fork(
-        const std::string &sessionId, const std::string &cwd, const std::string &prompt, Done done
+        const std::string              &sessionId,
+        const std::string              &cwd,
+        const std::string              &prompt,
+        Done                            done,
+        const std::vector<std::string> &deniedTools = {}
     );
 
     // Stop background session `sessionId` now, mid-turn or idle (`claude stop`):

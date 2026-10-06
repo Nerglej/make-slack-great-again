@@ -223,6 +223,26 @@ struct Backend::Tracked {
     model::Ts   forkRoot   = 0;  // that prompt's ts: the root message in the parent
     bool        standalone = false;   // "Open as session": listed as a session of its own
     bool        awaitingRoot = false; // msga launched it: its first prompt settles the send
+    // An agent branch's (startAgentBranch): the tools it was started without.
+    // Each turn of msga's goes typed into its live worker, or else as a fork
+    // of it passing them again (adopted as a copy): never a plain resume,
+    // which may start a copy without its options (see dispatch).
+    std::vector<std::string> deniedTools;
+    // What its root shows instead of its first prompt (setAgentBranchLabel).
+    std::string              branchLabel;
+    // Someone following its turn (watchTurn): the turn's progress, its end.
+    struct TurnWatch {
+        model::Backend::AgentTurnFn fn;
+        // Send: msga's turn, from the moment it's sent (`sent`) until settled;
+        // else the turn under way, if any.
+        bool                        send = false, sent = false;
+        // Items from here on are the turn's (npos: from the branch's first
+        // prompt, once it's known).
+        size_t                      from  = 0;
+        int                         phase = -1;    // as last told; -1 = nothing yet
+        bool                        held  = false; // until the branch's start is told
+    };
+    std::unique_ptr<TurnWatch> watch;
 };
 
 struct Backend::Cleanup {

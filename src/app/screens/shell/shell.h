@@ -23,6 +23,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
+namespace claude {
+class Links;
+}
 namespace settings {
 class SettingsDialog;
 }
@@ -162,6 +165,13 @@ public:
     void           openBrowseDialog(int tab);
     // "Create a channel": the two-step dialog, then the backend creates it.
     void           openCreateChannel();
+
+    // ── Agent thread links (shell_links.cpp) ──
+    // The accounts controller's links (null: none, the default): the
+    // message toolbar's robot, the message menu's items, the session
+    // picker, the thread panel's chip — all of it shows only while set.
+    void           setAgentLinks(claude::Links *links);
+    claude::Links *agentLinks() const { return _links; }
 
     // ── Agent workspace: sessions and the team (shell_agents.cpp) ──
     void openSessionFinder();
@@ -373,7 +383,15 @@ private:
     void runCommand(
         model::ConvRef conv, model::Ts thread, const std::string &name, const std::string &args
     );
-    void wireAgentUi();
+    void                        wireAgentUi();
+    // Agent thread links (shell_links.cpp).
+    screens::Context::AgentLink agentLink(model::ConvRef conv, const model::Message &m) const;
+    void agentLinkAction(model::ConvRef conv, model::Ts ts, screens::Context::AgentLinkAction a);
+    void agentLinksChanged();
+    // The workspace whose Store is `st` comes on screen (switched to when
+    // it isn't); true once its Store is the open one.
+    bool showWorkspaceOf(const model::Store *st);
+    claude::Links *_links = nullptr;
 
     screens::Context &_ctx;
     ui::Window       &_win;

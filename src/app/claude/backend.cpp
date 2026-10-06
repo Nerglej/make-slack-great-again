@@ -214,6 +214,8 @@ void Backend::loadKnown() {
         t.starred         = o["starred"].boolean();
         t.muted           = o["muted"].boolean();
         t.notify          = model::NotifyLevel(std::clamp<int64_t>(o["notify"].integer(), 0, 3));
+        for (const json::Value v : o["deniedTools"])
+            t.deniedTools.emplace_back(v.str());
         if (str::startsWith(convId, kNewPrefix))
             _launchedHere.insert(sid); // a "+" session, remembered before `started` was
     }
@@ -264,6 +266,12 @@ void Backend::saveKnown() {
             w.key("muted").value(true);
         if (t.notify != model::NotifyLevel::Default)
             w.key("notify").value(int64_t(t.notify));
+        if (!t.deniedTools.empty()) { // an agent branch: every turn goes without them
+            w.key("deniedTools").beginArray();
+            for (const std::string &tool : t.deniedTools)
+                w.value(tool);
+            w.endArray();
+        }
         w.endObject();
     }
     w.endArray();
@@ -1019,6 +1027,8 @@ const Backend::Rendered &Backend::renderedAt(Tracked &t, size_t i) {
         ++_counters.renders;
         Rendered r;
         r.msg = toMessage(items[j], me, subagentAuthor(items[j], author));
+        if (int(j) == t.forkAt && !t.branchLabel.empty()) // an agent branch's root
+            r.msg.text = escapeMrkdwn(t.branchLabel);
         attachOutputs(r.msg, items, j, t.convId, t.info.cwd);
         r.rev       = t.parser.revision(j);
         r.contentFp = contentFingerprint(r.msg);
@@ -1996,6 +2006,7 @@ void Backend::refreshScan() {
         for (auto it = _shown.begin(); it != _shown.end();)
             it = it->first.first == t.ref ? _shown.erase(it) : std::next(it);
         forgetCaches(t);
+        endWatch(t, tr("The session was removed from msga."));
         _sessions.erase(id);
         clearOutputs(id);
     }
@@ -2048,7 +2059,9 @@ void Backend::refreshScan() {
             _loginCheckedMs  = 0;
         }
         settleTurn(t);
-        dispatch(t); // the next queued message, if the turn is over
+        if (t.watch)
+            watchTurn(t); // someone follows its turn: how it goes, how it ended
+        dispatch(t);      // the next queued message, if the turn is over
         readApproval(t);
         syncMeta(t);
         if (!asThread(t))

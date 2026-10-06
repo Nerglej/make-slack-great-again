@@ -6,6 +6,8 @@
 //                  "Create a session", the close button; rows with the
 //                  agent's picture, the title, "folder · when · last
 //                  prompt", "In the list" for those listed already.
+//   Session picker "Ask agent…" (agent thread links): the finder over the
+//                  Claude Code workspace, most recent first, no "Create".
 //   Teammate       "Add a teammate" / "Edit teammate": Name, Description, Picture (a glyph on a
 //                  colour), Instructions, the hint; [Restore default] Cancel /
 //                  Add teammate | Save.
@@ -112,6 +114,17 @@ ui::Popup *showSessionFinder(
     Avatars                                 &avatars,
     std::function<void(const std::string &)> pick,
     std::function<void()>                    create
+);
+
+// "Ask agent…": the finder over `agents` (the Claude Code workspace's
+// backend, which needn't be the open one), the most recently active
+// sessions first, without "Create a session". pick(id) as the finder's.
+ui::Popup *showSessionPicker(
+    screens::Context                        &ctx,
+    ui::Window                              &w,
+    Avatars                                 &avatars,
+    model::Backend                          &agents,
+    std::function<void(const std::string &)> pick
 );
 
 // "Add a teammate" (role.id empty) / "Edit teammate". done(role, false) after

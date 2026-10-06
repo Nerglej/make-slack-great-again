@@ -39,7 +39,22 @@ ThreadPanel::ThreadPanel(Context &ctx) : _ctx(ctx) {
     auto *header = add<View>();
     header->style().row().height(48).padding(16, 0, 8, 0).spacing(8).items(Align::Center);
     header->style().noShrink();
-    header->add<Label>(tr("Thread"), Font::BodyBold)->style().flex(1);
+    // The title keeps its width; a narrow header shortens the link chip
+    // ("…") instead of squeezing "Thread".
+    header->add<Label>(tr("Thread"), Font::BodyBold)->style().noShrink();
+    header->add<View>()->style().flex(1);
+    _linkChip = header->add<Clickable>();
+    _linkChip->style().row().height(32).padding(8, 0).spacing(6).items(Align::Center);
+    _linkChip->setLook({C::None, C::Hover, C::Pressed, C::None, 6});
+    _linkChip->setRole(Role::Button);
+    _linkChip->add<IconView>(gfx::Icon::Link, 14, C::Text)->style().noShrink();
+    _linkText = _linkChip->add<Label>();
+    _linkText->setMaxLines(1);
+    _linkChip->setVisible(false);
+    _linkChip->onClick = [this] {
+        if (_ctx.agentLinkAction && root())
+            _ctx.agentLinkAction(conversation(), root(), Context::AgentLinkAction::OpenSource);
+    };
     _mute          = header->add<RoundButton>(gfx::Icon::Bell, tr("Mute thread"));
     _mute->onClick = [this] { toggleMuted(); };
     _download      = header->add<RoundButton>(gfx::Icon::Download, tr("Download thread as text"));
@@ -91,6 +106,19 @@ void ThreadPanel::show(ConvRef conv, Ts root) {
     }
     refreshMute();
     refreshBroadcast();
+    refreshLink();
+}
+
+void ThreadPanel::refreshLink() {
+    const std::string from = _ctx.agentLinkSource && root()
+                                 ? _ctx.agentLinkSource(conversation(), root())
+                                 : std::string();
+    _linkChip->setVisible(!from.empty());
+    if (from.empty() || from == _linkText->text())
+        return;
+    _linkText->setText(from);
+    // The tooltip names it whole, as the chip may show it shortened.
+    _linkChip->setTooltip(arg(tr("Open the Slack thread: %1"), from));
 }
 
 ui::View *ThreadPanel::setComposer(std::unique_ptr<ui::View> composer) {

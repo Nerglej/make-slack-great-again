@@ -85,40 +85,57 @@ void Backend::sendNext(ConvRef conv) {
             continue;
         }
         _copying.push_back(conv);
-        auto copies = std::make_shared<std::vector<std::string>>();
-        auto failed = std::make_shared<std::string>(); // the file that couldn't be read
-        // Taken before q moves into the second callback (argument order is unspecified).
+        // Taken before q moves into the callback (argument order is unspecified).
         std::vector<std::string> files = std::move(q.files);
-        model::runInBackground(
-            _app,
-            [files = std::move(files), copies, failed] {
-                for (const std::string &path : files) {
-                    std::string copy = cacheUpload(path);
-                    if (copy.empty()) {
-                        *failed = path;
-                        return;
-                    }
-                    copies->push_back(std::move(copy));
-                }
-            },
-            [this, alive = _alive, conv, q = std::move(q), copies, failed]() mutable {
-                if (!*alive)
-                    return;
+        uploadFiles(
+            std::move(files),
+            [this,
+             conv,
+             q = std::move(q)](std::vector<std::string> copies, std::string failed) mutable {
                 std::erase(_copying, conv);
-                if (!failed->empty()) {
+                if (!failed.empty()) {
                     const std::string why =
-                        i18n::arg(tr("Couldn't read %1."), std::string(file::baseName(*failed)));
+                        i18n::arg(tr("Couldn't read %1."), std::string(file::baseName(failed)));
                     if (q.done)
                         q.done(false, why);
                     reportError(why);
                 } else {
-                    sendText(conv, withAttachments(q.text, *copies), q.threadTs, std::move(q.done));
+                    sendText(conv, withAttachments(q.text, copies), q.threadTs, std::move(q.done));
                 }
                 sendNext(conv);
             }
         );
         return;
     }
+}
+
+void Backend::uploadFiles(
+    std::vector<std::string> files, std::function<void(std::vector<std::string>, std::string)> then
+) {
+    struct Job {
+        std::vector<std::string> files, copies;
+        std::string              failed; // the file that couldn't be read
+    };
+    auto job   = std::make_shared<Job>();
+    job->files = std::move(files);
+    model::runInBackground(
+        _app,
+        [job] {
+            for (const std::string &path : job->files) {
+                std::string copy = cacheUpload(path);
+                if (copy.empty()) {
+                    job->failed = path;
+                    job->copies.clear();
+                    return;
+                }
+                job->copies.push_back(std::move(copy));
+            }
+        },
+        [alive = _alive, job, then = std::move(then)] {
+            if (*alive)
+                then(std::move(job->copies), std::move(job->failed));
+        }
+    );
 }
 
 void Backend::reportError(const std::string &message) {
@@ -185,10 +202,6 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
     }
     if (!target->announcedInit)
         sync(*target); // what's there already isn't news
-    // msga's copy of it, from now on: after everything shown, uniquely timed.
-    Ts micros = nowMs() * 1000;
-    for (const auto &v : asThread(*target) ? threadList(*target) : visibleList(*target))
-        micros = std::max(micros, v.ts + 1);
     // How to spawn the teammates it mentions, which the session may not know
     // as subagent types; the chat shows the message without it. Those it
     // doesn't offer (a session started without --agents: in a terminal, or
@@ -208,25 +221,39 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
             text += note;
         }
     }
-    target->outbox.push_back({text, micros, relayRoot, shown});
-    // A record timed before that (clocks, the same millisecond) would
-    // otherwise be tie-broken onto the copy's very ts, and its prompt never
-    // seen landing.
-    target->parser.reserveTs(micros);
-    dispatch(*target); // at once when Claude is free; otherwise when its turn ends
-    sync(*target);     // its copy shows
-    syncMeta(*target);
+    enqueue(*target, std::move(text), relayRoot, std::move(shown));
     post([done = std::move(done)] {
         if (done)
             done(true, {});
     });
 }
 
+void Backend::enqueue(Tracked &target, std::string text, Ts relayRoot, std::string shown) {
+    if (!target.announcedInit)
+        sync(target); // what's there already isn't news
+    // msga's copy of it, from now on: after everything shown, uniquely timed.
+    Ts micros = nowMs() * 1000;
+    for (const auto &v : asThread(target) ? threadList(target) : visibleList(target))
+        micros = std::max(micros, v.ts + 1);
+    target.outbox.push_back({std::move(text), micros, relayRoot, std::move(shown)});
+    // A record timed before that (clocks, the same millisecond) would
+    // otherwise be tie-broken onto the copy's very ts, and its prompt never
+    // seen landing.
+    target.parser.reserveTs(micros);
+    dispatch(target); // at once when Claude is free; otherwise when its turn ends
+    sync(target);     // its copy shows
+    syncMeta(target);
+}
+
 void Backend::failSends(Tracked &t, const std::string &reason) {
     if (!t.inFlight && !t.flying && t.outbox.empty())
         return; // nothing on its way
-    if (auto done = std::exchange(t.inFlight, {}))
+    if (auto done = std::exchange(t.inFlight, {})) {
+        t.watch.reset(); // a branch that never started: its start says so
         done(false, reason);
+    } else if (t.watch) {
+        endWatch(t, reason);
+    }
     const bool copies = t.flying || !t.outbox.empty();
     t.flying.reset();
     t.outbox.clear();
@@ -315,11 +342,13 @@ void Backend::typeLive(Tracked &t) {
     t.sendStartedMs           = nowMs();
     t.promptLanded            = false;
     t.flying                  = next;
-    const std::string convId  = t.convId;
+    if (t.watch)
+        t.watch->sent = true;
+    const std::string convId = t.convId;
     // Its done may run before sendLive returns (nothing to type, no terminal):
     // then the handle is a finished one, and `t` may be gone by then too.
-    const auto        ran     = std::make_shared<bool>(false);
-    const auto        handle  = _launcher->sendLive(
+    const auto        ran    = std::make_shared<bool>(false);
+    const auto        handle = _launcher->sendLive(
         t.info.sessionId,
         t.info.cwd,
         next.text,
@@ -584,12 +613,14 @@ void Backend::dispatch(Tracked &t) {
     }
     Tracked::Outgoing next = t.outbox.front();
     t.outbox.pop_front();
-    t.sending                = true;
-    t.launching              = true;
-    t.sendStartedMs          = nowMs();
-    t.promptLanded           = false;
-    t.handedOver             = false;
-    t.flying                 = std::move(next);
+    t.sending       = true;
+    t.launching     = true;
+    t.sendStartedMs = nowMs();
+    t.promptLanded  = false;
+    t.handedOver    = false;
+    t.flying        = std::move(next);
+    if (t.watch)
+        t.watch->sent = true;
     const std::string convId = t.convId;
     const std::string cwd    = t.info.cwd;
     const bool        fresh  = t.info.sessionId.empty(); // a "+" session: msga's
@@ -638,7 +669,26 @@ void Backend::dispatch(Tracked &t) {
             }
             scheduleRefresh();
         };
-    if (t.info.sessionId.empty()) {
+    if (!t.deniedTools.empty() && !t.info.sessionId.empty()) {
+        // A branch that goes without tools: a resume would keep them off
+        // (they're saved with it) — unless it raced the old worker's exit and
+        // Claude Code started a copy, which runs without its options. A fork
+        // passing them again is that copy, made on purpose: adopted the same
+        // way (adoptCopy), the original's worker stopped.
+        const std::string folder = file::absolute(cwd);
+        _forkingIn.insert(folder); // the copy mustn't flash up in the list meanwhile
+        _launcher->fork(
+            t.info.sessionId,
+            cwd,
+            t.flying->text,
+            [this, alive = _alive, folder, settled](std::string sessionId, std::string error) {
+                if (*alive)
+                    _forkingIn.erase(folder);
+                settled(std::move(sessionId), std::move(error));
+            },
+            t.deniedTools
+        );
+    } else if (t.info.sessionId.empty()) {
         _launcher->start(
             t.info.cwd,
             t.flying->text,
@@ -743,34 +793,39 @@ void Backend::stopWorker(Tracked &t) {
 
 // ── /btw: a branch of the session ───────────────────────────────────────────
 
-void Backend::startFork(Tracked &parent, const std::string &question, Done done) {
+void Backend::startFork(Tracked &parent, const std::string &question, Done done, ForkOptions opts) {
     const std::string parentConv = parent.convId;
-    whenLoggedIn([this, parentConv, question, done](bool loggedIn) {
+    whenLoggedIn([this, parentConv, question, done, opts = std::move(opts)](bool loggedIn) mutable {
         Tracked *t = find(parentConv);
         if (loggedIn && t) {
-            launchFork(*t, question, done);
+            launchFork(*t, question, done, std::move(opts));
             return;
         }
         const std::string error =
             !t ? std::string(tr("The session was removed from msga.")) : notLoggedInMessage();
         reportError(i18n::arg(tr("Couldn't send message: %1"), error));
-        if (done)
+        if (opts.started)
+            opts.started({}, error);
+        else if (done)
             done(false, error);
     });
 }
 
-void Backend::launchFork(Tracked &parent, const std::string &question, Done done) {
+void Backend::launchFork(
+    Tracked &parent, const std::string &question, Done done, ForkOptions opts
+) {
     const std::string parentConv = parent.convId;
     const std::string cwd        = parent.info.cwd;
     const std::string folder     = file::absolute(cwd);
     _forkingIn.insert(folder); // the branch mustn't flash up in the list meanwhile
+    std::vector<std::string> denied = opts.deniedTools; // opts moves into the callback
     _launcher->fork(
         parent.info.sessionId,
         cwd,
         question,
-        [this, alive = _alive, parentConv, cwd, folder, done](
+        [this, alive = _alive, parentConv, cwd, folder, done, opts = std::move(opts)](
             std::string sessionId, std::string error
-        ) {
+        ) mutable {
             if (!*alive)
                 return;
             _forkingIn.erase(folder);
@@ -778,23 +833,42 @@ void Backend::launchFork(Tracked &parent, const std::string &question, Done done
                 if (error.empty())
                     error = tr("The session was removed from msga.");
                 reportError(i18n::arg(tr("Couldn't send message: %1"), error));
-                if (done)
+                if (opts.started)
+                    opts.started({}, error);
+                else if (done)
                     done(false, error);
                 scheduleRefresh();
                 return;
             }
             _launchedHere.insert(sessionId);
-            Tracked &f          = ensureTracked(convIdFor(sessionId));
-            f.info.sessionId    = sessionId;
-            f.info.cwd          = cwd;
-            f.info.kind         = SessionInfo::Kind::Background;
-            f.forkOf            = parentConv; // detectForks confirms it from the transcript
-            f.awaitingRoot      = true;
+            Tracked &f       = ensureTracked(convIdFor(sessionId));
+            f.info.sessionId = sessionId;
+            f.info.cwd       = cwd;
+            f.info.kind      = SessionInfo::Kind::Background;
+            f.forkOf         = parentConv; // detectForks confirms it from the transcript
+            f.awaitingRoot   = true;
             // Its turn is msga's, like any send: typing, then the answer.
-            f.sending           = true;
-            f.sendStartedMs     = nowMs();
-            f.promptLanded      = false;
-            f.inFlight          = done;
+            f.sending        = true;
+            f.sendStartedMs  = nowMs();
+            f.promptLanded   = false;
+            f.inFlight       = done;
+            f.deniedTools    = std::move(opts.deniedTools);
+            if (opts.turn) {
+                f.watch       = std::make_unique<Tracked::TurnWatch>();
+                f.watch->fn   = std::move(opts.turn);
+                f.watch->send = f.watch->sent = true;
+                f.watch->from = std::string::npos; // from its first prompt, once read
+                f.watch->held = bool(opts.started);
+            }
+            if (opts.started)
+                f.inFlight = [this,
+                              convId  = f.convId,
+                              started = std::move(opts.started)](bool ok, const std::string &why) {
+                    if (ok)
+                        branchStarted(convId, started);
+                    else
+                        started({}, why);
+                };
             // Everything in the thread is news.
             f.announcedAsThread = true;
             f.announcedInit     = true;
@@ -802,7 +876,8 @@ void Backend::launchFork(Tracked &parent, const std::string &question, Done done
             ++f.announcedGen;
             scheduleSaveKnown();
             scheduleRefresh();
-        }
+        },
+        denied
     );
 }
 

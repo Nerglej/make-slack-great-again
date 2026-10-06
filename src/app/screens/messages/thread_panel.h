@@ -1,5 +1,5 @@
-// ThreadPanel — the right-hand thread view: a 48 px
-// header ("Thread", then mute / download / open-as-session / close), the
+// ThreadPanel — the right-hand thread view: a 48 px header ("Thread", an
+// agent link's chip, then mute / download / open-as-session / close), the
 // root and its replies (a MessageList in thread mode), the shell's typing
 // indicator and composer in their slots, and "Also send to channel" under
 // the composer for a thread in a channel on a service that can broadcast.
@@ -49,12 +49,20 @@ public:
 
     std::function<void(ConvRef, Ts)> onOpenAsSession; // the external-link button
 
+    // The chip of an agent's thread that answers a Slack thread (Context::
+    // agentLinkSource): where the questions come from; a click opens it.
+    ui::Clickable     *linkChip() const { return _linkChip; }
+    const std::string &linkChipText() const { return _linkText->text(); }
+    void               refreshLink();
+
 private:
     void refreshMute();
     void refreshBroadcast();
 
     Context       &_ctx;
     ui::Clickable *_mute = nullptr, *_download = nullptr, *_openSession = nullptr;
+    ui::Clickable *_linkChip   = nullptr;
+    ui::Label     *_linkText   = nullptr;
     MessageList   *_list       = nullptr;
     ui::View      *_typingSlot = nullptr, *_slot = nullptr, *_composer = nullptr;
     ui::View      *_broadcastRow = nullptr;

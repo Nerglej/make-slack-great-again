@@ -27,6 +27,7 @@ add_library(msga_screens_shell STATIC
     shortcuts.cpp
     shell.cpp
     shell_agents.cpp
+    shell_links.cpp
     shell_notify.cpp
     shell_text.cpp
     sidebar.cpp

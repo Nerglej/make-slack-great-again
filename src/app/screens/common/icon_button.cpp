@@ -10,6 +10,13 @@ void IconButton::setIcon(gfx::Icon icon) {
     update();
 }
 
+void IconButton::setInk(ui::C ink) {
+    if (_ink == ink)
+        return;
+    _ink = ink;
+    update();
+}
+
 void IconButton::paint(gfx::Painter &p) {
     Clickable::paint(p);
     paintIcon(p);

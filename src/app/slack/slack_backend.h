@@ -166,6 +166,39 @@ public:
     pressButton(model::ConvRef conv, model::Ts ts, const std::string &buttonId, Done done) override;
     void loadSidebarTheme(std::function<void(SidebarTheme, std::string)> done) override;
 
+    // ── Agent thread links ──────────────────────────────────────────────────
+    // Posts (slack_actions.cpp): chat.postMessage / chat.update with message
+    // metadata {event_type: kAgentReplyEvent}; a token that refuses metadata
+    // (metadata_* / invalid_metadata_*) posts without it from then on.
+    void postAgentReply(
+        model::ConvRef conv, model::Ts root, std::string text, std::string blocks, PostDone done
+    ) override;
+    void editAgentReply(
+        model::ConvRef conv, model::Ts ts, std::string text, std::string blocks, Done done
+    ) override;
+    void deleteAgentReply(model::ConvRef conv, model::Ts ts, Done done) override;
+    // A send with files (sendWithFiles) that answers with the shared message's ts.
+    void postAgentFiles(
+        model::ConvRef           conv,
+        model::Ts                root,
+        std::string              text,
+        std::vector<std::string> files,
+        PostDone                 done
+    ) override;
+    // Reading and watching (slack_backend.cpp): conversations.replies with
+    // include_all_metadata. A watched thread is polled on the paced lane at a
+    // cadence by its quietness (15 s while busy or for 10 min after a reply,
+    // then 1 min, 5 min after an hour, 15 min after a day; the first polls
+    // after a start staggered); where the thread feed reports it (session
+    // tokens, a thread I follow) at most every 5 min. A new reply the feed,
+    // a push or an open-thread poll delivers, or client.counts' thread
+    // unread flag turning on, brings the poll forward.
+    void loadThreadReplies(
+        model::ConvRef conv, model::Ts root, model::Ts after, RepliesDone done
+    ) override;
+    void watchThread(model::ConvRef conv, model::Ts root, model::Ts after, bool busy) override;
+    void unwatchThread(model::ConvRef conv, model::Ts root) override;
+
     // ── Realtime, presence link, token refresh (slack_realtime.cpp) ─────────
     // The app's Socket Mode socket (one per app token, shared by every
     // workspace: see socket_mode.h), or null: polling only. Before connect().

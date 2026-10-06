@@ -1082,3 +1082,67 @@ TEST("transcript: a turn since a byte offset") {
     CHECK_FALSE(hasTurnSince(path + ".missing", 0));
     CHECK_FALSE(hasTurnSince(path, 1 << 30));
 }
+
+namespace {
+// A record with a uuid, as Claude Code writes every one: "type" first, the
+// uuid after the message (so a match must be the record's own key).
+std::string record(const char *type, const char *uuid, std::string_view body = {}) {
+    return str::concat(
+        {R"({"type":")",
+         type,
+         R"(","message":{"content":)",
+         q(body),
+         R"(},"uuid":")",
+         uuid,
+         "\"}\n"}
+    );
+}
+} // namespace
+
+TEST("transcript: a session moved on since a record, read from its end") {
+    const std::string path = tempDir() + "/s.jsonl";
+    // A big line before it all: the file is read 64 KB at a time from its end.
+    const std::string big  = record("user", "u0", std::string(200'000, 'x'));
+    const std::string head = big + record("user", "u1", "hi") + record("assistant", "a1", "hello") +
+                             record("system", "e1");
+    REQUIRE(file::writeAtomic(path, head));
+    CHECK_FALSE(hasTurnAfter(path, "e1"));
+    CHECK(hasTurnAfter(path, "u1"));
+    CHECK(hasTurnAfter(path, "u0")); // across the chunks
+    // Bookkeeping after it isn't a turn; a record named only inside another
+    // (a parent link) isn't the record.
+    REQUIRE(
+        file::writeAtomic(
+            path,
+            head + R"({"type":"last-prompt","lastPrompt":"hi","leafUuid":"e1"})"
+                   "\n"
+                   R"({"type":"attachment","parentUuid":"e1","uuid":"x1"})"
+                   "\n"
+        )
+    );
+    CHECK_FALSE(hasTurnAfter(path, "e1"));
+    // Unknown, gone, or none at all: nothing says it didn't move on.
+    CHECK(hasTurnAfter(path, "nope"));
+    CHECK(hasTurnAfter(path, ""));
+    CHECK(hasTurnAfter(path + ".missing", "e1"));
+    // A line still being written (no newline yet) counts.
+    REQUIRE(file::writeAtomic(path, head + R"({"type":"user","uuid":"u2"})"));
+    CHECK(hasTurnAfter(path, "e1"));
+    CHECK_FALSE(hasTurnAfter(path, "u2"));
+
+    // The records before one, newest first, as many as asked.
+    using V = std::vector<std::string>;
+    CHECK(recordsBefore(path, "u2", 2) == (V{"e1", "a1"}));
+    CHECK(recordsBefore(path, "u2", 10) == (V{"e1", "a1", "u1", "u0"}));
+    CHECK(recordsBefore(path, "u0", 10).empty());
+    CHECK(recordsBefore(path, "nope", 10).empty());
+}
+
+TEST("transcript: the parser knows the records it read") {
+    TranscriptParser p;
+    p.feed(record("user", "u1", "hi") + record("system", "e1"));
+    CHECK(p.hasRecord("u1"));
+    CHECK(p.hasRecord("e1"));
+    CHECK_FALSE(p.hasRecord("a1"));
+    CHECK_FALSE(p.hasRecord(""));
+}

@@ -154,7 +154,8 @@ public:
     virtual std::string agentSessionFolder(ConvRef) const { return {}; }
     // Which teammate (role id) a session works as; "" = none / not a session.
     virtual std::string agentSessionRole(ConvRef) const { return {}; }
-    // "Find a session": every session the service has, listed or not.
+    // "Find a session": every session the service has, listed or not, the
+    // most recently active first.
     struct FoundSession {
         std::string id, title, folder, role, avatar, firstPrompt, lastPrompt;
         int64_t     lastActiveMs = 0;
@@ -207,8 +208,106 @@ public:
     virtual bool    threadAcceptsReplies(ConvRef, Ts root) const { return (void)root, true; }
     virtual bool    threadOpensAsSession(ConvRef, Ts root) const { return (void)root, false; }
     virtual ConvRef openThreadAsSession(ConvRef, Ts root) { return (void)root, kNoConv; }
+    // ── Agent branches (Claude Code; defaults: none) ────────────────────────
+    // A branch is a side conversation forked off an agent session: it knows
+    // everything the session knew at the fork, the session itself isn't
+    // touched, and it shows as a thread under the session (like a /btw).
+    // Sessions and branches are named by their conversation ids
+    // (Conversation::id) — kept across restarts, and across the copies
+    // Claude Code makes of a session. Every callback runs later on the UI
+    // thread, never from inside the call, and never after the backend is gone.
+    struct AgentBranch {
+        std::string id; // the branch (continueAgentBranch, watchAgentBranch)
+        // The last record the branch shares with its session ("" = unknown):
+        // agentSessionMovedOn's question.
+        std::string forkPoint;
+        ConvRef     conv = kNoConv; // the session's conversation…
+        Ts          root = 0;       // …and the branch's thread root in it
+    };
+    // What a turn is doing, for a one-line status (the tool calls it makes,
+    // never listed one by one).
+    enum class AgentPhase : uint8_t {
+        Thinking,
+        Reading,   // reading files
+        Searching, // through files, or for tools
+        Browsing,  // the web
+        Running,   // a shell command
+        Delegating,
+        Working, // any other tool
+        WaitingForApproval,
+    };
+    // A branch turn's progress (done = false, as the phase changes), then
+    // its end: the answer (markdown) with the files the turn made (copies in
+    // the cache), or why it failed (error non-empty: not logged in, the
+    // session gone, the turn cut short). `answerId` names the answer — the
+    // same one reported again (watchAgentBranch after a restart) has it too.
+    struct AgentTurn {
+        bool              done  = false;
+        AgentPhase        phase = AgentPhase::Thinking;
+        std::string       status; // the phase as a short line: "Reading files…"
+        std::string       answer, answerId, error;
+        std::vector<File> files;
+    };
+    using AgentTurnFn     = std::function<void(const AgentTurn &)>;
+    using AgentBranchDone = std::function<void(AgentBranch branch, const std::string &error)>;
+    // A new branch of `session` whose first turn is `prompt`, with `files`
+    // (local paths) attached and `deniedTools` turned off in it for good
+    // (on top of what the backend always turns off). `started` once the
+    // branch exists, its prompt taken (or with why it couldn't start); then
+    // `turn` follows that first turn. The session may be mid-turn: the
+    // branch then sees the call under way as cut short.
+    virtual void startAgentBranch(
+        const std::string       &session,
+        std::string              prompt,
+        std::vector<std::string> files,
+        std::vector<std::string> deniedTools,
+        AgentBranchDone          started,
+        AgentTurnFn              turn
+    ) {
+        (void)session, (void)prompt, (void)files, (void)deniedTools, (void)turn;
+        if (started)
+            started({}, "not supported");
+    }
+    // The branch's next turn: `prompt` (and `files`) as a reply in its
+    // thread, with the tools it was started without still off. One turn at a
+    // time: sent while one runs, it waits for it — and `turn` takes over
+    // from the earlier observer, which hears nothing more.
+    virtual void continueAgentBranch(
+        const std::string       &branch,
+        std::string              prompt,
+        std::vector<std::string> files,
+        AgentTurnFn              turn
+    ) {
+        (void)branch, (void)prompt, (void)files;
+        if (turn)
+            turn({true, AgentPhase::Thinking, {}, {}, {}, "not supported", {}});
+    }
+    // Follows the branch's turn under way — or, none running, reports its
+    // last answer at once (after a restart: a turn that ended meanwhile).
+    virtual void watchAgentBranch(const std::string &branch, AgentTurnFn turn) {
+        (void)branch;
+        if (turn)
+            turn({true, AgentPhase::Thinking, {}, {}, {}, "not supported", {}});
+    }
+    // Whether `session` went on since `forkPoint` (AgentBranch::forkPoint):
+    // a prompt or an answer of its own after that record — true too when
+    // that can't be told (the record or the session is gone). A tail read,
+    // off the UI thread.
+    virtual void agentSessionMovedOn(
+        const std::string &session, const std::string &forkPoint, std::function<void(bool)> done
+    ) {
+        (void)session, (void)forkPoint;
+        if (done)
+            done(true);
+    }
+    // What the branch's thread root shows instead of its first prompt (a
+    // short line for the long prompt it was asked with); "" = the prompt.
+    // Not kept by the backend: the caller sets it again after a start.
+    virtual void setAgentBranchLabel(const std::string &branch, std::string label) {
+        (void)branch, (void)label;
+    }
     // "Delete message" where deleting depends on more than authorship.
-    virtual bool    canDeleteMessage(ConvRef, Ts) const { return true; }
+    virtual bool                 canDeleteMessage(ConvRef, Ts) const { return true; }
     // A message's button (Message extras' buttons) pressed. A button the
     // service won't let this client press (Slack's legacy attachment
     // buttons, a token without the internal API) fails with
@@ -469,6 +568,100 @@ public:
         if (done)
             done(m != nullptr, m ? m->clone() : Message());
     }
+
+    // ── Agent thread links ──────────────────────────────────────────────────
+    // A thread of this workspace answered by an agent session of another
+    // (the links module): posting into it as the user, reading it, watching
+    // it. Every call works on any thread, loaded or not, open or not.
+    // Defaults, for a backend without it: fails, or nothing.
+    //
+    // The marker on the agent's posts (Slack: message metadata with this
+    // event_type), so a reader can tell them from the user's own. Best
+    // effort: where the service refuses it the post goes out without one,
+    // and the caller's list of posted ts is the record.
+    static constexpr const char *kAgentReplyEvent = "msga_agent_reply";
+    // done(ts, "") with the posted message's ts, or done(0, why).
+    using PostDone = std::function<void(Ts ts, const std::string &error)>;
+    // Posts a reply in thread `root` as the user: mrkdwn `text` (what a
+    // notification shows, and the whole message where `blocks` is "") with
+    // Block Kit `blocks` (a JSON array), marked. Like a send: a pending copy
+    // in the Store, never posted twice, a failure on the error banner.
+    virtual void
+    postAgentReply(ConvRef conv, Ts root, std::string text, std::string blocks, PostDone done) {
+        (void)conv, (void)root, (void)text, (void)blocks;
+        if (done)
+            done(0, "not supported");
+    }
+    // Replaces an own message's text and blocks (marked as above); the
+    // Store's copy, if it holds one, follows once the service agreed.
+    virtual void
+    editAgentReply(ConvRef conv, Ts ts, std::string text, std::string blocks, Done done) {
+        (void)conv, (void)ts, (void)text, (void)blocks;
+        if (done)
+            done(false, "not supported");
+    }
+    // Deletes an own message (one already gone is a success); the Store's
+    // copy goes once the service agreed.
+    virtual void deleteAgentReply(ConvRef conv, Ts ts, Done done) {
+        (void)conv, (void)ts;
+        if (done)
+            done(false, "not supported");
+    }
+    // Uploads local `files` into thread `root` as the user, `text` with
+    // them (a send with files, unmarked: uploads carry no metadata);
+    // done(ts, "") with the shared message's ts, or done(0, why).
+    virtual void postAgentFiles(
+        ConvRef conv, Ts root, std::string text, std::vector<std::string> files, PostDone done
+    ) {
+        (void)conv, (void)root, (void)text, (void)files;
+        if (done)
+            done(0, "not supported");
+    }
+    // One message of a thread as the service has it (a copy, not Store
+    // data): text is the raw mrkdwn, files are in its extras; threadTs is
+    // the root for every message, the root's own included.
+    struct ThreadReply {
+        Message message;
+        bool    agentReply = false; // carries kAgentReplyEvent
+    };
+    // error "" on success.
+    using RepliesDone =
+        std::function<void(std::vector<ThreadReply> replies, const std::string &error)>;
+    // Every message of thread `root` newer than `after`, oldest first (after
+    // 0: the whole thread, root first), every page.
+    virtual void loadThreadReplies(ConvRef conv, Ts root, Ts after, RepliesDone done) {
+        (void)conv, (void)root, (void)after;
+        if (done)
+            done({}, "not supported");
+    }
+    // Watching a thread: its messages newer than `after` (the root too when
+    // after < root) reach onThreadReplies as they are noticed, each once —
+    // everyone's, the user's and the agent's own posts included. The
+    // backend's cursor moves on with every report; the caller keeps its own
+    // across runs and watches again from it after a start. busy: an agent
+    // turn runs for the thread (watched most closely). Calling it for a
+    // watched thread updates busy and moves the cursor forward only.
+    // Watches end with unwatchThread or the backend; nothing is persisted.
+    virtual void watchThread(ConvRef conv, Ts root, Ts after, bool busy) {
+        (void)conv, (void)root, (void)after, (void)busy;
+    }
+    virtual void unwatchThread(ConvRef conv, Ts root) { (void)conv, (void)root; }
+    // What watching found: new messages (oldest first, never none) and
+    // error "", or no messages and the service's reason the thread can't be
+    // read any more ("thread_not_found", "channel_not_found"…), once per
+    // streak of it — the watch goes on until unwatched. Set on the
+    // workspace's own backend (a BackendProxy's is never called), once.
+    std::function<
+        void(ConvRef conv, Ts root, std::vector<ThreadReply> replies, const std::string &error)>
+                onThreadReplies;
+    // The thread `ts` is in: its root (a top-level message is its own);
+    // done(0) when the message can't be found. Answers at once when the
+    // Store holds the message, else asks loadMessage.
+    void        resolveThreadRoot(ConvRef conv, Ts ts, std::function<void(Ts root)> done);
+    // The user's own name as this workspace shows names (Settings → Names,
+    // which follows the service's own preference by default): the "AI reply
+    // on behalf of <name>" label.
+    std::string selfName() const;
 
     struct SearchHit {
         ConvRef     conv   = kNoConv;

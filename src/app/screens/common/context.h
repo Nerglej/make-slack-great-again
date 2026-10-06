@@ -91,6 +91,25 @@ struct Context {
     // Settings opened on its AI assistance page (the Summarize notice's
     // "Open settings"). Set by the shell.
     std::function<void()>                                            openAiSettings;
+
+    // Agent thread links (a Slack thread answered by a Claude Code session):
+    // what the hover toolbar's robot and the message menu offer for a
+    // message, and what their items do. Set by the shell while there are
+    // links to make; unset: nothing of it shows.
+    struct AgentLink {
+        bool offered  = false; // the robot, "Ask agent…" (a Claude Code workspace exists)
+        bool linked   = false; // its thread is linked: they open the agent's thread
+        bool canAllow = false; // linked; its author can't ask yet: "Allow <name> to ask agent"
+        bool root     = false; // linked, and it is the thread's root: "Unlink agent"
+    };
+    enum class AgentLinkAction : uint8_t { Ask, Allow, Unlink, OpenSource };
+    std::function<AgentLink(ConvRef, const model::Message &)> agentLink;
+    // OpenSource: (conv, root) is an agent's thread of a link (a branch of
+    // the session): the Slack thread it answers opens.
+    std::function<void(ConvRef, Ts ts, AgentLinkAction)>      agentLinkAction;
+    // An agent session's thread that answers a link: where its questions
+    // come from ("#general in Lumen", the thread panel's chip); "" = none.
+    std::function<std::string(ConvRef, Ts root)>              agentLinkSource;
 };
 
 } // namespace screens

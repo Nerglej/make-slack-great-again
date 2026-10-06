@@ -6,6 +6,7 @@
 #include "app/claude/backend.h"
 #include "app/claude/cli.h"
 #include "app/claude/common.h"
+#include "app/claude/links.h"
 #include "app/claude/roles.h"
 #include "app/slack/oauth.h"
 #include "app/slack/session.h"
@@ -18,6 +19,7 @@
 #include "base/i18n.h"
 #include "base/str.h"
 #include "net/net.h"
+#include "screens/common/message_text.h"
 #include "screens/common/remote_images.h"
 #include "screens/shell/settings.h"
 #include "screens/shell/shell.h"
@@ -93,6 +95,20 @@ Accounts::Accounts(
       _saveSettings(std::move(saveSettings)), _proxy(proxy), _client(client),
       _store(std::move(storePath)), _none(none), _blank(ctx.store()) {
     imageAuth();
+    // The links live in the Claude Code workspace's files (links.json) and
+    // fetch the askers' files into its cache.
+    plat::App        &pa    = ctx.app.platform();
+    const std::string data  = identity::dataDir(pa);
+    const std::string cache = identity::cacheDir(pa);
+    _links                  = std::make_unique<claude::Links>(
+        pa,
+        data.empty() ? std::string() : file::join(data, "claude-code/links.json"),
+        cache.empty() ? std::string() : file::join(cache, "claude-code")
+    );
+    _links->plainText = [](const model::Store &st, std::string_view text) {
+        return screens::plainText(st, text, true);
+    };
+    _shell.setAgentLinks(_links.get());
 }
 
 Accounts::~Accounts() {
@@ -107,6 +123,7 @@ Accounts::~Accounts() {
     _proxy.setTarget(_none);
     _ctx.store.setTarget(_blank);
     _active = nullptr;
+    _shell.setAgentLinks(nullptr);
     for (const auto &r : _running)
         shutdown(*r, true);  // quitting: what changed in the last second too
     model::stopBackground(); // the work still under way reports to nobody
@@ -115,6 +132,7 @@ Accounts::~Accounts() {
     if (_migration && _migration->req)
         _client.cancel(_migration->req);
     _running.clear();
+    _links.reset();
 }
 
 void Accounts::start() {
@@ -352,6 +370,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
         backend->setZenMode(_settings.zenMode(key));
         r->claude  = backend.get();
         r->backend = std::move(backend);
+        _links->setAgents(&st, r->claude);
     } else {
         const std::string cached = iconCachePath(pa, rec->iconUrl);
         st.workspaceIcon         = !cached.empty() && file::exists(cached) ? cached : std::string();
@@ -389,6 +408,7 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
         backend->setNamesMode(model::Backend::NamesMode(_settings.names));
         r->slack   = backend.get();
         r->backend = std::move(backend);
+        _links->attach(st, *r->slack);
     }
     Running *raw = r.get();
     _running.push_back(std::move(r));
@@ -438,6 +458,10 @@ void Accounts::shutdown(Running &r, bool keepCache) {
         r.slack->closeCache(keepCache);
     if (r.claude)
         r.claude->close(); // nothing more goes into the Store it is about to lose
+    if (r.claude)
+        _links->setAgents(nullptr, nullptr);
+    else
+        _links->detach(r.store);
 }
 
 void Accounts::drop(Running *r, bool keepCache) {
@@ -538,6 +562,11 @@ void Accounts::connect(uint64_t serial) {
                 }
             }
             fetchIcon(*r);
+            // Its links watched (again), turns a restart cut short taken up.
+            if (r->claude)
+                _links->agentsReady();
+            else
+                _links->ready(r->store);
             const bool first = !r->live;
             r->live          = true;
             _shell.setWorkspaceLive(r->key, true);

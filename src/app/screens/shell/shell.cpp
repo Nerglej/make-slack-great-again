@@ -2731,6 +2731,20 @@ Shell::Running *Shell::findRunning(const std::string &key) {
     return nullptr;
 }
 
+bool Shell::showWorkspaceOf(const model::Store *st) {
+    if (!st)
+        return false;
+    if (st == &_ctx.store() && _signedIn)
+        return true;
+    for (const auto &r : _running)
+        if (r->store == st) {
+            if (onSwitchWorkspace)
+                onSwitchWorkspace(r->key);
+            break;
+        }
+    return st == &_ctx.store() && _signedIn;
+}
+
 void Shell::attachWorkspace(const std::string &key, model::Store &store, model::Backend &backend) {
     detachWorkspace(key);
     auto r      = std::make_unique<Running>();

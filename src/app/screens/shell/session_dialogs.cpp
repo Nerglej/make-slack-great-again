@@ -149,15 +149,17 @@ public:
             tr("Search for sessions"), TextField::Size::Normal, uint16_t(Icon::Search)
         );
         _search->style().flex(1).minW = 200;
-        auto *createBtn =
-            top->add<Button>(tr("Create a session"), V::Primary, Button::Form::Normal);
-        createBtn->setFocusable(false);
-        createBtn->onClick = [this] {
-            auto cb = _create;
-            reject();
-            if (cb)
-                cb();
-        };
+        if (_create) { // not in the session picker
+            auto *createBtn =
+                top->add<Button>(tr("Create a session"), V::Primary, Button::Form::Normal);
+            createBtn->setFocusable(false);
+            createBtn->onClick = [this] {
+                auto cb = _create;
+                reject();
+                if (cb)
+                    cb();
+            };
+        }
         top->add<CloseX>()->onClick = [this] { reject(); };
 
         content()->add<Separator>(false, C::FormDivider);
@@ -567,10 +569,14 @@ foundSessionItem(const model::Backend::FoundSession &s, const std::string &home,
 
 // ── Entry points ────────────────────────────────────────────────────────────
 
-Popup *showSessionFinder(
+namespace {
+
+// The finder over `source`'s sessions; without `create`, no "Create a session".
+Popup *openFinder(
     screens::Context                        &ctx,
     Window                                  &w,
     Avatars                                 &avatars,
+    model::Backend                          &source,
     std::function<void(const std::string &)> pick,
     std::function<void()>                    create
 ) {
@@ -579,13 +585,35 @@ Popup *showSessionFinder(
     // The list arrives later; the dialog may be closed by then.
     auto  alive = std::make_shared<bool>(true);
     raw->onClosed = [alive] { *alive = false; };
-    ctx.backend.findAgentSessions([raw, alive](std::vector<model::Backend::FoundSession> s) {
+    source.findAgentSessions([raw, alive](std::vector<model::Backend::FoundSession> s) {
         if (*alive)
             raw->setSessions(s);
     });
     w.showPopup(std::move(d));
     raw->search().edit().focus();
     return raw;
+}
+
+} // namespace
+
+Popup *showSessionFinder(
+    screens::Context                        &ctx,
+    Window                                  &w,
+    Avatars                                 &avatars,
+    std::function<void(const std::string &)> pick,
+    std::function<void()>                    create
+) {
+    return openFinder(ctx, w, avatars, ctx.backend, std::move(pick), std::move(create));
+}
+
+Popup *showSessionPicker(
+    screens::Context                        &ctx,
+    Window                                  &w,
+    Avatars                                 &avatars,
+    model::Backend                          &agents,
+    std::function<void(const std::string &)> pick
+) {
+    return openFinder(ctx, w, avatars, agents, std::move(pick), nullptr);
 }
 
 Popup *showTeammateDialog(

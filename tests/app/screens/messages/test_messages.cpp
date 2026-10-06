@@ -9,6 +9,7 @@
 #include "support/fake_llm_server.h"
 #include "app/model/jobs.h"
 #include "app/screens/common/avatar_initial.h"
+#include "app/screens/common/icon_button.h"
 #include "app/screens/common/message_rules.h"
 #include "app/screens/common/message_text.h"
 #include "app/screens/common/remote_images.h"
@@ -842,6 +843,49 @@ TEST("actions: a reaction pill toggles mine; the newest message on screen marks 
     CHECK(e.win->topPopup() != nullptr);
 }
 
+TEST("thread: an agent's thread of a link has a chip back to the Slack thread") {
+    Env           e(true);
+    const ConvRef design = e.conv("C0DESIGN");
+    Ts            root   = 0;
+    for (const model::Message &m : e.store.conversation(design).messages)
+        if (m.replyCount > 0)
+            root = m.ts;
+    REQUIRE(root != 0);
+    std::vector<Context::AgentLinkAction> actions;
+    e.ctx.agentLinkSource = [&](ConvRef, Ts r) {
+        return r == root ? std::string("#general in Lumen") : std::string();
+    };
+    e.ctx.agentLinkAction = [&](ConvRef, Ts r, Context::AgentLinkAction a) {
+        CHECK(r == root);
+        actions.push_back(a);
+    };
+    auto *panel = e.win->root().add<ThreadPanel>(e.ctx);
+    panel->show(design, root);
+    REQUIRE(panel->linkChip()->visible());
+    CHECK_STR(panel->linkChipText(), "#general in Lumen");
+    panel->linkChip()->activate();
+    CHECK(actions == std::vector<Context::AgentLinkAction>{Context::AgentLinkAction::OpenSource});
+    // A long name in a narrow panel: the chip gives way ("…", the whole
+    // name in its tooltip), "Thread" stays one line at its own width.
+    const std::string longName = "Vladimir Osipov in CityCity Consulting";
+    e.ctx.agentLinkSource = [&](ConvRef, Ts r) { return r == root ? longName : std::string(); };
+    panel->refreshLink();
+    CHECK_STR(panel->linkChipText(), longName);
+    CHECK(panel->linkChip()->tooltip().find(longName) != std::string::npos);
+    panel->style().width(360);
+    pump(4);
+    ui::View   *title = panel->child(0)->child(0);
+    const float tw    = title->measure(ui::kInf, ui::kInf).w;
+    CHECK(title->width() >= tw - 1);
+    CHECK(title->height() < 2 * title->measure(ui::kInf, ui::kInf).h);
+    CHECK(panel->linkChip()->width() > 0);
+    CHECK(panel->linkChip()->width() < panel->linkChip()->measure(ui::kInf, ui::kInf).w);
+    // Another thread: none.
+    e.ctx.agentLinkSource = [](ConvRef, Ts) { return std::string(); };
+    panel->refreshLink();
+    CHECK_FALSE(panel->linkChip()->visible());
+}
+
 TEST("thread: day dividers, the root and its replies; the summary opens the thread") {
     Env           e(true);
     const ConvRef design = e.conv("C0DESIGN");
@@ -1456,15 +1500,17 @@ TEST("actions: the hover toolbar — react, forward, save, more; save toggles") 
     const ui::RectF rr = row->windowRect();
     h->injectPointerMove(e.win->native(), {rr.x + 300, rr.y + 20});
     pump(4);
-    // The four buttons, their tooltips, 28-px buttons in a 16/12-padded card.
+    // The four buttons, their tooltips, 28-px buttons in a 16/12-padded card
+    // (Ask agent hidden: no agent links here).
     ui::View *fwd = findByTooltip(e.win->root().child(0), "Forward message");
     REQUIRE(fwd != nullptr);
     ui::View *card = fwd->parent();
     REQUIRE(card->visible());
-    REQUIRE(card->childCount() == 4);
+    REQUIRE(card->childCount() == 5);
     CHECK_STR(card->child(0)->tooltip(), "Add reaction");
     CHECK_STR(card->child(2)->tooltip(), "Save for later");
-    CHECK_STR(card->child(3)->tooltip(), "More actions");
+    CHECK_FALSE(card->child(3)->visible());
+    CHECK_STR(card->child(4)->tooltip(), "More actions");
     CHECK(near(card->frame().w, 16 + 4 * 28 + 3 * 4) && near(card->frame().h, 40));
     // It straddles the row's top edge, 12 px from the right.
     CHECK(near(card->windowRect().y, rr.y - 20, 1));
@@ -1494,6 +1540,66 @@ TEST("actions: the hover toolbar — react, forward, save, more; save toggles") 
         pump(2);
         CHECK_FALSE(card->visible());
     }
+}
+
+TEST("actions: the robot asks an agent, active on a linked thread; its menu items") {
+    Env                                                  e(true);
+    const ConvRef                                        design     = e.conv("C0DESIGN");
+    // The shell's links, stood in for: the newest message's thread linked.
+    Ts                                                   linkedRoot = 0;
+    std::vector<std::pair<Ts, Context::AgentLinkAction>> actions;
+    e.ctx.agentLink = [&](ConvRef, const model::Message &m) {
+        Context::AgentLink a;
+        a.offered  = true;
+        a.linked   = (m.isReply() ? m.threadTs : m.ts) == linkedRoot;
+        a.root     = a.linked && m.ts == linkedRoot;
+        a.canAllow = a.linked;
+        return a;
+    };
+    e.ctx.agentLinkAction = [&](ConvRef, Ts ts, Context::AgentLinkAction a) {
+        actions.push_back({ts, a});
+    };
+    e.list->showConversation(design);
+    pump(10);
+    const model::Message &last = e.store.conversation(design).messages.back();
+    ui::View             *row  = e.row(last.ts);
+    REQUIRE(row != nullptr);
+    auto           *h  = app().platform().testHooks();
+    const ui::RectF rr = row->windowRect();
+    h->injectPointerMove(e.win->native(), {rr.x + 300, rr.y + 20});
+    pump(4);
+    // Hovering the message shows the robot before More actions.
+    auto *robot = static_cast<IconButton *>(findByTooltip(e.win->root().child(0), "Ask agent"));
+    REQUIRE(robot != nullptr);
+    REQUIRE(robot->visible());
+    CHECK(robot->icon() == gfx::Icon::Bot);
+    CHECK(robot->parent()->child(4) == findByTooltip(e.win->root().child(0), "More actions"));
+    CHECK(robot->ink() != ui::C::Accent);
+    robot->activate();
+    REQUIRE(actions.size() == 1);
+    CHECK(actions[0].first == last.ts && actions[0].second == Context::AgentLinkAction::Ask);
+    // Asking is the robot's alone; the menu doesn't repeat it.
+    std::string labels = menuLabels(e.list->menuItems(last.ts));
+    CHECK(labels.find("Ask agent") == std::string::npos);
+    CHECK(labels.find("Unlink agent") == std::string::npos);
+    // Linked: active, "Open agent thread"; the menu lets its author ask and
+    // the root unlink.
+    linkedRoot = last.ts;
+    e.list->refreshToolbar();
+    CHECK(robot->ink() == ui::C::Accent);
+    CHECK_STR(robot->tooltip(), "Open agent thread");
+    labels = menuLabels(e.list->menuItems(last.ts));
+    CHECK(labels.find("Allow ") != std::string::npos);
+    CHECK(labels.find(" to ask agent") != std::string::npos);
+    CHECK(labels.find("Unlink agent") != std::string::npos);
+    e.list->runMenuAction(last.ts, MessageList::kUnlinkAgent);
+    REQUIRE(actions.size() == 2);
+    CHECK(actions[1].second == Context::AgentLinkAction::Unlink);
+    // Nothing offered (no Claude Code workspace): hidden.
+    e.ctx.agentLink = [](ConvRef, const model::Message &) { return Context::AgentLink{}; };
+    e.list->refreshToolbar();
+    CHECK_FALSE(robot->visible());
+    CHECK(menuLabels(e.list->menuItems(last.ts)).find("agent") == std::string::npos);
 }
 
 TEST("actions: the file bar on hovered files; right click on them does nothing") {

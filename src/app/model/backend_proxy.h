@@ -67,7 +67,26 @@ public:
     bool                     threadAcceptsReplies(ConvRef c, Ts root) const override;
     bool                     threadOpensAsSession(ConvRef c, Ts root) const override;
     ConvRef                  openThreadAsSession(ConvRef c, Ts root) override;
-    bool                     canDeleteMessage(ConvRef c, Ts ts) const override;
+    void                     startAgentBranch(
+        const std::string       &session,
+        std::string              prompt,
+        std::vector<std::string> files,
+        std::vector<std::string> deniedTools,
+        AgentBranchDone          started,
+        AgentTurnFn              turn
+    ) override;
+    void continueAgentBranch(
+        const std::string       &branch,
+        std::string              prompt,
+        std::vector<std::string> files,
+        AgentTurnFn              turn
+    ) override;
+    void watchAgentBranch(const std::string &branch, AgentTurnFn turn) override;
+    void agentSessionMovedOn(
+        const std::string &session, const std::string &forkPoint, std::function<void(bool)> done
+    ) override;
+    void         setAgentBranchLabel(const std::string &branch, std::string label) override;
+    bool         canDeleteMessage(ConvRef c, Ts ts) const override;
     void         pressButton(ConvRef c, Ts ts, const std::string &buttonId, Done d) override;
     void         setZenMode(bool on) override;
     void         setLocalName(ConvRef c, std::string name) override;
@@ -99,8 +118,18 @@ public:
     bool        gifSearchAvailable() const override;
     void        searchGifs(std::string query, std::function<void(std::vector<Gif>)> done) override;
     std::string promptSuggestion(ConvRef c) const override;
-    void    search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
-    void    loadMessage(ConvRef c, Ts ts, MessageDone done) override;
+    void search(std::string query, std::function<void(std::vector<SearchHit>)> done) override;
+    void loadMessage(ConvRef c, Ts ts, MessageDone done) override;
+    void
+    postAgentReply(ConvRef c, Ts root, std::string text, std::string blocks, PostDone d) override;
+    void editAgentReply(ConvRef c, Ts ts, std::string text, std::string blocks, Done d) override;
+    void deleteAgentReply(ConvRef c, Ts ts, Done d) override;
+    void postAgentFiles(
+        ConvRef c, Ts root, std::string text, std::vector<std::string> files, PostDone d
+    ) override;
+    void    loadThreadReplies(ConvRef c, Ts root, Ts after, RepliesDone done) override;
+    void    watchThread(ConvRef c, Ts root, Ts after, bool busy) override;
+    void    unwatchThread(ConvRef c, Ts root) override;
     void    loadThreadsView(std::string cursor, ThreadsViewDone done) override;
     void    markThreadRead(ConvRef c, Ts root, Ts ts) override;
     int64_t nowSecs() const override;

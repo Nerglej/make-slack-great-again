@@ -192,14 +192,17 @@ struct SlackBackend::Write {
     struct Send {
         ConvRef                  conv  = model::kNoConv;
         Ts                       local = 0, thread = 0;
-        std::string              text;    // exactly what chat.postMessage is given
-        std::string              blocks;  // its Block Kit blocks (JSON), "" = none
-        std::string              oldest;  // the reconcile scan's exclusive lower bound
-        std::vector<std::string> fileIds; // uploads: what the shared message carries
-        bool                     broadcast = false;
-        bool                     withFiles = false; // an upload (msga: "Upload failed")
-        bool                     undone    = false; // taken back while in flight (undo send)
-        int                      attempts  = 0;
+        std::string              text;     // exactly what chat.postMessage is given
+        std::string              blocks;   // its Block Kit blocks (JSON), "" = none
+        std::string              metadata; // message metadata (JSON), "" = none
+        std::string              oldest;   // the reconcile scan's exclusive lower bound
+        std::vector<std::string> fileIds;  // uploads: what the shared message carries
+        bool                     broadcast  = false;
+        bool                     withFiles  = false; // an upload (msga: "Upload failed")
+        bool                     awaitShare = false; // an upload's done waits for its ts
+        bool                     undone     = false; // taken back while in flight (undo send)
+        int                      attempts   = 0;
+        Ts                       server     = 0; // the confirmed message's ts
         Done                     done;
         void                     finish(bool ok, const std::string &err) {
             if (auto cb = std::exchange(done, nullptr))
@@ -220,6 +223,8 @@ struct SlackBackend::Write {
     model::OneShotTimers   timers{b._app}; // cancelled with the Write
     Ts                     lastLocal        = 0;
     bool                   savedUnavailable = false, threadMarkUnavailable = false;
+    // The token refused message metadata: agent posts go without the marker.
+    bool                   metadataRefused = false;
     MyProfile              profile; // the last users.profile.get (updateProfile diffs it)
     bool                   profileLoaded = false;
 
@@ -415,10 +420,21 @@ struct SlackBackend::Write {
             addParam(form, "thread_ts", model::formatTs(st->thread));
         if (st->broadcast)
             addParam(form, "reply_broadcast", "true");
+        if (!st->metadata.empty())
+            addParam(form, "metadata", st->metadata);
         b.api(
             "chat.postMessage",
             std::move(form),
             [this, st](const json::Document &doc, const std::string &err) {
+                if (!st->metadata.empty() && metadataError(err)) {
+                    // Refused outright, so nothing was posted: again, unmarked.
+                    LOG_INFO(
+                        "slack", "chat.postMessage: %s, posting without metadata", err.c_str()
+                    );
+                    metadataRefused = true;
+                    st->metadata.clear();
+                    return postAttempt(st);
+                }
                 if (err.empty()) {
                     // Confirmed from the answer itself, not a later echo.
                     const json::Value r = doc.root();
@@ -492,6 +508,7 @@ struct SlackBackend::Write {
         }
         const Ts   ts    = m.ts;
         const bool reply = m.isReply();
+        st->server       = ts;
         store().removeMessage(st->conv, st->local);
         if (ts) {
             store().addMessage(st->conv, std::move(m));
@@ -519,6 +536,68 @@ struct SlackBackend::Write {
                 );
         }
         st->finish(false, err);
+    }
+
+    // ── Agent posts (Backend::postAgentReply) ───────────────────────────────
+    // The marker, unless this token refused it.
+    std::string agentMetadata() const {
+        if (metadataRefused)
+            return {};
+        json::Writer w;
+        w.beginObject().key("event_type").value(model::Backend::kAgentReplyEvent);
+        w.key("event_payload").beginObject().endObject().endObject();
+        return w.str();
+    }
+    // chat.postMessage's / chat.update's metadata codes
+    // (metadata_must_be_sent_from_app, invalid_metadata_format …).
+    static bool metadataError(const std::string &err) {
+        return str::startsWith(err, "metadata_") || str::startsWith(err, "invalid_metadata");
+    }
+    // chat.update of an agent post: safe to repeat, so it rides the read
+    // path (lost connections and 429s waited out).
+    void updateAgent(
+        ConvRef conv, Ts ts, std::string text, std::string blocks, std::string metadata, Done done
+    ) {
+        std::string form;
+        addParam(form, "channel", b.convId(conv));
+        addParam(form, "ts", model::formatTs(ts));
+        addParam(form, "text", text);
+        if (!blocks.empty())
+            addParam(form, "blocks", blocks);
+        if (!metadata.empty())
+            addParam(form, "metadata", metadata);
+        b.readCall(
+            "chat.update",
+            std::move(form),
+            [this, conv, ts, text, blocks, metadata, done = std::move(done)](
+                const json::Document &doc, const std::string &err
+            ) mutable {
+                if (err == "cancelled")
+                    return;
+                if (!metadata.empty() && metadataError(err)) {
+                    metadataRefused = true;
+                    return updateAgent(
+                        conv, ts, std::move(text), std::move(blocks), {}, std::move(done)
+                    );
+                }
+                if (!err.empty()) {
+                    LOG_WARN("slack", "chat.update: %s", err.c_str());
+                } else {
+                    // Slack's copy (links, mentions normalised; the blocks).
+                    model::Message fresh = mapjson::toMessage(doc.root()["message"], store());
+                    store().updateMessage(conv, ts, [&](model::Message &x) {
+                        x.text   = fresh.text.empty() ? text : std::move(fresh.text);
+                        x.edited = true;
+                        if (fresh.extra)
+                            x.extras().blocks = std::move(fresh.extra->blocks);
+                        else if (x.extra)
+                            x.extra->blocks.clear();
+                    });
+                }
+                if (done)
+                    done(err.empty(), err);
+            }
+        );
     }
 
     // ── Uploads (files.getUploadURLExternal → bytes → completeUploadExternal)
@@ -636,7 +715,8 @@ struct SlackBackend::Write {
                 if (!err.empty())
                     return fail(st, err);
                 // The answer has no message ts: find the share in history.
-                st->finish(true, {});
+                if (!st->awaitShare)
+                    st->finish(true, {});
                 scanUpload(st);
             }
         );
@@ -672,6 +752,7 @@ struct SlackBackend::Write {
                 }
                 // Never seen: drop the ghost; history brings the real one.
                 LOG_WARN("slack", "upload: shared message not found in history");
+                st->finish(false, "share_not_found"); // shared, its ts unknown
                 forget(st);
                 if (!st->undone)
                     store().removeMessage(st->conv, st->local);
@@ -975,6 +1056,83 @@ void SlackBackend::remove(ConvRef conv, Ts ts) {
         restore = std::make_shared<model::Message>(m->clone());
     _store.removeMessage(conv, ts);
     _write->deleteAttempt(conv, ts, 0, std::move(restore));
+}
+
+// ── Agent thread links ──────────────────────────────────────────────────────
+
+void SlackBackend::postAgentReply(
+    ConvRef conv, Ts root, std::string text, std::string blocks, PostDone done
+) {
+    auto st = _write->begin(conv, std::move(text), root, false, nullptr);
+    if (!st) {
+        _write->post([done = std::move(done)] {
+            if (done)
+                done(0, "channel_not_found");
+        });
+        return;
+    }
+    // Answered from inside finish(), while st is alive.
+    st->done = [raw = st.get(), done = std::move(done)](bool ok, const std::string &err) {
+        if (done)
+            done(ok ? raw->server : 0, err);
+    };
+    st->blocks   = std::move(blocks);
+    st->metadata = _write->agentMetadata();
+    _write->postAttempt(std::move(st));
+}
+
+void SlackBackend::editAgentReply(
+    ConvRef conv, Ts ts, std::string text, std::string blocks, Done done
+) {
+    ts = _write->serverTs(conv, ts);
+    _write->updateAgent(
+        conv, ts, std::move(text), std::move(blocks), _write->agentMetadata(), std::move(done)
+    );
+}
+
+void SlackBackend::postAgentFiles(
+    ConvRef conv, Ts root, std::string text, std::vector<std::string> files, PostDone done
+) {
+    auto st = files.empty() ? nullptr : _write->begin(conv, std::move(text), root, false, nullptr);
+    if (!st) {
+        _write->post([done = std::move(done), none = files.empty()] {
+            if (done)
+                done(0, none ? "no_files" : "channel_not_found");
+        });
+        return;
+    }
+    // Answered from inside finish(), while st is alive.
+    st->done = [raw = st.get(), done = std::move(done)](bool ok, const std::string &err) {
+        if (done)
+            done(ok ? raw->server : 0, err);
+    };
+    st->withFiles  = true;
+    st->awaitShare = true;
+    _store.updateMessage(conv, st->local, [&files](model::Message &m) {
+        for (const std::string &p : files)
+            m.extras().files.push_back(localFile(p));
+    });
+    _write->upload(std::move(st), files);
+}
+
+// chat.delete is idempotent: retried like a read, "already gone" is done.
+void SlackBackend::deleteAgentReply(ConvRef conv, Ts ts, Done done) {
+    ts = _write->serverTs(conv, ts);
+    readCall(
+        "chat.delete",
+        net::formEncode({{"channel", convId(conv)}, {"ts", model::formatTs(ts)}}),
+        [this, conv, ts, done = std::move(done)](const json::Document &, const std::string &err) {
+            if (err == "cancelled")
+                return;
+            const bool ok = err.empty() || err == "message_not_found";
+            if (ok)
+                _store.removeMessage(conv, ts);
+            else
+                LOG_WARN("slack", "chat.delete: %s", err.c_str());
+            if (done)
+                done(ok, ok ? std::string() : err);
+        }
+    );
 }
 
 void SlackBackend::react(ConvRef conv, Ts ts, std::string_view name, bool add) {

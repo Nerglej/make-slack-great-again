@@ -3274,6 +3274,257 @@ TEST("backend: Stop while a message waits for the prompt box stops the worker, t
     CHECK(rig.errors.empty());
 }
 
+namespace {
+
+// Background sessions with no live worker (each turn is a launch), whose
+// turns read a file before they answer: the prompt and the Read call are
+// written at once, the rest 1.5 s later. `--fork-session` copies the
+// session's transcript (uuids and all) before the new prompt.
+constexpr const char *kBranchCli = R"SH(#!/bin/sh
+H="$CLAUDE_CONFIG_DIR"
+if [ "$1" = auth ]; then echo '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0; fi
+printf '%s\n' "$*" >> "$H/calls.log"
+[ "$1" = stop ] && exit 0
+sid=""; prompt=""; fork=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --resume) sid="$2"; shift ;;
+    --fork-session) fork=1 ;;
+    --) prompt="$2"; shift ;;
+  esac; shift
+done
+parent="$sid"
+if [ -z "$sid" ] || [ -n "$fork" ]; then
+  n=$(cat "$H/counter" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$H/counter"
+  sid="abcdef1$n-0000-4000-8000-00000000000$n"
+fi
+short=$(echo "$sid" | cut -c1-8)
+T="$H/projects/-fake/$sid.jsonl"
+[ -n "$fork" ] && cp "$H/projects/-fake/$parent.jsonl" "$T"
+now() { perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000'; }
+ts=$(now)
+u=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+mkdir -p "$H/jobs/$short"
+echo "{\"state\":\"done\",\"sessionId\":\"$sid\",\"cwd\":\"$PWD\",\"name\":\"fake-$short\",\"linkScanPath\":\"$T\"}" > "$H/jobs/$short/state.json"
+echo "{\"type\":\"user\",\"uuid\":\"$u-1\",\"timestamp\":\"$ts\",\"origin\":{\"kind\":\"human\"},\"message\":{\"content\":\"$prompt\"}}" >> "$T"
+echo "{\"type\":\"assistant\",\"uuid\":\"$u-2\",\"timestamp\":\"$ts\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t$u\",\"name\":\"Read\",\"input\":{\"file_path\":\"/x\"}}]}}" >> "$T"
+(
+  sleep 1.5; ts=$(now)
+  echo "{\"type\":\"user\",\"uuid\":\"$u-3\",\"timestamp\":\"$ts\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t$u\",\"is_error\":false}]}}" >> "$T"
+  echo "{\"type\":\"assistant\",\"uuid\":\"$u-4\",\"timestamp\":\"$ts\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"answer: $prompt\"}]}}" >> "$T"
+  echo "{\"type\":\"system\",\"subtype\":\"turn_duration\",\"uuid\":\"$u-5\",\"timestamp\":\"$ts\"}" >> "$T"
+) </dev/null >/dev/null 2>&1 &
+echo "backgrounded · $short"
+)SH";
+
+// What a branch's turn told, in order.
+struct TurnLog {
+    std::vector<model::Backend::AgentTurn> updates;
+    model::Backend::AgentTurnFn            fn() {
+        return [this](const model::Backend::AgentTurn &t) { updates.push_back(t); };
+    }
+    bool done() const { return !updates.empty() && updates.back().done; }
+    bool phased(model::Backend::AgentPhase p) const {
+        return std::any_of(updates.begin(), updates.end(), [&](const auto &u) {
+            return !u.done && u.phase == p;
+        });
+    }
+};
+
+// The uuid of the transcript's last record.
+std::string lastUuid(const std::string &path) {
+    const auto     all = lines(readText(path));
+    json::Document doc;
+    return !all.empty() && doc.parse(all.back()) ? std::string(doc.root()["uuid"].str())
+                                                 : std::string();
+}
+
+} // namespace
+
+TEST("backend: an agent branch runs without tools, answers each turn, and keeps them off") {
+    FakeClaudeHome    home;
+    const std::string work = tempDir("work");
+    file::makeDirs(home.dir + "/jobs");
+    file::makeDirs(home.dir + "/projects/-fake");
+    home.trust(work);
+    const std::string cli                 = writeCli(work, kBranchCli);
+    using Phase                           = model::Backend::AgentPhase;
+    const std::vector<std::string> denied = {"Bash", "Edit", "Write", "NotebookEdit"};
+    const std::string flags = " --fork-session --disallowedTools AskUserQuestion Bash Edit Write "
+                              "NotebookEdit -- ";
+
+    auto          rig  = std::make_unique<Rig>(Credentials{cli});
+    const ConvRef conv = rig->start(work);
+    REQUIRE(conv != kNoConv);
+    rig->load(conv);
+    rig->send(conv, "first");
+    REQUIRE(rig->wait([&] { return rig->answered(conv, "answer: first"); }));
+    const std::string session = rig->store.conversation(conv).id;
+    const std::string sid     = "abcdef11-0000-4000-8000-000000000001";
+    const std::string sPath   = home.dir + "/projects/-fake/" + sid + ".jsonl";
+    rig->pump(300); // the turn settled
+
+    // No such session, or one that can't be branched: said, nothing launched.
+    std::optional<std::string> refused;
+    rig->backend->startAgentBranch(
+        "nope",
+        "x",
+        {},
+        denied,
+        [&](model::Backend::AgentBranch, const std::string &e) { refused = e; },
+        {}
+    );
+    REQUIRE(rig->wait([&] { return refused.has_value(); }));
+    CHECK(!refused->empty());
+
+    // A branch: started off the session as it is, its first turn followed.
+    std::optional<model::Backend::AgentBranch> branch;
+    std::string                                startError;
+    TurnLog                                    first;
+    rig->backend->startAgentBranch(
+        session,
+        "what is up",
+        {},
+        denied,
+        [&](model::Backend::AgentBranch b, const std::string &e) {
+            branch     = std::move(b);
+            startError = e;
+            CHECK(first.updates.empty()); // the start is told before its turn
+        },
+        first.fn()
+    );
+    REQUIRE(rig->wait([&] { return branch.has_value(); }));
+    CHECK_STR(startError, "");
+    REQUIRE(!branch->id.empty());
+    CHECK_STR(branch->forkPoint, lastUuid(sPath)); // the session's last record then
+    CHECK(branch->conv == conv);
+    CHECK(branch->root != 0);
+    REQUIRE(rig->wait([&] { return first.done(); }));
+    CHECK(first.phased(Phase::Reading)); // the Read call, while it ran
+    CHECK_STR(first.updates.back().error, "");
+    CHECK_STR(first.updates.back().answer, "answer: what is up");
+    CHECK(!first.updates.back().answerId.empty());
+    CHECK(contains(home.text("calls.log"), "--bg --resume " + sid + flags + "what is up\n"));
+    // It's a thread under the session, never a session in the list.
+    CHECK(rig->listedCount() == 1);
+    const model::Message *root = nullptr;
+    for (const auto &m : rig->load(conv))
+        if (m.ts == branch->root)
+            root = &m;
+    REQUIRE(root);
+    CHECK_STR(plain(*root), "what is up");
+    // A label in the long prompt's place on the root, and back.
+    rig->backend->setAgentBranchLabel(branch->id, "\xF0\x9F\x94\x97 Mira in Lumen: up?");
+    REQUIRE(rig->wait([&] {
+        for (const auto &m : rig->load(conv))
+            if (m.ts == branch->root)
+                return plain(m) == "\xF0\x9F\x94\x97 Mira in Lumen: up?";
+        return false;
+    }));
+    rig->backend->setAgentBranchLabel(branch->id, {});
+    REQUIRE(rig->wait([&] {
+        for (const auto &m : rig->load(conv))
+            if (m.ts == branch->root)
+                return plain(m) == "what is up";
+        return false;
+    }));
+    auto replies = rig->loadThread(conv, branch->root);
+    REQUIRE(!replies.empty());
+    CHECK_STR(plain(*replies.back()), "answer: what is up");
+
+    // The session hasn't moved on since.
+    std::optional<bool> moved;
+    rig->backend->agentSessionMovedOn(session, branch->forkPoint, [&](bool m) { moved = m; });
+    REQUIRE(rig->wait([&] { return moved.has_value(); }));
+    CHECK_FALSE(*moved);
+
+    // The next turn: a fork of the branch passing the tools again, taken as
+    // the branch going on — one thread still, its replies in order.
+    const std::string bSid = "abcdef12-0000-4000-8000-000000000002";
+    TurnLog           second;
+    rig->backend->continueAgentBranch(branch->id, "and more", {}, second.fn());
+    REQUIRE(rig->wait([&] { return second.done(); }));
+    CHECK_STR(second.updates.back().error, "");
+    CHECK_STR(second.updates.back().answer, "answer: and more");
+    CHECK(contains(home.text("calls.log"), "--bg --resume " + bSid + flags + "and more\n"));
+    CHECK(rig->listedCount() == 1);
+    replies = rig->loadThread(conv, branch->root);
+    std::vector<std::string> texts;
+    for (const auto *m : replies)
+        if (!plain(*m).empty()) // the Read calls are cards
+            texts.push_back(plain(*m));
+    CHECK(
+        texts == (std::vector<std::string>{"answer: what is up", "and more", "answer: and more"})
+    );
+
+    // The session goes on: from now on the branch is behind it.
+    rig->send(conv, "second");
+    REQUIRE(rig->wait([&] { return rig->answered(conv, "answer: second"); }));
+    moved.reset();
+    rig->backend->agentSessionMovedOn(session, branch->forkPoint, [&](bool m) { moved = m; });
+    REQUIRE(rig->wait([&] { return moved.has_value(); }));
+    CHECK(*moved);
+
+    // Followed with no turn running: its last answer at once, the same one.
+    TurnLog later;
+    rig->backend->watchAgentBranch(branch->id, later.fn());
+    REQUIRE(rig->wait([&] { return later.done(); }));
+    CHECK_STR(later.updates.back().answer, "answer: and more");
+    CHECK_STR(later.updates.back().answerId, second.updates.back().answerId);
+
+    // After a restart the branch still goes without them.
+    rig->pump(300);
+    rig.reset();
+    CHECK(contains(
+        readText(dirs().data + "/known-sessions.json"),
+        R"("deniedTools":["Bash","Edit","Write","NotebookEdit"])"
+    ));
+    rig = std::make_unique<Rig>(Credentials{cli});
+    TurnLog third;
+    rig->backend->continueAgentBranch(branch->id, "once more", {}, third.fn());
+    REQUIRE(rig->wait([&] { return third.done(); }));
+    CHECK_STR(third.updates.back().answer, "answer: once more");
+    CHECK(contains(home.text("calls.log"), flags + "once more\n"));
+
+    // A branch that isn't there says so through its turn.
+    TurnLog gone;
+    rig->backend->continueAgentBranch("nope", "x", {}, gone.fn());
+    REQUIRE(rig->wait([&] { return gone.done(); }));
+    CHECK(!gone.updates.back().error.empty());
+
+    // Files go first, as mentions of copies in the cache (one ending the
+    // prompt would eat the Enter when typed live).
+    writeFile(work + "/notes.txt", "hi");
+    std::optional<model::Backend::AgentBranch> withFile;
+    TurnLog                                    fileTurn;
+    rig->backend->startAgentBranch(
+        session,
+        "read this",
+        {work + "/notes.txt"},
+        denied,
+        [&](model::Backend::AgentBranch b, const std::string &) { withFile = std::move(b); },
+        fileTurn.fn()
+    );
+    REQUIRE(rig->wait([&] { return fileTurn.done(); }));
+    REQUIRE(withFile.has_value());
+    CHECK(withFile->root != branch->root); // a thread of its own
+    CHECK(contains(home.text("calls.log"), flags + "@" + uploadsDir() + "/"));
+    CHECK(contains(home.text("calls.log"), "/notes.txt read this\n"));
+    CHECK(rig->errors.empty());
+}
+
+TEST("backend: a tool call's name says what an agent turn is doing") {
+    using Phase = model::Backend::AgentPhase;
+    CHECK(toolPhase("Read") == Phase::Reading);
+    CHECK(toolPhase("Grep") == Phase::Searching);
+    CHECK(toolPhase("WebFetch") == Phase::Browsing);
+    CHECK(toolPhase("Bash") == Phase::Running);
+    CHECK(toolPhase("Agent") == Phase::Delegating);
+    CHECK(toolPhase("mcp__x__y") == Phase::Working);
+    CHECK_STR(phaseStatus(Phase::Reading), "Reading files…");
+    CHECK_STR(phaseStatus(Phase::WaitingForApproval), "Waiting for approval…");
+}
+
 #endif // !_WIN32
 
 // Not a test: how the backend does on the real ~/.claude (read only — no
