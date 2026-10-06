@@ -54,8 +54,10 @@ inline uint32_t lerpPx(uint32_t a, uint32_t b, uint32_t f) {
 
 } // namespace
 
-bool rrRow(const RR &q, int y, int x0, int x1, uint8_t *out) {
+bool rrRow(const RR &q, int y, int x0, int x1, uint8_t *out, int *full) {
     const int n = x1 - x0;
+    if (full)
+        full[0] = full[1] = x1;
     if (n <= 0)
         return false;
     if (float(y + 1) <= q.y0 || float(y) >= q.y1) {
@@ -78,6 +80,8 @@ bool rrRow(const RR &q, int y, int x0, int x1, uint8_t *out) {
     std::memset(out + (fa - x0), 255, size_t(fb - fa));
     edgeCov(q, fb, b, cy, out + (fb - x0));
     std::memset(out + (b - x0), 0, size_t(x1 - b));
+    if (full)
+        full[0] = fa, full[1] = fb;
     return fa == x0 && fb == x1;
 }
 
@@ -91,6 +95,10 @@ const uint8_t *PainterImpl::clipMask(Painter &p, int y, int x0, int x1, const ui
     for (int i = p._s.roundClip; i >= 0; i = p._roundClips[size_t(i)].parent) {
         const auto &c = p._roundClips[size_t(i)];
         const RR    q{c.x, c.y, c.x + c.w, c.y + c.h, c.r};
+        // Inside the clip's straight middle: nothing to compute.
+        if (float(y) >= q.y0 + q.r && float(y + 1) <= q.y1 - q.r && float(x0) >= q.x0 &&
+            float(x1) <= q.x1)
+            continue;
         if (rrRow(q, y, x0, x1, tmp))
             continue; // this clip leaves the whole span alone
         if (!m) {
@@ -125,11 +133,17 @@ void PainterImpl::span(Painter &p, int y, int x0, int x1, const uint8_t *cov, ui
         }
         return;
     }
+    // The glyph path for every text pixel: a fully covered pixel of an
+    // opaque colour is a plain store.
+    const bool opaque = (pm >> 24) == 255;
     for (int i = 0; i < n; ++i) {
         const uint32_t a = m[i];
         if (!a)
             continue;
-        d[i] = over(a == 255 ? pm : mulPx(pm, a), d[i]);
+        if (a == 255)
+            d[i] = opaque ? pm : over(pm, d[i]);
+        else
+            d[i] = over(mulPx(pm, a), d[i]);
     }
 }
 
@@ -164,14 +178,23 @@ void PainterImpl::fillRR(Painter &p, const RR &q, const RR *inner, uint32_t pm) 
     uint8_t  *in  = row8(p, 1);
     const int n   = x1 - x0;
     for (int y = y0; y < y1; ++y) {
-        bool full = rrRow(q, y, x0, x1, cov);
-        if (inner) {
-            rrRow(*inner, y, x0, x1, in);
-            for (int i = 0; i < n; ++i)
-                cov[i] = cov[i] > in[i] ? uint8_t(cov[i] - in[i]) : 0;
-            full = false;
+        const bool full = rrRow(q, y, x0, x1, cov);
+        if (!inner) {
+            span(p, y, x0, x1, full ? nullptr : cov, pm);
+            continue;
         }
-        span(p, y, x0, x1, full ? nullptr : cov, pm);
+        // A border: the columns the inner shape fully covers are left alone,
+        // so only the two edge runs are subtracted and blended, not the
+        // whole interior.
+        int hole[2];
+        rrRow(*inner, y, x0, x1, in, hole);
+        const int ha = hole[0] - x0, hb = hole[1] - x0;
+        for (int i = 0; i < ha; ++i)
+            cov[i] = cov[i] > in[i] ? uint8_t(cov[i] - in[i]) : 0;
+        for (int i = hb; i < n; ++i)
+            cov[i] = cov[i] > in[i] ? uint8_t(cov[i] - in[i]) : 0;
+        span(p, y, x0, hole[0], cov, pm);
+        span(p, y, hole[1], x1, cov + hb, pm);
     }
 }
 

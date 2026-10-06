@@ -707,7 +707,7 @@ void WorkspaceCache::write(const char *name, std::string data) {
     const auto     it = _written.find(name);
     if (it != _written.end() && it->second == h)
         return; // unchanged since we read or wrote it
-    if (file::writeAtomic(file::join(_dir, name), data, 0600))
+    if (file::writeAtomic(file::join(_dir, name), data, 0600, false))
         _written[name] = h;
     else
         LOG_WARN("cache", "can't write %s/%s", _dir.c_str(), name);

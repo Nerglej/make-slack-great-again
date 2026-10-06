@@ -166,9 +166,11 @@ std::vector<IconMask> g_masks;
 size_t                g_maskBytes = 0;
 uint32_t              g_maskTick  = 0;
 uint8_t               g_fixedColour[kIconCount]; // 0 unknown, 1 plain, 2 has fixed colours
-// Per icon, where its last mask sat in g_masks: icons mostly repeat at one
-// size, so a draw rarely scans. Stale after an eviction moved it: checked.
-uint16_t              g_lastMask[kIconCount];
+// Per icon, where its last two masks sat in g_masks (most recent first):
+// icons repeat at one or two sizes (a row's icon and a toolbar's), so a draw
+// rarely scans, even when two sizes alternate within a frame. Stale after an
+// eviction moved one: checked.
+uint16_t              g_lastMask[kIconCount][2];
 
 } // namespace
 
@@ -192,10 +194,10 @@ void drawIcon(Painter &p, Icon icon, RectF r, Color tint) {
         paintIcon(p, i, k, ox, oy, tint, false);
         return;
     }
-    IconMask    *m    = nullptr;
-    const size_t last = g_lastMask[i];
-    if (last < g_masks.size() && g_masks[last].icon == i && g_masks[last].k == k)
-        m = &g_masks[last];
+    IconMask *m = nullptr;
+    for (const size_t last : g_lastMask[i])
+        if (!m && last < g_masks.size() && g_masks[last].icon == i && g_masks[last].k == k)
+            m = &g_masks[last];
     for (size_t j = 0; !m && j < g_masks.size(); ++j)
         if (g_masks[j].icon == i && g_masks[j].k == k)
             m = &g_masks[j];
@@ -243,8 +245,11 @@ void drawIcon(Painter &p, Icon icon, RectF r, Color tint) {
                 m->a[size_t(y) * size_t(cw) + size_t(x)] =
                     uint8_t(tmp.pixels()[size_t(y + cy0) * size_t(w) + size_t(x + cx0)] >> 24);
     }
-    m->used       = ++g_maskTick;
-    g_lastMask[i] = uint16_t(m - g_masks.data());
+    m->used              = ++g_maskTick;
+    const uint16_t  slot = uint16_t(m - g_masks.data());
+    uint16_t *const hint = g_lastMask[i];
+    if (hint[0] != slot)
+        hint[1] = hint[0], hint[0] = slot;
     PainterImpl::maskAt(
         p,
         {m->a.data(), m->w, m->h, m->w},

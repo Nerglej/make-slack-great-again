@@ -158,33 +158,48 @@ bool containsFolded(std::string_view haystack, std::string_view needle) {
     return needle.empty() || containsFoldedNeedle(haystack, foldCase(needle));
 }
 
-bool containsFoldedNeedle(std::string_view haystack, std::string_view n) {
+// Whether `n` (folded) matches `h` folded from byte i on. ASCII pairs compare
+// inline; anything else goes through the decoder (a non-ASCII code point can
+// fold to ASCII: U+0130 → 'i').
+static bool foldedMatchAt(std::string_view h, size_t i, std::string_view n) {
+    for (size_t k = 0; k < n.size();) {
+        if (i >= h.size())
+            return false;
+        const uint8_t a = uint8_t(h[i]), b = uint8_t(n[k]);
+        if ((a | b) < 0x80) {
+            if (((a >= 'A' && a <= 'Z') ? a + 32 : a) != b)
+                return false;
+            ++i, ++k;
+        } else if (foldCase(decode(h, i)) != decode(n, k)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool containsFoldedNeedle(std::string_view h, std::string_view n) {
     if (n.empty())
         return true;
-    for (size_t start = 0; start < haystack.size(); start = nextBoundary(haystack, start)) {
-        size_t h = start, k = 0;
-        bool   match = true;
-        while (k < n.size()) {
-            if (h >= haystack.size() || foldCase(decode(haystack, h)) != decode(n, k)) {
-                match = false;
-                break;
-            }
+    const uint8_t n0 = uint8_t(n[0]);
+    for (size_t start = 0; start < h.size();) {
+        const uint8_t c = uint8_t(h[start]);
+        if (c < 0x80) { // folds to itself or its lower case: the first byte rules most out
+            if (((c >= 'A' && c <= 'Z') ? c + 32 : c) == n0 && foldedMatchAt(h, start, n))
+                return true;
+            ++start;
+            continue;
         }
-        if (match)
+        if (foldedMatchAt(h, start, n))
             return true;
+        start = nextBoundary(h, start);
     }
     return false;
 }
 
 bool containsPrefolded(std::string_view h, std::string_view n) {
-    if (n.empty())
-        return true;
-    if (h.find(n) == std::string_view::npos) // the usual answer, without segmenting
-        return false;
-    for (size_t start = 0; start < h.size(); start = nextBoundary(h, start))
-        if (h.compare(start, n.size(), n) == 0)
-            return true;
-    return false;
+    // A plain byte search: folded text is valid UTF-8, so the needle starts
+    // with a lead (or ASCII) byte, and a match can only begin at a boundary.
+    return n.empty() || h.find(n) != std::string_view::npos;
 }
 
 } // namespace utf8

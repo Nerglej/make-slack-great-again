@@ -23,7 +23,12 @@ bool overwrite(std::string_view path, std::string_view data);
 // a torn one: a temp file in the same directory, flushed to disk, then
 // renamed over `path`. Creates missing parent directories.
 // `mode`: POSIX permissions of a newly written file (0600 for secrets).
-bool writeAtomic(std::string_view path, std::string_view data, int mode = 0644);
+// `durable` false skips the flush to disk (5-50 ms): still never torn for a
+// reader, but a power loss may leave the old content or an empty file. For
+// data that can be rebuilt (caches, downloaded images).
+bool writeAtomic(
+    std::string_view path, std::string_view data, int mode = 0644, bool durable = true
+);
 
 bool    exists(std::string_view path);
 bool    isDir(std::string_view path);

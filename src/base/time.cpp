@@ -365,9 +365,10 @@ std::string formatTimeSecs(int64_t secs) {
     return formatCivil(localTime(secs), timePattern(true));
 }
 
-std::string formatDate(int64_t secs, int64_t now) {
-    const CivilTime c    = localTime(secs);
-    const bool      year = c.year != localTime(now).year;
+// formatDate of c, with `now` already converted: the labels below convert
+// each time once.
+static std::string formatDateOf(const CivilTime &c, const CivilTime &now) {
+    const bool year = c.year != now.year;
     if (names().ja) // 2026年3月15日 / 3月15日
         return formatCivil(
             c,
@@ -377,6 +378,10 @@ std::string formatDate(int64_t secs, int64_t now) {
                    "d\xE6\x97\xA5"
         );
     return formatCivil(c, year ? "MMMM d, yyyy" : "MMMM d");
+}
+
+std::string formatDate(int64_t secs, int64_t now) {
+    return formatDateOf(localTime(secs), localTime(now));
 }
 
 std::string formatDateTime(int64_t secs) {
@@ -479,35 +484,42 @@ int64_t parseIsoMicros(std::string_view s) {
     return secs * 1000000 + frac;
 }
 
+static int64_t dayOf(const CivilTime &c) {
+    return daysFromCivil(c.year, c.month, c.day);
+}
+
 std::string dayLabel(int64_t secs, int64_t now) {
-    const int64_t d = localDay(now) - localDay(secs);
+    const CivilTime c = localTime(secs), n = localTime(now);
+    const int64_t   d = dayOf(n) - dayOf(c);
     if (d == 0)
         return i18n::tr("Today");
     if (d == 1)
         return i18n::tr("Yesterday");
-    return formatDate(secs, now);
+    return formatDateOf(c, n);
 }
 
 std::string lastReplyLabel(int64_t secs, int64_t now) {
-    const std::string time = formatTime(secs);
-    const int64_t     d    = localDay(now) - localDay(secs);
+    const CivilTime   c = localTime(secs), n = localTime(now);
+    const std::string time = formatCivil(c, timePattern(false));
+    const int64_t     d    = dayOf(n) - dayOf(c);
     if (d == 0)
         return i18n::arg(i18n::tr("today at %1"), time);
     if (d == 1)
         return i18n::arg(i18n::tr("yesterday at %1"), time);
-    return i18n::arg(i18n::tr("%1 at %2"), formatDate(secs, now), time);
+    return i18n::arg(i18n::tr("%1 at %2"), formatDateOf(c, n), time);
 }
 
 std::string dateTimeLabel(int64_t secs, int64_t now) {
-    const std::string time = formatTime(secs);
-    const int64_t     d    = localDay(now) - localDay(secs);
+    const CivilTime   c = localTime(secs), n = localTime(now);
+    const std::string time = formatCivil(c, timePattern(false));
+    const int64_t     d    = dayOf(n) - dayOf(c);
     if (d <= 0)
         return time;
     if (d == 1)
         return i18n::arg(i18n::tr("yesterday at %1"), time);
     if (d < 7)
-        return i18n::arg(i18n::tr("%1 at %2"), weekdayName(localTime(secs).weekday), time);
-    return i18n::arg(i18n::tr("%1 at %2"), formatDate(secs, now), time);
+        return i18n::arg(i18n::tr("%1 at %2"), weekdayName(c.weekday), time);
+    return i18n::arg(i18n::tr("%1 at %2"), formatDateOf(c, n), time);
 }
 
 std::string relativeTime(int64_t secs, int64_t now) {

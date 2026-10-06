@@ -68,6 +68,29 @@ TEST("json: string escapes decode in place") {
     ); // high surrogate + non-low escape
 }
 
+TEST("json: plain runs after escapes move into place") {
+    json::Document d;
+    REQUIRE(d.parse(std::string(R"(["ab\ncdef\u00e9ghij\"k", "plain", "x\\"])"), nullptr));
+    CHECK(d.root()[0].str() == "ab\ncdef\xC3\xA9ghij\"k");
+    CHECK(d.root()[1].str() == "plain");
+    CHECK(d.root()[2].str() == "x\\");
+}
+
+TEST("json: one document re-parsed, and numbers next to delimiters") {
+    json::Document d;
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(d.parse(std::string(R"({"a":[1.5,2e3,-0.25],"b":1E-2})"), nullptr));
+        CHECK(d.root()["a"][0].number() == 1.5);
+        CHECK(d.root()["a"][1].number() == 2000);
+        CHECK(d.root()["a"][2].number() == -0.25);
+        CHECK(d.root()["b"].number() == 0.01);
+        REQUIRE(d.parse(std::string("3.75"), nullptr));
+        CHECK(d.root().number() == 3.75);
+        CHECK_FALSE(d.parse(std::string("[1,"), nullptr));
+        CHECK_FALSE(d.root().exists());
+    }
+}
+
 TEST("json: keys with escapes") {
     json::Document d;
     REQUIRE(d.parse(std::string(R"({"a\u0062c": 1, "x": {"y": [true]}})"), nullptr));

@@ -181,7 +181,7 @@ struct RemoteImages::Impl {
             const size_t n    = r.body.size();
             self->work([self, url, path, n, body = std::move(r.body)] {
                 const bool image = looksLikeImage(body);
-                const bool ok    = image && file::writeAtomic(path, body);
+                const bool ok    = image && file::writeAtomic(path, body, 0644, false);
                 self->app.post([self, url, path, n, image, ok] {
                     if (!self->alive)
                         return;

@@ -325,6 +325,27 @@ void testRoundRect() {
         CHECK(symmetricX(b) && symmetricY(b) && symmetricDiag(b));
         CHECK(std::fabs(alphaSum(b) - 3.14159265 * (225 - 144)) < 2);
     }
+    { // a fractional rounded border: coverage == ring area, the hole untouched
+        Bitmap  b(40, 30);
+        Painter p(b.view(), 1);
+        p.strokeRoundRect({2.3f, 1.7f, 30, 20}, 6, 2.5f, kWhite);
+        const double outer = 30 * 20 - (4 - 3.14159265) * 36;
+        const double inner = 25 * 15 - (4 - 3.14159265) * 3.5 * 3.5;
+        CHECK(std::fabs(alphaSum(b) - (outer - inner)) < 2);
+        CHECK(premulValid(b));
+        Bitmap  bg(40, 30);
+        Painter q(bg.view(), 1);
+        fillBitmap(bg, 0xff0000ffu);
+        q.clipRoundRect({0, 0, 40, 30}, 8);
+        q.strokeRoundRect({2.3f, 1.7f, 30, 20}, 6, 2.5f, kRed);
+        for (int y = 6; y < 17; ++y)
+            for (int x = 6; x < 27; ++x)
+                CHECK_PX(px(bg, x, y), 0xff0000ffu);
+        CHECK_PX(px(bg, 1, 10), 0xff0000ffu);  // left of the border
+        CHECK_PX(px(bg, 3, 10), 0xffff0000u);  // in it
+        CHECK_PX(px(bg, 17, 2), 0xffff0000u);  // the top edge
+        CHECK_PX(px(bg, 17, 23), 0xff0000ffu); // below it
+    }
 }
 
 Path square(float x0, float y0, float x1, float y1, bool cw) {

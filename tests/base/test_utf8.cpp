@@ -189,4 +189,16 @@ TEST("utf8: containsFoldedNeedle takes the needle folded once") {
     CHECK(utf8::containsFoldedNeedle("anything", ""));
     CHECK_FALSE(utf8::containsFoldedNeedle("", "x"));
     CHECK(utf8::containsFolded("Hej \xC3\x96rjan!", "\xC3\xB6RJ"));
+    CHECK(utf8::containsFoldedNeedle("\xC4\xB0stanbul", "ist")); // İ folds to ASCII i
+    CHECK(utf8::containsFoldedNeedle("xx\xC5\xBFTOP", "stop"));  // ſ folds to s
+    CHECK(utf8::containsFoldedNeedle("aaaB", "aab"));
+    CHECK(utf8::containsFoldedNeedle("ABC", "c"));
+    CHECK_FALSE(utf8::containsFoldedNeedle("ABC", "cd"));
+}
+
+TEST("utf8: containsPrefolded") {
+    CHECK(utf8::containsPrefolded("hej \xC3\xB6rjan", "\xC3\xB6r"));
+    CHECK(utf8::containsPrefolded("abc", ""));
+    CHECK_FALSE(utf8::containsPrefolded("abc", "abcd"));
+    CHECK_FALSE(utf8::containsPrefolded("", "a"));
 }

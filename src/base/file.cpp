@@ -136,7 +136,7 @@ bool overwrite(std::string_view path, std::string_view data) {
     return ok;
 }
 
-bool writeAtomic(std::string_view path, std::string_view data, int mode) {
+bool writeAtomic(std::string_view path, std::string_view data, int mode, bool durable) {
     (void)mode; // NTFS: the user's profile ACLs apply
     makeDirs(dirName(path));
     const std::wstring target = widePath(path);
@@ -149,11 +149,13 @@ bool writeAtomic(std::string_view path, std::string_view data, int mode) {
     DWORD put = 0;
     bool  ok = data.empty() ||
                (WriteFile(h, data.data(), DWORD(data.size()), &put, nullptr) && put == data.size());
-    ok       = ok && FlushFileBuffers(h);
+    ok       = ok && (!durable || FlushFileBuffers(h));
     CloseHandle(h);
     if (ok)
         ok = MoveFileExW(
-            tmp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+            tmp.c_str(),
+            target.c_str(),
+            MOVEFILE_REPLACE_EXISTING | (durable ? MOVEFILE_WRITE_THROUGH : 0)
         );
     if (!ok)
         DeleteFileW(tmp.c_str());
@@ -325,7 +327,7 @@ bool overwrite(std::string_view path, std::string_view data) {
     return ::close(fd) == 0 && put == data.size();
 }
 
-bool writeAtomic(std::string_view path, std::string_view data, int mode) {
+bool writeAtomic(std::string_view path, std::string_view data, int mode, bool durable) {
     const std::string target(path);
     const std::string dir(dirName(path));
     if (!dir.empty() && !makeDirs(dir))
@@ -350,7 +352,7 @@ bool writeAtomic(std::string_view path, std::string_view data, int mode) {
     }
     // fsync before rename: otherwise a crash can leave the renamed file empty
     // on ext4/xfs with delayed allocation.
-    ok = ok && ::fsync(fd) == 0;
+    ok = ok && (!durable || ::fsync(fd) == 0);
     ok = (::close(fd) == 0) && ok;
     if (ok)
         ok = ::rename(tmp.c_str(), target.c_str()) == 0;
@@ -416,8 +418,9 @@ bool listDir(std::string_view dir, std::vector<DirEntry> *out) {
         de.name   = n;
         de.hidden = n[0] == '.';
         struct stat st;
-        // stat, not lstat: a link to a folder is browsed like one.
-        if (::stat(join(d, n).c_str(), &st) == 0) {
+        // stat, not lstat: a link to a folder is browsed like one. Relative
+        // to the open directory: no joined path to build and walk per entry.
+        if (::fstatat(::dirfd(h), n, &st, 0) == 0) {
             de.isDir = S_ISDIR(st.st_mode);
             de.size  = de.isDir ? 0 : int64_t(st.st_size);
             de.mtime = int64_t(st.st_mtime);
@@ -452,21 +455,32 @@ bool removeTree(std::string_view path) {
     return ::rmdir(p.c_str()) == 0;
 }
 
-int64_t treeBytes(std::string_view path) {
-    const std::string p(path);
-    struct stat       st;
-    if (::lstat(p.c_str(), &st) != 0)
+// The entry `name` of the directory `at`, links not followed; entries are
+// looked up relative to their open directory, not by a full path each.
+static int64_t treeBytesAt(int at, const char *name) {
+    struct stat st;
+    if (::fstatat(at, name, &st, AT_SYMLINK_NOFOLLOW) != 0)
         return 0;
     if (!S_ISDIR(st.st_mode))
         return S_ISREG(st.st_mode) ? int64_t(st.st_size) : 0; // a link counts as nothing
-    int64_t n = 0;
-    if (DIR *d = ::opendir(p.c_str())) {
-        while (const dirent *e = ::readdir(d))
-            if (!dotName(e->d_name))
-                n += treeBytes(join(p, e->d_name));
-        ::closedir(d);
+    const int fd = ::openat(at, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return 0;
+    DIR *d = ::fdopendir(fd);
+    if (!d) {
+        ::close(fd);
+        return 0;
     }
+    int64_t n = 0;
+    while (const dirent *e = ::readdir(d))
+        if (!dotName(e->d_name))
+            n += treeBytesAt(fd, e->d_name);
+    ::closedir(d); // closes fd too
     return n;
+}
+
+int64_t treeBytes(std::string_view path) {
+    return treeBytesAt(AT_FDCWD, std::string(path).c_str());
 }
 
 bool touch(std::string_view path) {

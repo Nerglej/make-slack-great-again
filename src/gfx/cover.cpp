@@ -61,10 +61,14 @@ void maskRoundedRect(Bitmap &b, float radius) {
     if (r <= 0)
         return;
     uint32_t *px = b.pixels();
+    // Only the corner squares change: the first and last rc rows and columns.
+    const int rc = std::min(w, int(std::ceil(r)));
     for (int y = 0; y < h; ++y) {
         const float fy = float(y) + 0.5f;
         const float cy = fy < r ? r : fy > float(h) - r ? float(h) - r : fy;
-        for (int x = 0; x < w; ++x) {
+        if (cy == fy)
+            continue; // a middle row: fully inside
+        for (int x = 0; x < w; x = x + 1 == rc ? std::max(x + 1, w - rc) : x + 1) {
             const float fx = float(x) + 0.5f;
             const float cx = fx < r ? r : fx > float(w) - r ? float(w) - r : fx;
             if (cx == fx || cy == fy)

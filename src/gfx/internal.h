@@ -56,8 +56,9 @@ struct RR {
 RR makeRR(float x0, float y0, float x1, float y1, float r);
 
 // Coverage of pixel row y, columns [x0, x1), by q → out[0 .. x1-x0).
-// Returns true when every pixel is fully covered.
-bool rrRow(const RR &q, int y, int x0, int x1, uint8_t *out);
+// Returns true when every pixel is fully covered. *full (when given) gets the
+// run of columns [full[0], full[1]) known to be fully covered (empty: equal).
+bool rrRow(const RR &q, int y, int x0, int x1, uint8_t *out, int *full = nullptr);
 
 // Flattened geometry in physical pixels.
 struct Poly {

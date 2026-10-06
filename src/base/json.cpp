@@ -216,8 +216,17 @@ private:
             if (c < 0x20)
                 return fail("control character in string");
             if (c != '\\') {
-                _s[w++] = char(c);
-                ++_p;
+                // A run of plain bytes: moved only once an escape has shrunk
+                // the string (before that, w == run and nothing moves).
+                const size_t run = _p;
+                while (++_p < _n) {
+                    const unsigned char b = uint8_t(_s[_p]);
+                    if (b == '"' || b == '\\' || b < 0x20)
+                        break;
+                }
+                if (w != run)
+                    std::memmove(_s + w, _s + run, _p - run);
+                w += _p - run;
                 continue;
             }
             if (++_p >= _n)
@@ -335,9 +344,13 @@ private:
         // strtod, not std::from_chars: libstdc++'s floating-point charconv is
         // ~160 KB in a static binary. The grammar is checked above, and msga
         // never calls setlocale, so the decimal point is always '.'.
-        const std::string text(_s + start, _p - start);
-        errno    = 0;
-        double d = std::strtod(text.c_str(), nullptr);
+        // The number ends at _p, which stays readable (the buffer's own NUL
+        // at the very end): end it there for strtod, then put the byte back.
+        const char after = _s[_p];
+        _s[_p]           = '\0';
+        errno            = 0;
+        double d         = std::strtod(_s + start, nullptr);
+        _s[_p]           = after;
         if (errno == ERANGE)
             d = 0; // out of range: 0, as std::from_chars left it
         n.type = Type::Double;
@@ -435,16 +448,19 @@ private:
 
 bool Document::parse(std::string text, std::string *error) {
     _buf = std::move(text);
+    // clear() keeps the capacity: a Document re-parsed per line or response
+    // grows once, not each time.
     _nodes.clear();
-    // Slack payloads average one node per ~12 bytes; reserving avoids most
-    // regrowth copies without over-committing on small documents.
-    _nodes.reserve(_buf.size() / 16 + 4);
+    // Slack payloads average one node per ~12 bytes, so this rarely regrows.
+    // String-heavy text needs far fewer; the pages never touched stay
+    // uncommitted, so the slack is address space, not memory (no
+    // shrink_to_fit: that would copy every node a second time).
+    _nodes.reserve(_buf.size() / 10 + 4);
     Parser p(*this);
     if (!p.run(error)) {
         _nodes.clear();
         return false;
     }
-    _nodes.shrink_to_fit();
     return true;
 }
 

@@ -22,6 +22,9 @@ TEST("file: atomic write creates parents and replaces content") {
     REQUIRE(file::readAll(path, &got));
     CHECK(got.size() == 100000);
     CHECK(file::size(path) == 100000);
+    REQUIRE(file::writeAtomic(path, "not flushed", 0644, false)); // a cache's write
+    REQUIRE(file::readAll(path, &got));
+    CHECK(got == "not flushed");
     CHECK(file::isDir(file::join(dir, "a/b")));
     // No temp file left behind.
     CHECK_FALSE(file::exists(path + ".tmp" + std::to_string(getpid())));
