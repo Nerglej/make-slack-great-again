@@ -1250,8 +1250,13 @@ void MessageList::checkEdges() {
         if (newest > c.lastRead && newest != _markedTs && !c.messages.back().pending) {
             _markedTs = newest;
             _ctx.backend.markRead(_conv, newest);
-        } else if (newest <= c.lastRead)
+        } else if (newest <= c.lastRead) {
             _markedTs = newest; // seen read: a later "mark unread" must stick
+            // Read, yet still badged (thread replies counted on the channel,
+            // a cursor moved elsewhere): the backend recounts.
+            if (c.unread || c.mentions)
+                _ctx.backend.markRead(_conv, newest);
+        }
     }
     const int first = _list->firstVisible();
     if (c.hasMoreBefore && !_loadingOlder && (c.messages.empty() || (first >= 0 && first <= 3))) {

@@ -2259,6 +2259,10 @@ void SlackBackend::Read::applyActivity(
                 unread               = std::max(unread, muted ? m : std::max(c.unread, m));
                 mentions             = std::max(mentions, m);
             }
+            // Read up on the server (another client; or a badge cached from
+            // before) with nothing newer here: no badge either.
+            if (fromCounts && c.unread == 0 && c.lastRead >= c.latest && x.latest <= c.latest)
+                unread = mentions = 0;
             if (c.latest > x.latest || c.lastRead > x.lastRead || unread != x.unread ||
                 mentions != x.mentions)
                 s.updateConversation(r, [&](model::Conversation &y) {

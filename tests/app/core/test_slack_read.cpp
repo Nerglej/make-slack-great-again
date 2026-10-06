@@ -476,6 +476,51 @@ TEST("slack read: hidden, the open chat polls slowly, client.counts brings it fo
     ));
 }
 
+TEST("slack read: a channel read elsewhere loses its badge with the next client.counts") {
+    if (!haveServer())
+        return;
+    Env e;
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(pumpUntil([&] { return e.store.conversation(c).mentions == 1; }, 3000)); // seeded
+    set(R"({"client.counts": {"ok": true,
+              "channels": [{"id": "C1", "latest": "1700000100.000000",
+                            "last_read": "1700000100.000000", "has_unreads": false}],
+              "ims": [], "mpims": []}})");
+    REQUIRE(pumpUntil(
+        [&] {
+            const model::Conversation &x = e.store.conversation(c);
+            return x.unread == 0 && x.mentions == 0;
+        },
+        3000
+    ));
+    CHECK(e.store.conversation(c).lastRead == model::parseTs("1700000100.000000"));
+}
+
+TEST("slack read: seeing a read channel's newest message clears a badge left over") {
+    if (!haveServer())
+        return;
+    Env           e(nullptr);
+    const ConvRef c = e.addChannel("C1");
+    set(R"({"conversations.history": {"ok": true, "has_more": false, "messages": [
+              {"type": "message", "ts": "1700000100.000000", "user": "UMIRA", "text": "hi"}]}})");
+    REQUIRE(e.history(c, 0));
+    const Ts newest = model::parseTs("1700000100.000000");
+    // Read up to the newest message, yet badged: thread replies counted on
+    // the channel (issue #92), or a stale cached count.
+    e.store.updateConversation(c, [&](model::Conversation &x) {
+        x.lastRead = newest;
+        x.unread = x.mentions = 5;
+    });
+    e.be->markRead(c, newest - 1); // not the newest: left alone
+    CHECK(e.store.conversation(c).mentions == 5);
+    e.be->markRead(c, newest);
+    CHECK(e.store.conversation(c).unread == 0);
+    CHECK(e.store.conversation(c).mentions == 0);
+    fakeslack::pumpFor(200);
+    CHECK(Log().count("conversations.mark") == 0); // nothing to tell Slack
+}
+
 TEST("slack read: a failed author lookup is not re-asked on every poll") {
     if (!haveServer())
         return;

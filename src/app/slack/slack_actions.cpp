@@ -1435,8 +1435,14 @@ void SlackBackend::markRead(ConvRef conv, Ts ts) {
         markThreadRead(conv, m->threadTs, ts);
         return;
     }
-    if (ts <= _store.conversation(conv).lastRead)
-        return; // read already: nothing to tell Slack
+    const model::Conversation &c = _store.conversation(conv);
+    if (ts <= c.lastRead) {
+        // Read already: nothing to tell Slack. Badges left from thread
+        // replies or a stale count go once the newest message is seen.
+        if ((c.unread || c.mentions) && !c.messages.empty() && c.messages.back().ts == ts)
+            _store.markRead(conv, ts);
+        return;
+    }
     _store.markRead(conv, ts);
     _write->mark(convId(conv), model::formatTs(ts));
 }
