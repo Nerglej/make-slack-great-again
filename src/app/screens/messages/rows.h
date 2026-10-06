@@ -115,6 +115,9 @@ private:
     void      buildButtons(ui::View *col, const model::Message &m, int32_t owner);
     void      buildUnfurl(ui::View *col, const model::Message &m, size_t index);
     ui::RectF dismissRect() const; // local; empty while no card is hovered
+    // The gutter strip from the "×" to the card, as tall as the card: the
+    // pointer on its way to the "×" (the 4-px gap, a diagonal) keeps it shown.
+    ui::RectF dismissReach() const;
     bool      dismissable(int index) const;
     // `file`: an uploaded image (a placeholder box and "Loading image…"
     // while it loads); else a link preview's picture (nothing until then).

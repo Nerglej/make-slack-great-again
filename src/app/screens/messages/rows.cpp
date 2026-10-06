@@ -1814,7 +1814,7 @@ void MessageRow::attachHovered(int index, ui::View *card, bool on) {
     if (_attachCard != card)
         return;
     // Leaving the card for its "×" keeps it.
-    if (window() && dismissRect().contains(mapFromWindow(window()->pointerPos())))
+    if (window() && dismissReach().contains(mapFromWindow(window()->pointerPos())))
         return;
     _attach     = -1;
     _attachCard = nullptr;
@@ -1833,6 +1833,13 @@ ui::RectF MessageRow::dismissRect() const {
     const ui::PointF o = mapFromWindow({r.x, r.y});
     // The dismiss button: 18 px, 4 px left of the card.
     return {o.x - 4 - 18, o.y, 18, 18};
+}
+
+ui::RectF MessageRow::dismissReach() const {
+    const ui::RectF r = dismissRect();
+    if (r.w <= 0)
+        return {};
+    return {r.x, r.y, r.w + 4, std::max(r.h, _attachCard->height())};
 }
 
 void MessageRow::paint(gfx::Painter &p) {
@@ -1942,7 +1949,8 @@ bool MessageRow::onEvent(ui::Event &e) {
         return false;
     case ui::EventType::PointerMove: {
         const bool over = dismissRect().contains(e.pos);
-        if (!over && _attach >= 0 && !(_attachCard && _attachCard->hovered())) {
+        if (_attach >= 0 && !dismissReach().contains(e.pos) &&
+            !(_attachCard && _attachCard->hovered())) {
             _attach     = -1;
             _attachCard = nullptr;
             update();

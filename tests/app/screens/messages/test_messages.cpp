@@ -2864,6 +2864,52 @@ TEST("blocks: headers, dividers, images and tables; ten rows and the pill; cards
     CHECK(findLeaf(row2, "quoted words") == nullptr);
 }
 
+TEST("blocks: a click on the × beside a link preview hides it") {
+    Env                         e(false);
+    auto                       *h  = app().platform().testHooks();
+    const int64_t               t0 = base::nowSecs() - 3600;
+    // A message with its author's header, then one grouped under it.
+    std::vector<model::Message> ms;
+    for (int i = 0; i < 2; ++i) {
+        model::Message    m = msg(1, t0 + i * 60, "https://example.com");
+        model::Attachment a;
+        a.linkPreview = true;
+        a.service     = "regex101";
+        a.title       = i ? "Grouped preview" : "Header preview";
+        a.link        = "https://example.com";
+        a.text        = "Explore and test regular expressions";
+        m.extras().attachments.push_back(a);
+        ms.push_back(std::move(m));
+    }
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    for (int i = 0; i < 2; ++i) {
+        const Ts    ts    = (t0 + i * 60) * 1000000;
+        const char *title = i ? "Grouped preview" : "Header preview";
+        ui::View   *row   = e.row(ts);
+        REQUIRE(row != nullptr);
+        ui::View *t = findLeaf(row, title);
+        REQUIRE(t != nullptr);
+        const ui::RectF card = t->parent()->parent()->windowRect();
+        // Over the card the "×" shows in the gutter, 4 px left of it: the
+        // pointer gets there across the gap a pixel at a time, as a hand
+        // moves it.
+        for (float x = card.x + 30; x >= card.x - 13; x -= 1) {
+            h->injectPointerMove(e.win->native(), {x, card.y + 9});
+            pump(1);
+        }
+        pump(4);
+        h->injectButton(e.win->native(), plat::Button::Left, true);
+        h->injectButton(e.win->native(), plat::Button::Left, false);
+        pump(6);
+        CHECK(e.list->attachmentHidden(*e.store.findMessage(c, ts), 0));
+        row = e.row(ts);
+        REQUIRE(row != nullptr);
+        CHECK(findLeaf(row, title) == nullptr);
+    }
+}
+
 TEST("selection: runs over a table's cells, tab apart, a row per line") {
     Env            e(false);
     const int64_t  t0 = base::nowSecs() - 3600;
