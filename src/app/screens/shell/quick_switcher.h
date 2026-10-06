@@ -84,11 +84,15 @@ public:
     // A pick in another workspace's tab: switch there, then open it.
     std::function<void(const std::string &key, model::ConvRef conv)> onChooseIn;
 
+    // Matches with their scores, in the tab's order (best first once ranked).
+    using Scored = std::vector<std::pair<double, model::ConvRef>>;
+
 private:
     class Rows;
     friend class Rows;
     void                                       applyFilter(); // re-aims the tab, then refilter()
-    void                                       refilter();
+    // `scored`: the tab's matches for the query already (taken).
+    void                                       refilter(Scored *scored = nullptr);
     void                                       highlight(int index);
     void                                       refreshStrip();
     std::optional<double>                      bestScore(QuickSwitchTab &t, std::string_view query);

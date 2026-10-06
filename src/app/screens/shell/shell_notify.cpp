@@ -299,8 +299,10 @@ void Shell::notifyWhenUsersResolve(
 void Shell::huddleChanged(model::Store &st, const std::string &key, ConvRef conv) {
     if (conv >= st.conversationCount())
         return;
-    const model::Conversation &c   = st.conversation(conv);
-    const std::string          tag = str::concat({key, "\x1F", c.id});
+    const model::Conversation &c = st.conversation(conv);
+    if (!c.huddleActive && _notifiedHuddles.empty())
+        return; // the usual Meta: nothing to forget (and no tag to make)
+    const std::string tag = str::concat({key, "\x1F", c.id});
     if (!c.huddleActive) {
         _notifiedHuddles.erase(tag);
         return;
@@ -374,11 +376,7 @@ void Shell::notifyReminderDue(const std::string &key, model::Store &st, ConvRef 
     if (it->author != kNoUser && st.user(it->author).placeholder)
         backendFor(st).resolveUser(it->author);
     // The snippet: the text simplified, at most 120 characters.
-    std::string snippet;
-    for (char ch : screens::plainText(st, it->text))
-        if (!(ch == ' ' || ch == '\n' || ch == '\t') || (!snippet.empty() && snippet.back() != ' '))
-            snippet += ch == '\n' || ch == '\t' ? ' ' : ch;
-    snippet = std::string(str::trim(snippet));
+    std::string snippet = str::simplified(screens::plainText(st, it->text));
     if (utf8::countCodePoints(snippet) > 120) {
         size_t at = 0;
         for (size_t k = 0; k < 120; ++k)

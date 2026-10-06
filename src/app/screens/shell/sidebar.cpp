@@ -44,6 +44,24 @@ C ink(bool selected, bool bright) {
     return selected ? C::SidebarSelectedText : bright ? C::SidebarText : C::SidebarTextMuted;
 }
 
+// A row on the list's pill: inset kPill from the edges, the content at
+// kContentX; selected, the selected pill.
+void pillRow(Clickable *r) {
+    r->setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
+    r->setRole(Role::ListItem);
+    r->style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
+    r->style().padding(kContentX - kPill, 0, 6, 0);
+}
+
+// The 20 px rounded avatar rows show, its placeholder the away grey.
+Avatar *smallAvatar(View *parent) {
+    auto *a = parent->add<Avatar>();
+    a->style().size(20, 20);
+    a->setRadius(5);
+    a->setPlaceholder(C::PresenceAway);
+    return a;
+}
+
 // Rows that change colour on hover (repainted bright).
 class HoverRow : public Clickable {
 public:
@@ -62,10 +80,7 @@ public:
 class NavRow final : public HoverRow {
 public:
     NavRow(Icon i, const char *text) : icon(i) {
-        setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
-        setRole(Role::ListItem);
-        style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
-        style().padding(kContentX - kPill, 0, 6, 0);
+        pillRow(this);
         label = add<Label>(text, Font::Section, C::SidebarTextMuted);
         label->setMaxLines(1);
     }
@@ -360,10 +375,7 @@ public:
     HuddlePill() {
         setLook({C::None, C::None, C::None, C::None, 0});
         style().row().items(Align::Center).spacing(6).margins(6, 0, 0, 0).noShrink();
-        avatar = add<Avatar>();
-        avatar->style().size(20, 20);
-        avatar->setRadius(5);
-        avatar->setPlaceholder(C::PresenceAway);
+        avatar = smallAvatar(this);
         avatar->setHitTransparent(true);
         pill = add<View>();
         pill->style().row().height(18).padding(6, 0, 6, 0).items(Align::Center).noShrink();
@@ -412,17 +424,12 @@ protected:
 class ConvRow final : public SidebarRow {
 public:
     ConvRow(Sidebar &sb, ConvRef c) : sidebar(sb), conv(c) {
-        setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
-        setRole(Role::ListItem);
-        style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
-        style().padding(kContentX - kPill, 0, 6, 0);
+        pillRow(this);
         const auto &store = sb._ctx.store();
         const auto &cv    = store.conversation(c);
         if (cv.kind == ConvKind::Dm) {
-            avatar = add<Avatar>();
-            avatar->style().size(20, 20).margins(0, 0, 8, 0);
-            avatar->setRadius(5);
-            avatar->setPlaceholder(C::PresenceAway);
+            avatar = smallAvatar(this);
+            avatar->style().margins(0, 0, 8, 0);
             avatar->setBitmap(sb._avatars.get(store.user(cv.dmUser).avatar, kAvatarPx));
             avatar->setInitial(store.user(cv.dmUser).label()); // while it downloads
         } else if (cv.kind == ConvKind::Group) {
@@ -460,13 +467,8 @@ public:
             }
         }
         add<View>()->style().flex(1);
-        badge           = add<CountBadge>();
-        huddle          = add<HuddlePill>();
-        huddle->onClick = [this] {
-            if (sidebar._ctx.openUrl)
-                sidebar._ctx.openUrl(huddleJoinUrl(sidebar._ctx.store, conv));
-        };
-        huddle->setVisible(false);
+        // The badge and the huddle pill (in that order, last) are made the
+        // first time they show: most rows never need either.
         onClick = [this] {
             if (sidebar._ctx.openConversation)
                 sidebar._ctx.openConversation(conv);
@@ -477,6 +479,44 @@ public:
         if (sidebar._menus)
             sidebar._menus->showChat(conv, at);
         return sidebar._menus != nullptr;
+    }
+
+    CountBadge *makeBadge() {
+        if (!badge) { // before the huddle pill, when there is one
+            badge = new CountBadge();
+            adopt(std::unique_ptr<View>(badge), huddle ? int(childCount()) - 1 : -1);
+        }
+        return badge;
+    }
+    HuddlePill *makeHuddle() {
+        if (!huddle) {
+            huddle          = add<HuddlePill>();
+            huddle->onClick = [this] {
+                if (sidebar._ctx.openUrl)
+                    sidebar._ctx.openUrl(huddleJoinUrl(sidebar._ctx.store, conv));
+            };
+        }
+        return huddle;
+    }
+
+    // The DM's presence dot (a users change that moved nothing else).
+    void refreshPresence() {
+        if (!avatar)
+            return;
+        const auto &store   = sidebar._ctx.store();
+        const auto &cv      = store.conversation(conv);
+        const bool  sel     = sidebar._selected == conv;
+        const bool  phantom = cv.dmUser == store.me && store.me != model::kNoUser &&
+                              sidebar._ctx.backend.selfPresence().phantomAway();
+        avatar->setPresence(
+            Avatar::presenceOf(
+                &store.user(cv.dmUser), sidebar._ctx.backend.capabilities().presence, phantom
+            ),
+            sel         ? C::SidebarSelected
+            : hovered() ? C::SidebarHover
+                        : C::Sidebar,
+            sel
+        );
     }
 
     // Everything that depends on Store state.
@@ -503,21 +543,13 @@ public:
             glyph->setTint(text);
         if (you)
             you->setColor(sel ? text : C::SidebarTextMuted);
-        if (avatar) {
-            const bool phantom = cv.dmUser == store.me && store.me != model::kNoUser &&
-                                 sidebar._ctx.backend.selfPresence().phantomAway();
-            avatar->setPresence(
-                Avatar::presenceOf(&store.user(cv.dmUser), caps.presence, phantom),
-                sel         ? C::SidebarSelected
-                : hovered() ? C::SidebarHover
-                            : C::Sidebar,
-                sel
-            );
-        }
-        badge->set(count, count == 0 && dot);
+        refreshPresence();
+        if (count > 0 || dot || badge)
+            makeBadge()->set(count, count == 0 && dot);
         // A live huddle: who is in it and how many (no count before anyone joined).
         const bool live = caps.huddles && cv.huddleActive;
-        huddle->setVisible(live);
+        if (live || huddle)
+            makeHuddle()->setVisible(live);
         huddleCount = live ? std::max<int>(1, int(cv.huddleParticipants.size())) : 0;
         if (live) {
             const auto &ps = cv.huddleParticipants;
@@ -551,16 +583,11 @@ public:
 class TeammateRow final : public SidebarRow {
 public:
     TeammateRow(Sidebar &sb, const model::Backend::AgentRole &mate) : sidebar(sb), role(mate.id) {
-        setLook({C::None, C::SidebarHover, C::SidebarHover, C::SidebarSelected, 6});
-        setRole(Role::ListItem);
-        style().row().height(rowH()).margins(kPill, 0, kPill, 0).items(Align::Center);
-        style().padding(kContentX - kPill, 0, 6, 0);
+        pillRow(this);
         const auto &store = sb._ctx.store();
         user              = mate.user;
-        avatar            = add<Avatar>();
-        avatar->style().size(20, 20).margins(0, 0, 8, 0);
-        avatar->setRadius(5);
-        avatar->setPlaceholder(C::PresenceAway);
+        avatar            = smallAvatar(this);
+        avatar->style().margins(0, 0, 8, 0);
         const std::string &pic = user < store.userCount() && !store.user(user).avatar.empty()
                                      ? store.user(user).avatar
                                      : mate.avatar;
@@ -582,15 +609,10 @@ public:
             sidebar._menus->showTeammate(role, at);
         return sidebar._menus != nullptr;
     }
+    // `unread` as Sidebar::refreshTeammates found it.
     void refresh() override {
         const auto &store = sidebar._ctx.store();
         const bool  sel   = sidebar._selectedTeammate == role;
-        unread            = false;
-        for (ConvRef c = 0; c < store.conversationCount() && !unread; ++c) {
-            const auto &cv = store.conversation(c);
-            unread         = cv.member && sidebar.paintsUnread(cv) &&
-                             sidebar._ctx.backend.agentSessionRole(c) == role;
-        }
         label->setFont(unread ? Font::BodySemibold : Font::Body);
         label->setColor(
             sel      ? C::SidebarSelectedText
@@ -612,7 +634,7 @@ public:
     std::string    role;
     model::UserRef user   = model::kNoUser;
     Avatar        *avatar = nullptr;
-    bool           unread = false;
+    bool           unread = false; // any of its sessions is (set by the sidebar)
 };
 
 // ── Sidebar ─────────────────────────────────────────────────────────────────
@@ -675,8 +697,7 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
                 rebuildSoon(false); // once per burst; the list stays where it was scrolled
             else {
                 refresh(ch.conv);
-                refreshSections();
-                refreshTeammates(); // its sessions' unread state
+                sectionsSoon(); // the headers, its sessions' teammate: once per burst
             }
             break;
         }
@@ -689,7 +710,7 @@ Sidebar::Sidebar(screens::Context &ctx, Avatars &avatars) : _ctx(ctx), _avatars(
 
 Sidebar::~Sidebar() {
     _ctx.store.unobserve(_observer);
-    for (plat::TimerId t : {_rebuildTimer, _usersTimer})
+    for (plat::TimerId t : {_rebuildTimer, _usersTimer, _sectionsTimer})
         if (t)
             _ctx.app.platform().cancelTimer(t);
 }
@@ -922,7 +943,7 @@ void Sidebar::rebuild() {
     refreshTeammates();
     refreshAll();
     _footer->refresh();
-    _userShape = userShape();
+    noteShape(userShape());
     ++_rebuilds;
     invalidateLayout();
 }
@@ -985,13 +1006,48 @@ void Sidebar::usersSoon() {
         _usersTimer = 0;
         if (_rebuildTimer)
             return; // the pending rebuild reads the users anyway
-        if (userShape() != _userShape) {
+        // No profile (nor custom emoji) changed since the shape was taken:
+        // a presence round, which only moves the dots. An agent workspace
+        // (its team may change with its users) always takes the long way.
+        const auto &st = _ctx.store();
+        if (!_ctx.backend.capabilities().agentSessions && _shapeStore == &st && _shapeMe == st.me &&
+            _shapeProfileRev == st.profileRevision() && _shapeTextRev == st.textRevision()) {
+            for (ConvRow *r : _rows)
+                r->refreshPresence();
+            _footer->refresh();
+            return;
+        }
+        const uint64_t shape = userShape();
+        if (shape != _userShape) {
             rebuild();
             return;
         }
+        noteShape(shape);
         refreshTeammates();
         refreshAll();
         _footer->refresh();
+    });
+}
+
+void Sidebar::noteShape(uint64_t shape) {
+    const auto &st   = _ctx.store();
+    _userShape       = shape;
+    _shapeStore      = &st;
+    _shapeMe         = st.me;
+    _shapeProfileRev = st.profileRevision();
+    _shapeTextRev    = st.textRevision();
+}
+
+void Sidebar::sectionsSoon() {
+    if (_sectionsTimer)
+        return;
+    std::weak_ptr<int> alive = _alive;
+    _sectionsTimer           = _ctx.app.platform().addTimer(0, false, [this, alive] {
+        if (alive.expired())
+            return;
+        _sectionsTimer = 0;
+        refreshSections();
+        refreshTeammates();
     });
 }
 
@@ -1051,8 +1107,22 @@ void Sidebar::refreshAll() {
 }
 
 void Sidebar::refreshTeammates() {
-    for (TeammateRow *r : _teamRows)
+    if (_teamRows.empty())
+        return;
+    // The roles with an unread session, in one pass over the conversations.
+    const auto              &store = _ctx.store();
+    std::vector<std::string> roles;
+    for (ConvRef c = 0; c < store.conversationCount(); ++c) {
+        const auto &cv = store.conversation(c);
+        if (cv.member && paintsUnread(cv))
+            if (std::string role = _ctx.backend.agentSessionRole(c);
+                std::find(roles.begin(), roles.end(), role) == roles.end())
+                roles.push_back(std::move(role));
+    }
+    for (TeammateRow *r : _teamRows) {
+        r->unread = std::find(roles.begin(), roles.end(), r->role) != roles.end();
         r->refresh();
+    }
 }
 
 void Sidebar::selectTeammate(const std::string &role) {
@@ -1248,7 +1318,7 @@ bool Sidebar::threadsUnread() const {
 
 bool Sidebar::joinHuddle(ConvRef conv) {
     ConvRow *r = rowFor(conv);
-    if (!r || !r->huddle->visible())
+    if (!r || !r->huddle || !r->huddle->visible())
         return false;
     r->huddle->onClick();
     return true;

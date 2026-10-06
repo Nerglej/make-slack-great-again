@@ -90,6 +90,7 @@ private:
     std::list<std::string>                _lru; // ready slots, most recently asked first
     screens::RemoteImages                *_remote = nullptr;
     std::shared_ptr<char>                 _alive; // guards downloads and decodes
+    std::string                           _probe; // get()'s key buffer
     size_t                                _bytes = 0, _budget, _decodes = 0;
     bool                                  _notifyQueued = false;
 };

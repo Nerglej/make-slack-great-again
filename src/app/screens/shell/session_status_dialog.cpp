@@ -1,6 +1,7 @@
 #include "screens/shell/session_status_dialog.h"
 
 #include "base/i18n.h"
+#include "screens/shell/shell_text.h"
 #include "ui/controls.h"
 
 using namespace ui;
@@ -35,11 +36,7 @@ SessionStatusDialog::show(Window &w, const std::vector<std::pair<std::string, st
     for (const auto &[label, value] : rows) {
         styledLabel(labels, label, pxFont(15, text::Weight::Regular, color(C::FormTextMuted)), 1);
         auto *v = values->add<ValueLabel>(value);
-        v->setRichText([&] {
-            text::AttributedText t;
-            t.append(value, pxFont(15, text::Weight::Regular, themed(C::FormText)));
-            return t;
-        }());
+        setStyledText(v, value, pxFont(15, text::Weight::Regular, themed(C::FormText)));
         v->setMaxLines(1);
     }
     auto   *close = d->makeButton(tr("Close"), Button::Kind::Primary);

@@ -40,6 +40,8 @@ public:
 
 private:
     void build();
+    void buildEmail();
+    void refreshEmail();
 
     screens::Context                  &_ctx;
     ProfileCards                      &_owner;

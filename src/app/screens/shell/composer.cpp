@@ -28,7 +28,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <unordered_set>
 
 using namespace ui;
 using gfx::Icon;
@@ -219,12 +218,16 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
     };
     // Per rank, in the order considered: common, the table, custom (sorted).
     // Eight prefix matches fill the list: nothing later can come before them.
-    constexpr size_t                kMax = 8;
-    std::vector<EmojiCompletion>    tiers[3];
-    std::unordered_set<std::string> added;
-    auto                            consider = [&](std::string_view n, bool custom) {
+    // A rank keeps its first eight only (no more of it can show), and a name
+    // seen again is in its own rank's list already (the rank is the name's).
+    constexpr size_t             kMax = 8;
+    std::vector<EmojiCompletion> tiers[3];
+    auto                         consider = [&](std::string_view n, bool custom) {
         const int r = rankOf(n);
-        if (r >= 0 && added.emplace(n).second)
+        if (r >= 0 && tiers[r].size() < kMax &&
+            std::none_of(tiers[r].begin(), tiers[r].end(), [n](const EmojiCompletion &e) {
+                return e.name == n;
+            }))
             tiers[r].push_back({std::string(n), custom});
         return tiers[0].size() < kMax; // false: the list is settled
     };
@@ -1324,11 +1327,12 @@ bool Composer::send() {
     // still goes out; the rest are messages to the agent.
     if (_files.empty() && text.size() > 1 && text[0] == '/' && onCommand &&
         _ctx.backend.capabilities().slashCommands) {
-        const size_t      sp = text.find(' ');
-        const std::string name =
-            text.substr(1, sp == std::string::npos ? std::string::npos : sp - 1);
+        const size_t      sp   = text.find(' ');
+        const std::string name = utf8::foldCase(
+            text.substr(1, sp == std::string::npos ? std::string::npos : sp - 1)
+        ); // folded once, not per command
         for (const auto &c : _ctx.backend.commands(_key.conv)) {
-            if (!c.local || utf8::foldCase(c.name) != utf8::foldCase(name))
+            if (!c.local || utf8::foldCase(c.name) != name)
                 continue;
             const std::string args(
                 sp == std::string::npos ? std::string_view() : str::trim(text.substr(sp + 1))
@@ -1336,7 +1340,7 @@ bool Composer::send() {
             _edit->clear();
             _drafts.erase(_key);
             refreshLook();
-            onCommand(utf8::foldCase(name), args);
+            onCommand(name, args);
             return true;
         }
     }
@@ -2036,7 +2040,6 @@ void Composer::updatePickList() {
     if (_inPick) // the caret probe below moves the selection
         return;
     PickInputs in;
-    in.text    = _edit->text();
     in.caret   = _edit->caret();
     in.anchor  = _edit->anchor();
     in.conv    = _key.conv;
@@ -2045,9 +2048,11 @@ void Composer::updatePickList() {
     in.window  = window() != nullptr;
     // Nothing moved since the last look, and the list is as that look left
     // it (not closed by Escape or a pick meanwhile): the same answer again.
-    if (_pickInValid && in == _pickIn && _pickShown == (_pick != nullptr))
+    if (_pickInValid && in == _pickIn && _pickText == _edit->text() &&
+        _pickShown == (_pick != nullptr))
         return;
-    _pickIn      = std::move(in);
+    _pickIn = in;
+    _pickText.assign(_edit->text()); // into the kept buffer: no allocation per key
     _pickInValid = true;
     computePickList();
     _pickShown = _pick != nullptr;
@@ -2077,7 +2082,11 @@ void Composer::computePickList() {
         dismiss();
         return;
     }
-    const char        trig  = t[start];
+    const char trig = t[start];
+    if (trig != '@' && trig != '/' && trig != '#' && trig != ':') { // nothing asks for a list
+        dismiss();
+        return;
+    }
     const std::string query = t.substr(start + 1, cur - start - 1);
     // Inside a pill: nothing to complete.
     for (const TextEdit::Run &r : _edit->runs())
@@ -2115,6 +2124,10 @@ void Composer::computePickList() {
                 }
         wide      = _threadMode && !dm;
         int added = 0;
+        if (_foldedStore != &st) { // another workspace: its revisions are its own
+            _folded.clear();
+            _foldedStore = &st;
+        }
         if (_folded.size() < st.userCount())
             _folded.resize(st.userCount());
         for (model::UserRef u = 0; u < st.userCount() && added < 50; ++u) {
@@ -2124,20 +2137,26 @@ void Composer::computePickList() {
             const std::string_view label = user.label();
             FoldedUser            &f     = _folded[u];
             // Both names match whichever one shows (Settings → Names).
-            if (f.label != label || f.name != user.name || f.real != user.realName ||
-                f.profile != user.profileName) { // new, renamed, another workspace
-                f.label   = label;
-                f.name    = user.name;
-                f.real    = user.realName;
-                f.profile = user.profileName;
-                f.flabel  = utf8::foldCase(label);
-                f.fname   = utf8::foldCase(user.name);
-                f.fnames  = utf8::foldCase(str::concat({user.realName, "\n", user.profileName}));
+            if (const uint64_t rev = st.userRevision(u); f.rev != rev || f.id != user.id) {
+                f.rev      = rev; // new or changed
+                f.id       = user.id;
+                f.folded   = utf8::foldCase(label);
+                f.labelEnd = uint32_t(f.folded.size());
+                f.folded += '\n';
+                f.folded += utf8::foldCase(user.name);
+                f.nameEnd = uint32_t(f.folded.size());
+                f.folded += '\n';
+                f.folded += utf8::foldCase(str::concat({user.realName, "\n", user.profileName}));
                 ++_mentionFolds;
             }
-            if (!query.empty() && !utf8::containsPrefolded(f.flabel, fq) &&
-                !utf8::containsPrefolded(f.fname, fq) && !utf8::containsPrefolded(f.fnames, fq))
+            // One search over all four: the query is a word (no line break),
+            // so a match never spans two of them.
+            if (!query.empty() && !utf8::containsPrefolded(f.folded, fq))
                 continue;
+            const std::string_view flabel(f.folded.data(), f.labelEnd);
+            const std::string_view fname(
+                f.folded.data() + f.labelEnd + 1, f.nameEnd - f.labelEnd - 1
+            );
             PickList::Item it;
             it.kind    = PickList::Item::Kind::Mention;
             // The chip reads as names show elsewhere (Settings → Names).
@@ -2146,8 +2165,7 @@ void Composer::computePickList() {
             if (u == st.me)
                 it.title = str::concat({it.title, " ", tr("(you)")});
             it.insert = str::concat({"<@", user.id, ">"});
-            if (!user.name.empty() && !utf8::containsPrefolded(f.fname, f.flabel) &&
-                f.fname != f.flabel)
+            if (!user.name.empty() && !utf8::containsPrefolded(fname, flabel) && fname != flabel)
                 it.subtitle = user.name;
             it.bot      = user.bot;
             it.avatar   = user.avatar;

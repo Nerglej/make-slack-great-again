@@ -142,6 +142,11 @@ void TypingIndicator::refresh() {
             }
         );
     }
+    // The tick with nothing new to say (several thinking, the clock not
+    // shown) keeps the line as laid out.
+    if (t.text == _label->text() && plain == _shownStyle)
+        return;
+    _shownStyle = plain;
     _label->setRichText(std::move(t));
 }
 

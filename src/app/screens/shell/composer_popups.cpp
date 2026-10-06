@@ -842,23 +842,31 @@ public:
     Label *label = nullptr;
 };
 
-} // namespace
-
-std::vector<size_t> historyFilter(const std::vector<std::string> &entries, std::string_view query) {
-    const std::vector<std::string> words = queryWords(query);
-    std::vector<size_t>            out;
-    for (size_t i = 0; i < entries.size(); ++i) {
+// historyFilter over entries already through foldCase, with the query's
+// words folded too.
+std::vector<size_t>
+filterFolded(const std::vector<std::string> &folded, const std::vector<std::string> &words) {
+    std::vector<size_t> out;
+    for (size_t i = 0; i < folded.size(); ++i) {
         bool all = true;
         for (const std::string &w : words)
-            all = all && utf8::containsFolded(entries[i], w);
+            all = all && utf8::containsPrefolded(folded[i], w);
         if (all)
             out.push_back(i);
     }
     return out;
 }
 
+std::vector<std::string> foldedWords(std::string_view query) {
+    std::vector<std::string> words = queryWords(query);
+    for (std::string &w : words)
+        w = utf8::foldCase(w);
+    return words;
+}
+
+// historyMatches with the query's words as folded code points.
 std::vector<std::pair<size_t, size_t>>
-historyMatches(std::string_view text, std::string_view query) {
+matchesOf(std::string_view text, const std::vector<std::vector<uint32_t>> &needles) {
     // Folded code points with their byte offsets, so a match maps back to
     // the original bytes whatever folding did to their length.
     std::vector<uint32_t> cps;
@@ -869,10 +877,7 @@ historyMatches(std::string_view text, std::string_view query) {
     }
     at.push_back(text.size());
     std::vector<std::pair<size_t, size_t>> found;
-    for (const std::string &w : queryWords(query)) {
-        std::vector<uint32_t> needle;
-        for (size_t i = 0; i < w.size();)
-            needle.push_back(utf8::foldCase(utf8::decode(w, i)));
+    for (const std::vector<uint32_t> &needle : needles) {
         for (size_t s = 0; s + needle.size() <= cps.size();) {
             if (std::equal(needle.begin(), needle.end(), cps.begin() + long(s))) {
                 found.push_back({at[s], at[s + needle.size()] - at[s]});
@@ -895,6 +900,28 @@ historyMatches(std::string_view text, std::string_view query) {
     return merged;
 }
 
+std::vector<std::vector<uint32_t>> queryNeedles(std::string_view query) {
+    std::vector<std::vector<uint32_t>> out;
+    for (const std::string &w : queryWords(query))
+        out.push_back(utf8::codePoints(w, true));
+    return out;
+}
+
+} // namespace
+
+std::vector<size_t> historyFilter(const std::vector<std::string> &entries, std::string_view query) {
+    std::vector<std::string> folded;
+    folded.reserve(entries.size());
+    for (const std::string &e : entries)
+        folded.push_back(utf8::foldCase(e));
+    return filterFolded(folded, foldedWords(query));
+}
+
+std::vector<std::pair<size_t, size_t>>
+historyMatches(std::string_view text, std::string_view query) {
+    return matchesOf(text, queryNeedles(query));
+}
+
 HistorySearch::HistorySearch(std::vector<std::string> entries, RectF box) : _box(box) {
     setModal(false); // the search field takes the keyboard; a click elsewhere goes through
     setCard(false);
@@ -909,6 +936,10 @@ HistorySearch::HistorySearch(std::vector<std::string> entries, RectF box) : _box
             if (keep[i])
                 _entries.push_back(std::move(entries[i]));
     }
+    // Folded once here, not per keystroke.
+    _folded.reserve(_entries.size());
+    for (const std::string &e : _entries)
+        _folded.push_back(utf8::foldCase(e));
     style().width(box.w).padding(kHistMargins).spacing(kHistMargins);
     _scroll = add<ScrollView>();
     _empty  = add<Label>(tr("No earlier prompt matches"), Font::Control, C::FormTextMuted);
@@ -976,19 +1007,21 @@ std::string HistorySearch::selectedEntry() const {
 }
 
 void HistorySearch::refilter() {
-    _matches = historyFilter(_entries, query());
+    _matches = filterFolded(_folded, foldedWords(query()));
     _sel     = 0;
     View *c  = _scroll->content();
     c->clearChildren();
     _rows.assign(_matches.size(), nullptr);
-    const std::string q = query();
+    const std::vector<std::vector<uint32_t>> needles = queryNeedles(query());
     // Newest at the bottom, next to the search field.
     for (size_t r = _matches.size(); r-- > 0;) {
         std::string text = str::simplified(_entries[_matches[r]]);
-        if (const auto m = historyMatches(text, q); !m.empty() && m.front().first > kLateMatch) {
+        auto        m    = matchesOf(text, needles);
+        if (!m.empty() && m.front().first > kLateMatch) {
             // Not inside a code point.
             const size_t from = utf8::truncateAt(text, m.front().first - kLeadIn);
             text              = str::concat({"\xE2\x80\xA6", std::string_view(text).substr(from)});
+            m                 = matchesOf(text, needles);
         }
         text::AttributedText t;
         const text::Style    plain = pxFont(14, text::Weight::Regular, themed(C::FormText));
@@ -996,7 +1029,7 @@ void HistorySearch::refilter() {
         hit.weight                 = text::Weight::Semibold;
         hit.background             = themed(C::AccentSubtle);
         size_t done                = 0;
-        for (const auto &[start, len] : historyMatches(text, q)) {
+        for (const auto &[start, len] : m) {
             t.append(std::string_view(text).substr(done, start - done), plain);
             t.append(std::string_view(text).substr(start, len), hit);
             done = start + len;

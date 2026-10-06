@@ -197,9 +197,14 @@ void Accounts::connectClaudeCode() {
 
 void Accounts::connectSlack() {
     // A session is the default way in; the dialog's link falls back to OAuth.
+    sessionDialog(true);
+}
+
+void Accounts::sessionDialog(bool appKeysLink) {
     SessionImportHooks h;
     h.imported = [this](std::vector<slack::Credentials> c) { addSessionWorkspaces(std::move(c)); };
-    h.useAppKeys = [this] { loginWithAppKeys(); };
+    if (appKeysLink)
+        h.useAppKeys = [this] { loginWithAppKeys(); };
     showSessionImportDialog(_ctx, _win, _client, std::move(h));
 }
 
@@ -215,8 +220,9 @@ void Accounts::addSessionWorkspaces(std::vector<slack::Credentials> creds) {
     }
     std::vector<std::string> added;
     for (const auto &c : creds) {
-        _store.save(slack::toRecord(c));
-        added.push_back(slack::toRecord(c).key());
+        auth::WorkspaceRecord rec = slack::toRecord(c);
+        added.push_back(rec.key());
+        _store.save(std::move(rec));
     }
     const std::string first = added.front();
     _store.setActive(first);
@@ -680,9 +686,7 @@ void Accounts::showSignedOut() {
 }
 
 void Accounts::importSession() {
-    SessionImportHooks h;
-    h.imported = [this](std::vector<slack::Credentials> c) { addSessionWorkspaces(std::move(c)); };
-    showSessionImportDialog(_ctx, _win, _client, std::move(h));
+    sessionDialog(false);
 }
 
 int Accounts::oauthSlackWorkspaces() const {

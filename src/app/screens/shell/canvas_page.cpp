@@ -29,11 +29,6 @@ constexpr int   kSaveDelayMs = 2500; // autosave this long after typing stops
 
 namespace canvas {
 
-std::string
-editorHtml(std::string_view html, const std::vector<std::string> &titles, std::string *title) {
-    return screens::canvas::editorHtml(html, titles, title);
-}
-
 std::string markdown(const TextEdit &body) {
     return screens::canvas::markdown(body.text(), body.runs());
 }
@@ -239,8 +234,9 @@ void CanvasPage::applyRemoteHtml(const std::string &html) {
     if ((_bodyDirty || _titleDirty || _saving) && !_body->empty())
         return;
     std::string       title;
-    const std::string body =
-        canvas::editorHtml(html, {_serverTitle, std::string(str::trim(_title->text()))}, &title);
+    const std::string body = screens::canvas::editorHtml(
+        html, {_serverTitle, std::string(str::trim(_title->text()))}, &title
+    );
     if (!title.empty() && title != _title->text()) {
         _loading = true;
         _title->setText(title);

@@ -56,7 +56,10 @@ public:
         style().size(36, 36);
     }
     Avatar *peer() const { return _single; } // the DM's, else null
+    // The DM's avatar: the one shown already, re-bound by the caller.
     Avatar *single() {
+        if (_single)
+            return _single;
         clear();
         _single = add<Avatar>();
         _single->setRadius(4);
@@ -70,22 +73,31 @@ public:
         const std::vector<std::string_view>                   &names,
         uint32_t                                               count
     ) {
-        clear();
-        _group = int(std::min<size_t>(3, pics.size()));
+        // The same stack again (a refresh): its pictures and count re-bound.
+        const int         n    = int(std::min<size_t>(3, pics.size()));
+        const std::string text = count > 0 ? str::number(int64_t(count)) : std::string();
+        if (_single || n != _group || (_count != nullptr) != (count > 0) ||
+            (_count && _count->text() != text)) {
+            clear();
+            _group = n;
+            for (int i = 0; i < _group; ++i) {
+                auto *a = add<Avatar>();
+                a->setRadius(4);
+                a->setPlaceholder(C::PresenceAway);
+                a->setHitTransparent(true);
+            }
+            float w = kRing * 2 + kStack + float(std::max(0, _group - 1)) * kStep;
+            if (count > 0) {
+                _count = add<Label>(text, Font::BodyBold, C::TextMuted);
+                w += 6 + std::ceil(_count->measure(kInf, kInf).w);
+            }
+            style().size(w, 36);
+        }
         for (int i = 0; i < _group; ++i) {
-            auto *a = add<Avatar>();
-            a->setRadius(4);
-            a->setPlaceholder(C::PresenceAway);
+            auto *a = static_cast<Avatar *>(child(size_t(i)));
             a->setBitmap(pics[size_t(i)]);
             a->setInitial(names[size_t(i)]);
-            a->setHitTransparent(true);
         }
-        float w = kRing * 2 + kStack + float(std::max(0, _group - 1)) * kStep;
-        if (count > 0) {
-            _count = add<Label>(str::number(int64_t(count)), Font::BodyBold, C::TextMuted);
-            w += 6 + std::ceil(_count->measure(kInf, kInf).w);
-        }
-        style().size(w, 36);
     }
     bool isGroup() const { return _group > 0; }
     void layout() override {

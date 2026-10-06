@@ -181,22 +181,7 @@ public:
         _search->edit().onChange = [this] { applyFilter(); };
         // The search field drives the list: arrows move, Enter opens.
         _search->edit().onKey    = [this](const Event &e) {
-            if (e.type != EventType::KeyDown || !_list->visible())
-                return false;
-            switch (e.key) {
-            case plat::Key::Down:
-                _list->moveSelection(1);
-                return true;
-            case plat::Key::Up:
-                _list->moveSelection(-1);
-                return true;
-            case plat::Key::Enter:
-            case plat::Key::KpEnter:
-                _list->activateSelected();
-                return true;
-            default:
-                return false;
-            }
+            return _list->visible() && _list->navKey(e);
         };
     }
 
@@ -479,6 +464,19 @@ void BrowseList::setItems(std::vector<Item> list) {
     applyFilter({});
 }
 
+void BrowseList::refreshItems(std::vector<Item> list) {
+    if (list == items)
+        return;
+    const Anchor at = anchor();
+    items           = std::move(list);
+    shown.clear();
+    for (size_t i = 0; i < items.size(); ++i)
+        shown.push_back(i);
+    _selected = -1;
+    reset();
+    scrollToAnchor(at);
+}
+
 void BrowseList::applyFilter(std::string_view query) {
     const std::string q = utf8::foldCase(str::trim(query));
     shown.clear();
@@ -526,6 +524,25 @@ void BrowseList::moveSelection(int delta) {
     // Wrap, so Up from the top lands on the last match.
     const int from = _selected < 0 ? (delta > 0 ? -1 : 0) : _selected;
     setSelectedRow(((from + delta) % n + n) % n);
+}
+
+bool BrowseList::navKey(const Event &e) {
+    if (e.type != EventType::KeyDown)
+        return false;
+    switch (e.key) {
+    case plat::Key::Down:
+        moveSelection(1);
+        return true;
+    case plat::Key::Up:
+        moveSelection(-1);
+        return true;
+    case plat::Key::Enter:
+    case plat::Key::KpEnter:
+        activateSelected();
+        return true;
+    default:
+        return false;
+    }
 }
 
 void BrowseList::activateSelected() {

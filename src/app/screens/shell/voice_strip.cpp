@@ -246,9 +246,10 @@ buildVoiceContext(screens::Context &ctx, model::ConvRef conv, model::Ts thread, 
             if (utf8::countCodePoints(text) > kMaxMessageChars)
                 text = text.substr(0, utf8::truncateAt(text, kMaxMessageChars)) + "\xE2\x80\xA6";
             const std::string who(screens::authorName(st, m));
-            lines.insert(lines.begin(), who.empty() ? text : who + ": " + text);
+            lines.push_back(who.empty() ? text : who + ": " + text);
             addUnique(authors, who);
         }
+    std::reverse(lines.begin(), lines.end()); // collected newest first
     out.recentMessages = std::move(lines);
 
     // The conversation's name and members.

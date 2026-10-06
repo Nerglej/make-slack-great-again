@@ -259,13 +259,7 @@ void Shell::prefillTeammate(
             text = str::concat({_composer->mrkdwn(), "\n", text});
         loadMrkdwn(_composer->edit(), _ctx.store(), text);
     }
-    std::vector<std::string> add;
-    for (std::string &p : paths)
-        if (std::find(_composer->attachments().begin(), _composer->attachments().end(), p) ==
-            _composer->attachments().end())
-            add.push_back(std::move(p));
-    if (!add.empty())
-        _composer->addAttachments(add);
+    _composer->addAttachments(paths); // skips the ones attached already
     _composer->edit().focus();
 }
 

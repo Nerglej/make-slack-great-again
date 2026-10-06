@@ -32,6 +32,7 @@ private:
     model::Ts                _thread   = 0;
     model::Store::ObserverId _observer = 0;
     plat::TimerId            _tick     = 0; // while someone is thinking
+    text::Style              _shownStyle;   // the plain style of the text shown
 };
 
 } // namespace shell

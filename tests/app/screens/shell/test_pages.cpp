@@ -840,6 +840,39 @@ TEST("composer: the @ list folds each user once and filters in the open list") {
     CHECK(c.pickList() == nullptr);
 }
 
+TEST("composer: the @ list refolds a renamed user only, and finds the new name") {
+    Harness h;
+    h.store.usersChanged(); // every user's revision noted, as after any Users change
+    pump();
+    auto &c = h.sh->composer();
+    c.edit().focus();
+    c.edit().insertText("@");
+    pump();
+    REQUIRE(c.pickList() != nullptr);
+    const size_t  folds = c.mentionFolds();
+    const UserRef u     = h.store.findUser("U0MIRA");
+    REQUIRE(u != kNoUser);
+    h.store.user(u).displayName = "Zanzibar Quux";
+    h.store.usersChanged(u);
+    pump();
+    c.edit().insertText("zanz");
+    pump();
+    REQUIRE(c.pickList() != nullptr);
+    CHECK(c.mentionFolds() == folds + 1); // the one user who changed
+    REQUIRE(c.pickList()->count() == 1);
+    CHECK_STR(c.pickList()->item(0).title, "@Zanzibar Quux");
+    // Her handle still finds her (the label, handle and names are one search).
+    c.edit().setText("@" + h.store.user(u).name.substr(0, 3));
+    c.edit().setSelection(4, 4);
+    pump();
+    c.updatePickList();
+    REQUIRE(c.pickList() != nullptr);
+    bool found = false;
+    for (size_t i = 0; i < c.pickList()->count(); ++i)
+        found = found || c.pickList()->item(i).title == "@Zanzibar Quux";
+    CHECK(found);
+}
+
 #ifdef MSGA_HAVE_MESSAGES
 TEST("emoji picker: the search finds what a fold-per-name search finds; recents by name") {
     Harness h;

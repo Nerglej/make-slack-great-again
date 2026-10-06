@@ -170,8 +170,7 @@ public:
     // The accounts controller's links (null: none, the default): the
     // message toolbar's robot, the message menu's items, the session
     // picker, the thread panel's chip — all of it shows only while set.
-    void           setAgentLinks(claude::Links *links);
-    claude::Links *agentLinks() const { return _links; }
+    void setAgentLinks(claude::Links *links);
 
     // ── Agent workspace: sessions and the team (shell_agents.cpp) ──
     void openSessionFinder();
@@ -371,6 +370,9 @@ private:
     void          applyTeammateComposer();
     bool          startSessionWithTeammate();
     void          saveSettingsNow(); // what saveSettingsSoon has waiting, written at once
+    // The same without the wait on the UI thread: asked for now, written
+    // on a worker (in order with every other settings write).
+    void          saveSettingsAsync();
     void
     showSampleNotification(plat::Notification n, std::function<void(const std::string &)> result);
     void sampleNotificationReady(const plat::Notification &n); // its picture is there

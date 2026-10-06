@@ -59,7 +59,8 @@ public:
     void visibilityChanged(bool on) override;
 
 private:
-    void rebuild();
+    // fresh: from the top (a teammate opened); else the list keeps its scroll.
+    void rebuild(bool fresh = false);
     void rebuildSoon();
     void setFolder(const std::string &dir);
     void chooseFolder();

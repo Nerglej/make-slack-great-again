@@ -37,11 +37,12 @@ class BrowseList;
 struct BrowseListData {
     struct Item {
         std::string id, title, subtitle, avatar, badge;
-        std::string searchKey;           // lower-case, what the filter matches
-        bool        badgeStrong = false; // bold, primary text ("2 new")
-        bool        badgeCheck  = true;  // a check mark before it ("In the list")
+        std::string searchKey;                              // lower-case, what the filter matches
+        bool        badgeStrong                    = false; // bold, primary text ("2 new")
+        bool        badgeCheck                     = true; // a check mark before it ("In the list")
         // A channel's row: no picture, this icon (Hash / Lock) before the title.
-        uint16_t    titleIcon   = 0xffff;
+        uint16_t    titleIcon                      = 0xffff;
+        bool        operator==(const Item &) const = default;
     };
     struct Rows final : ui::VirtualList::Adapter {
         BrowseListData           *data = nullptr;
@@ -74,6 +75,10 @@ public:
     ~BrowseList() override;
 
     void setItems(std::vector<Item> items);
+    // The same list with what changed since (an unfiltered one, as the
+    // teammate page's): nothing happens when nothing did, and the list stays
+    // scrolled where it was.
+    void refreshItems(std::vector<Item> items);
     // Rows whose searchKey contains the (trimmed, lower-cased) query.
     void applyFilter(std::string_view query);
     // On the content surface (the teammate page) instead of a dialog's card.
@@ -88,6 +93,9 @@ public:
     void        setSelectedRow(int row); // -1: none
     void        moveSelection(int delta);
     void        activateSelected();
+    // A search field's keys for the list: Down / Up move the selection,
+    // Enter opens it (true); any other key is the field's (false).
+    bool        navKey(const ui::Event &e);
     std::function<void(const std::string &id)> onActivated;
 
     void paint(gfx::Painter &p) override;

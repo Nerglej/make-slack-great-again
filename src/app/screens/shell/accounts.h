@@ -89,6 +89,8 @@ public:
 private:
     struct Running; // a signed-in workspace's backend and Store, open or not
     void     addSessionWorkspaces(std::vector<slack::Credentials> creds);
+    // The session-import dialog, with its "Use app keys (OAuth)" link or not.
+    void     sessionDialog(bool appKeysLink);
     void     refreshRail(); // the store's workspaces to the shell
     void     activate(const std::string &key);
     // The open workspace's last chat opens again, once its

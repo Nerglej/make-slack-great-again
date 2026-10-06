@@ -86,12 +86,23 @@ public:
                 p.fillRect({1, y, b.w - 2, rowH()}, ui::color(C::AccentSubtle));
             else if (int(i) == _hover)
                 p.fillRect({1, y, b.w - 2, rowH()}, ui::color(C::FormHighlight));
-            auto l = oneLineLayout(
-                _items[i].label,
-                ui::pxFont(15, text::Weight::Regular, cur ? ui::color(C::ReplyLink) : 0xff1d1c1dU),
-                b.w - 24,
-                k
-            );
+            // Shaped once per row (again for another width, scale or colour),
+            // not on every paint (each hover move repaints).
+            const Color fg = cur ? ui::color(C::ReplyLink) : 0xff1d1c1dU;
+            if (_lines.size() != _items.size() || _linesW != b.w || _linesScale != k) {
+                _lines.clear();
+                _lines.resize(_items.size());
+                _lineFg.assign(_items.size(), 0);
+                _linesW     = b.w;
+                _linesScale = k;
+            }
+            if (!_lines[i] || _lineFg[i] != fg) {
+                _lines[i] = oneLineLayout(
+                    _items[i].label, ui::pxFont(15, text::Weight::Regular, fg), b.w - 24, k
+                );
+                _lineFg[i] = fg;
+            }
+            const text::Layout *l = _lines[i].get();
             l->paint(p, snapPx({12, y + std::floor((rowH() - l->height()) / 2)}));
         }
         p.restore();
@@ -109,10 +120,13 @@ private:
         const int i = int((y - 2 + _scroll) / rowH());
         return i >= 0 && i < int(_items.size()) ? i : -1;
     }
-    ConvSelector       &_owner;
-    std::vector<Target> _items;
-    float               _w = 300, _scroll = 0;
-    int                 _hover = -1, _current = -1;
+    ConvSelector                              &_owner;
+    std::vector<Target>                        _items;
+    std::vector<std::unique_ptr<text::Layout>> _lines; // by item, shaped as last painted
+    std::vector<Color>                         _lineFg;
+    float                                      _w = 300, _scroll = 0;
+    float                                      _linesW = -1, _linesScale = 0;
+    int                                        _hover = -1, _current = -1;
 };
 
 class ConvSelector final : public View {
@@ -186,9 +200,9 @@ public:
         _target = t;
         _picked = true;
         closeList();
-        text::AttributedText a;
-        a.append(t.label, ui::pxFont(15, text::Weight::Bold, ui::color(C::ReplyLink)));
-        _chipLabel->setRichText(std::move(a));
+        setStyledText(
+            _chipLabel, t.label, ui::pxFont(15, text::Weight::Bold, ui::color(C::ReplyLink))
+        );
         _chipLabel->style().padding(8, 2);
         _chip->setVisible(true);
         _edit->setVisible(false);
@@ -257,12 +271,12 @@ private:
                 const model::User &us = st.user(u);
                 if (us.bot || us.placeholder || u == st.me || hasDm[u])
                     continue;
-                const std::string label(us.label());
+                const std::string_view label = us.label();
                 if (!match(label))
                     continue;
                 std::string folded = utf8::foldCase(label);
                 const bool  prefix = str::startsWith(folded, fq);
-                ppl.push_back({prefix, std::move(folded), {kNoConv, u, label}});
+                ppl.push_back({prefix, std::move(folded), {kNoConv, u, std::string(label)}});
             }
             const auto top = ppl.begin() + long(std::min<size_t>(ppl.size(), 50));
             std::partial_sort(ppl.begin(), top, ppl.end(), [](const Person &a, const Person &b) {
@@ -813,9 +827,7 @@ protected:
 
 private:
     void setHint(const char *text, C color) {
-        text::AttributedText t;
-        t.append(text, ui::pxFont(11, text::Weight::Regular, ui::color(color)));
-        _hint->setRichText(std::move(t));
+        setStyledText(_hint, text, ui::pxFont(11, text::Weight::Regular, ui::color(color)));
     }
     void choose_() {
         plat::FileDialogDesc d;

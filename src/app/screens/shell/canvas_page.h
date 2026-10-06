@@ -82,13 +82,9 @@ private:
     std::shared_ptr<bool> _alive;
 };
 
-// The conversion halves (canvas_page.cpp), exposed for tests.
+// The body's conversion back (canvas_page.cpp), exposed for tests; the
+// other way is screens::canvas::editorHtml.
 namespace canvas {
-// Canvas HTML → the body's text as HTML for TextEdit::insertHtml: a <p> per
-// block with its markdown prefix, inline formats kept. A leading <h1> whose
-// text is one of `titles` is taken out into *title.
-std::string
-editorHtml(std::string_view html, const std::vector<std::string> &titles, std::string *title);
 // The body back to canvas markdown: block prefixes as typed, formats as
 // **b** _i_ ~~s~~ `c` [t](u), a blank line between paragraphs.
 std::string markdown(const ui::TextEdit &body);

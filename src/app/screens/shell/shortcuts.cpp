@@ -173,6 +173,9 @@ size_t tableSize() {
 }
 
 const Def &def(Id id) {
+    // The table is in Id order: straight there (a scan should it ever not be).
+    if (size_t(id) < size_t(Id::Count) && kDefs[size_t(id)].id == id)
+        return kDefs[size_t(id)];
     for (const Def &d : kDefs)
         if (d.id == id)
             return d;

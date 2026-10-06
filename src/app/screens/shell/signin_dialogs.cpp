@@ -6,6 +6,7 @@
 #include "base/i18n.h"
 #include "base/str.h"
 #include "net/net.h"
+#include "screens/shell/shell_text.h"
 
 #include <memory>
 
@@ -51,10 +52,8 @@ Label *linkButton(View *parent, std::string text, std::function<void()> fn) {
     text::Style st = pxFont(13, text::Weight::Regular, themed(C::FormLink));
     st.linkId      = 1;
     st.underline   = true;
-    text::AttributedText t;
-    t.append(text, st);
-    auto *l = parent->add<Label>();
-    l->setRichText(std::move(t));
+    auto *l        = parent->add<Label>();
+    setStyledText(l, text, st);
     l->style().alignSelf(Align::Start);
     l->onLink = [fn = std::move(fn)](uint32_t) { fn(); };
     return l;
@@ -294,11 +293,11 @@ private:
             _status->setVisible(false);
             return;
         }
-        text::AttributedText t;
-        t.append(
-            msg, pxFont(15, text::Weight::Regular, themed(error ? C::FormError : C::FormTextMuted))
+        setStyledText(
+            _status,
+            msg,
+            pxFont(15, text::Weight::Regular, themed(error ? C::FormError : C::FormTextMuted))
         );
-        _status->setRichText(std::move(t));
         _status->setVisible(true);
     }
 

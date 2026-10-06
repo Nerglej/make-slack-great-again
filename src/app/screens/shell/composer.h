@@ -304,20 +304,26 @@ private:
     // What the last updatePickList saw (text, caret, anchor…): the same again
     // (an edit's onSelectionChange after its onChange) changes nothing.
     struct PickInputs {
-        std::string    text;
         uint32_t       caret = 0, anchor = 0;
         model::ConvRef conv    = model::kNoConv;
         bool           focused = false, thread = false, window = false;
         bool           operator==(const PickInputs &) const = default;
     };
-    PickInputs _pickIn;
-    bool       _pickInValid = false, _pickShown = false;
-    // The @ filter's folded user labels and names, by UserRef; an entry
-    // refolds only when its user's label or name changed.
+    PickInputs  _pickIn;
+    std::string _pickText;
+    bool        _pickInValid = false, _pickShown = false;
+    // The @ filter's folded user names, by UserRef: one buffer per user,
+    // "label\nname\nreal name\nprofile name" folded, with where the label
+    // and the name end. An entry refolds only when its user changed
+    // (Store::userRevision; the id guards a slot reused by another user),
+    // and all of them for another Store.
     struct FoldedUser {
-        std::string label, name, real, profile, flabel, fname, fnames;
+        uint64_t    rev = ~uint64_t(0); // none yet
+        std::string id, folded;
+        uint32_t    labelEnd = 0, nameEnd = 0;
     };
     std::vector<FoldedUser> _folded;
+    const model::Store     *_foldedStore = nullptr;
     // The # filter's folded channel names, by ConvRef (refolded on a rename).
     struct FoldedName {
         std::string name, folded;

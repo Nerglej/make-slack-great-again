@@ -1,6 +1,7 @@
 #include "screens/shell/shell_text.h"
 
 #include "base/str.h"
+#include "ui/widgets.h"
 
 namespace shell {
 
@@ -28,6 +29,12 @@ oneLineLayout(std::string_view s, const text::Style &st, float maxWidth, float s
     text::AttributedText t;
     t.append(s, st);
     return oneLineLayout(t, maxWidth, scale);
+}
+
+void setStyledText(ui::Label *label, std::string_view s, const text::Style &st) {
+    text::AttributedText t;
+    t.append(s, st);
+    label->setRichText(std::move(t));
 }
 
 } // namespace shell

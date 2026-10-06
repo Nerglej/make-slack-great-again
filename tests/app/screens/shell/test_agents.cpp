@@ -308,6 +308,45 @@ TEST("agents: a teammate's draft waits for the next visit; a blocked folder lock
     CHECK_STR(h.sh->teammatePage()->blocker(), "Not a folder");
 }
 
+// The teammate page's list follows its sessions' changes (a status, a
+// presence round) without jumping back to the top.
+TEST("agents: the teammate page's list keeps its scroll through a change") {
+    Harness          h;
+    shell::Avatars   avatars(h.ctx.images);
+    plat::WindowDesc d;
+    d.size = {400, 200};
+    ui::Window                           w(d);
+    auto                                *list = w.root().add<shell::BrowseList>(avatars);
+    std::vector<shell::BrowseList::Item> items(30);
+    for (size_t i = 0; i < items.size(); ++i) {
+        items[i].id        = "S" + std::to_string(i);
+        items[i].title     = "Session " + std::to_string(i);
+        items[i].searchKey = "session " + std::to_string(i);
+    }
+    list->setItems(items);
+    pump();
+    list->scrollToAnchor({10, 0});
+    pump();
+    REQUIRE(list->anchor().index == 10);
+    // Nothing changed: the rows stay as bound.
+    const ui::View *row = list->viewFor(10);
+    REQUIRE(row != nullptr);
+    list->refreshItems(items);
+    pump();
+    CHECK(list->viewFor(10) == row);
+    CHECK(list->anchor().index == 10);
+    // A session's status: the new rows, where the list was.
+    items[3].badge = "Working";
+    list->refreshItems(items);
+    pump();
+    CHECK(list->anchor().index == 10);
+    CHECK_STR(list->visibleItem(3).badge, "Working");
+    // A new list (another teammate) starts at the top.
+    list->setItems(items);
+    pump();
+    CHECK(list->anchor().index == 0);
+}
+
 TEST("agents: a teammate's folder that's gone starts in its parent, and leaves the menu") {
     Harness           h;
     const std::string proj = rf::normalized(file::join(home(), "proj"));

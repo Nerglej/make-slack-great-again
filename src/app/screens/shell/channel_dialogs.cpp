@@ -120,25 +120,7 @@ public:
 
         _search->edit().onChange = [this] { applyFilter(); };
         // The search field drives the open list: arrows move, Enter opens.
-        _search->edit().onKey    = [this](const Event &e) {
-            if (e.type != EventType::KeyDown)
-                return false;
-            BrowseList *l = _lists[_tab];
-            switch (e.key) {
-            case plat::Key::Down:
-                l->moveSelection(1);
-                return true;
-            case plat::Key::Up:
-                l->moveSelection(-1);
-                return true;
-            case plat::Key::Enter:
-            case plat::Key::KpEnter:
-                l->activateSelected();
-                return true;
-            default:
-                return false;
-            }
-        };
+        _search->edit().onKey    = [this](const Event &e) { return _lists[_tab]->navKey(e); };
         selectTab(0);
     }
 
@@ -156,10 +138,8 @@ public:
     TextField &search() { return *_search; }
 
 private:
-    void applyFilter() {
-        for (BrowseList *l : _lists)
-            l->applyFilter(_search->text());
-    }
+    // The open list only; the other one is filtered when its tab opens.
+    void applyFilter() { _lists[_tab]->applyFilter(_search->text()); }
     void activated(int list, const std::string &id) {
         // The ids are the Store's: channels by conversation id, people by user id.
         const ConvRef c  = list == 0 ? _ctx.store().findConversation(id) : model::kNoConv;

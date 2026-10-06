@@ -179,7 +179,9 @@ private:
     // reveal: scroll the selected row into view afterwards.
     void               rebuildSoon(bool reveal = true);
     void               usersSoon();
+    void               sectionsSoon(); // refreshSections + refreshTeammates, coalesced
     uint64_t           userShape() const;
+    void               noteShape(uint64_t shape); // a userShape() and what it was taken at
     void               addChannelsMenu(ui::View *row);
     void               refreshTeammates();
 
@@ -206,7 +208,12 @@ private:
     std::shared_ptr<int>     _alive           = std::make_shared<int>(0);
     plat::TimerId            _rebuildTimer    = 0;
     plat::TimerId            _usersTimer      = 0;
+    plat::TimerId            _sectionsTimer   = 0;
     uint64_t                 _userShape       = 0; // userShape() at the last rebuild
+    // The Store and its profile / text revisions _userShape was taken at.
+    const model::Store      *_shapeStore      = nullptr;
+    uint64_t                 _shapeProfileRev = 0, _shapeTextRev = 0;
+    model::UserRef           _shapeMe         = model::kNoUser;
     int                      _rebuilds        = 0;
     bool                     _revealOnRebuild = false;
     int                      _hiddenChannels  = 0;

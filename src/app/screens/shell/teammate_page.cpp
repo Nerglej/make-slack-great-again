@@ -7,6 +7,7 @@
 #include "base/str.h"
 #include "base/time.h"
 #include "screens/shell/recent_folders.h"
+#include "screens/shell/shell_text.h"
 
 #include <algorithm>
 
@@ -116,12 +117,10 @@ void TeammatePage::visibilityChanged(bool on) {
 
 void TeammatePage::open(const model::Backend::AgentRole &mate) {
     _mate = mate;
-    text::AttributedText n;
-    n.append(mate.name, pxFont(24, text::Weight::Bold, themed(C::Text)));
-    _name->setRichText(std::move(n));
-    text::AttributedText d;
-    d.append(mate.description, pxFont(15, text::Weight::Regular, themed(C::TextMuted)));
-    _description->setRichText(std::move(d));
+    setStyledText(_name, mate.name, pxFont(24, text::Weight::Bold, themed(C::Text)));
+    setStyledText(
+        _description, mate.description, pxFont(15, text::Weight::Regular, themed(C::TextMuted))
+    );
     _description->setVisible(!mate.description.empty());
     _avatar->setInitial(mate.name);
     _avatar->setBitmap(_avatars.get(mate.avatar, int(kAvatar * 2)));
@@ -137,7 +136,7 @@ void TeammatePage::open(const model::Backend::AgentRole &mate) {
             _saveSettings();
     }
     setFolder(here);
-    rebuild();
+    rebuild(true);
 }
 
 void TeammatePage::clear() {
@@ -160,7 +159,7 @@ void TeammatePage::rebuildSoon() {
     });
 }
 
-void TeammatePage::rebuild() {
+void TeammatePage::rebuild(bool fresh) {
     if (_mate.id.empty())
         return;
     const model::Store &st = _ctx.store;
@@ -211,7 +210,10 @@ void TeammatePage::rebuild() {
     for (Row &r : rows)
         items.push_back(std::move(r.item));
     const bool none = items.empty();
-    _list->setItems(std::move(items));
+    if (fresh)
+        _list->setItems(std::move(items));
+    else
+        _list->refreshItems(std::move(items)); // a change: where it was scrolled to
     _list->setVisible(!none);
     _empty->setVisible(none);
 }

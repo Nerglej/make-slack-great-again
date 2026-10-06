@@ -726,9 +726,7 @@ public:
     // follow the theme by themselves; the sizes follow the text scale).
     void styleChanged() override {
         View::styleChanged();
-        text::AttributedText t;
-        t.append("MSGA", pxFont(24, text::Weight::Semibold, themed(C::Text)));
-        _title->setRichText(std::move(t));
+        setStyledText(_title, "MSGA", pxFont(24, text::Weight::Semibold, themed(C::Text)));
         const text::Style    dim = pxFont(11, text::Weight::Regular, themed(C::TextFaint));
         const text::Style    hi  = pxFont(11, text::Weight::Regular, themed(C::Text));
         text::AttributedText g;
@@ -983,6 +981,12 @@ void Shell::saveSettingsSoon() {
         _saveTimer = 0;
         _settings.saveInBackground(_ctx.app.platform(), _settingsPath);
     });
+}
+
+void Shell::saveSettingsAsync() {
+    if (_saveTimer)
+        _ctx.app.cancelTimer(std::exchange(_saveTimer, 0));
+    _settings.saveInBackground(_ctx.app.platform(), _settingsPath);
 }
 
 void Shell::saveSettingsNow() {
@@ -2081,11 +2085,10 @@ void Shell::onChange(const model::Change &ch) {
         if (ch.conv == _current || ch.kind == K::Roster)
             applyComposerAccess(); // the lock flips while the chat is open
         // A poll or a roster reload brings a burst of Meta: count once after
-        // it (each count walks every conversation of every workspace).
+        // it (each count walks every conversation of every workspace). A
+        // Roster was counted already (refreshWorkspaceIcon → refreshRail).
         if (ch.kind == K::Meta)
             attentionSoon();
-        else
-            updateAttention();
         return;
     }
     if ((ch.kind != K::Append && ch.kind != K::Arrived) || !_live || ch.conv == kNoConv)
@@ -2567,7 +2570,7 @@ void Shell::openSettingsAt(uint8_t page) {
     settings::SettingsDialog::Hooks hooks;
     // What the dialog changes is on disk at once (its pages say so).
     hooks.changed = [this] {
-        saveSettingsNow();
+        saveSettingsAsync();
         applySettings();
     };
     hooks.updater = _updater;
@@ -2587,7 +2590,7 @@ void Shell::openSettingsAt(uint8_t page) {
                 _settings.trayIconPath   = path;
                 // A picture saved turns the custom icon on; "Use default" off.
                 _settings.customTrayIcon = !path.empty();
-                saveSettingsNow();
+                saveSettingsAsync();
                 applySettings();
                 after();
             }
@@ -2598,7 +2601,7 @@ void Shell::openSettingsAt(uint8_t page) {
         // Re-seeded from what is known now.
         _sidebar->clearVisited();
         storeVisited();
-        saveSettingsNow();
+        saveSettingsAsync();
     };
     hooks.importSlackSession   = onImportSlackSession;
     hooks.convertToSession     = onConvertToSession;

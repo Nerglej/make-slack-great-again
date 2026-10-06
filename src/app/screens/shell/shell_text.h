@@ -10,6 +10,10 @@
 #include <string>
 #include <string_view>
 
+namespace ui {
+class Label;
+}
+
 namespace shell {
 
 // "#general" for a channel, the name alone for a DM or group DM.
@@ -22,5 +26,8 @@ std::unique_ptr<text::Layout>
 oneLineLayout(const text::AttributedText &t, float maxWidth, float scale);
 std::unique_ptr<text::Layout>
 oneLineLayout(std::string_view s, const text::Style &st, float maxWidth, float scale);
+
+// The label's text, all in one style.
+void setStyledText(ui::Label *label, std::string_view s, const text::Style &st);
 
 } // namespace shell

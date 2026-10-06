@@ -171,17 +171,23 @@ quickSwitchNames(const model::Store &store, const std::vector<ConvRef> &order) {
     return out;
 }
 
-std::vector<ConvRef> quickSwitchFilter(
-    std::string_view                    query,
+namespace {
+
+// What matches, with its score, in `order`.
+QuickSwitcher::Scored scoreAll(
+    const std::vector<uint32_t>        &q,
     const std::vector<ConvRef>         &order,
     const std::vector<QuickSwitchName> &names
 ) {
-    // Best first; equal scores keep `order`.
-    const std::vector<uint32_t>             q = fuzzyQuery(str::trim(query));
-    std::vector<std::pair<double, ConvRef>> scored;
+    QuickSwitcher::Scored scored;
     for (size_t i = 0; i < order.size() && i < names.size(); ++i)
         if (const std::optional<double> sc = scoreOf(names[i], q))
             scored.emplace_back(*sc, order[i]);
+    return scored;
+}
+
+// Best first; equal scores keep `order`.
+std::vector<ConvRef> ranked(QuickSwitcher::Scored scored) {
     std::stable_sort(scored.begin(), scored.end(), [](const auto &a, const auto &b) {
         return a.first > b.first;
     });
@@ -190,6 +196,24 @@ std::vector<ConvRef> quickSwitchFilter(
     for (const auto &s : scored)
         out.push_back(s.second);
     return out;
+}
+
+std::optional<double> bestOf(const QuickSwitcher::Scored &scored) {
+    std::optional<double> best;
+    for (const auto &s : scored)
+        if (!best || s.first > *best)
+            best = s.first;
+    return best;
+}
+
+} // namespace
+
+std::vector<ConvRef> quickSwitchFilter(
+    std::string_view                    query,
+    const std::vector<ConvRef>         &order,
+    const std::vector<QuickSwitchName> &names
+) {
+    return ranked(scoreAll(fuzzyQuery(str::trim(query)), order, names));
 }
 
 std::vector<ConvRef> quickSwitchFilter(
@@ -385,10 +409,16 @@ void QuickSwitcher::applyFilter() {
     if (query.empty()) {
         _manualTab = false; // a fresh query starts with a fresh mind
     } else if (n > 1) {
+        // Each tab scored once: its best picks the tab, and the one picked
+        // is the list (refilter doesn't score it again).
+        const std::vector<uint32_t>        q = fuzzyQuery(query);
+        std::vector<Scored>                all(static_cast<size_t>(n));
         std::vector<std::optional<double>> scores;
         int                                best = -1;
         for (int i = 0; i < n; ++i) {
-            scores.push_back(bestScore(_tabs[size_t(i)], query));
+            QuickSwitchTab &t = _tabs[size_t(i)];
+            all[size_t(i)]    = scoreAll(q, t.order, names(t));
+            scores.push_back(bestOf(all[size_t(i)]));
             _dimmed.push_back(!scores.back());
             if (scores.back() && (best < 0 || *scores.back() > *scores[size_t(best)]))
                 best = i;
@@ -400,6 +430,9 @@ void QuickSwitcher::applyFilter() {
             best = _tab;
         if (best >= 0 && best != _tab && (!_manualTab || !cur))
             _tab = best;
+        refreshStrip();
+        refilter(&all[size_t(_tab)]);
+        return;
     }
     refreshStrip();
     refilter();
@@ -437,9 +470,10 @@ std::string QuickSwitcher::emptyText() const {
 
 QuickSwitcher::~QuickSwitcher() = default;
 
-void QuickSwitcher::refilter() {
+void QuickSwitcher::refilter(Scored *scored) {
     QuickSwitchTab &tab = _tabs[size_t(_tab)];
-    _results            = quickSwitchFilter(_field->text(), tab.order, names(tab));
+    _results            = scored ? ranked(std::move(*scored))
+                                 : quickSwitchFilter(_field->text(), tab.order, names(tab));
     // Preselect the top match so Enter always opens something.
     _current            = 0;
     _list->reset();
@@ -453,9 +487,12 @@ void QuickSwitcher::refilter() {
         return;
     bool              elsewhere = false;
     const std::string query(str::trim(_field->text()));
+    // The dimming says it for this query already (applyFilter scored them).
+    const bool        known = _dimmed.size() == _tabs.size();
     if (_tabs.size() > 1 && !query.empty())
         for (size_t i = 0; i < _tabs.size() && !elsewhere; ++i)
-            elsewhere = int(i) != _tab && bestScore(_tabs[i], query).has_value();
+            elsewhere =
+                int(i) != _tab && (known ? !_dimmed[i] : bestScore(_tabs[i], query).has_value());
     _empty->setText(
         elsewhere ? i18n::arg(tr("No matches in %1. Other workspaces have some."), tab.name)
                   : std::string(tr("No conversations match."))

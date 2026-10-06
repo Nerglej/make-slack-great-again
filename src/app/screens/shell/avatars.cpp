@@ -25,14 +25,19 @@ Avatars::~Avatars() = default;
 Avatars::Picture Avatars::get(const std::string &path, int px) {
     if (path.empty() || px <= 0)
         return nullptr;
-    std::string key = str::concat({path, "@", str::number(px)});
-    if (const auto it = _slots.find(key); it != _slots.end()) {
+    // The key built in a kept buffer: asking again (every row bind, every
+    // refresh) allocates nothing.
+    _probe.assign(path);
+    _probe += '@';
+    _probe += str::number(px);
+    if (const auto it = _slots.find(_probe); it != _slots.end()) {
         Slot &s = it->second;
         if (s.ready && s.lru != _lru.begin())
             _lru.splice(_lru.begin(), _lru, s.lru);
         return s.bmp;
     }
-    std::string file = path;
+    const std::string key  = _probe;
+    std::string       file = path;
     if (screens::RemoteImages::isRemote(path)) {
         if (!_remote) { // no picture, and none later
             Slot &s = _slots[key];

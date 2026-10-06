@@ -39,9 +39,7 @@ void TextLink::refreshLook() {
     // The link button turns accent.hover when hovered.
     st.color       = themed(_underline && hovered() ? C::AccentHover : _color);
     st.underline   = _underline || hovered();
-    text::AttributedText t;
-    t.append(_text, st);
-    _label->setRichText(std::move(t));
+    setStyledText(_label, _text, st);
 }
 
 // ── The page ────────────────────────────────────────────────────────────────

@@ -95,6 +95,28 @@ void ProfileCard::styleChanged() {
     update();
 }
 
+// The email line ("Copied" for a moment after a click), in its hover look.
+void ProfileCard::buildEmail() {
+    const model::User &u      = _ctx.store().user(_user);
+    const bool         copied = _copiedUntil && int32_t(_copiedUntil - nowMs()) > 0;
+    if (u.email.empty()) {
+        _email = nullptr;
+        return;
+    }
+    text::Style s = px(13, false, copied || _emailHover ? AccentDef : Primary);
+    s.underline   = _emailHover && !copied;
+    _email        = oneLineLayout(
+        copied ? std::string(tr("Copied")) : u.email, s, kWidth - 2 * kPad - 24, windowScale()
+    );
+}
+
+// The email line alone (its hover colour, "Copied"): the rest stays as built.
+// Nothing built yet: build() makes it with the rest.
+void ProfileCard::refreshEmail() {
+    if (_name)
+        buildEmail();
+}
+
 void ProfileCard::build() {
     const model::User &u     = _ctx.store().user(_user);
     const float        k     = windowScale();
@@ -110,20 +132,7 @@ void ProfileCard::build() {
         status = status.empty() ? u.statusText : str::concat({status, " ", u.statusText});
     _status = status.empty() ? nullptr : oneLineLayout(status, px(13, false, Secondary), textW, k);
     _title = u.title.empty() ? nullptr : oneLineLayout(u.title, px(13, false, Secondary), textW, k);
-    const bool copied = _copiedUntil && int32_t(_copiedUntil - nowMs()) > 0;
-    _email            = u.email.empty()
-                            ? nullptr
-                            : oneLineLayout(
-                                  copied ? std::string(tr("Copied")) : u.email,
-                                  [&] {
-                           text::Style s =
-                               px(13, false, copied || _emailHover ? AccentDef : Primary);
-                           s.underline = _emailHover && !copied;
-                           return s;
-                                  }(),
-                                  kWidth - 2 * kPad - 24,
-                                  k
-                              );
+    buildEmail();
     if (u.hasTz) {
         const int64_t now   = base::nowSecs();
         const int64_t local = now + u.tzOffset - base::localTime(now).utcOffset;
@@ -275,7 +284,7 @@ bool ProfileCard::onEvent(Event &e) {
     case EventType::PointerLeave:
         if (_btnHover || _emailHover) {
             _btnHover = _emailHover = false;
-            _name.reset();
+            refreshEmail();
             update();
         }
         _owner.scheduleHide();
@@ -288,7 +297,7 @@ bool ProfileCard::onEvent(Event &e) {
             _btnHover   = btn;
             _emailHover = mail;
             if (_email)
-                _name.reset(); // rebuild the email line's colour
+                refreshEmail(); // the email line's colour
             update();
         }
         setCursor(btn || mail ? plat::Cursor::Hand : plat::Cursor::Arrow);
@@ -304,12 +313,12 @@ bool ProfileCard::onEvent(Event &e) {
         } else if (emailRow().contains(e.pos)) {
             _ctx.app.platform().setClipboardText(_ctx.store().user(_user).email);
             _copiedUntil = nowMs() + kCopiedMs;
-            _name.reset();
+            refreshEmail();
             update();
             app()->cancelTimer(_copiedTimer);
             _copiedTimer = app()->addTimer(kCopiedMs + 20, false, [this] {
                 _copiedTimer = 0;
-                _name.reset();
+                refreshEmail();
                 update();
             });
         }

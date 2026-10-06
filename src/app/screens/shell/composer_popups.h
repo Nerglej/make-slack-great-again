@@ -148,6 +148,7 @@ private:
     bool key(const ui::Event &e);
 
     std::vector<std::string>     _entries;
+    std::vector<std::string>     _folded;  // _entries through foldCase
     std::vector<size_t>          _matches; // into _entries, newest first
     std::vector<ui::Clickable *> _rows;    // by match
     ui::ScrollView              *_scroll = nullptr;
