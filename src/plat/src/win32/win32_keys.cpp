@@ -216,6 +216,7 @@ Key keyFromVk(UINT vk, bool ext, UINT scan) {
     return Key::Unknown;
 }
 
+#ifdef PLAT_TEST_HOOKS
 UINT vkFromKey(Key k, bool *ext) {
     *ext        = false;
     const int i = int(k);
@@ -338,6 +339,7 @@ UINT vkFromKey(Key k, bool *ext) {
         return 0;
     }
 }
+#endif // PLAT_TEST_HOOKS
 
 uint32_t currentMods() {
     // GetKeyState (not GetAsyncKeyState) is synchronised with the message

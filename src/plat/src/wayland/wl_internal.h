@@ -80,12 +80,16 @@ struct Output {
 
 // One wl_shm buffer with its own memfd-backed pool. A window keeps a small
 // ring of these; `stale` tracks which parts of it are older than the newest
-// presented frame, so a partial repaint can start from correct pixels.
+// presented frame, so a partial repaint can start from correct pixels. The
+// pool may be larger than the buffer, so a resize that still fits makes only
+// a new wl_buffer from it (resizeShmBuffer), not a new memfd and mapping.
 struct ShmBuffer {
     WlWindow         *owner  = nullptr;
     wl_buffer        *buffer = nullptr;
+    wl_shm_pool      *pool   = nullptr;
     uint32_t         *pixels = nullptr;
-    size_t            bytes  = 0;
+    size_t            bytes  = 0;            // width * height * 4
+    size_t            cap    = 0;            // the pool's (and the mapping's) size
     int               width = 0, height = 0; // physical
     bool              busy     = false;      // attached and not yet released by the compositor
     bool              staleAll = false;
@@ -94,7 +98,13 @@ struct ShmBuffer {
 
 // memfd (or an unlinked file in $XDG_RUNTIME_DIR) of `bytes`, or -1.
 int  createShmFd(size_t bytes);
-bool allocShmBuffer(wl_shm *shm, int w, int h, uint32_t format, ShmBuffer *out);
+// `capacity` (bytes) reserves room for later resizeShmBuffer calls.
+bool allocShmBuffer(
+    wl_shm *shm, int w, int h, uint32_t format, ShmBuffer *out, size_t capacity = 0
+);
+// A new w x h wl_buffer from b's pool when it fits; the old one is destroyed
+// (b must not be busy). False, b untouched, when it does not fit.
+bool resizeShmBuffer(ShmBuffer *b, int w, int h, uint32_t format);
 void freeShmBuffer(ShmBuffer *b);
 
 class WlWindow final : public Window {
@@ -298,6 +308,7 @@ public:
     void onPointerEnter(uint32_t serial, wl_surface *s, double x, double y);
     void onPointerLeave(uint32_t serial, wl_surface *s);
     void onPointerMotion(double x, double y);
+    void flushMotion(); // emits the held PointerMove, if any
     void onPointerButton(uint32_t serial, uint32_t button, uint32_t state);
     void onPointerAxis(uint32_t axis, double value);
     void onPointerAxisSource(uint32_t source) { _axis.source = int(source); }
@@ -332,7 +343,6 @@ public:
         std::vector<std::string> mimes;
         uint32_t                 sourceActions = 0; // wl_data_offer.source_actions (v3)
         uint32_t                 action        = 0; // DnD action the compositor settled on (v3)
-        bool                     has(std::string_view m) const;
     };
     using Items = std::shared_ptr<const std::vector<DataItem>>;
     void   setupDataDevice();
@@ -424,6 +434,12 @@ public:
     WlWindow                  *_pointerFocus = nullptr;
     uint32_t                   _enterSerial  = 0;
     Point                      _pointerPos;
+    // Motion is coalesced: the latest PointerMove waits here until another
+    // event goes out or the dispatch batch ends, so a 1000 Hz mouse costs the
+    // app (and the cursor hit test) one move per batch, not one per report.
+    WlWindow                  *_motionWin = nullptr;
+    Point                      _motionPos;
+    uint32_t                   _motionMods  = 0;
     uint32_t                   _swallowed   = 0; // buttons whose press became a move/resize
     uint32_t                   _held        = 0; // delivered presses not yet released (Button bits)
     uint32_t                   _pressSerial = 0; // of the latest delivered press: start_drag
@@ -483,14 +499,15 @@ public:
     zwp_primary_selection_source_v1 *_primarySource           = nullptr; // our Primary selection
 
     // Drop target: the drag currently over one of our windows.
-    wl_data_offer *_dragOffer  = nullptr;
-    WlWindow      *_dragWindow = nullptr;
-    uint32_t       _dragSerial = 0; // of wl_data_device.enter, for accept
-    bool           _dropping   = false;
-    std::string    _dragMime; // what we accept; empty = nothing usable
-    Point          _dragPos;
-    DropAction     _dragAnswered     = DropAction::None;
-    bool           _dragAnsweredOnce = false;
+    wl_data_offer        *_dragOffer  = nullptr;
+    WlWindow             *_dragWindow = nullptr;
+    uint32_t              _dragSerial = 0; // of wl_data_device.enter, for accept
+    bool                  _dropping   = false;
+    std::string           _dragMime;  // what we accept; empty = nothing usable
+    std::vector<DataItem> _dragItems; // the entered offer's normalised types, data empty
+    Point                 _dragPos;
+    DropAction            _dragAnswered     = DropAction::None;
+    bool                  _dragAnsweredOnce = false;
 
     // Drag source: our startDrag() in flight.
     struct DragSource {

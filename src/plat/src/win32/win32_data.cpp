@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 namespace plat::win32 {
 
@@ -429,12 +430,77 @@ std::optional<std::string> finishDecode(std::string_view mime, OsData raw) {
     return std::move(raw.bytes);
 }
 
-std::optional<std::string>
-decodeFromOs(std::string_view mime, const std::function<std::optional<std::string>(UINT)> &get) {
-    auto raw = readFromOs(mime, get);
-    if (!raw)
-        return std::nullopt;
-    return finishDecode(mime, std::move(*raw));
+bool decodeIsSlow(std::string_view mime, const OsData &raw) {
+    return (raw.cf == CF_DIB || raw.cf == CF_DIBV5) && mime == "image/png";
+}
+
+// ── decoding on a worker ────────────────────────────────────────────────────
+
+// How a worker reaches the App: null once the App is going away.
+struct DecodeLink {
+    std::mutex m;
+    Win32App  *app = nullptr;
+};
+
+namespace {
+
+struct DecodeJob {
+    std::shared_ptr<DecodeLink> link;
+    uint64_t                    id = 0;
+    std::string                 mime;
+    OsData                      raw;
+};
+
+DWORD WINAPI decodeThread(LPVOID p) {
+    std::unique_ptr<DecodeJob> job(static_cast<DecodeJob *>(p));
+    // WIC is free-threaded; this thread's factory is its own (see wic()).
+    const HRESULT              co     = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    std::optional<std::string> result = finishDecode(job->mime, std::move(job->raw));
+    if (SUCCEEDED(co))
+        CoUninitialize();
+    // Under the lock: the App clears the link before it shuts its loop down.
+    std::lock_guard lock(job->link->m);
+    if (Win32App *app = job->link->app)
+        app->post([app, id = job->id, r = std::move(result)]() mutable {
+            app->decodeFinished(id, std::move(r));
+        });
+    return 0;
+}
+
+} // namespace
+
+void Win32App::decodeOffThread(std::string mime, OsData raw, DecodeDone done) {
+    if (!_decodeLink) {
+        _decodeLink      = std::make_shared<DecodeLink>();
+        _decodeLink->app = this;
+    }
+    const uint64_t id  = _nextDecode++;
+    auto          *job = new DecodeJob{_decodeLink, id, std::move(mime), std::move(raw)};
+    if (HANDLE t = CreateThread(nullptr, 0, &decodeThread, job, 0, nullptr)) {
+        CloseHandle(t); // detached: it reports back through the link
+        _decodes.push_back({id, std::move(done)});
+        return;
+    }
+    // No thread: convert here, still answering from the loop.
+    std::optional<std::string> result = finishDecode(job->mime, std::move(job->raw));
+    delete job;
+    post([done = std::move(done), r = std::move(result)]() mutable { done(std::move(r)); });
+}
+
+void Win32App::decodeFinished(uint64_t id, std::optional<std::string> result) {
+    auto it = std::find_if(_decodes.begin(), _decodes.end(), [id](auto &d) { return d.id == id; });
+    if (it == _decodes.end())
+        return;
+    DecodeDone done = std::move(it->done);
+    _decodes.erase(it);
+    done(std::move(result));
+}
+
+void Win32App::detachDecoders() {
+    if (!_decodeLink)
+        return;
+    std::lock_guard lock(_decodeLink->m);
+    _decodeLink->app = nullptr;
 }
 
 // ── clipboard ───────────────────────────────────────────────────────────────
@@ -459,9 +525,9 @@ void Win32App::requestClipboard(
 ) {
     // The data is local to the OS, so reading is synchronous; the callback is
     // still posted because the contract promises it never runs re-entrantly.
-    // Only the copy happens with the clipboard open: converting (a
-    // screenshot's DIB to PNG takes a while) waits until other apps can
-    // have it back.
+    // Only the copy happens with the clipboard open: converting waits until
+    // other apps can have it back, and a slow conversion (a screenshot's DIB
+    // to PNG) runs on a worker.
     std::optional<OsData> raw;
     if (sel == Selection::Clipboard && openClipboard(_msgHwnd)) {
         raw = readFromOs(mime, [](UINT cf) -> std::optional<std::string> {
@@ -471,6 +537,10 @@ void Win32App::requestClipboard(
             return h ? bytesFromGlobal(h) : std::nullopt;
         });
         CloseClipboard();
+    }
+    if (raw && decodeIsSlow(mime, *raw)) {
+        decodeOffThread(std::string(mime), std::move(*raw), std::move(cb));
+        return;
     }
     std::optional<std::string> result;
     if (raw)

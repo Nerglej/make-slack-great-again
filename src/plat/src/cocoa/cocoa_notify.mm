@@ -9,7 +9,9 @@
 // arrives on its own queues and is posted to the loop thread.
 #include "cocoa/cocoa_internal.h"
 
+#ifdef PLAT_TEST_HOOKS
 #import <CommonCrypto/CommonDigest.h>
+#endif
 #import <ImageIO/ImageIO.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <UserNotifications/UserNotifications.h>
@@ -69,9 +71,9 @@ NSString *categoryFor(const std::vector<plat::NotificationAction> &actions, bool
 
 // UNNotificationAttachment takes a file: the picture as PNG in the temp
 // directory. The center moves an accepted attachment into its own store, so
-// only a rejected one is left to delete. *sha1 gets the file's SHA-1 (hex):
-// the store names its copy by it (see notificationProbe).
-NSURL *writePng(const plat::Image &img, std::string *sha1) {
+// only a rejected one is left to delete. In test builds *sha1 gets the file's
+// SHA-1 (hex): the store names its copy by it (see notificationProbe).
+NSURL *writePng(const plat::Image &img, [[maybe_unused]] std::string *sha1) {
     CGImageRef cg = plat::cocoa::createCGImage(img);
     if (!cg)
         return nil;
@@ -88,6 +90,7 @@ NSURL *writePng(const plat::Image &img, std::string *sha1) {
     CGImageRelease(cg);
     if (!ok)
         return nil;
+#ifdef PLAT_TEST_HOOKS
     unsigned char digest[CC_SHA1_DIGEST_LENGTH];
     CC_SHA1(png.bytes, CC_LONG(png.length), digest);
     sha1->clear();
@@ -96,6 +99,7 @@ NSURL *writePng(const plat::Image &img, std::string *sha1) {
         std::snprintf(hex, sizeof hex, "%02x", c);
         *sha1 += hex;
     }
+#endif
     NSString *name =
         [NSProcessInfo.processInfo.globallyUniqueString stringByAppendingString:@".png"];
     NSURL *url =
@@ -103,11 +107,13 @@ NSURL *writePng(const plat::Image &img, std::string *sha1) {
     return [png writeToURL:url atomically:YES] ? url : nil;
 }
 
+#ifdef PLAT_TEST_HOOKS
 // Wait for a completion handler the center runs on its own queue (never the
 // main one, so blocking the loop thread for it cannot deadlock). Test hooks only.
 bool waitFor(dispatch_semaphore_t s) {
     return dispatch_semaphore_wait(s, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)) == 0;
 }
+#endif
 
 } // namespace
 
@@ -214,7 +220,9 @@ uint64_t CocoaApp::notify(const Notification &n) {
                                                              error:&err];
             if (att) {
                 content.attachments = @[ att ];
-                _notifyImages[id]   = {sha1, {n.image.width, n.image.height}};
+#ifdef PLAT_TEST_HOOKS
+                _notifyImages[id] = {sha1, {n.image.width, n.image.height}};
+#endif
             } else
                 [NSFileManager.defaultManager removeItemAtURL:png error:nil];
         }
@@ -278,7 +286,9 @@ void CocoaApp::onNotificationResponse(uint64_t id, std::string action, bool dism
     // A click removes the notification from Notification Center, so either
     // way it is no longer ours to close.
     const bool live = _liveNotifications.erase(id) > 0;
+#ifdef PLAT_TEST_HOOKS
     _notifyImages.erase(id);
+#endif
     if (dismissed) {
         if (live)
             emit({.type = EventType::NotificationClosed, .id = id});
@@ -290,7 +300,9 @@ void CocoaApp::onNotificationResponse(uint64_t id, std::string action, bool dism
 
 void CocoaApp::onNotificationFailed(uint64_t id, std::string reason) {
     _liveNotifications.erase(id);
+#ifdef PLAT_TEST_HOOKS
     _notifyImages.erase(id);
+#endif
     emit({.type = EventType::NotificationFailed, .text = std::move(reason), .id = id});
     noteWork();
 }
@@ -320,6 +332,7 @@ void CocoaApp::tearDownNotifications() {
     _notifyState    = 0;
 }
 
+#ifdef PLAT_TEST_HOOKS
 // ── test hook ───────────────────────────────────────────────────────────────
 
 bool CocoaApp::notificationProbe(uint64_t id, NotificationProbe *out) {
@@ -389,5 +402,6 @@ bool CocoaApp::notificationProbe(uint64_t id, NotificationProbe *out) {
         return true;
     }
 }
+#endif
 
 } // namespace plat::cocoa

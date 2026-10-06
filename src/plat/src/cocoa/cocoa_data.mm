@@ -169,15 +169,28 @@ std::optional<std::string> readPasteboard(NSPasteboard *pb, std::string_view mim
     }
     if (NSData *d = [pb dataForType:type])
         return std::string(static_cast<const char *>(d.bytes), d.length);
-    if (type == NSPasteboardTypePNG) { // a TIFF-only picture, as PNG
-        NSData           *tiff = [pb dataForType:NSPasteboardTypeTIFF];
-        NSBitmapImageRep *rep  = tiff ? [NSBitmapImageRep imageRepWithData:tiff] : nil;
+    if (type == NSPasteboardTypePNG) // a TIFF-only picture, as PNG
+        if (NSData *tiff = [pb dataForType:NSPasteboardTypeTIFF])
+            return pngFromTiff(tiff);
+    return std::nullopt;
+}
+
+NSData *tiffOnlyPicture(NSPasteboard *pb, std::string_view mime) {
+    if (pasteboardTypeForMime(mime) != NSPasteboardTypePNG ||
+        [pb availableTypeFromArray:@[ NSPasteboardTypePNG ]])
+        return nil;
+    return [pb dataForType:NSPasteboardTypeTIFF];
+}
+
+std::optional<std::string> pngFromTiff(NSData *tiff) {
+    @autoreleasepool {
+        NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:tiff];
         NSData           *png =
             rep ? [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}] : nil;
         if (png.length)
             return std::string(static_cast<const char *>(png.bytes), png.length);
+        return std::nullopt;
     }
-    return std::nullopt;
 }
 
 CGImageRef createCGImage(const Image &img) {

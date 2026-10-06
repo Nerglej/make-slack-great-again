@@ -98,6 +98,7 @@ NSMenu *buildMenu(const std::vector<MenuItem> &items, PlatTrayTarget *target) {
     return m;
 }
 
+#ifdef PLAT_TEST_HOOKS
 // Depth-first: the (sub)menu and index holding the item that sends `id`.
 bool findItem(NSMenu *m, uint32_t id, NSMenu **inMenu, NSInteger *index) {
     for (NSInteger i = 0; i < m.numberOfItems; ++i) {
@@ -121,6 +122,7 @@ void flattenTitles(NSMenu *m, std::vector<std::string> &out) {
             flattenTitles(mi.submenu, out);
     }
 }
+#endif
 
 } // namespace
 
@@ -198,6 +200,7 @@ std::unique_ptr<Tray> CocoaApp::createTray() {
     }
 }
 
+#ifdef PLAT_TEST_HOOKS
 bool CocoaApp::trayActivate(Tray &t) {
     auto &c = static_cast<CocoaTray &>(t);
     // With a menu a click opens it (and blocks in menu tracking): that is
@@ -235,5 +238,6 @@ bool CocoaApp::trayProbe(Tray &t, TrayProbe *out) {
         flattenTitles(c.item.menu, out->menuLabels);
     return true;
 }
+#endif
 
 } // namespace plat::cocoa

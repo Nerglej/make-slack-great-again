@@ -588,8 +588,10 @@ void Win32Window::endPaint(const std::vector<Rect> &damage) {
     // current update region, and a BeginPaint DC is clipped to it. Under DWM
     // this writes the redirection surface, composed at the next vblank.
     HDC dc       = GetDC(_hwnd);
-    if (damage.empty())
+    if (damage.empty()) {
         blit(dc, {0, 0, _dibW, _dibH});
+        _blittedAll = true;
+    }
     for (const Rect &d : damage)
         blit(dc, {d.x, d.y, d.x + d.w, d.y + d.h});
     ReleaseDC(_hwnd, dc);
@@ -604,11 +606,14 @@ void Win32Window::onPaint() {
     // Exposure alone is served from the DIB; a Frame is only asked for when
     // the content is actually stale (requested, resized, never painted).
     const bool stale = _frameRequested || !_everPainted || _dibW != _physW || _dibH != _physH;
+    _blittedAll      = false;
     if (stale && _physW > 0 && _physH > 0 && !deliverFrame()) {
         EndPaint(h, &ps);
         return;
     }
-    if (_dib)
+    // The Frame's endPaint already put the whole canvas on screen: no
+    // second copy of the same pixels.
+    if (_dib && !_blittedAll)
         blit(dc, ps.rcPaint);
     // The app has not painted the new size yet: black, not stale garbage.
     HBRUSH black = HBRUSH(GetStockObject(BLACK_BRUSH));

@@ -532,18 +532,26 @@ void X11Window::onConfigure(const xcb_configure_notify_event_t *e) {
     _framePending = true;
 }
 
-void X11Window::onExpose(int x, int y, int w, int h, int) {
+void X11Window::onExpose(int x, int y, int w, int h, int count) {
     // Our buffer still holds the last frame: repair exposures from it without
     // bothering the app. Only a missing or stale-sized buffer needs a Frame.
+    // A series (count = how many follow) goes out as one batch at its end:
+    // one completion and one flush.
     if (_presented && _buf.pixels && _buf.w == _pw && _buf.h == _ph && !_painting) {
         Rect r{x, y, std::min(w, _buf.w - x), std::min(h, _buf.h - y)};
-        if (r.w > 0 && r.h > 0) {
-            putRect(r, true);
+        if (r.w > 0 && r.h > 0)
+            _exposed.push_back(r);
+        if (count > 0)
+            return;
+        for (size_t i = 0; i < _exposed.size(); ++i)
+            putRect(_exposed[i], i + 1 == _exposed.size());
+        if (!_exposed.empty())
             xcb_flush(_app->conn());
-        }
     } else {
         _framePending = true;
     }
+    if (count == 0)
+        _exposed.clear();
 }
 
 void X11Window::onMapped(bool mapped) {
@@ -579,14 +587,6 @@ void X11Window::onProperty(xcb_atom_t atom) {
             _above      = above;
             emit({.type = EventType::StateChanged});
         }
-    } else if (atom == _app->atom(NetFrameExtents)) {
-        // Kept for future use (positioning relative to the frame); the
-        // window's own size is always the client area.
-        auto  ck = xcb_get_property(c, 0, _win, atom, XCB_ATOM_CARDINAL, 0, 4);
-        auto *r  = xcb_get_property_reply(c, ck, nullptr);
-        if (r && r->format == 32 && xcb_get_property_value_length(r) == 16)
-            std::memcpy(_frameExtents, xcb_get_property_value(r), 16);
-        std::free(r);
     }
 }
 
@@ -649,12 +649,25 @@ void X11Window::waitIdle() {
 }
 
 bool X11Window::allocBuffer(int w, int h) {
+    // Live resize asks for a new size every few pixels: the buffer grows in
+    // 128 px steps and is reused while the window fits (rows keep their
+    // stride, so what overlaps stays in place), so a drag reallocates and
+    // round-trips a handful of times instead of on every step. A much
+    // smaller window (a quarter of the area) gives the memory back.
+    if (_buf.pixels && w <= _buf.stride && h <= _buf.capH &&
+        size_t(_buf.stride) * _buf.capH <= size_t(w) * h * 4) {
+        _buf.w = w;
+        _buf.h = h;
+        return true;
+    }
     xcb_connection_t *c = _app->conn();
     Buffer            nb;
-    nb.w     = w;
-    nb.h     = h;
-    nb.bytes = size_t(w) * size_t(h) * 4;
-    bool fd  = false;
+    nb.w      = w;
+    nb.h      = h;
+    nb.stride = (w + 127) & ~127;
+    nb.capH   = (h + 127) & ~127;
+    nb.bytes  = size_t(nb.stride) * size_t(nb.capH) * 4;
+    bool fd   = false;
     if (_app->shmMode(&fd)) {
         void *mem = nullptr;
         if (fd) {
@@ -719,7 +732,9 @@ bool X11Window::allocBuffer(int w, int h) {
         const int cw = std::min(w, _buf.w), ch = std::min(h, _buf.h);
         for (int y = 0; y < ch; ++y)
             std::memcpy(
-                nb.pixels + size_t(y) * w, _buf.pixels + size_t(y) * _buf.w, size_t(cw) * 4
+                nb.pixels + size_t(y) * nb.stride,
+                _buf.pixels + size_t(y) * _buf.stride,
+                size_t(cw) * 4
             );
     }
     freeBuffer(_buf);
@@ -750,14 +765,15 @@ Canvas X11Window::beginPaint() {
             return {};
     }
     _painting = true;
-    return {_buf.pixels, _buf.w, _buf.h, _buf.w, _app->scale()};
+    return {_buf.pixels, _buf.w, _buf.h, _buf.stride, _app->scale()};
 }
 
 void X11Window::endPaint(const std::vector<Rect> &damage) {
     if (!_painting)
         return;
-    _painting = false;
-    std::vector<Rect> rects;
+    _painting                = false;
+    std::vector<Rect> &rects = _puts;
+    rects.clear();
     for (const Rect &d : damage) {
         const int x0 = std::max(0, d.x), y0 = std::max(0, d.y);
         const int x1 = std::min(_buf.w, d.x + d.w), y1 = std::min(_buf.h, d.y + d.h);
@@ -781,8 +797,8 @@ void X11Window::putRect(const Rect &r, bool last) {
             c,
             _win,
             _gc,
-            uint16_t(_buf.w),
-            uint16_t(_buf.h),
+            uint16_t(_buf.stride),
+            uint16_t(_buf.capH),
             uint16_t(r.x),
             uint16_t(r.y),
             uint16_t(r.w),
@@ -808,11 +824,13 @@ void X11Window::putRect(const Rect &r, bool last) {
     std::vector<uint32_t> strip;
     for (int y = r.y; y < r.y + r.h; y += rows) {
         const int       n   = std::min(rows, r.y + r.h - y);
-        const uint32_t *src = _buf.pixels + size_t(y) * _buf.w + r.x;
-        if (r.w != _buf.w) {
+        const uint32_t *src = _buf.pixels + size_t(y) * _buf.stride + r.x;
+        if (r.w != _buf.stride) {
             strip.resize(size_t(r.w) * n);
             for (int k = 0; k < n; ++k)
-                std::memcpy(strip.data() + size_t(k) * r.w, src + size_t(k) * _buf.w, rowBytes);
+                std::memcpy(
+                    strip.data() + size_t(k) * r.w, src + size_t(k) * _buf.stride, rowBytes
+                );
             src = strip.data();
         }
         xcb_put_image(

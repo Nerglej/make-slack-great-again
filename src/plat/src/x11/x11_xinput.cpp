@@ -180,6 +180,7 @@ void X11App::handleXInput(xcb_generic_event_t *ev) {
         if (!scrolled || moved)
             handleMotion(w, px, py, mods, e->time);
         if (scrolled && (nx != 0 || ny != 0)) {
+            flushMotion(); // the move first, then the scroll at that position
             // The server also sends emulated core wheel buttons for this
             // (same timestamp); handleButton drops those.
             _xiScrollTime = e->time;

@@ -55,7 +55,6 @@ enum AtomId : int {
     NetWmWindowType,
     NetWmWindowTypeNormal,
     NetActiveWindow,
-    NetFrameExtents,
     NetWmMoveResize,
     NetSupported,
     NetSupportingWmCheck,
@@ -147,6 +146,8 @@ public:
     xcb_window_t xid() const { return _win; }
     void         emit(Event e);
     Point        toLogical(int x, int y) const;
+    int          rootX() const { return _rootX; } // content top-left on the root, physical
+    int          rootY() const { return _rootY; }
     int          physW() const { return _pw; }
     int          physH() const { return _ph; }
     bool         textInputEnabled() const { return _textInput.enabled; }
@@ -171,11 +172,11 @@ public:
 private:
     struct Buffer {
         uint32_t *pixels = nullptr;
-        int       w = 0, h = 0;
-        size_t    bytes  = 0;
-        uint32_t  seg    = 0; // xcb_shm_seg_t, 0 = heap buffer
-        bool      shmFd  = false;
-        int       sysvId = -1;
+        int       w = 0, h = 0;         // in use (the window's size)
+        int       stride = 0, capH = 0; // allocated: pixels per row, rows
+        size_t    bytes = 0;
+        uint32_t  seg   = 0; // xcb_shm_seg_t, 0 = heap buffer
+        bool      shmFd = false;
     };
     bool allocBuffer(int w, int h);
     void freeBuffer(Buffer &b);
@@ -201,17 +202,18 @@ private:
     std::function<HitArea(Point)> _hitTest;
     TextInputState                _textInput;
     Buffer                        _buf;
+    std::vector<Rect>             _puts;    // endPaint's scratch
+    std::vector<Rect>             _exposed; // an Expose series, put when it ends
     bool                          _mapped = false, _presented = false;
     bool                          _framePending = false, _painting = false;
     int                           _shmInFlight = 0; // puts awaiting XCB_SHM_COMPLETION
     core::Clock::time_point       _shmSince{}, _lastFrame{};
     bool                          _maximized = false, _fullscreen = false, _hidden = false;
-    bool                          _above           = false;
-    bool                          _active          = false;
-    bool                          _attention       = false; // urgency / demands-attention set
-    Cursor                        _cursor          = Cursor::Arrow;
-    uint32_t                      _frameExtents[4] = {};  // left, right, top, bottom
-    xcb_window_t                  _parent          = 0;   // root, or the WM's frame
+    bool                          _above     = false;
+    bool                          _active    = false;
+    bool                          _attention = false; // urgency / demands-attention set
+    Cursor                        _cursor    = Cursor::Arrow;
+    xcb_window_t                  _parent    = 0;         // root, or the WM's frame
     int                           _rootX = 0, _rootY = 0; // content top-left, physical root coords
     bool                          _userPos = false; // an explicit position: USPosition in the hints
     int                           _userX = 0, _userY = 0; // …and that position, physical
@@ -310,6 +312,7 @@ private:
     void     handleKey(xcb_key_press_event_t *e, bool down);
     void     handleClientMessage(xcb_client_message_event_t *e);
     void     handleMotion(X11Window *w, double px, double py, uint32_t mods, xcb_timestamp_t t);
+    void     flushMotion(); // emits the held PointerMove, if any
     void     focusWindow(X11Window *w);
     void     emitFrames();
     void     readScale();
@@ -388,6 +391,12 @@ private:
     uint32_t           _swallowRelease = 0; // bitmask of X buttons whose release we eat
     uint32_t           _buttonsHeld    = 0; // bitmask of X buttons down (startDrag needs one)
     Point              _pointerPos;         // logical, last seen, for scroll events
+    // Motion is coalesced: the latest PointerMove waits here until another
+    // event or the end of the batch, so a 1000 Hz mouse costs the app one
+    // move per batch, not one per report.
+    xcb_window_t       _motionWin = 0; // 0 = none held
+    Point              _motionPos;
+    uint32_t           _motionMods = 0;
 
     // Cursors.
     xcb_cursor_context_t *_cursorCtx                           = nullptr;

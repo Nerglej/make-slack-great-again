@@ -1,6 +1,6 @@
 // Win32 backend, app half: the event loop (MsgWaitForMultipleObjectsEx over
-// the thread's message queue), frame pacing, theme, openUrl and the
-// SendInput-based test hooks.
+// the thread's message queue), frame pacing, theme, openUrl and (in
+// PLAT_TEST_HOOKS builds) the SendInput-based test hooks.
 #include "core/pacing.h"
 #include "win32/win32.h"
 
@@ -106,6 +106,7 @@ bool Win32App::init(std::string *error) {
         );
     // Broadcast by Explorer once a window's taskbar button exists: overlay
     // icons set before that are lost.
+    bindWic(); // WIC's factory is cached for this thread only
     _taskbarButtonCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
     _instance             = thisModule();
 
@@ -169,6 +170,7 @@ bool Win32App::init(std::string *error) {
 }
 
 Win32App::~Win32App() {
+    detachDecoders(); // before shutdown(): a worker's late post must find no App
     _core.shutdown(); // pending closures go while the message window still exists
     teardownSystem(); // pipes, the network sink and the system window, before COM goes
     if (_msgHwnd) {
@@ -255,8 +257,12 @@ void Win32App::unwatchHandle(uint64_t id) {
 }
 
 void Win32App::pollHandles() {
-    // By id: a callback may add or remove watches (its own included).
+    // By id: a callback may add or remove watches (its own included). The
+    // list is a reused buffer, taken while in use (service() can nest
+    // through an OS modal loop a callback opens).
     std::vector<uint64_t> ids;
+    ids.swap(_scratchIds);
+    ids.clear();
     for (const auto &w : _handleWatches)
         ids.push_back(w.id);
     for (uint64_t id : ids) {
@@ -268,6 +274,7 @@ void Win32App::pollHandles() {
         auto fn = it->fn; // a copy: the callback may unwatch itself
         fn();
     }
+    _scratchIds.swap(ids);
 }
 
 void Win32App::pump(int timeoutMs) {
@@ -304,8 +311,12 @@ void Win32App::service() {
 }
 
 void Win32App::flushFrames() {
-    const auto now = core::Clock::now();
-    for (auto *w : std::vector<Win32Window *>(_windows)) {
+    const auto                 now = core::Clock::now();
+    // A snapshot in a reused buffer, as in pollHandles().
+    std::vector<Win32Window *> windows;
+    windows.swap(_scratchWindows);
+    windows.assign(_windows.begin(), _windows.end());
+    for (auto *w : windows) {
         // A Frame handler may destroy other windows; skip the ones gone.
         if (std::find(_windows.begin(), _windows.end(), w) == _windows.end())
             continue;
@@ -313,6 +324,7 @@ void Win32App::flushFrames() {
         if (w->frameDue(now, &wait))
             w->deliverFrame();
     }
+    _scratchWindows.swap(windows);
 }
 
 int Win32App::msUntilFrame() const {
@@ -431,6 +443,7 @@ bool Win32App::openUrl(std::string_view url) {
     return r > 32;
 }
 
+#ifdef PLAT_TEST_HOOKS
 // ── test hooks: real input through SendInput ────────────────────────────────
 
 namespace {
@@ -537,6 +550,7 @@ bool Win32App::readPixel(Window &win, int x, int y, uint32_t *argb) {
             uint32_t(GetBValue(c));
     return true;
 }
+#endif // PLAT_TEST_HOOKS
 
 } // namespace plat::win32
 

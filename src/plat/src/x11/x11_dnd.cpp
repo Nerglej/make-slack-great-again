@@ -7,6 +7,7 @@
 // own windows, which answer through the server like anyone else's would.
 #include "x11/x11_internal.h"
 
+#include "core/drop.h"
 #include "core/image_util.h"
 
 #include <xcb/xfixes.h>
@@ -130,12 +131,10 @@ void X11App::onXdnd(X11Window *w, xcb_client_message_event_t *e) {
     if (e->type == _atoms[XdndPosition]) {
         if (_dnd.dropping)
             return; // positions after a drop are a source bug
+        // Root coordinates: the window knows where its content is on the root
+        // (it follows every move), so no round trip per position.
         const int16_t rx = int16_t(d[2] >> 16), ry = int16_t(d[2] & 0xffff);
-        Reply         t(xcb_translate_coordinates_reply(
-            _c, xcb_translate_coordinates(_c, _root, w->xid(), rx, ry), nullptr
-        ));
-        if (t)
-            _dnd.pos = w->toLogical(t->dst_x, t->dst_y);
+        _dnd.pos = w->toLogical(rx - w->rootX(), ry - w->rootY());
         if (_dnd.version >= 1 && d[3])
             _lastTime = d[3];
         // v2+ carries the requested action; before that it is always Copy.
@@ -229,13 +228,8 @@ void X11App::dndFetchNext() {
     Event ev{.type = EventType::Drop, .pos = _dnd.pos};
     ev.dropAction     = _dnd.preferred;
     ev.allowedActions = _dnd.allowed;
-    for (auto &item : _dnd.got) {
-        if (item.mime == "text/uri-list")
-            ev.uris = core::parseUriList(item.data);
-        else if (item.mime == core::kTextMime)
-            ev.text = item.data;
-    }
-    ev.items                = std::move(_dnd.got);
+    ev.items          = std::move(_dnd.got);
+    core::fillDropText(ev);
     const xcb_atom_t action = atomFromAction(w->dropReply);
     const uint64_t   gen    = _dnd.gen;
     w->emit(ev);
@@ -544,19 +538,10 @@ void X11App::sendXdnd(xcb_window_t to, xcb_window_t window, xcb_atom_t type, con
 }
 
 xcb_atom_t X11App::dragRequestedAction() const {
-    // The usual modifier convention (toolkits, file managers): Shift moves,
-    // Ctrl copies, both link — when the drag allows it.
-    const uint32_t m    = _kbd.hasKeymap() ? _kbd.mods() : 0;
-    DropAction     want = core::preferredAction(_drag.actions);
-    if ((m & ModShift) && (m & ModCtrl))
-        want = DropAction::Link;
-    else if (m & ModShift)
-        want = DropAction::Move;
-    else if (m & ModCtrl)
-        want = DropAction::Copy;
-    if (!(_drag.actions & bitOf(want)))
-        want = core::preferredAction(_drag.actions);
-    return atomFromAction(want);
+    const uint32_t m = _kbd.hasKeymap() ? _kbd.mods() : 0;
+    return atomFromAction(
+        core::modifierDropAction((m & ModShift) != 0, (m & ModCtrl) != 0, _drag.actions)
+    );
 }
 
 void X11App::dragMotion(int16_t rootX, int16_t rootY, xcb_timestamp_t t) {

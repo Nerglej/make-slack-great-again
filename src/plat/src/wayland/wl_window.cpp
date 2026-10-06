@@ -206,6 +206,8 @@ void WlWindow::destroyRole() {
 }
 
 void WlWindow::emitEvent(Event e) {
+    if (app->_motionWin)
+        app->flushMotion(); // a held move goes out first, in order
     e.window                = this;
     // PLAT_WAYLAND_DEBUG=1 traces what the app sees (with WAYLAND_DEBUG=1 for
     // the wire side): the quickest way to tell a compositor quirk from ours.
@@ -680,11 +682,19 @@ void WlWindow::onFrameDone() {
     // The Frame itself goes out from WlApp::afterWait, outside dispatch.
 }
 
+// Live resize asks for a new size every few pixels: a buffer of another size
+// is kept while its pool fits the window (and is not four times too big), and
+// beginPaint makes it a buffer of the new size from the same memory.
+static bool reusable(const ShmBuffer *b, int pw, int ph) {
+    const size_t need = std::max<size_t>(1, size_t(pw)) * std::max<size_t>(1, size_t(ph)) * 4;
+    return b->cap >= need && b->cap <= need * 4;
+}
+
 void WlWindow::pruneBuffers() {
     const int pw = int(std::lround(_size.w * _scale)), ph = int(std::lround(_size.h * _scale));
     for (auto it = _buffers.begin(); it != _buffers.end();) {
         ShmBuffer *b         = it->get();
-        const bool wrongSize = b->width != pw || b->height != ph;
+        const bool wrongSize = (b->width != pw || b->height != ph) && !reusable(b, pw, ph);
         const bool surplus   = _buffers.size() > kKeepBuffers && b != _newest;
         if (!b->busy && b != _painting && (wrongSize || surplus)) {
             if (_newest == b)
@@ -712,10 +722,26 @@ Canvas WlWindow::beginPaint() {
         for (auto &b : _buffers)
             if (!b->busy && b->width == pw && b->height == ph && (!pick || b.get() == _newest))
                 pick = b.get();
+        // Else an idle buffer of another size whose pool still fits.
+        for (auto &b : _buffers) {
+            if (pick)
+                break;
+            if (b->busy || !reusable(b.get(), pw, ph) ||
+                !resizeShmBuffer(b.get(), pw, ph, WL_SHM_FORMAT_ARGB8888))
+                continue;
+            wl_buffer_add_listener(b->buffer, &kBufferListener, b.get());
+            if (_newest == b.get())
+                _newest = nullptr; // its pixels are of the old size
+            b->stale.clear();
+            b->staleAll = true;
+            pick        = b.get();
+        }
         if (!pick) {
-            auto b   = std::make_unique<ShmBuffer>();
-            b->owner = this;
-            if (!allocShmBuffer(app->shm, pw, ph, WL_SHM_FORMAT_ARGB8888, b.get()))
+            auto b           = std::make_unique<ShmBuffer>();
+            b->owner         = this;
+            // Rounded up to 128 px both ways, so the next resize steps fit.
+            const size_t cap = size_t((pw + 127) & ~127) * size_t((ph + 127) & ~127) * 4;
+            if (!allocShmBuffer(app->shm, pw, ph, WL_SHM_FORMAT_ARGB8888, b.get(), cap))
                 return {};
             wl_buffer_add_listener(b->buffer, &kBufferListener, b.get());
             b->staleAll = true;

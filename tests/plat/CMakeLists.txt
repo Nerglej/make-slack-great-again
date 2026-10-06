@@ -28,14 +28,15 @@ if(MINGW)
     target_link_options(plat_unit_tests PRIVATE -static)
 endif()
 
-if(WIN32)
+if(WIN32 AND PLAT_TEST_HOOKS)
     # Win32-only end-to-end checks (Custom frame, modal loops, DPI, IME-free
     # text paths, drops); like plat_selftest it needs a desktop, so it is not
-    # a ctest test — run it with plat-selftest-wine.sh or on Windows.
+    # a ctest test — run it with plat-selftest-wine.sh or on Windows. It drives
+    # the backend through its test hooks, so it needs PLAT_TEST_HOOKS.
     add_executable(plat_win32_tests win32_tests.cpp)
     target_link_libraries(plat_win32_tests PRIVATE plat)
     target_include_directories(plat_win32_tests PRIVATE ${PLAT_DIR}/src)
-    target_compile_definitions(plat_win32_tests PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+    target_compile_definitions(plat_win32_tests PRIVATE PLAT_TEST_HOOKS UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00 WINVER=0x0A00)
     if(MINGW)
         target_link_options(plat_win32_tests PRIVATE -static)
     endif()

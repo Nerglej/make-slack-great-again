@@ -8,6 +8,7 @@
 // hidden window's modal timer (enterModal) keeps plat timers, posted work and
 // frames running inside it, exactly as for live move/resize.
 #include "win32/win32.h"
+#include "core/drop.h"
 
 #include <ole2.h>
 #include <shlobj.h>
@@ -71,16 +72,7 @@ DropAction actionFor(DWORD effect) {
 // What Explorer does with the modifiers held: Ctrl copies, Shift moves,
 // both link; otherwise Copy when allowed. Falls back when not allowed.
 DropAction proposedAction(DWORD keys, uint32_t allowed) {
-    DropAction want = DropAction::None;
-    if ((keys & MK_CONTROL) && (keys & MK_SHIFT))
-        want = DropAction::Link;
-    else if (keys & MK_SHIFT)
-        want = DropAction::Move;
-    else if (keys & MK_CONTROL)
-        want = DropAction::Copy;
-    if (want != DropAction::None && (effectFor(want) & effectsFor(allowed)))
-        return want;
-    return core::preferredAction(allowed);
+    return core::modifierDropAction((keys & MK_SHIFT) != 0, (keys & MK_CONTROL) != 0, allowed);
 }
 
 uint32_t modsFor(DWORD keys) {
@@ -106,14 +98,6 @@ HGLOBAL duplicate(HGLOBAL src) {
     HGLOBAL g = globalFromBytes(p, n);
     GlobalUnlock(src);
     return g;
-}
-
-// Drop data is read only for types that are cheap and meant for us: the
-// standard ones and plat-style MIME types, not the BMP a bitmap drag also
-// offers or other image conversions (the others are listed without data).
-bool readOnDrop(const std::string &m) {
-    return m == core::kTextMime || m == "text/html" || m == "image/png" || m == "text/uri-list" ||
-           (m.find('/') != std::string::npos && m.rfind("image/", 0) != 0);
 }
 
 // ── IDataObject ─────────────────────────────────────────────────────────────
@@ -336,25 +320,56 @@ struct DropTarget final : public ComObject<IDropTarget> {
             window->sendEvent({.type = EventType::DropLeave});
             return S_OK;
         }
-        Event e = event(EventType::Drop, keys, pt);
+        Event       e = event(EventType::Drop, keys, pt);
+        // The bytes are all copied out now, while the source is still there.
+        // Converting is quick except for a bitmap offered as PNG (a dragged
+        // screenshot): that encode runs on a worker, so neither this loop
+        // nor the source waits for it, and the Drop follows when it is done.
+        std::string slowMime;
+        OsData      slowRaw;
+        size_t      slowAt = 0;
         for (const auto &mime : types) {
-            if (!readOnDrop(mime)) {
+            if (!core::readOnDrop(mime)) {
                 e.items.push_back({mime, {}});
                 continue;
             }
-            auto data = decodeFromOs(mime, [&](UINT cf) { return fetch(obj, cf); });
+            auto raw = readFromOs(mime, [&](UINT cf) { return fetch(obj, cf); });
+            if (!raw)
+                continue;
+            if (slowMime.empty() && decodeIsSlow(mime, *raw)) {
+                slowMime = mime;
+                slowRaw  = std::move(*raw);
+                slowAt   = e.items.size();
+                e.items.push_back({mime, {}}); // filled in when it is ready
+                continue;
+            }
+            auto data = finishDecode(mime, std::move(*raw));
             if (!data)
                 continue;
-            if (mime == "text/uri-list")
-                e.uris = parseUriList(*data);
-            else if (isTextMime(mime))
-                e.text = *data;
             e.items.push_back({mime, std::move(*data)});
         }
+        core::fillDropText(e); // the slow item is an image: it never counts here
         e.dropAction = reply;
         setData(nullptr);
         types.clear();
-        window->sendEvent(std::move(e));
+        if (slowMime.empty()) {
+            window->sendEvent(std::move(e));
+            return S_OK;
+        }
+        Win32Window *w = window;
+        w->app()->decodeOffThread(
+            std::move(slowMime),
+            std::move(slowRaw),
+            [w, alive = w->aliveToken(), e = std::move(e), slowAt](auto data) mutable {
+                if (alive.expired())
+                    return;
+                if (data)
+                    e.items[slowAt].data = std::move(*data);
+                else
+                    e.items.erase(e.items.begin() + ptrdiff_t(slowAt));
+                w->sendEvent(std::move(e));
+            }
+        );
         return S_OK;
     }
 

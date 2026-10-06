@@ -15,7 +15,9 @@
 #import <Carbon/Carbon.h> // kTISNotifySelectedKeyboardInputSourceChanged
 #import <QuartzCore/QuartzCore.h>
 
-#include <dlfcn.h>
+#ifdef PLAT_TEST_HOOKS
+#include <dlfcn.h> // readPixel
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -473,7 +475,8 @@ void CocoaApp::onFd(uint64_t id, uint32_t events) {
 // macOS has one clipboard (NSPasteboard.generalPasteboard) and no primary
 // selection: Primary writes are dropped and reads answer nullopt/empty.
 // The pasteboard server answers synchronously; only the callbacks are
-// deferred, per the never-re-entrant contract.
+// deferred, per the never-re-entrant contract (a TIFF-only picture asked for
+// as PNG is converted on a worker first).
 
 void CocoaApp::setClipboard(std::vector<DataItem> items, Selection sel) {
     if (sel != Selection::Clipboard)
@@ -492,7 +495,23 @@ void CocoaApp::requestClipboard(
     std::optional<std::string> v;
     if (sel == Selection::Clipboard) {
         @autoreleasepool {
-            v = readPasteboard(NSPasteboard.generalPasteboard, mime);
+            NSPasteboard *pb = NSPasteboard.generalPasteboard;
+            if (NSData *tiff = tiffOnlyPicture(pb, mime)) {
+                // A screenshot's TIFF → PNG takes tens of ms or more: convert
+                // the copied bytes on a worker and answer from there.
+                auto alive = _alive;
+                auto done  = std::make_shared<std::function<void(std::optional<std::string>)>>(
+                    std::move(cb)
+                );
+                dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                  std::optional<std::string> png = pngFromTiff(tiff);
+                  std::lock_guard            lock(alive->mutex);
+                  if (CocoaApp *app = alive->app)
+                      app->post([done, png = std::move(png)] { (*done)(png); });
+                });
+                return;
+            }
+            v = readPasteboard(pb, mime);
         }
     }
     post([cb = std::move(cb), v = std::move(v)] { cb(v); });
@@ -552,6 +571,7 @@ void CocoaApp::requestQuit() {
     noteWork();
 }
 
+#ifdef PLAT_TEST_HOOKS
 // ── TestHooks ───────────────────────────────────────────────────────────────
 // CGEventPost would be the faithful path, but it needs the Accessibility
 // permission, which a test started over ssh or from CI never has. Instead
@@ -899,6 +919,8 @@ bool CocoaApp::readPixel(Window &win, int x, int y, uint32_t *argb) {
         return ok;
     }
 }
+
+#endif // PLAT_TEST_HOOKS
 
 } // namespace plat::cocoa
 

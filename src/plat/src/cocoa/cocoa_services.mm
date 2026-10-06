@@ -329,8 +329,10 @@ void CocoaApp::tearDownServices() {
         nw_path_monitor_cancel((nw_path_monitor_t)_pathMonitor);
         _pathMonitor = nil;
     }
+#ifdef PLAT_TEST_HOOKS
     [(NSTimer *)_dialogDriver invalidate];
     _dialogDriver = nil;
+#endif
     for (auto &[fd, c] : _instanceConns) {
         unwatchFd(c.watch);
         close(fd);
@@ -415,6 +417,7 @@ bool CocoaApp::registerUrlScheme(std::string_view scheme) {
     return false;
 }
 
+#ifdef PLAT_TEST_HOOKS
 bool CocoaApp::deliverUrl(std::string_view url) {
     @autoreleasepool {
         // A real GetURL event, addressed to our pid, so it takes the same path
@@ -439,6 +442,7 @@ bool CocoaApp::deliverUrl(std::string_view url) {
         return true;
     }
 }
+#endif
 
 // ── single instance ─────────────────────────────────────────────────────────
 // A Unix socket in the per-user temp dir, guarded by an flock on a sibling
@@ -609,6 +613,7 @@ void CocoaApp::showFileDialog(
         if (NSArray<UTType *> *types = contentTypes(d.filters))
             panel.allowedContentTypes = types;
 
+#ifdef PLAT_TEST_HOOKS
         // A pending test answer is entered the way a user would before
         // confirming: navigate to its folder and type its name (Save), or
         // navigate to the file itself, which the panel selects (Open). Set
@@ -630,6 +635,7 @@ void CocoaApp::showFileDialog(
                 panel.directoryURL = [NSURL fileURLWithPath:first];
             }
         }
+#endif
 
         auto alive = _alive;
         auto done  = std::make_shared<std::function<void(std::vector<std::string>)>>(std::move(cb));
@@ -659,10 +665,14 @@ void CocoaApp::showFileDialog(
             [panel beginSheetModalForWindow:pw completionHandler:finish];
         else
             [panel beginWithCompletionHandler:finish];
+#ifdef PLAT_TEST_HOOKS
         if (answer)
             confirmPanel(panel, sheet, !answer->empty());
+#endif
     }
 }
+
+#ifdef PLAT_TEST_HOOKS
 
 // Test driver, second half: once the panel is up (and the service has had a
 // moment to fill it), press its button. Only two public calls do anything
@@ -720,6 +730,7 @@ bool CocoaApp::fileDialogRespond(std::vector<std::string> paths) {
     _dialogAnswer = std::move(paths);
     return true;
 }
+#endif
 
 // ── directories, settings ───────────────────────────────────────────────────
 
@@ -806,6 +817,7 @@ SystemSettings CocoaApp::systemSettings() const {
     return s;
 }
 
+#ifdef PLAT_TEST_HOOKS
 // ── system-event test hook ──────────────────────────────────────────────────
 
 bool CocoaApp::simulateSystemEvent(EventType type, bool online) {
@@ -828,5 +840,6 @@ bool CocoaApp::simulateSystemEvent(EventType type, bool online) {
         }
     }
 }
+#endif
 
 } // namespace plat::cocoa

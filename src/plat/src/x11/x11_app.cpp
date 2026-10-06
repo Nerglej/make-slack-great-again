@@ -10,6 +10,7 @@
 #include <xcb/shm.h>
 #include <xcb/xcb_cursor.h>
 #include <xcb/xfixes.h>
+#include <xcb/xinput.h>
 // xkb.h names a struct member `explicit`; rename it for C++.
 #define explicit explicit_
 #include <xcb/xkb.h>
@@ -47,7 +48,6 @@ constexpr const char *kAtomNames[AtomCount] = {
     "_NET_WM_WINDOW_TYPE",
     "_NET_WM_WINDOW_TYPE_NORMAL",
     "_NET_ACTIVE_WINDOW",
-    "_NET_FRAME_EXTENTS",
     "_NET_WM_MOVERESIZE",
     "_NET_SUPPORTED",
     "_NET_SUPPORTING_WM_CHECK",
@@ -533,6 +533,7 @@ bool X11App::dispatchAll(bool readSocket) {
         handle(ev);
         std::free(ev);
     }
+    flushMotion();
     if (!_lost && xcb_connection_has_error(_c))
         connectionLost();
     return any;
@@ -610,6 +611,11 @@ void X11App::emitFrames() {
 
 void X11App::handle(xcb_generic_event_t *ev) {
     const uint8_t type = ev->response_type & 0x7f;
+    // Anything but more motion goes out after the held move, in order.
+    if (_motionWin && type != XCB_MOTION_NOTIFY &&
+        !(type == XCB_GE_GENERIC &&
+          reinterpret_cast<xcb_ge_generic_event_t *>(ev)->event_type == XCB_INPUT_MOTION))
+        flushMotion();
     switch (type) {
     case 0: {
         if (debugEnabled()) {
@@ -797,13 +803,24 @@ void X11App::handleMotion(X11Window *w, double px, double py, uint32_t mods, xcb
     // During an implicit grab motion keeps coming from outside the window;
     // that is a drag, not a re-entry.
     const bool  inside = px >= 0 && py >= 0 && px < w->physW() && py < w->physH();
+    if (_motionWin && (_motionWin != w->xid() || _motionMods != mods || (!w->hover && inside)))
+        flushMotion();
     if (!w->hover && inside) {
         w->hover    = true;
         _pointerWin = w;
         w->emit({.type = EventType::PointerEnter, .pos = p, .mods = mods});
     }
     _pointerPos = p;
-    w->emit({.type = EventType::PointerMove, .pos = p, .mods = mods});
+    _motionWin  = w->xid();
+    _motionPos  = p;
+    _motionMods = mods;
+}
+
+void X11App::flushMotion() {
+    const xcb_window_t id = _motionWin;
+    _motionWin            = 0;
+    if (X11Window *w = id ? findWindow(id) : nullptr)
+        w->emit({.type = EventType::PointerMove, .pos = _motionPos, .mods = _motionMods});
 }
 
 void X11App::handleXkb(xcb_generic_event_t *ev) {

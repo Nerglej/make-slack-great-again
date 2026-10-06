@@ -1,6 +1,7 @@
 // Win32 backend internals shared by the app half (loop, clipboard, theme,
 // test hooks — win32_app.cpp), the window half (wndproc, present, input,
 // IME — win32_window.cpp) and the pure helpers (keys, UTF-16 — win32_keys.cpp).
+// The test hooks exist only in PLAT_TEST_HOOKS builds.
 //
 // The desktop-integration half lives in its own files: formats + clipboard
 // (win32_data.cpp), OLE drag and drop (win32_dnd.cpp), tray, notifications,
@@ -31,7 +32,9 @@
 #include "core/input.h"
 #include "core/strings.h"
 #include "core/transfer.h"
+#ifdef PLAT_TEST_HOOKS
 #include "plat/testing.h"
+#endif
 #include "prim/winstr.h"
 
 #include <atomic>
@@ -66,9 +69,11 @@ std::string fileUri(std::wstring_view path);
 std::optional<std::wstring> pathFromFileUri(std::string_view uri);
 using core::parseUriList; // the URIs of a text/uri-list
 
-Key      keyFromVk(UINT vk, bool extended, UINT scan);
-UINT     vkFromKey(Key k, bool *extended); // for SendInput; 0 = no mapping
-uint32_t currentMods();                    // from GetKeyState, i.e. as of the current message
+Key keyFromVk(UINT vk, bool extended, UINT scan);
+#ifdef PLAT_TEST_HOOKS
+UINT vkFromKey(Key k, bool *extended); // for SendInput; 0 = no mapping
+#endif
+uint32_t currentMods(); // from GetKeyState, i.e. as of the current message
 
 // ── Small shared helpers (win32_system.cpp unless noted) ────────────────────
 // GetProcAddress as a typed function pointer; null for a missing module or
@@ -168,9 +173,9 @@ struct OsData {
 std::optional<OsData>
 readFromOs(std::string_view mime, const std::function<std::optional<std::string>(UINT)> &get);
 std::optional<std::string> finishDecode(std::string_view mime, OsData raw);
-// Both steps at once.
-std::optional<std::string>
-decodeFromOs(std::string_view mime, const std::function<std::optional<std::string>(UINT)> &get);
+// Whether finishDecode is slow for this: a DIB to PNG through WIC (tens to
+// hundreds of ms for a large screenshot), done off the loop thread.
+bool                       decodeIsSlow(std::string_view mime, const OsData &raw);
 using core::isTextMime;
 // CF_HTML ("HTML Format"): a header with byte offsets, then the markup.
 std::string cfHtmlEncode(std::string_view fragment);
@@ -191,7 +196,9 @@ HBITMAP     dibFromImage(const Image &img);
 // PNG through WIC (part of Windows; no encoder of our own). Empty on failure.
 std::string encodePng(const Image &img);
 std::string bmpFileToPng(std::string_view bmp);
-// Drops the WIC factory cached for this thread; before COM goes.
+// The WIC factory is cached for the thread that calls bindWic (the loop
+// thread, at App init); releaseWic drops it there, before COM goes.
+void        bindWic();
 void        releaseWic();
 // The taskbar overlay: a red disc with the count ("9+" past nine) drawn by
 // a tiny built-in bitmap font, since plat has no text rendering.
@@ -249,6 +256,7 @@ double       textScaleFromPercent(DWORD percent);
 int          caretBlinkFromOs(UINT ms);
 
 class Win32App;
+struct DecodeLink; // win32_data.cpp
 
 // ── Window ──────────────────────────────────────────────────────────────────
 class Win32Window final : public Window {
@@ -288,6 +296,7 @@ public:
     void   requestAttention() override;
 
     HWND                hwnd() const { return _hwnd; }
+    Win32App           *app() const { return _app; }
     // For the drop target and drag source (win32_dnd.cpp).
     bool                sendEvent(Event e) { return send(std::move(e)); }
     std::weak_ptr<char> aliveToken() const { return _alive; }
@@ -359,6 +368,7 @@ private:
     int       _dibW = 0, _dibH = 0; // the canvas: the client size last painted
     int       _capW = 0, _capH = 0; // the DIB itself, at least as big
     bool      _everPainted = false, _inSizeMove = false;
+    bool      _blittedAll     = false; // endPaint blitted the whole canvas (for onPaint)
     int       _modalRefs      = 0; // OS modal loops this window entered (enterModal calls to undo)
     bool      _frameRequested = true;
     core::Clock::time_point _lastFrame{};
@@ -400,7 +410,12 @@ struct ShellDeleter {
 // rest of a batch of posted closures or due timers.
 constexpr UINT kDialogMsg = WM_APP + 2;
 
-class Win32App final : public BackendApp, public TestHooks {
+class Win32App final : public BackendApp
+#ifdef PLAT_TEST_HOOKS
+    ,
+                       public TestHooks
+#endif
+{
 public:
     Win32App() = default;
     ~Win32App() override;
@@ -440,10 +455,12 @@ public:
     uint64_t              notify(const Notification &n) override;
     void                  setBadgeCount(int count) override;
 
-    bool       darkMode() const override;
-    int        doubleClickMs() const override { return int(GetDoubleClickTime()); }
-    bool       openUrl(std::string_view url) override;
+    bool darkMode() const override;
+    int  doubleClickMs() const override { return int(GetDoubleClickTime()); }
+    bool openUrl(std::string_view url) override;
+#ifdef PLAT_TEST_HOOKS
     TestHooks *testHooks() override { return this; }
+#endif
 
     std::vector<Monitor> monitors() const override;
     bool claimSingleInstance(std::string_view key, const std::vector<std::string> &args) override;
@@ -458,6 +475,8 @@ public:
     SystemSettings           systemSettings() const override;
     std::vector<std::string> preferredLanguages() const override;
 
+#ifdef PLAT_TEST_HOOKS
+    // ── TestHooks ───────────────────────────────────────────────────────────
     bool injectKey(Window &w, Key k, bool down) override;
     bool injectPointerMove(Window &w, Point logical) override;
     bool injectButton(Window &w, Button b, bool down) override;
@@ -476,6 +495,7 @@ public:
     // Sends WM_POWERBROADCAST to the window the OS sends it to. A network
     // change cannot be faked honestly: false.
     bool simulateSystemEvent(EventType type, bool online) override;
+#endif
 
     // ── backend-internal ──
     using BackendApp::emit;
@@ -498,8 +518,10 @@ public:
     void      leaveModal();
     // The modal timer for what is due next, or none: no ticks while idle.
     void      armModal();
+#ifdef PLAT_TEST_HOOKS
     // For win32_tests: the modal timer's period now (-1: not armed).
-    int       modalTimerMs() const { return _modalTimerMs; }
+    int modalTimerMs() const { return _modalTimerMs; }
+#endif
 
     bool   oleReady() const { return _oleInit; }
     Shell &shell(); // created on first use
@@ -508,13 +530,22 @@ public:
     // Taskbar overlay for one window (on TaskbarButtonCreated and on change).
     void   applyBadge(HWND h);
     UINT   taskbarButtonCreatedMsg() const { return _taskbarButtonCreated; }
+#ifdef PLAT_TEST_HOOKS
     // For win32_tests: force the Shell_NotifyIcon balloon path, as on Wine.
-    void   forceBalloonNotifications(bool on);
+    void forceBalloonNotifications(bool on);
     // For win32_tests: how many times each tray was (re-)added to the shell.
-    int    trayAddCount(Tray &t) const;
+    int  trayAddCount(Tray &t) const;
     // For win32_tests: deliver a balloon's notify-icon callback (NIN_BALLOON*)
     // as the shell would; false for an id that has no balloon.
-    bool   postBalloonCallback(uint64_t id, UINT event);
+    bool postBalloonCallback(uint64_t id, UINT event);
+#endif
+
+    // finishDecode(mime, raw) on a worker thread; `done` gets the result
+    // later, on the loop thread, and is never called once the App is gone.
+    using DecodeDone = std::function<void(std::optional<std::string>)>;
+    void decodeOffThread(std::string mime, OsData raw, DecodeDone done);
+    void decodeFinished(uint64_t id, std::optional<std::string> result);
+    void detachDecoders(); // workers still running then report to nobody
 
     // Waitable handles in the loop's MsgWaitForMultipleObjectsEx (at most
     // 60). fn runs on the loop thread whenever h is signalled, inside OS
@@ -568,8 +599,21 @@ private:
         HANDLE                h;
         std::function<void()> fn;
     };
-    std::vector<HandleWatch> _handleWatches;
-    uint64_t                 _nextHandleWatch = 1;
+    std::vector<HandleWatch>   _handleWatches;
+    uint64_t                   _nextHandleWatch = 1;
+    // service()'s per-pass snapshots, kept to save an allocation each pass.
+    std::vector<uint64_t>      _scratchIds;
+    std::vector<Win32Window *> _scratchWindows;
+
+    // decodeOffThread: the callbacks stay here (destroyed on this thread);
+    // workers reach the App through the link, cleared when it goes.
+    struct PendingDecode {
+        uint64_t   id;
+        DecodeDone done;
+    };
+    std::vector<PendingDecode>  _decodes;
+    uint64_t                    _nextDecode = 1;
+    std::shared_ptr<DecodeLink> _decodeLink;
 
     // Round 3 desktop state (win32_system.cpp, win32_dialog.cpp).
     HWND                 _sysHwnd       = nullptr; // hidden top-level: broadcasts, power
@@ -592,9 +636,11 @@ private:
         HWND                                  owner = nullptr;
         std::function<void(FileDialogResult)> cb;
     };
-    std::vector<DialogRequest>              _dialogQueue;
-    bool                                    _dialogActive = false;
+    std::vector<DialogRequest> _dialogQueue;
+    bool                       _dialogActive = false;
+#ifdef PLAT_TEST_HOOKS
     std::optional<std::vector<std::string>> _dialogAnswer; // fileDialogRespond, for the next dialog
+#endif
 
     friend class Win32Window;
 };

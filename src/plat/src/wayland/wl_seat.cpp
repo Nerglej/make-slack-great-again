@@ -272,10 +272,22 @@ void WlApp::onPointerMotion(double x, double y) {
     _pointerPos = {x, y};
     if (!_pointerFocus)
         return;
-    applyCursor();
-    _pointerFocus->emitEvent(
-        {.type = EventType::PointerMove, .pos = _pointerPos, .mods = _xkb.mods()}
-    );
+    const uint32_t mods = _xkb.mods();
+    if (_motionWin && (_motionWin != _pointerFocus || _motionMods != mods))
+        flushMotion();
+    _motionWin  = _pointerFocus;
+    _motionPos  = _pointerPos;
+    _motionMods = mods;
+}
+
+void WlApp::flushMotion() {
+    WlWindow *w = _motionWin;
+    _motionWin  = nullptr;
+    if (!w || !alive(w))
+        return;
+    if (w == _pointerFocus)
+        applyCursor();
+    w->emitEvent({.type = EventType::PointerMove, .pos = _motionPos, .mods = _motionMods});
 }
 
 void WlApp::onPointerButton(uint32_t serial, uint32_t code, uint32_t state) {

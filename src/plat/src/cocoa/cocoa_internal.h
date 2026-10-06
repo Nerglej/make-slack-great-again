@@ -12,7 +12,9 @@
 #include "core/input.h"
 #include "core/strings.h"
 #include "core/transfer.h"
+#ifdef PLAT_TEST_HOOKS
 #include "plat/testing.h"
+#endif
 
 #include <map>
 #include <memory>
@@ -55,15 +57,17 @@ NSString *nsString(std::string_view s);
 // The logical Key for a macOS virtual key code (kVK_*): letters and
 // punctuation resolve through the active layout (Dvorak, AZERTY, …), falling
 // back to the ASCII-capable layout and then the US position (plat.h's rule).
-Key       keyFromKeyCode(uint16_t vk);
-uint32_t  modsFromFlags(NSEventModifierFlags flags);
+Key      keyFromKeyCode(uint16_t vk);
+uint32_t modsFromFlags(NSEventModifierFlags flags);
+#ifdef PLAT_TEST_HOOKS
 // Reverse of keyFromKeyCode for the active layout; -1 when the key has none.
 int       keyCodeForKey(Key k);
 // What the key types on the active layout with these modifiers, dead keys
 // off — used to fill synthesised NSEvents the way the window server would.
 NSString *charactersForKeyCode(uint16_t vk, NSEventModifierFlags flags);
+#endif
 // Drop the cached layout table (the user switched input source).
-void      invalidateKeyboardLayout();
+void invalidateKeyboardLayout();
 
 // ── Data transfer (cocoa_data.mm): clipboard, drag source, drop target ─────
 // The pasteboard type a MIME type travels as: the system UTI for the
@@ -83,6 +87,11 @@ NSArray<NSPasteboardItem *> *pasteboardItems(const std::vector<DataItem> &items)
 std::vector<std::string>     pasteboardMimes(NSPasteboard *pb);
 // One representation read back; uri-list gathers every item's URL.
 std::optional<std::string>   readPasteboard(NSPasteboard *pb, std::string_view mime);
+// The TIFF behind a request for `mime` when that is image/png and the
+// picture is on the pasteboard as TIFF only (readPasteboard converts), else nil.
+NSData                      *tiffOnlyPicture(NSPasteboard *pb, std::string_view mime);
+// TIFF → PNG bytes. Touches no pasteboard, so it runs on any thread.
+std::optional<std::string>   pngFromTiff(NSData *tiff);
 // file:// URIs etc. of every item (file references resolved to paths).
 std::vector<std::string>     pasteboardUris(NSPasteboard *pb);
 // plat Image (premultiplied ARGB32) → CGImage in sRGB; null when empty.
@@ -230,7 +239,11 @@ public:
 };
 
 // ── App (cocoa_app.mm) ──────────────────────────────────────────────────────
+#ifdef PLAT_TEST_HOOKS
 class CocoaApp final : public BackendApp, public TestHooks {
+#else
+class CocoaApp final : public BackendApp {
+#endif
 public:
     CocoaApp();
     ~CocoaApp() override;
@@ -276,6 +289,7 @@ public:
     SystemSettings           systemSettings() const override;
     std::vector<std::string> preferredLanguages() const override;
 
+#ifdef PLAT_TEST_HOOKS
     TestHooks *testHooks() override { return this; }
     bool       injectKey(Window &w, Key k, bool down) override;
     bool       injectPointerMove(Window &w, Point logical) override;
@@ -297,6 +311,7 @@ public:
     bool       fileDialogRespond(std::vector<std::string> paths) override;
     bool       simulateSystemEvent(EventType type, bool online) override;
     bool       deliverUrl(std::string_view url) override;
+#endif
 
     // ── backend-internal ────────────────────────────────────────────────────
     void emitEvent(const Event &e) { emit(e); }
@@ -326,7 +341,9 @@ public:
     void onNetwork(bool online);
     void onInstanceAccept();
     void onInstanceData(int fd);
+#ifdef PLAT_TEST_HOOKS
     void confirmPanel(NSSavePanel *panel, bool sheet, bool accept); // fileDialogRespond driver
+#endif
     // Notification delegate callbacks (cocoa_notify.mm), on the loop thread.
     void onNotificationResponse(uint64_t id, std::string action, bool dismissed);
     void onNotificationFailed(uint64_t id, std::string reason);
@@ -349,7 +366,9 @@ public:
 private:
     void rescheduleTimer();
     void dispatch(NSEvent *ev);
+#ifdef PLAT_TEST_HOOKS
     bool deliverInjected(NSEvent *ev);
+#endif
 
     struct FdWatch {
         CFFileDescriptorRef           cf        = nullptr;
@@ -389,10 +408,12 @@ private:
         uint64_t    watch = 0;
         std::string buf;
     };
-    std::map<int, InstanceConn>             _instanceConns;
+    std::map<int, InstanceConn> _instanceConns;
+#ifdef PLAT_TEST_HOOKS
     // fileDialogRespond(): the answer for the next showFileDialog().
     std::optional<std::vector<std::string>> _dialogAnswer;
     id                                      _dialogDriver = nil; // NSTimer driving the panel
+#endif
 
     // Notifications (cocoa_notify.mm).
     bool                   setUpNotifications() const; // lazily, once
@@ -404,6 +425,7 @@ private:
     std::string            _notifySession; // per-process prefix of request identifiers
     uint64_t               _nextNotification = 1;
     std::set<uint64_t>     _liveNotifications; // submitted, not yet clicked or dismissed
+#ifdef PLAT_TEST_HOOKS
     // Attached picture per live id: its PNG's SHA-1 (hex) and pixel size,
     // for notificationProbe (the center's copy is not readable by us).
     std::map<uint64_t, std::pair<std::string, Size>> _notifyImages;
@@ -416,6 +438,7 @@ private:
     double               _injLastPress  = 0;
     Button               _injLastButton = Button::Left;
     int                  _injClicks     = 0;
+#endif
 };
 
 } // namespace plat::cocoa

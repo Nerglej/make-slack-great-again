@@ -60,35 +60,53 @@ int createShmFd(size_t bytes) {
     return fd;
 }
 
-bool allocShmBuffer(wl_shm *shm, int w, int h, uint32_t format, ShmBuffer *out) {
+bool allocShmBuffer(wl_shm *shm, int w, int h, uint32_t format, ShmBuffer *out, size_t capacity) {
     const size_t stride = size_t(w) * 4, bytes = stride * size_t(h);
-    const int    fd = createShmFd(bytes);
+    const size_t cap = std::max(bytes, capacity);
+    const int    fd  = createShmFd(cap);
     if (fd < 0)
         return false;
-    void *data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *data = mmap(nullptr, cap, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (data == MAP_FAILED) {
         close(fd);
         return false;
     }
-    // One pool per buffer: buffers are replaced wholesale on resize, so a
-    // shared growable pool would only add bookkeeping.
-    wl_shm_pool *pool = wl_shm_create_pool(shm, fd, int32_t(bytes));
-    out->buffer       = wl_shm_pool_create_buffer(pool, 0, w, h, int32_t(stride), format);
-    wl_shm_pool_destroy(pool);
+    // One pool per buffer, kept for resizes that fit: buffers are replaced
+    // wholesale otherwise, so a shared growable pool would only add
+    // bookkeeping.
+    out->pool   = wl_shm_create_pool(shm, fd, int32_t(cap));
+    out->buffer = wl_shm_pool_create_buffer(out->pool, 0, w, h, int32_t(stride), format);
     close(fd);
     out->pixels = static_cast<uint32_t *>(data);
     out->bytes  = bytes;
+    out->cap    = cap;
     out->width  = w;
     out->height = h;
+    return true;
+}
+
+bool resizeShmBuffer(ShmBuffer *b, int w, int h, uint32_t format) {
+    const size_t stride = size_t(w) * 4, bytes = stride * size_t(h);
+    if (!b->pool || bytes > b->cap)
+        return false;
+    if (b->buffer)
+        wl_buffer_destroy(b->buffer);
+    b->buffer = wl_shm_pool_create_buffer(b->pool, 0, w, h, int32_t(stride), format);
+    b->bytes  = bytes;
+    b->width  = w;
+    b->height = h;
     return true;
 }
 
 void freeShmBuffer(ShmBuffer *b) {
     if (b->buffer)
         wl_buffer_destroy(b->buffer);
+    if (b->pool)
+        wl_shm_pool_destroy(b->pool);
     if (b->pixels)
-        munmap(b->pixels, b->bytes);
+        munmap(b->pixels, b->cap);
     b->buffer = nullptr;
+    b->pool   = nullptr;
     b->pixels = nullptr;
 }
 
@@ -490,6 +508,7 @@ bool WlApp::beforeWait() {
             fatal("dispatch failed");
             return false;
         }
+        flushMotion();
     }
     _reading = true;
     // EAGAIN means the socket is full; the rest goes out on a later flush.
@@ -528,6 +547,7 @@ void WlApp::afterWait() {
         fatal("dispatch failed");
         return;
     }
+    flushMotion(); // the batch's last move, before any Frame
     // Frame callbacks that fired in this batch: paint now, outside libwayland's
     // dispatch, so the app may do anything (even block) in its Frame handler.
     emitReadyFrames();

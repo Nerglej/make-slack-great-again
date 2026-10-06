@@ -164,9 +164,11 @@ public:
 
     LRESULT handle(HWND h, UINT msg, WPARAM wp, LPARAM lp) override;
     void    detach(); // the App is going away first
-    bool    postActivate();
-    bool    postCommand(uint32_t itemId);
-    int     addCount = 0;
+#ifdef PLAT_TEST_HOOKS
+    bool postActivate();
+    bool postCommand(uint32_t itemId);
+    int  addCount = 0;
+#endif
 
 private:
     struct Command {
@@ -258,16 +260,21 @@ struct ToastSink {
     }
 };
 
-// ITypedEventHandler<ToastNotification*, Args> as a plain COM object. Agile:
-// the toast raises its events on a worker thread and would otherwise try to
-// marshal the call into our STA (which may not be pumping).
-template <class Iface, class Arg>
-class ToastHandler final : public Iface, public IAgileObject {
+// The three ITypedEventHandler<ToastNotification*, Args*> a toast takes, as
+// one plain COM object: their vtables are the same (IUnknown, then
+// Invoke(sender, args) with both pointers), so this implements Activated's
+// and answers to the IID it was made for; `fn` reads `args` as that
+// handler's own type. Agile: the toast raises its events on a worker thread
+// and would otherwise try to marshal the call into our STA (which may not be
+// pumping).
+class ToastHandler final : public ActivatedHandler, public IAgileObject {
 public:
-    explicit ToastHandler(std::function<void(Arg *)> fn) : _fn(std::move(fn)) {}
+    using Fn = void (*)(const std::weak_ptr<ToastSink> &sink, uint64_t id, IInspectable *args);
+    ToastHandler(REFIID iid, Fn fn, std::weak_ptr<ToastSink> sink, uint64_t id)
+        : _iid(iid), _fn(fn), _sink(std::move(sink)), _id(id) {}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
-        if (riid == IID_IUnknown || riid == __uuidof(Iface)) {
-            *out = static_cast<Iface *>(this);
+        if (riid == IID_IUnknown || riid == _iid) {
+            *out = static_cast<ActivatedHandler *>(this);
         } else if (riid == __uuidof(IAgileObject)) {
             *out = static_cast<IAgileObject *>(this);
         } else {
@@ -284,14 +291,22 @@ public:
             delete this;
         return n;
     }
-    HRESULT STDMETHODCALLTYPE Invoke(wr::IToastNotification *, Arg *args) override {
-        _fn(args);
+    HRESULT STDMETHODCALLTYPE Invoke(wr::IToastNotification *, IInspectable *args) override {
+        _fn(_sink, _id, args);
         return S_OK;
+    }
+    // This object as handler interface I (DismissedHandler, FailedHandler).
+    template <class I>
+    I *as() {
+        return reinterpret_cast<I *>(static_cast<ActivatedHandler *>(this));
     }
 
 private:
-    std::atomic<ULONG>         _refs{1};
-    std::function<void(Arg *)> _fn;
+    std::atomic<ULONG>             _refs{1};
+    const IID                      _iid;
+    const Fn                       _fn;
+    const std::weak_ptr<ToastSink> _sink;
+    const uint64_t                 _id;
 };
 #endif
 
@@ -365,9 +380,11 @@ struct Shell final : IconHost {
     Win32App                   *app;
     std::vector<Win32Tray *>    trays;
     std::map<uint64_t, Balloon> balloons;
-    UINT                        nextUid      = 1;
-    uint64_t                    nextId       = 1;
-    bool                        forceBalloon = false;
+    UINT                        nextUid = 1;
+    uint64_t                    nextId  = 1;
+#ifdef PLAT_TEST_HOOKS
+    bool forceBalloon = false;
+#endif
 
     int            badge        = 0;
     HICON          badgeIcon    = nullptr;
@@ -476,7 +493,9 @@ void Win32Tray::add() {
         _added = Shell_NotifyIconW(NIM_MODIFY, &nid) != 0;
     if (!_added)
         return;
+#ifdef PLAT_TEST_HOOKS
     ++addCount;
+#endif
     // Version 4: NIN_SELECT for clicks, WM_CONTEXTMENU with the anchor point
     // for the menu, the icon id in HIWORD(lParam).
     nid.uVersion = NOTIFYICON_VERSION_4;
@@ -585,6 +604,7 @@ void Win32Tray::onCommand(UINT cmd) {
     _shell->app->emit({.type = EventType::TrayMenuItem, .tray = this, .id = _commands[cmd - 1].id});
 }
 
+#ifdef PLAT_TEST_HOOKS
 bool Win32Tray::postActivate() {
     if (!hwnd || !_added)
         return false;
@@ -600,6 +620,7 @@ bool Win32Tray::postCommand(uint32_t itemId) {
             return hwnd && PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(UINT(i + 1), 0), 0) != 0;
     return false;
 }
+#endif
 
 LRESULT Win32Tray::handle(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == kTrayMsg && _shell) {
@@ -634,6 +655,7 @@ std::unique_ptr<Tray> Win32App::createTray() {
     return std::make_unique<Win32Tray>(&shell());
 }
 
+#ifdef PLAT_TEST_HOOKS
 bool Win32App::trayActivate(Tray &t) {
     return static_cast<Win32Tray &>(t).postActivate();
 }
@@ -645,6 +667,7 @@ bool Win32App::trayMenuSelect(Tray &t, uint32_t itemId) {
 int Win32App::trayAddCount(Tray &t) const {
     return static_cast<Win32Tray &>(t).addCount;
 }
+#endif
 
 // ── balloons ────────────────────────────────────────────────────────────────
 
@@ -832,8 +855,10 @@ bool Shell::registerAumid() {
 }
 
 bool Shell::toastsReady() {
+#ifdef PLAT_TEST_HOOKS
     if (forceBalloon)
         return false;
+#endif
     if (toastsTried)
         return toastsOk;
     toastsTried = true;
@@ -932,9 +957,9 @@ uint64_t Shell::toastNotify(const Notification &n, uint64_t id) {
     for (const auto &a : n.actions)
         t.actionKeys.push_back(a.key);
 
-    std::weak_ptr<ToastSink> weak = sink;
-    auto                    *onActivated =
-        new ToastHandler<ActivatedHandler, IInspectable>([weak, id](IInspectable *args) {
+    auto *onActivated = new ToastHandler(
+        __uuidof(ActivatedHandler),
+        [](const std::weak_ptr<ToastSink> &weak, uint64_t id, IInspectable *args) {
             std::string                   arguments;
             wr::IToastActivatedEventArgs *a = nullptr;
             if (args && SUCCEEDED(args->QueryInterface(
@@ -952,9 +977,14 @@ uint64_t Shell::toastNotify(const Notification &n, uint64_t id) {
                     if (s->app)
                         s->app->shell().toastActivated(id, arguments);
                 });
-        });
-    auto *onDismissed = new ToastHandler<DismissedHandler, wr::IToastDismissedEventArgs>(
-        [weak, id](wr::IToastDismissedEventArgs *args) {
+        },
+        sink,
+        id
+    );
+    auto *onDismissed = new ToastHandler(
+        __uuidof(DismissedHandler),
+        [](const std::weak_ptr<ToastSink> &weak, uint64_t id, IInspectable *raw) {
+            auto                    *args   = reinterpret_cast<wr::IToastDismissedEventArgs *>(raw);
             wr::ToastDismissalReason reason = wr::ToastDismissalReason_UserCanceled;
             if (args)
                 args->get_Reason(&reason);
@@ -988,10 +1018,14 @@ uint64_t Shell::toastNotify(const Notification &n, uint64_t id) {
                     }
                     s->app->emit({.type = EventType::NotificationClosed, .id = id});
                 });
-        }
+        },
+        sink,
+        id
     );
-    auto *onFailed = new ToastHandler<FailedHandler, wr::IToastFailedEventArgs>(
-        [weak, id](wr::IToastFailedEventArgs *args) {
+    auto *onFailed = new ToastHandler(
+        __uuidof(FailedHandler),
+        [](const std::weak_ptr<ToastSink> &weak, uint64_t id, IInspectable *raw) {
+            auto   *args = reinterpret_cast<wr::IToastFailedEventArgs *>(raw);
             HRESULT code = E_FAIL;
             if (args)
                 args->get_ErrorCode(&code);
@@ -1007,11 +1041,13 @@ uint64_t Shell::toastNotify(const Notification &n, uint64_t id) {
                     sh.toastForget(id);
                     s->app->emit({.type = EventType::NotificationFailed, .text = reason, .id = id});
                 });
-        }
+        },
+        sink,
+        id
     );
     t.toast->add_Activated(onActivated, &t.activated);
-    t.toast->add_Dismissed(onDismissed, &t.dismissed);
-    t.toast->add_Failed(onFailed, &t.failed);
+    t.toast->add_Dismissed(onDismissed->as<DismissedHandler>(), &t.dismissed);
+    t.toast->add_Failed(onFailed->as<FailedHandler>(), &t.failed);
     onActivated->Release(); // the toast holds them now
     onDismissed->Release();
     onFailed->Release();
@@ -1070,6 +1106,7 @@ uint64_t Win32App::notify(const Notification &n) {
     return s.balloonNotify(n, id);
 }
 
+#ifdef PLAT_TEST_HOOKS
 bool Win32App::notificationInvoke(uint64_t id, std::string_view action) {
     Shell &s = shell();
 #if defined(PLAT_WINRT_TOAST)
@@ -1099,6 +1136,7 @@ bool Win32App::postBalloonCallback(uint64_t id, UINT event) {
 void Win32App::forceBalloonNotifications(bool on) {
     shell().forceBalloon = on;
 }
+#endif
 
 // ── badge ───────────────────────────────────────────────────────────────────
 

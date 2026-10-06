@@ -145,6 +145,7 @@ Key keyFromChar(UniChar c) {
     return core::keyFromAscii(c);
 }
 
+#ifdef PLAT_TEST_HOOKS
 // Carbon's modifier state byte for UCKeyTranslate ((EventModifiers >> 8) & 0xff).
 UInt32 carbonModState(NSEventModifierFlags f) {
     UInt32 m = 0;
@@ -160,6 +161,7 @@ UInt32 carbonModState(NSEventModifierFlags f) {
         m |= alphaLock;
     return (m >> 8) & 0xff;
 }
+#endif
 
 // UTF-16 of what vk types on `source` (dead keys yield their accent).
 std::u16string translate(TISInputSourceRef source, uint16_t vk, UInt32 modState) {
@@ -247,6 +249,7 @@ Key keyFromKeyCode(uint16_t vk) {
     return vk < 128 ? table().keys[vk] : Key::Unknown;
 }
 
+#ifdef PLAT_TEST_HOOKS
 int keyCodeForKey(Key k) {
     if (k == Key::Unknown)
         return -1;
@@ -256,6 +259,7 @@ int keyCodeForKey(Key k) {
             return vk;
     return -1;
 }
+#endif
 
 uint32_t modsFromFlags(NSEventModifierFlags f) {
     uint32_t m = 0;
@@ -274,6 +278,7 @@ uint32_t modsFromFlags(NSEventModifierFlags f) {
     return m;
 }
 
+#ifdef PLAT_TEST_HOOKS
 NSString *charactersForKeyCode(uint16_t vk, NSEventModifierFlags flags) {
     // The window server fills NSEvent.characters for the special keys with
     // the Unicode private-use function-key range (NSUpArrowFunctionKey …) and
@@ -297,6 +302,7 @@ NSString *charactersForKeyCode(uint16_t vk, NSEventModifierFlags flags) {
     return [NSString stringWithCharacters:reinterpret_cast<const unichar *>(s.data())
                                    length:s.size()];
 }
+#endif
 
 void invalidateKeyboardLayout() {
     g_table.valid = false;

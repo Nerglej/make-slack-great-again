@@ -29,6 +29,7 @@ std::string itemPath(IShellItem *item) {
     return out;
 }
 
+#ifdef PLAT_TEST_HOOKS
 std::wstring parentOf(const std::wstring &p) {
     const size_t slash = p.find_last_of(L'\\');
     return slash == std::wstring::npos ? std::wstring() : p.substr(0, slash);
@@ -92,6 +93,7 @@ bool driveDialog(IFileDialog *dlg, const std::vector<std::string> &answer, bool 
     PostMessageW(h, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), LPARAM(GetDlgItem(h, IDOK)));
     return false; // keep watching until Show() returns (see above)
 }
+#endif // PLAT_TEST_HOOKS
 
 } // namespace
 
@@ -111,10 +113,12 @@ void Win32App::showFileDialogEx(const FileDialogDesc &d, std::function<void(File
     PostMessageW(_msgHwnd, kDialogMsg, 0, 0);
 }
 
+#ifdef PLAT_TEST_HOOKS
 bool Win32App::fileDialogRespond(std::vector<std::string> paths) {
     _dialogAnswer = std::move(paths);
     return true;
 }
+#endif
 
 void Win32App::runNextDialog() {
     // One at a time: a request made while a dialog is up (from a timer
@@ -133,12 +137,14 @@ void Win32App::runNextDialog() {
 }
 
 FileDialogResult Win32App::runFileDialog(const FileDialogDesc &d, HWND owner) {
-    using Mode                                     = FileDialogDesc::Mode;
-    const bool                              save   = d.mode == Mode::Save;
+    using Mode      = FileDialogDesc::Mode;
+    const bool save = d.mode == Mode::Save;
+#ifdef PLAT_TEST_HOOKS
     // The answer is taken now, so a dialog that cannot be created does not
     // leave it lying around for an unrelated later one.
     std::optional<std::vector<std::string>> answer = std::move(_dialogAnswer);
     _dialogAnswer.reset();
+#endif
 
     IFileDialog *dlg = nullptr;
     if (FAILED(CoCreateInstance(
@@ -215,6 +221,7 @@ FileDialogResult Win32App::runFileDialog(const FileDialogDesc &d, HWND owner) {
     if (save && !d.suggestedName.empty())
         dlg->SetFileName(toWide(d.suggestedName).c_str());
 
+#ifdef PLAT_TEST_HOOKS
     TimerId drive = 0;
     if (answer) {
         // Polled through a plat timer, which enterModal() keeps firing
@@ -229,11 +236,14 @@ FileDialogResult Win32App::runFileDialog(const FileDialogDesc &d, HWND owner) {
             }
         });
     }
+#endif
     enterModal();
     const HRESULT hr = dlg->Show(owner);
     leaveModal();
+#ifdef PLAT_TEST_HOOKS
     if (drive)
         cancelTimer(drive);
+#endif
 
     std::vector<std::string> out;
     if (hr == S_OK) {

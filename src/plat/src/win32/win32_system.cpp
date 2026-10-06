@@ -593,6 +593,7 @@ void Win32App::emitPower(EventType t) {
     emit({.type = t});
 }
 
+#ifdef PLAT_TEST_HOOKS
 bool Win32App::simulateSystemEvent(EventType type, bool) {
     if (!_sysHwnd)
         return false;
@@ -610,6 +611,7 @@ bool Win32App::simulateSystemEvent(EventType type, bool) {
         return false;
     }
 }
+#endif
 
 // ── network ─────────────────────────────────────────────────────────────────
 

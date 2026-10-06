@@ -2,6 +2,7 @@
 // hand CPU frames to, plus the NSTextInputClient half of IME support, touchpad
 // phases and gestures, and both ends of drag and drop.
 #include "cocoa/cocoa_internal.h"
+#include "core/drop.h"
 
 #import <QuartzCore/QuartzCore.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -635,12 +636,8 @@ constexpr NSEventModifierFlags kDevLCtrl = 0x0001, kDevLShift = 0x0002, kDevRShi
     for (const auto &m : _dropMimes) {
         plat::DataItem item{m, {}};
         // Data only on Drop, and only for types that are cheap and meant
-        // for us: the standard ones and plat-style MIME/dynamic types (not
-        // file promises or the TIFF a PNG drag also offers, say).
-        const bool wanted = m == plat::core::kTextMime || m == "text/html" || m == "image/png" ||
-                            m == "text/uri-list" ||
-                            (m.find('/') != std::string::npos && m.rfind("image/", 0) != 0);
-        if (withData && wanted) {
+        // for us (not file promises or the TIFF a PNG drag also offers, say).
+        if (withData && plat::core::readOnDrop(m)) {
             if (m == "text/uri-list") {
                 for (const auto &u : e.uris)
                     item.data += u + "\r\n";

@@ -4,6 +4,7 @@
 // never blocks us — and so a transfer between two of our own windows (the
 // compositor routes our own offer back to us) works on one thread.
 #include "wayland/wl_internal.h"
+#include "core/drop.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -198,10 +199,6 @@ void setNonBlocking(int fd) {
 }
 
 } // namespace
-
-bool WlApp::Offer::has(std::string_view m) const {
-    return std::find(mimes.begin(), mimes.end(), m) != mimes.end();
-}
 
 void WlApp::setupDataDevice() {
     if (!_dataDevice && seat && dataManager) {
@@ -497,8 +494,7 @@ Event WlApp::dropEvent(EventType t, const Offer &of) const {
     // Before v3 there are no actions: every drop is a copy.
     e.allowedActions = dataManagerVersion >= 3 ? fromWlActions(of.sourceActions) : ActCopy;
     e.dropAction     = core::preferredAction(e.allowedActions);
-    for (auto &m : normalised(of.mimes))
-        e.items.push_back({std::move(m), {}});
+    e.items          = _dragItems;
     return e;
 }
 
@@ -522,6 +518,11 @@ void WlApp::onDragEnter(uint32_t serial, wl_surface *s, double x, double y, wl_d
             break;
     if (_dragMime.empty() && !of->mimes.empty())
         _dragMime = of->mimes.front();
+    // The offer's types are fixed once it is entered: normalise them once,
+    // not on every motion.
+    _dragItems.clear();
+    for (auto &m : normalised(of->mimes))
+        _dragItems.push_back({std::move(m), {}});
     if (_dragWindow) {
         Event e                = dropEvent(EventType::DropEnter, *of);
         _dragWindow->dropReply = e.dropAction; // "default Copy" — when the source allows it
@@ -613,16 +614,10 @@ void WlApp::onDrop() {
                 if (--p->left)
                     return;
                 Event &e = p->event;
-                for (size_t k = 0; k < p->want.size(); ++k) {
-                    if (!p->got[k])
-                        continue;
-                    const std::string &mime = p->want[k].first;
-                    if (mime == kUriList)
-                        e.uris = core::parseUriList(*p->got[k]);
-                    else if (mime == kText)
-                        e.text = *p->got[k];
-                    e.items.push_back({mime, std::move(*p->got[k])});
-                }
+                for (size_t k = 0; k < p->want.size(); ++k)
+                    if (p->got[k])
+                        e.items.push_back({p->want[k].first, std::move(*p->got[k])});
+                core::fillDropText(e);
                 if (alive(window))
                     window->emitEvent(e);
                 // finish is a protocol error unless an action was negotiated;

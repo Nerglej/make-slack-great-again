@@ -31,10 +31,10 @@ struct Com {
     explicit operator bool() const { return p != nullptr; }
 };
 
-// The factory, created once and kept for the thread that created it (the
-// loop thread): COM objects must not outlive their apartment, so the App
-// drops it (releaseWic) before it uninitialises COM. Another thread gets a
-// fresh one per call.
+// The factory, created once and kept for the loop thread (bindWic): COM
+// objects must not outlive their apartment, so the App drops it (releaseWic)
+// before it uninitialises COM. Any other thread (a paste's PNG encode on a
+// worker) gets a fresh one per call.
 IWICImagingFactory *g_wic       = nullptr;
 DWORD               g_wicThread = 0;
 
@@ -52,18 +52,13 @@ IWICImagingFactory *createWic() {
 
 // A reference the caller releases.
 IWICImagingFactory *wic() {
-    const DWORD me = GetCurrentThreadId();
-    if (g_wic && g_wicThread == me) {
+    if (g_wicThread != GetCurrentThreadId())
+        return createWic();
+    if (!g_wic)
+        g_wic = createWic();
+    if (g_wic)
         g_wic->AddRef();
-        return g_wic;
-    }
-    IWICImagingFactory *f = createWic();
-    if (f && !g_wic) {
-        g_wic       = f;
-        g_wicThread = me;
-        f->AddRef();
-    }
-    return f;
+    return g_wic;
 }
 
 std::string readStream(IStream *s) {
@@ -107,6 +102,11 @@ std::string encodePngBgra(IWICImagingFactory *f, int w, int h, const uint32_t *p
 }
 
 } // namespace
+
+void bindWic() {
+    if (!g_wic) // a factory still held belongs to the thread that made it
+        g_wicThread = GetCurrentThreadId();
+}
 
 void releaseWic() {
     if (g_wic && g_wicThread == GetCurrentThreadId()) {
