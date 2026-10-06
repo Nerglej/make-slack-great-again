@@ -208,6 +208,15 @@ void forEach(const std::function<bool(std::string_view, const std::string &)> &f
     }
 }
 
+void forEachName(const std::function<bool(std::string_view)> &fn) {
+    Cursor c;
+    for (int i = 0; i < kEmojiCount; ++i) {
+        c.next();
+        if (!fn(c.view()))
+            return;
+    }
+}
+
 int count() {
     return kEmojiCount;
 }

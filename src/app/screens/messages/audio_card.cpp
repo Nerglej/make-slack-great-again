@@ -8,6 +8,7 @@
 #include "app/screens/common/message_rules.h"
 #include "app/screens/common/remote_images.h"
 #include "app/screens/messages/message_list.h"
+#include "app/screens/messages/rich.h"
 #include "app/screens/messages/rows.h"
 #include "base/file.h"
 #include "base/i18n.h"
@@ -62,7 +63,7 @@ std::unique_ptr<text::Layout>
 oneLine(std::string_view s, const text::Style &st, float maxW, float scale) {
     ++gLayoutBuilds;
     text::AttributedText t;
-    t.append(std::string(s), st);
+    t.append(s, st);
     text::LayoutOptions o;
     o.maxLines   = 1;
     o.ellipsis   = true;
@@ -75,12 +76,11 @@ oneLine(std::string_view s, const text::Style &st, float maxW, float scale) {
 // scale or colour (`tag`) changes — the card repaints 5×/s while it plays.
 class LineCache {
 public:
-    template <class StyleFn>
     const text::Layout &
-    get(std::string_view s, StyleFn style, float maxW, float scale, int tag = 0) {
+    get(std::string_view s, const text::Style &style, float maxW, float scale, int tag = 0) {
         maxW = std::max(1.f, maxW);
         if (!_l || s != _s || maxW != _w || scale != _scale || tag != _tag) {
-            _l = oneLine(s, style(), maxW, scale);
+            _l = oneLine(s, style, maxW, scale);
             _s.assign(s);
             _w     = maxW;
             _scale = scale;
@@ -139,12 +139,7 @@ public:
         auto *copy     = _copy;
         _copy->onClick = [this, copy, alive] {
             _ctx.app.platform().setClipboardText(_plain);
-            copy->setLabel(tr("Copied"));
-            std::weak_ptr<char> weak = alive;
-            _ctx.app.addTimer(1400, false, [copy, weak] {
-                if (!weak.expired())
-                    copy->setLabel(tr("Copy"));
-            });
+            flashCopied(_ctx, copy, alive);
         };
         d->addButtonRow(_copy, nullptr);
         setBody({}, tr("Loading\xE2\x80\xA6"));
@@ -265,8 +260,7 @@ public:
         return {_labelW, 15 * kLine};
     }
     void paint(gfx::Painter &p) override {
-        const text::Layout &l =
-            _line.get(label(), [] { return lineFont(C::Link); }, 1e9f, windowScale());
+        const text::Layout &l = _line.get(label(), lineFont(C::Link), 1e9f, windowScale());
         l.paint(p, snapPx({0, std::floor((height() - l.height()) / 2)}));
     }
     void styleChanged() override {
@@ -411,7 +405,7 @@ public:
         // Title block: name, then "0:05 (79 KB)" / Loading… / the error.
         const float         textX = kPad + kBtn + kPad;
         const float         textW = chip.w - textX - kPad;
-        const text::Layout &name  = _name.get(_file.name, nameFont, textW, k);
+        const text::Layout &name  = _name.get(_file.name, nameFont(), textW, k);
         std::string         sub;
         C                   subColor = C::FormTextMuted;
         if (ph == AudioPlayer::State::Error) {
@@ -428,9 +422,7 @@ public:
         }
         name.paint(p, snapPx({textX, kPad - 1}));
         if (!sub.empty())
-            _sub.get(
-                    sub, [subColor] { return subFont(subColor); }, textW, k, int(subColor)
-            )
+            _sub.get(sub, subFont(subColor), textW, k, int(subColor))
                 .paint(p, snapPx({textX, kPad - 1 + std::ceil(name.height()) + 2}));
 
         // Slider: track, played part, knob.
@@ -462,7 +454,7 @@ public:
             label = formatDuration(dur, true);
         if (!label.empty()) {
             const ui::RectF     action = actionRect();
-            const text::Layout &l      = _time.get(label, [] { return subFont(); }, 1e9f, k);
+            const text::Layout &l      = _time.get(label, subFont(), 1e9f, k);
             const float         right  = action.x - kLabelGap;
             p.save();
             p.clipRect({bar.x + bar.w + 1, 0, std::max(0.f, right - bar.x - bar.w - 1), chip.h});
@@ -480,10 +472,7 @@ public:
             const ui::RectF tl = transcriptText();
             p.fillRoundRect({0, tl.y, 3, tl.h}, 1.5f, ui::color(C::FormDivider));
             if (tl.w > 0)
-                _transcriptLine
-                    .get(
-                        _simpleTranscript, [] { return lineFont(C::FormTextMuted); }, tl.w, k
-                    )
+                _transcriptLine.get(_simpleTranscript, lineFont(C::FormTextMuted), tl.w, k)
                     .paint(p, snapPx({tl.x, tl.y}));
         }
     }

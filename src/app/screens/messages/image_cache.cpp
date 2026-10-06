@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace screens {
 
@@ -358,10 +359,6 @@ void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool o
     _waited.erase(e);
     for (ui::View *v : waiters)
         v->update();
-    for (size_t i = 0; i < _listeners.size(); ++i) {
-        auto fn = _listeners[i].fn; // a listener may unlisten itself
-        fn();
-    }
     evict();
 }
 
@@ -393,20 +390,6 @@ size_t ImageCache::entryCount() const {
 }
 size_t ImageCache::pending() const {
     return _impl->inflight;
-}
-
-ImageCache::ListenerId ImageCache::listen(std::function<void()> fn) {
-    _listeners.push_back({_nextListener, std::move(fn)});
-    return _nextListener++;
-}
-
-void ImageCache::unlisten(ListenerId id) {
-    _listeners.erase(
-        std::remove_if(
-            _listeners.begin(), _listeners.end(), [id](const Listener &l) { return l.id == id; }
-        ),
-        _listeners.end()
-    );
 }
 
 void ImageCache::noteSize(const std::string &path, int w, int h, bool ok) {
@@ -458,7 +441,9 @@ CachedImage::CachedImage(ImageCache &cache, std::string path, ImageCache::Shape 
 
 CachedImage::~CachedImage() {
     ui::app()->cancelTimer(_timer);
-    _cache.forget(this);
+    ui::app()->cancelTimer(_settle);
+    if (_waiter) // only then can a pending request name it
+        _cache.forget(this);
 }
 
 void CachedImage::setPath(std::string path) {
@@ -511,6 +496,7 @@ void CachedImage::drop() {
     _still.reset();
     _held.reset();
     _heldW = _heldH = 0;
+    _askW = _askH = 0;
 }
 
 ImageCache::Ref CachedImage::ref() const {
@@ -523,8 +509,31 @@ ImageCache::Ref CachedImage::ref() const {
 void CachedImage::windowChanged() {
     if (!window()) {
         ui::app()->cancelTimer(_timer);
-        _timer = 0;
+        ui::app()->cancelTimer(_settle);
+        _timer = _settle = 0;
     }
+}
+
+bool CachedImage::askNow(int w, int h) {
+    // Asked already: looked up until it lands (no new decode).
+    if (w == _askW && h == _askH)
+        return true;
+    // Moved by more than a tenth since last asked: at once (a drag asks
+    // every tenth of the way, not every pixel).
+    const auto far = [](int a, int b) { return std::abs(a - b) * 10 > b; };
+    if (far(w, _askW) || far(h, _askH))
+        return true;
+    // A few pixels: once the size has held still.
+    if (w == _settleW && h == _settleH)
+        return !_settle;
+    _settleW = w;
+    _settleH = h;
+    ui::app()->cancelTimer(_settle);
+    _settle = ui::app()->addTimer(200, false, [this] {
+        _settle = 0;
+        update();
+    });
+    return false;
 }
 
 void CachedImage::scheduleFrame() {
@@ -543,24 +552,28 @@ void CachedImage::paint(gfx::Painter &p) {
     View::paint(p);
     if (width() <= 0 || height() <= 0)
         return;
-    const gfx::Bitmap    *bmp = nullptr;
-    const ImageCache::Ref q   = ref();
+    const gfx::Bitmap    *bmp  = nullptr;
+    const ImageCache::Ref q    = ref();
     // Once ready, the picture is kept and painted without a lookup; the
-    // cache only hears that it is still in use (its LRU). A new size asks again.
-    const bool            held =
-        (_animated ? bool(_frames) : bool(_still)) && q.width == _heldW && q.height == _heldH;
-    if (held) {
+    // cache only hears that it is still in use (its LRU). A new size asks
+    // again, the old picture painted scaled until it is there (no
+    // placeholder flash while a window is resized).
+    const bool            have = _animated ? bool(_frames) : bool(_still);
+    if (have && q.width == _heldW && q.height == _heldH) {
         _cache.touch(_held);
-    } else if (_animated) {
-        if (auto f = _cache.frames(q, this, &_held)) {
-            _frames = std::move(f);
-            _heldW  = q.width;
-            _heldH  = q.height;
+    } else if (!have || askNow(q.width, q.height)) {
+        _askW = q.width;
+        _askH = q.height;
+        if (_animated) {
+            if (auto f = _cache.frames(q, this, &_held))
+                _frames = std::move(f), _heldW = q.width, _heldH = q.height;
+            else
+                _waiter = true;
+        } else if (auto b = _cache.get(q, this, &_held)) {
+            _still = std::move(b), _heldW = q.width, _heldH = q.height;
+        } else {
+            _waiter = true;
         }
-    } else {
-        _still = _cache.get(q, this, &_held); // the placeholder until this size is there
-        _heldW = _still ? q.width : 0;
-        _heldH = _still ? q.height : 0;
     }
     if (_animated && _frames) {
         bmp = &(*_frames)[size_t(_frame) % _frames->size()].frame;
@@ -576,13 +589,10 @@ void CachedImage::paint(gfx::Painter &p) {
         paintPlaceholder(p, r, radius);
         if (_loadingText.empty())
             return;
-        if (!_loadingLayout) {
-            text::AttributedText t;
-            t.append(_loadingText, ui::font(ui::Font::Body, _loadingColor));
-            text::LayoutOptions o;
-            o.maxLines     = 1;
-            _loadingLayout = text::Layout::build(t, o, windowScale());
-        }
+        if (!_loadingLayout) // one line ("Loading image…")
+            _loadingLayout = text::layoutPlain(
+                _loadingText, ui::font(ui::Font::Body, _loadingColor), windowScale()
+            );
         const text::Layout &l = *_loadingLayout;
         p.save();
         p.clipRect(r);
@@ -590,8 +600,13 @@ void CachedImage::paint(gfx::Painter &p) {
         p.restore();
         return;
     }
-    // Scaled and masked for exactly this size: a 1:1 blit.
-    p.drawBitmap(bmp->view(), r, gfx::Sampling::Nearest);
+    // Scaled and masked for exactly this size: a 1:1 blit (resampled only
+    // while another size is on its way).
+    p.drawBitmap(
+        bmp->view(),
+        r,
+        _heldW == q.width && _heldH == q.height ? gfx::Sampling::Nearest : gfx::Sampling::Bilinear
+    );
 }
 
 } // namespace screens

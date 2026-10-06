@@ -24,6 +24,8 @@ constexpr int     kFirstSweepMs    = 15000;
 constexpr int     kSweepEveryMs    = 30 * 60 * 1000;
 constexpr int64_t kSweepAfterBytes = int64_t(32) << 20;
 constexpr int64_t kDefaultLimit    = int64_t(250) << 20;
+// Impl::onDisk stays this small.
+constexpr size_t  kMaxOnDisk       = 4096;
 
 // What gfx can decode: PNG, JPEG, GIF, WebP by magic bytes, and SVG (text,
 // so parsed; the "Slack" system user's avatar is one). Anything else —
@@ -106,6 +108,11 @@ struct RemoteImages::Impl {
     plat::TimerId                            firstSweep = 0, everySweep = 0;
     bool                                     alive = true; // UI thread; false once destroyed
 
+    // URLs found on disk (or written) this session → their file: a hit
+    // costs no hash, stat or mtime bump again. Forgotten by every sweep,
+    // which may delete them (bounded: cleared when full).
+    std::unordered_map<std::string, std::string> onDisk;
+
     // The worker: disk writes, mtime bumps, sweeps, one at a time and in
     // order; it ends when idle. Not the image decoder's: a sweep must not
     // hold up a picture.
@@ -120,6 +127,12 @@ struct RemoteImages::Impl {
         return file::join(dir, crypto::hex(crypto::bytes(digest)).substr(0, 32));
     }
 
+    void remember(const std::string &url, const std::string &path) {
+        if (onDisk.size() >= kMaxOnDisk)
+            onDisk.clear(); // a bound, not a policy: a miss only costs a stat
+        onDisk[url] = path;
+    }
+
     Pending *find(const std::string &url) {
         for (Pending &p : pending)
             if (p.url == url)
@@ -131,6 +144,7 @@ struct RemoteImages::Impl {
     // clears), then disk = what is left.
     static void
     sweep(const std::shared_ptr<Impl> &self, std::function<void()> done = {}, int64_t limit = -1) {
+        self->onDisk.clear();
         self->sinceSweep               = 0;
         std::vector<std::string> blobs = self->blobDirs;
         blobs.insert(blobs.begin(), self->dir);
@@ -143,6 +157,7 @@ struct RemoteImages::Impl {
                     if (!self->alive)
                         return;
                     self->disk = left;
+                    self->onDisk.clear(); // what it found on the way may be gone
                     if (done)
                         done();
                 });
@@ -218,6 +233,8 @@ struct RemoteImages::Impl {
             const int64_t now = base::monotonicMs();
             std::erase_if(self->failed, [now](const auto &f) { return f.second <= now; });
             self->failed[url] = now + kCooldownMs;
+        } else {
+            self->remember(url, path);
         }
         std::vector<Done> waiters;
         for (size_t i = 0; i < self->pending.size(); ++i)
@@ -281,11 +298,15 @@ std::string RemoteImages::cachedPath(const std::string &url) {
     Impl &d = *_impl;
     if (d.dir.empty() || url.empty())
         return {};
+    if (const auto it = d.onDisk.find(url); it != d.onDisk.end())
+        return it->second;
     std::string path = d.pathFor(url);
     if (!file::exists(path))
         return {};
-    // A hit is a use: the sweep deletes the least recently viewed first.
+    // A hit is a use: the sweep deletes the least recently viewed first
+    // (marked once a session; the memo answers the hits after it).
     d.work([path] { file::touch(path); });
+    d.remember(url, path);
     return path;
 }
 

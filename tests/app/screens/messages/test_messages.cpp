@@ -329,6 +329,35 @@ TEST("image: CachedImage keeps its ready picture; an eviction doesn't blank or r
     e.images.setBudget(size_t(48) << 20);
 }
 
+TEST("image: a resized CachedImage paints its picture until the new size is there") {
+    Env   e(false);
+    auto *img = e.win->root().add<CachedImage>(
+        e.images, asset("avatars/jonas.png"), ImageCache::Shape::Rounded, 6
+    );
+    img->style().size(60, 60).alignSelf(ui::Align::Start);
+    pump();
+    REQUIRE(until([&] { return e.images.pending() == 0; }));
+    pump();
+    const size_t entries = e.images.entryCount();
+    uint32_t     px      = 0;
+    // A few pixels (a window dragged wider): no new decode until the size
+    // has held still, the old picture painted meanwhile.
+    img->style().size(62, 62);
+    pump();
+    CHECK(e.images.entryCount() == entries);
+    REQUIRE(app().platform().testHooks()->readPixel(e.win->native(), 30, 30, &px));
+    CHECK(px != ui::color(ui::C::Border));
+    REQUIRE(until([&] { return e.images.entryCount() == entries + 1; }, 2000));
+    REQUIRE(until([&] { return e.images.pending() == 0; }));
+    // More than a tenth: asked for at once, still no placeholder.
+    img->style().size(120, 120);
+    pump();
+    CHECK(e.images.entryCount() == entries + 2);
+    REQUIRE(app().platform().testHooks()->readPixel(e.win->native(), 30, 30, &px));
+    CHECK(px != ui::color(ui::C::Border));
+    REQUIRE(until([&] { return e.images.pending() == 0; }));
+}
+
 TEST("image: natural sizes are memoised, from decodes too, with a negative entry for URLs") {
     {
         RemoteImages remote(app().platform(), nullptr, ""); // no disk: URLs are never there
@@ -695,6 +724,62 @@ TEST("rows: scrolling back over seen messages rebuilds nothing; edits and reacti
     l.scrollTo(l.scrollOffset() - 900);
     pump(8);
     CHECK(e.list->rowBinds() > named);
+}
+
+TEST("rows: a reaction keeps the row's body as built; an edit or a name rebuilds it") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 3600;
+    std::vector<model::Message> ms;
+    ms.push_back(msg(1, t0, "*bold* words with <https://x.test|a link>"));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    const Ts ts  = e.list->items().back().ts;
+    auto    *row = static_cast<MessageRow *>(e.row(ts));
+    REQUIRE(row != nullptr && !row->selectionLabels().empty());
+    // A mark only the body as built carries.
+    const auto marked = [&] {
+        auto *r = static_cast<MessageRow *>(e.row(ts));
+        return r && !r->selectionLabels().empty() &&
+               static_cast<RichLabel *>(r->selectionLabels()[0])->style().maxW == 123456.f;
+    };
+    static_cast<RichLabel *>(row->selectionLabels()[0])->style().maxW = 123456.f;
+    const int binds                                                   = e.list->rowBinds();
+
+    // Reactions, replies, a pin: bound again, the body kept.
+    e.store.setReaction(c, ts, "tada", 1, true);
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 1);
+    CHECK(marked());
+    e.store.updateMessage(c, ts, [](model::Message &m) { m.pinned = true; });
+    pump(8);
+    CHECK(marked());
+    e.store.setReaction(c, ts, "tada", 1, false);
+    pump(8);
+    CHECK(e.list->rowBinds() == binds + 3);
+    CHECK(marked());
+
+    // The author's name: everything again.
+    e.store.user(1).displayName = "Mira O.";
+    e.store.usersChanged();
+    pump(8);
+    CHECK_FALSE(marked());
+    static_cast<RichLabel *>(static_cast<MessageRow *>(e.row(ts))->selectionLabels()[0])
+        ->style()
+        .maxW = 123456.f;
+    // An edit: the body too.
+    e.store.updateMessage(c, ts, [](model::Message &m) {
+        m.text   = "edited words";
+        m.edited = true;
+    });
+    pump(8);
+    CHECK_FALSE(marked());
+    row = static_cast<MessageRow *>(e.row(ts));
+    REQUIRE(row != nullptr && !row->selectionLabels().empty());
+    CHECK(
+        static_cast<RichLabel *>(row->selectionLabels()[0])->text().find("edited words") !=
+        std::string::npos
+    );
 }
 
 TEST("dates: separators say Today, Yesterday, then the date") {

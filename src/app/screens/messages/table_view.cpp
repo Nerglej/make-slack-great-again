@@ -241,8 +241,14 @@ TableView::TableView(Context &ctx, std::vector<std::vector<std::string>> cells)
     : _ctx(ctx), _cells(std::move(cells)) {
     setHoverRepaint(true);
     setRole(ui::Role::Group);
-    _anim      = std::make_unique<EmojiFrameTimer>(ctx, *this);
-    _textSize  = uint32_t(tableText(ctx, _cells).size());
+    _anim = std::make_unique<EmojiFrameTimer>(ctx, *this);
+    // Made once: their text's length (tableText's) now, shaped on the first build().
+    _made = inlineCells(ctx, _cells, &_images);
+    for (size_t r = 0; r < _made.size(); ++r) {
+        _textSize += r > 0; // '\n'
+        for (size_t c = 0; c < _made[r].size(); ++c)
+            _textSize += uint32_t(_made[r][c].text.size()) + (c > 0); // '\t'
+    }
     onOpenFull = [this] {
         if (window())
             showTableViewer(*window(), _ctx, _cells);
@@ -269,8 +275,12 @@ void TableView::styleChanged() {
 void TableView::build(float width) {
     const float scale = windowScale();
     if (_grid.scale() != scale) {
-        _images.clear();
-        auto texts = inlineCells(_ctx, _cells, &_images);
+        auto texts = std::move(_made);
+        _made.clear();
+        if (texts.empty()) {
+            _images.clear();
+            texts = inlineCells(_ctx, _cells, &_images);
+        }
         for (auto &row : texts)
             for (text::AttributedText &t : row)
                 ui::resolveSpans(t);
@@ -351,9 +361,9 @@ void TableView::paintOver(gfx::Painter &p) {
     if (!hovered() || !clipped())
         return;
     if (!_pillText) {
-        text::AttributedText t;
-        t.append(i18n::tr("Open full table"), ui::font(ui::Font::Body, C::TooltipText));
-        _pillText = text::Layout::build(t, {}, windowScale());
+        _pillText = text::layoutPlain(
+            i18n::tr("Open full table"), ui::font(ui::Font::Body, C::TooltipText), windowScale()
+        );
     }
     const ui::RectF r = pillRect();
     if (r.w <= 0)

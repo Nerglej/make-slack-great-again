@@ -116,15 +116,17 @@ public:
 private:
     void build(float width);
 
-    Context                              &_ctx;
-    std::vector<std::vector<std::string>> _cells;
-    TableGrid                             _grid;
-    std::vector<std::string>              _images; // emoji box id i: [i - 1]
-    std::unique_ptr<EmojiFrameTimer>      _anim;
-    std::unique_ptr<text::Layout>         _pillText;
-    float                                 _builtW   = -1;
-    uint32_t                              _textSize = 0, _selFrom = 0, _selTo = 0;
-    bool                                  _overPill = false, _selectable = false;
+    Context                                       &_ctx;
+    std::vector<std::vector<std::string>>          _cells;
+    TableGrid                                      _grid;
+    std::vector<std::string>                       _images; // emoji box id i: [i - 1]
+    // The cells as the constructor made them, for the first build().
+    std::vector<std::vector<text::AttributedText>> _made;
+    std::unique_ptr<EmojiFrameTimer>               _anim;
+    std::unique_ptr<text::Layout>                  _pillText;
+    float                                          _builtW   = -1;
+    uint32_t                                       _textSize = 0, _selFrom = 0, _selTo = 0;
+    bool                                           _overPill = false, _selectable = false;
 };
 
 } // namespace screens

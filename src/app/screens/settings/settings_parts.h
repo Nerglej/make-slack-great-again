@@ -13,6 +13,8 @@ namespace settings {
 
 // Out of line: a braced list of literals costs a pointer array at the call.
 std::vector<std::string> strs(std::initializer_list<const char *> l);
+// A link in a page's text: the control font, underlined, link id 1.
+text::Style              linkStyle();
 
 struct SettingsDialog::Parts {
     // Appearance

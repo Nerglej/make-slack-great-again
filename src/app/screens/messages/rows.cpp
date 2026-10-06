@@ -328,9 +328,9 @@ private:
         _s     = _sub.empty() ? nullptr : line(_sub, subStyle(), 1e9f);
         _nCut.reset();
         _sCut.reset();
-        text::AttributedText l;
-        l.append(_label, ui::pxFont(15 * 0.66f, text::Weight::Bold, 0xffffffffU));
-        _l = text::Layout::build(l, {}, _scale);
+        _l = text::layoutPlain(
+            _label, ui::pxFont(15 * 0.66f, text::Weight::Bold, 0xffffffffU), _scale
+        );
     }
     float textWidth() const {
         return std::max(std::ceil(_n->width()), _s ? std::ceil(_s->width()) : 0.f);
@@ -724,6 +724,35 @@ text::AttributedText canvasPreviewText(
 
 namespace {
 
+// A canvas document past what its card can show (at most 40 lines, 4 KB:
+// still taller than the card's 229-px body at any width up to 600), so it
+// isn't shaped whole. Never inside a UTF-8 sequence or an inline box.
+void cutPreview(text::AttributedText &t) {
+    constexpr size_t kMaxBytes = 4096;
+    constexpr int    kMaxLines = 40;
+    size_t           cut       = std::min(t.text.size(), kMaxBytes);
+    int              lines     = 0;
+    for (size_t i = 0; i < cut; ++i)
+        if (t.text[i] == '\n' && ++lines == kMaxLines)
+            cut = i;
+    if (cut == t.text.size())
+        return;
+    while (cut > 0 && (uint8_t(t.text[cut]) & 0xC0) == 0x80)
+        --cut;
+    while (!t.spans.empty() && t.spans.back().start >= cut)
+        t.spans.pop_back();
+    if (!t.spans.empty()) {
+        text::Span &last = t.spans.back();
+        if (last.style.inlineBoxId && last.end > cut) {
+            cut = last.start;
+            t.spans.pop_back();
+        } else {
+            last.end = uint32_t(std::min<size_t>(last.end, cut));
+        }
+    }
+    t.text.resize(cut);
+}
+
 // The canvas preview card: 300 px high, up to 600
 // wide, the attachment card colours; a 60-px header with the blue canvas
 // tile, the title and "Canvas" over a hairline, then the start of the
@@ -743,7 +772,10 @@ public:
         Clickable::styleChanged();
     }
     void layout() override {
-        _title.reset(), _sub.reset(), _body.reset();
+        if (width() != _laidW) { // the texts are wrapped to the width
+            _title.reset(), _sub.reset(), _body.reset();
+            _laidW = width();
+        }
         Clickable::layout();
     }
     void paint(gfx::Painter &p) override {
@@ -779,12 +811,11 @@ public:
         const std::string *html  = _list.canvasPreview(_file.id, &state);
         if (!html) {
             if (!_body) {
-                text::AttributedText t;
-                t.append(
+                _body = text::layoutPlain(
                     state < 0 ? tr("Preview unavailable") : tr("Loading preview\xE2\x80\xA6"),
-                    ui::pxFont(15 * 0.85f, text::Weight::Regular, ui::color(C::TextMuted))
+                    ui::pxFont(15 * 0.85f, text::Weight::Regular, ui::color(C::TextMuted)),
+                    scale
                 );
-                _body       = text::Layout::build(t, {}, scale);
                 _bodyLoaded = false;
             }
             _body->paint(p, snapPx({body.x, body.y}));
@@ -794,6 +825,7 @@ public:
             if (!_parsed) {
                 _images.clear();
                 _bodyText = canvasPreviewText(_list.ctx(), *html, _file, &_images);
+                cutPreview(_bodyText);
                 ui::resolveSpans(_bodyText);
                 _parsed = true;
             }
@@ -828,6 +860,7 @@ private:
     text::AttributedText          _bodyText; // the document as parsed (once _parsed)
     std::vector<std::string>      _images;   // the body's custom emoji, box id i: [i - 1]
     EmojiFrameTimer               _anim;
+    float                         _laidW      = -1;
     bool                          _bodyLoaded = false, _parsed = false;
 };
 
@@ -1034,6 +1067,7 @@ DividerRow::DividerRow() {
 // ── MessageRow ──────────────────────────────────────────────────────────────
 
 MessageRow::MessageRow(MessageList &list, int kind) : _list(list), _kind(kind) {
+    _list.rowMade(this);
     setHoverRepaint(true);
     setRole(ui::Role::ListItem);
 }
@@ -1044,8 +1078,21 @@ MessageRow::~MessageRow() {
 }
 
 void MessageRow::bind(const MessageList::Item &item) {
-    clearChildren();
-    _sel.clear();
+    const model::Message *m     = _list.message(item.ts);
+    const int64_t         today = base::localDay(base::nowSecs());
+    // The same message changed only past its body (a reaction, a reply, a
+    // pin, saved): the body stays as built — no mrkdwn parse, no shaping,
+    // no image lookups — and the rest is built again.
+    const bool            keep  = m && _col && item.ts == _ts && today == _day && bodyHolds(*m);
+    if (keep) {
+        while (_col->childCount() > _tailAt)
+            _col->remove(_col->child(_col->childCount() - 1));
+    } else {
+        clearChildren();
+        _sel.clear();
+        _col = nullptr;
+        _bodyExtras.reset();
+    }
     _attachCard  = nullptr;
     _attach      = -1;
     _overDismiss = false;
@@ -1054,19 +1101,48 @@ void MessageRow::bind(const MessageList::Item &item) {
     _savedLayout = nullptr;
     _pinText.clear();
     _savedText.clear();
-    _reminded               = false;
-    _dueAt                  = 0;
-    _day                    = base::localDay(base::nowSecs());
-    _ts                     = item.ts;
-    const model::Message *m = _list.message(item.ts);
+    _reminded = false;
+    _dueAt    = 0;
+    _day      = today;
+    _ts       = item.ts;
     if (!m)
         return;
     _pending = m->pending;
-    if (_kind == kRowSystem)
+    if (keep) {
+        applyBanners(*m, _kind == kRowGrouped);
+        buildTail(_col, *m);
+    } else if (_kind == kRowSystem) {
         buildSystem(*m);
-    else
+    } else {
         buildMessage(*m, _kind == kRowGrouped);
+    }
     _list.applySelection(*this);
+}
+
+namespace {
+
+// What a message's body is drawn from besides its extras (MessageRow::
+// bodyHolds); the Store's app-local marks too (an AI transcript a card shows
+// comes as an Update of the message).
+uint64_t bodyHash(const model::Message &m, const Store &st) {
+    const uint64_t flags = uint64_t(m.user) << 2 | uint64_t(m.edited) << 1 | uint64_t(m.pending);
+    return std::hash<std::string_view>{}(m.text) ^ (flags + 1) * 0x9e3779b97f4a7c15ull ^
+           (st.localRevision() + 1) * 0xc2b2ae3d27d4eb4full;
+}
+
+} // namespace
+
+bool MessageRow::bodyHolds(const model::Message &m) const {
+    // Anything else a body shows (names, emoji, folded images, expanded
+    // cards, settings) moves the list's epoch when it changes.
+    return _bodyEpoch == _list.bodyEpoch() && _bodyHash == bodyHash(m, _list.ctx().store) &&
+           (m.extra ? _bodyExtras && *_bodyExtras == *m.extra : !_bodyExtras);
+}
+
+void MessageRow::rememberBody(const model::Message &m) {
+    _bodyHash   = bodyHash(m, _list.ctx().store);
+    _bodyEpoch  = _list.bodyEpoch();
+    _bodyExtras = m.extra ? std::make_unique<model::MessageExtras>(*m.extra) : nullptr;
 }
 
 bool MessageRow::reuse() {
@@ -1129,7 +1205,7 @@ void MessageRow::buildHeader(ui::View *col, const model::Message &m, bool tight)
         .margins(8, 0, 0, 0);
 }
 
-void MessageRow::buildMessage(const model::Message &m, bool grouped) {
+void MessageRow::applyBanners(const model::Message &m, bool grouped) {
     const Store &st = _list.ctx().store;
     // The banners stack above the message, before its padding.
     _pinText.clear();
@@ -1159,6 +1235,10 @@ void MessageRow::buildMessage(const model::Message &m, bool grouped) {
         )
         .spacing(kAvGap)
         .items(Align::Start);
+}
+
+void MessageRow::buildMessage(const model::Message &m, bool grouped) {
+    applyBanners(m, grouped);
     if (grouped) {
         // The gutter shows this message's time on hover (painted by the row).
         add<ui::View>()->style().size(kAvSize, 1);
@@ -1172,6 +1252,14 @@ void MessageRow::buildMessage(const model::Message &m, bool grouped) {
     if (!grouped)
         buildHeader(col, m, false);
     buildContent(col, m, true);
+    _col = col;
+    rememberBody(m);
+    buildTail(col, m);
+}
+
+void MessageRow::buildTail(ui::View *col, const model::Message &m) {
+    if (!m.reactions.empty())
+        buildReactions(col, m);
     if (m.replyCount > 0 && !(_list.threadMode() && m.ts == _list.threadRoot())) {
         buildThreadSummary(col, m);
         if (_list.inlineOpen(m.ts))
@@ -1200,7 +1288,7 @@ void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root)
         // (Slack edits every huddle message when it ends).
         body->add<ui::Label>(huddleSummaryText(ctx.store, x->huddle), Font::Body, C::TextMuted);
     } else if (x && !x->blocks.empty()) {
-        buildBlocks(body, x->blocks, m.ts, -1, m.edited, labels);
+        buildBlocks(body, x->blocks.data(), x->blocks.size(), m.ts, -1, m.edited, labels);
     } else {
         RichOptions o;
         o.edited = m.edited;
@@ -1224,6 +1312,10 @@ void MessageRow::buildContent(ui::View *col, const model::Message &m, bool root)
     for (size_t i = 0; i < m.attachments().size(); ++i)
         if (!_list.attachmentHidden(m, i))
             buildAttachment(col, m, i, root);
+    if (root) { // the row's tail (buildTail) follows
+        _tailAt = col->childCount();
+        return;
+    }
     if (!m.reactions.empty())
         buildReactions(col, m);
 }
@@ -1249,19 +1341,20 @@ void MessageRow::buildButtons(ui::View *col, const model::Message &m, int32_t ow
 }
 
 void MessageRow::buildBlocks(
-    ui::View                        *col,
-    const std::vector<model::Block> &blocks,
-    Ts                               ts,
-    int                              attachment,
-    bool                             edited,
-    std::vector<SelectableText *>   *labels
+    ui::View                      *col,
+    const model::Block            *blocks,
+    size_t                         count,
+    Ts                             ts,
+    int                            attachment,
+    bool                           edited,
+    std::vector<SelectableText *> *labels
 ) {
     // Text blocks as paragraphs (2 px apart), a header
     // 1.1x bold, a divider hairline, an image under its title (the title
     // folds it away), a data table.
     Context &ctx = _list.ctx();
     using K      = model::Block::Kind;
-    for (size_t i = 0; i < blocks.size(); ++i) {
+    for (size_t i = 0; i < count; ++i) {
         const model::Block &b = blocks[i];
         switch (b.kind) {
         case K::Text:
@@ -1501,9 +1594,8 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
         const bool expanded = root && _list.unfurlExpanded(m.ts, key);
         int        chars = 700, lines = 5;
         if (root && !a.linkPreview && !expanded)
-            o.cut = previewCut(a.text, &chars, &lines);
-        buildBody(ctx, c, a.text, o, this);
-        if (o.cut != UINT32_MAX || expanded) {
+            o.cutChars = &chars, o.cutLines = &lines;
+        if (buildBody(ctx, c, a.text, o, this) != UINT32_MAX || expanded) {
             auto *more = c->add<RichLabel>(ctx, this);
             more->setContent(
                 styled(expanded ? tr("Show less") : tr("Show more"), Font::Body, C::Link, 1),
@@ -1520,7 +1612,7 @@ void MessageRow::buildAttachment(ui::View *col, const model::Message &m, size_t 
     // An attachment's blocks are drawn when nothing above said anything.
     if (a.title.empty() && a.text.empty() && a.fields.empty() && a.author.empty() &&
         !a.blocks.empty())
-        buildBlocks(c, a.blocks, m.ts, int(index), false, nullptr);
+        buildBlocks(c, a.blocks.data(), a.blocks.size(), m.ts, int(index), false, nullptr);
     if (!a.image.empty())
         addThumb(c, a.image, a.imageWidth, a.imageHeight, int(kImgMax), 240);
     if (!a.footer.empty())
@@ -1570,11 +1662,11 @@ void MessageRow::buildUnfurl(ui::View *col, const model::Message &m, size_t inde
     int        chars = expanded ? INT32_MAX : 400, lineBudget = expanded ? INT32_MAX : 6;
     bool       truncated = false;
     auto       addText   = [&](const std::string &t, RichOptions o) {
-        o.cut   = previewCut(t, &chars, &lineBudget);
-        auto *w = body->add<ui::View>();
+        o.cutChars = &chars;
+        o.cutLines = &lineBudget;
+        auto *w    = body->add<ui::View>();
         w->style().margins(0, 2, 0, 2);
-        buildBody(ctx, w, t, o, this);
-        truncated = truncated || o.cut != UINT32_MAX;
+        truncated = buildBody(ctx, w, t, o, this) != UINT32_MAX || truncated;
     };
     if (!a.blocks.empty()) {
         for (size_t b = 0; b < a.blocks.size() && !truncated; ++b) {
@@ -1586,7 +1678,7 @@ void MessageRow::buildUnfurl(ui::View *col, const model::Message &m, size_t inde
                     o.font = Font::BodyBold, o.scale = 1.1f;
                 addText(blk.text, o);
             } else {
-                buildBlocks(body, {blk}, m.ts, key, false, nullptr);
+                buildBlocks(body, &blk, 1, m.ts, key, false, nullptr); // no copy of it
             }
         }
     } else if (!a.text.empty()) {
@@ -1759,14 +1851,10 @@ void MessageRow::paint(gfx::Painter &p) {
                              gfx::Icon                      icon,
                              gfx::Color                     c,
                              float                          y) {
-        if (!l) {
-            text::AttributedText t;
-            text::Style          st = ui::font(Font::Caption);
-            st.color                = c;
-            t.append(s, st);
-            text::LayoutOptions lo;
-            lo.maxLines = 1;
-            l           = text::Layout::build(t, lo, scale);
+        if (!l) { // one line (a name, a date)
+            text::Style st = ui::font(Font::Caption);
+            st.color       = c;
+            l              = text::layoutPlain(s, st, scale);
         }
         gfx::drawIcon(p, icon, {kPadH, y + (kBannerH - 12) / 2, 12, 12}, c);
         l->paint(p, snapPx({kPadH + 16, y + std::floor((kBannerH - l->height()) / 2)}));
@@ -1787,14 +1875,9 @@ void MessageRow::paint(gfx::Painter &p) {
         );
     by += _savedText.empty() ? 0 : kBannerH;
     if (!_hoverTime.empty() && (hovered() || _list.toolbarRow() == this)) {
-        if (!_hoverLayout) {
-            text::AttributedText t;
-            text::Style          s = ui::font(Font::Caption, C::TextFaint);
-            t.append(_hoverTime, s);
-            text::LayoutOptions lo;
-            lo.maxLines  = 1;
-            _hoverLayout = text::Layout::build(t, lo, windowScale());
-        }
+        if (!_hoverLayout) // a time: one line
+            _hoverLayout =
+                text::layoutPlain(_hoverTime, ui::font(Font::Caption, C::TextFaint), windowScale());
         const float x = kPadH + kAvSize - _hoverLayout->width();
         _hoverLayout->paint(p, snapPx({std::floor(x), by + kPadVGrouped + 3}));
     }
@@ -1809,11 +1892,10 @@ void MessageRow::paintOver(gfx::Painter &p) {
     const gfx::Color c = bannerColor(1);
     const float      k = windowScale();
     if (!_dismissLayout || _dismissColor != c || _dismissScale != k) {
-        text::AttributedText t;
-        t.append("\xC3\x97", ui::pxFont(15 * 1.15f, text::Weight::Regular, c));
-        _dismissLayout = text::Layout::build(t, {}, k);
-        _dismissColor  = c;
-        _dismissScale  = k;
+        _dismissLayout =
+            text::layoutPlain("\xC3\x97", ui::pxFont(15 * 1.15f, text::Weight::Regular, c), k);
+        _dismissColor = c;
+        _dismissScale = k;
     }
     const text::Layout *l = _dismissLayout.get();
     l->paint(

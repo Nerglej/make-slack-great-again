@@ -7,8 +7,8 @@
 // get() never blocks: it returns what is cached for that exact request (path,
 // physical size, shape) or null, and queues the decode on a worker thread.
 // When the result lands (on the UI thread, via plat::App::post) every view
-// that asked for it as `waiter` gets update(), and listeners are called. A
-// waiter view MUST call forget(this) from its destructor (CachedImage does).
+// that asked for it as `waiter` gets update(). A waiter view MUST call
+// forget(this) from its destructor (CachedImage does).
 //
 // What is cached is exactly what is painted: the file is decoded, scaled to
 // the requested physical size (cover-cropped when the aspect differs) and,
@@ -104,13 +104,7 @@ public:
     void decodeOnce(Request r, std::function<void(gfx::Bitmap)> done, bool urgent = false);
 
     // Where URLs come from (main's; may stay null).
-    void          setRemote(RemoteImages *r) { _remote = r; }
-    RemoteImages *remote() const { return _remote; }
-
-    // Called (UI thread) whenever any image finished loading.
-    using ListenerId = uint32_t;
-    ListenerId listen(std::function<void()> fn);
-    void       unlisten(ListenerId id);
+    void setRemote(RemoteImages *r) { _remote = r; }
 
     // Settings → Animate GIFs and images: off, animations show their first frame.
     void setAnimate(bool on) { _animate = on; }
@@ -164,11 +158,6 @@ private:
     std::vector<std::weak_ptr<Entry>> _failed; // failed entries, oldest first
     std::unordered_map<uint64_t, std::function<void(gfx::Bitmap)>> _once; // decodeOnce
     Entry *_lruHead = nullptr, *_lruTail = nullptr; // ready entries, most recent first
-    struct Listener {
-        ListenerId            id;
-        std::function<void()> fn;
-    };
-    std::vector<Listener> _listeners;
     struct SizeMemo {
         int     w = 0, h = 0;
         bool    ok      = false;
@@ -178,7 +167,6 @@ private:
     std::unordered_map<std::string, SizeMemo> _sizes; // bounded (kMaxSizeMemos)
     size_t                                    _bytes = 0, _budget, _sizeProbes = 0;
     uint64_t                                  _nextId       = 1;
-    ListenerId                                _nextListener = 1;
     bool                                      _animate      = true;
     bool                                      _animateEmoji = true;
 };
@@ -218,6 +206,8 @@ private:
     ImageCache::Ref ref() const;
     void            drop(); // forget the picture held (path, shape or mode changed)
     void            scheduleFrame();
+    // Whether to ask for size w×h now while another size is painted (see paint).
+    bool            askNow(int w, int h);
 
     std::string                   _loadingText;
     std::unique_ptr<text::Layout> _loadingLayout;
@@ -229,13 +219,17 @@ private:
     ImageCache::Bitmap _still;  // once ready: painted without a lookup
     ImageCache::Handle _held;   // what _still / _frames came from
     int                _heldW = 0, _heldH = 0;
+    int                _askW = 0, _askH = 0;       // the size last asked for
+    int                _settleW = 0, _settleH = 0; // the size _settle waits on
     plat::TimerId      _timer  = 0;
+    plat::TimerId      _settle = 0; // a new size holding still
     float              _radius = 0;
     int                _frame  = 0;
     ImageCache::Shape  _shape;
     ui::C              _placeholder = ui::C::Border;
     bool               _animated    = false;
     bool               _emoji       = false;
+    bool               _waiter      = false; // asked for one not ready yet (forget on exit)
 };
 
 } // namespace screens

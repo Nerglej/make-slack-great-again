@@ -698,7 +698,7 @@ void MessageList::clear() {
     _jumpTs   = 0;
     hideToolbar();
     _items.clear();
-    _list->reset();
+    resetRows();
     updateTyping();
     updateState();
 }
@@ -731,7 +731,7 @@ void MessageList::showConversation(ConvRef conv) {
     }
     _list->setBottomAligned(true);
     rebuild(false);
-    _list->reset();
+    resetRows();
     applyOpenTarget();
     subscribe();
     updateTyping();
@@ -752,21 +752,21 @@ void MessageList::showThread(ConvRef conv, Ts root) {
     // A thread reads from its root down; a short one sits at the top.
     _list->setBottomAligned(false);
     rebuild(false);
-    _list->reset();
+    resetRows();
     subscribe();
     updateTyping();
     if (conv != model::kNoConv && !_ctx.store().replies(conv, root)) {
         // The ring shows, not the root, until the thread's page is in.
         _loadingThread = true;
         rebuild(false);
-        _list->reset();
+        resetRows();
         std::weak_ptr<char> alive = _alive;
         _ctx.backend.loadThread(conv, root, [this, alive, conv, root](bool, const std::string &) {
             if (alive.expired() || !_loadingThread || conv != _conv || root != _root)
                 return;
             _loadingThread = false;
             rebuild(false);
-            _list->reset();
+            resetRows();
         });
     }
     updateState();
@@ -871,7 +871,7 @@ void MessageList::rebuild(bool notify) {
     if (inserted)
         _list->itemsInserted(int(p), int(inserted));
     for (int i : changed)
-        _list->itemsChanged(i, 1);
+        rowsChanged(i, 1);
     updateState();
 }
 
@@ -924,10 +924,13 @@ bool MessageList::groupingHolds(size_t i) const {
 }
 
 int MessageList::itemIndex(Ts ts) const {
-    for (size_t i = _items.size(); i-- > 0;)
-        if (_items[i].ts == ts &&
-            (_items[i].kind == Kind::Message || _items[i].kind == Kind::System))
-            return int(i);
+    // Items are in ts order; a day's item shares its first message's ts.
+    auto it = std::lower_bound(_items.begin(), _items.end(), ts, [](const Item &a, Ts t) {
+        return a.ts < t;
+    });
+    for (; it != _items.end() && it->ts == ts; ++it)
+        if (it->kind == Kind::Message || it->kind == Kind::System)
+            return int(it - _items.begin());
     return -1;
 }
 
@@ -964,10 +967,12 @@ void MessageList::onChange(const model::Change &ch) {
     if (ch.kind == CK::Reset) {
         hideToolbar();
         rebuild(false);
-        _list->reset();
+        resetRows();
     } else if (ch.kind == CK::Update) {
         // Most updates (a reaction, an edit, a poll's same page) leave the
         // items as they are: only the row is bound again.
+        // The row keeps its body when only the message changed and that
+        // part of it didn't (MessageRow::bind): no rowsChanged() here.
         int i = itemIndex(ch.ts);
         if (i < 0 || !groupingHolds(size_t(i))) {
             rebuild(true);
@@ -1031,7 +1036,8 @@ bool touches(const model::Message &m, const Changed &c) {
             return true;
         for (std::string_view e : c.emoji) // "name", or "name::skin-tone-N"
             if (str::startsWith(r.name, e) &&
-                (r.name.size() == e.size() || str::startsWith(r.name.substr(e.size()), "::")))
+                (r.name.size() == e.size() ||
+                 str::startsWith(std::string_view(r.name).substr(e.size()), "::")))
                 return true;
     }
     if (!m.extra)
@@ -1108,6 +1114,7 @@ void MessageList::usersChanged() {
     _seenProfile                  = st.profileRevision();
     if (!text && _seenProfile == since)
         return;
+    ++_bodyEpoch;                   // rows built before draw names and emoji as they were
     std::vector<std::string> names; // what c's needles point into
     size_t                   emoji = 0;
     // Another Store: everything.
@@ -1133,25 +1140,26 @@ void MessageList::usersChanged() {
     // A roster reload that changed many people: re-binding all is cheaper
     // than searching every message for each of them.
     if (full || c.users.size() > 64) {
-        _list->itemsChanged(0, int(_items.size()));
+        rowsChanged(0, int(_items.size()));
         return;
     }
-    for (size_t i = 0; i < _items.size(); ++i) {
-        const Item &it = _items[i];
-        if (it.kind != Kind::Message && it.kind != Kind::System)
-            continue;
-        const model::Message *m = message(it.ts);
+    // Only rows built (on screen, kept or spare) can show it: one never
+    // built is bound, and measured, from the Store when it scrolls in.
+    for (const MessageRow *row = _rows; row; row = row->_nextRow) {
+        const Ts              ts = row->ts();
+        const int             i  = ts ? itemIndex(ts) : -1;
+        const model::Message *m  = i >= 0 ? message(ts) : nullptr;
         if (!m)
             continue;
         bool hit = touches(*m, c);
         // An inline thread's replies draw in their root's row.
-        if (!hit && _root == 0 && has(_inlineThreads, it.ts))
-            if (const auto *replies = st.replies(_conv, it.ts))
+        if (!hit && _root == 0 && has(_inlineThreads, ts))
+            if (const auto *replies = st.replies(_conv, ts))
                 for (const model::Message &r : *replies)
                     if ((hit = touches(r, c)))
                         break;
         if (hit)
-            _list->itemsChanged(int(i), 1);
+            rowsChanged(i, 1);
     }
 }
 
@@ -1466,12 +1474,10 @@ public:
     ui::View *hitTest(ui::PointF) override { return nullptr; }
     ui::SizeF measureContent(float, float) override {
         if (!_l) {
-            text::AttributedText t;
-            text::Style          st = ui::font(ui::Font::Body);
-            st.weight               = text::Weight::Medium;
-            st.color                = ui::color(C::TooltipText);
-            t.append(_text, st);
-            _l = text::Layout::build(t, {}, windowScale());
+            text::Style st = ui::font(ui::Font::Body);
+            st.weight      = text::Weight::Medium;
+            st.color       = ui::color(C::TooltipText);
+            _l             = text::layoutPlain(_text, st, windowScale());
         }
         return {std::ceil(_l->width()) + 20, std::ceil(_l->height()) + 10 + 6};
     }
@@ -2390,7 +2396,7 @@ void MessageList::setThreadsInline(bool on) {
     _threadsInline = on;
     _inlineThreads.clear(); // switching modes drops the expansions (an open panel stays)
     if (!_items.empty())
-        _list->itemsChanged(0, int(_items.size()));
+        rowsChanged(0, int(_items.size()));
 }
 
 void MessageList::setOpenThreadRoot(Ts root) {
@@ -2407,11 +2413,36 @@ bool MessageList::threadOpen(Ts root) const {
                           : _openThreadRoot != 0 && _openThreadRoot == root;
 }
 
+void MessageList::rowsChanged(int index, int n) {
+    ++_bodyEpoch; // something besides the message: no row keeps its body
+    _list->itemsChanged(index, n);
+}
+
+void MessageList::resetRows() {
+    ++_bodyEpoch;
+    _list->reset();
+}
+
+void MessageList::rowMade(MessageRow *row) {
+    row->_nextRow = _rows;
+    if (_rows)
+        _rows->_prevRow = row;
+    _rows = row;
+}
+
+void MessageList::rowGone(MessageRow *row) {
+    if (_toolbarRow == row)
+        _toolbarRow = nullptr;
+    (row->_prevRow ? row->_prevRow->_nextRow : _rows) = row->_nextRow;
+    if (row->_nextRow)
+        row->_nextRow->_prevRow = row->_prevRow;
+}
+
 void MessageList::rowChanged(Ts ts) {
     if (!ts)
         return;
     if (const int i = itemIndex(ts); i >= 0)
-        _list->itemsChanged(i, 1);
+        rowsChanged(i, 1);
 }
 
 void MessageList::replyBarClicked(Ts root) {
@@ -2558,7 +2589,7 @@ const std::string *MessageList::canvasPreview(const std::string &id, int *state)
             if (const model::Message *m = message(_items[i].ts))
                 for (const model::File &f : m->files())
                     if (f.id == id)
-                        _list->itemsChanged(int(i), 1);
+                        rowsChanged(int(i), 1);
     });
     return nullptr;
 }

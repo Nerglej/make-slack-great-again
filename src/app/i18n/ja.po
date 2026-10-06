@@ -132,7 +132,7 @@ msgstr "「%1」はすでに存在します。置き換えますか？"
 msgid "Cut"
 msgstr "切り取り"
 
-#: src/ui/textedit.cpp src/app/screens/messages/audio_card.cpp src/app/screens/messages/summary.cpp
+#: src/ui/textedit.cpp src/app/screens/messages/audio_card.cpp src/app/screens/messages/rich.cpp src/app/screens/messages/summary.cpp
 msgid "Copy"
 msgstr "コピー"
 
@@ -774,10 +774,6 @@ msgstr "%1 · %2による文字起こし"
 msgid "Transcript (auto-generated)"
 msgstr "文字起こし（自動生成）"
 
-#: src/app/screens/messages/audio_card.cpp src/app/screens/messages/summary.cpp src/app/screens/shell/profile_card.cpp
-msgid "Copied"
-msgstr "コピーしました"
-
 #: src/app/screens/messages/audio_card.cpp
 msgid "Loading…"
 msgstr "読み込み中…"
@@ -1165,6 +1161,10 @@ msgstr "GIF"
 #: src/app/screens/messages/rich.cpp src/app/screens/messages/thread_export.cpp
 msgid "(edited)"
 msgstr "（編集済み）"
+
+#: src/app/screens/messages/rich.cpp src/app/screens/shell/profile_card.cpp
+msgid "Copied"
+msgstr "コピーしました"
 
 #: src/app/screens/messages/rich.cpp
 msgid "No email app — address copied"

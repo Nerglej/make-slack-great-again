@@ -9,9 +9,14 @@
 #include "app/screens/messages/context_fwd.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace ui {
+class Button;
+}
 
 namespace screens {
 
@@ -97,17 +102,21 @@ struct RichOptions {
     ui::C                          color    = ui::C::Text;
     bool                           edited   = false; // append " (edited)" to the last text block
     int                            maxLines = 0;     // > 0: one paragraph, ellipsized (previews)
-    float                          scale  = 1; // the font size times this (Block Kit headers: 1.1)
-    // Stop at this byte offset of the parsed text with "…" (previewCut);
-    // UINT32_MAX = the whole text.
-    uint32_t                       cut    = UINT32_MAX;
+    float                          scale = 1; // the font size times this (Block Kit headers: 1.1)
+    // A preview cut over the text the user reads, on budgets shared by
+    // several texts (characters, lines): it stops where they run out with
+    // "…" (both drop to 0), else what it used is taken off. Null: the whole
+    // text.
+    int                           *cutChars = nullptr, *cutLines = nullptr;
     // Collects the text labels made, in order (the message list's selection).
     std::vector<SelectableText *> *labels = nullptr;
 };
 
 // Appends the blocks of `mrkdwnText` to `column` (a Column view).
 // `imageWaiter` is the view to repaint when custom emoji images arrive (the row).
-void buildBody(
+// Returns where the preview cut it (a byte offset of the parsed text), or
+// UINT32_MAX when all of it shows.
+uint32_t buildBody(
     Context           &ctx,
     ui::View          *column,
     std::string_view   mrkdwnText,
@@ -152,11 +161,6 @@ private:
     plat::TimerId _id = 0;
 };
 
-// The preview cut over the text the user reads, on a budget shared by
-// several texts: the byte offset where the preview ends (both budgets drop
-// to 0), or UINT32_MAX when all of it fits (what it used is taken off).
-uint32_t previewCut(std::string_view mrkdwnText, int *maxChars, int *maxLines);
-
 // The texts of the labels buildBody makes for `mrkdwnText` (o.labels gets
 // the same ones, same order): what a selection spanning them copies, also
 // when their rows are gone.
@@ -168,6 +172,10 @@ void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at
 
 // A tooltip chip above a click for `ms`.
 void showClickToast(Context &ctx, ui::Window &w, const std::string &text, int ms, ui::PointF at);
+
+// A dialog's Copy button once clicked: "Copied" for 1.4 s, then "Copy"
+// again (while `alive` lasts).
+void flashCopied(Context &ctx, ui::Button *copy, std::weak_ptr<char> alive);
 
 // A conversation's place label: "#name", a DM peer's name, a group DM's name or
 // "group message"; "" for a conversation this workspace can't see.

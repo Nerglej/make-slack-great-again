@@ -228,12 +228,7 @@ showSummaryDialog(Context &ctx, ui::Window &w, const std::string &markdown, Summ
         auto  alive   = std::make_shared<char>(0); // lives as long as the button
         copy->onClick = [&ctx, copy, alive, markdown] {
             ctx.app.platform().setClipboardText(markdown);
-            copy->setLabel(tr("Copied"));
-            std::weak_ptr<char> weak = alive;
-            ctx.app.addTimer(1400, false, [copy, weak] {
-                if (!weak.expired())
-                    copy->setLabel(tr("Copy"));
-            });
+            flashCopied(ctx, copy, alive);
         };
         d->addButtonRow(copy, nullptr);
     } else {

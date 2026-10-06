@@ -18,6 +18,10 @@ namespace screens {
 // glyph (with skinTone 1-5 applied). "" when there is nothing better than the
 // parser's own text, or for any other kind.
 std::string entityText(const model::Store &store, const mrkdwn::Entity &e, uint8_t skinTone = 0);
+// The same for an entity already looked up: a user mention of `u`, an emoji
+// whose glyph is `unicode` ("" = none).
+std::string userMentionText(const model::Store &store, model::UserRef u);
+std::string emojiText(std::string unicode, uint8_t skinTone);
 
 // A message's text as the user reads it (notifications, copy text, search,
 // previews): markup stripped, every entity entityText can resolve swapped in

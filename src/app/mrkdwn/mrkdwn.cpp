@@ -434,11 +434,31 @@ size_t quoteMarkLen(std::string_view s, size_t pos) {
     return s.substr(pos, 4) == "&gt;" ? 4 : 0;
 }
 
+// "No closer from `from` to the end of its line" — a closer search that
+// failed answers every later opener on that line too (a line of " _a_b"
+// tokens or lone '*'s is then scanned once, not once per opener).
+struct NoCloser {
+    size_t from = std::string_view::npos, to = 0; // [from, to): to = the line's end
+    bool   covers(size_t start) const { return start >= from && start < to; }
+    void   note(std::string_view src, size_t start) {
+        from = start;
+        to   = std::min(src.find('\n', start), src.size());
+    }
+};
+
 Rich parseImpl(std::string_view src, int depth, bool inQuote) {
     Builder          b;
     size_t           i    = 0;
     const size_t     n    = src.size();
     constexpr size_t npos = std::string_view::npos;
+    // Per mark: '`', '*', '~', "__", '_'.
+    NoCloser         none[5];
+    bool             noGt  = false; // no '>' left after a '<': none for any later one
+    const auto       close = [&](NoCloser &nc, size_t start, size_t found) {
+        if (found == npos)
+            nc.note(src, start);
+        return found;
+    };
 
     if (depth > kMaxParseDepth) {
         b.text = decodeEntities(src);
@@ -467,78 +487,79 @@ Rich parseImpl(std::string_view src, int depth, bool inQuote) {
         }
 
         // ── Inline code ` ──
-        if (c == '`') {
-            const size_t close = findClose(src, i + 1, '`');
-            if (close != npos) {
+        if (c == '`' && !none[0].covers(i + 1)) {
+            const size_t end = close(none[0], i + 1, findClose(src, i + 1, '`'));
+            if (end != npos) {
                 const uint32_t start = uint32_t(b.text.size());
-                b.text += decodeEntities(src.substr(i + 1, close - 1 - (i + 1)));
+                b.text += decodeEntities(src.substr(i + 1, end - 1 - (i + 1)));
                 b.addSpan(Kind::Code, start);
-                i = close;
+                i = end;
                 continue;
             }
         }
 
         // ── Bold *text* ──
-        if (c == '*') {
-            const size_t close = findClose(src, i + 1, '*');
-            if (close != npos) {
+        if (c == '*' && !none[1].covers(i + 1)) {
+            const size_t end = close(none[1], i + 1, findClose(src, i + 1, '*'));
+            if (end != npos) {
                 b.appendNested(
-                    Kind::Bold,
-                    parseImpl(src.substr(i + 1, close - 1 - (i + 1)), depth + 1, inQuote)
+                    Kind::Bold, parseImpl(src.substr(i + 1, end - 1 - (i + 1)), depth + 1, inQuote)
                 );
-                i = close;
+                i = end;
                 continue;
             }
         }
 
         // ── Underline __text__ (before single-_ italic) ──
-        if (c == '_' && i + 1 < n && src[i + 1] == '_' && underscoreOpens(src, i)) {
-            const size_t close = findUnderscoreClose(src, i + 2, 2);
-            if (close != npos) {
+        if (c == '_' && i + 1 < n && src[i + 1] == '_' && !none[3].covers(i + 2) &&
+            underscoreOpens(src, i)) {
+            const size_t end = close(none[3], i + 2, findUnderscoreClose(src, i + 2, 2));
+            if (end != npos) {
                 b.appendNested(
                     Kind::Underline,
-                    parseImpl(src.substr(i + 2, close - 2 - (i + 2)), depth + 1, inQuote)
+                    parseImpl(src.substr(i + 2, end - 2 - (i + 2)), depth + 1, inQuote)
                 );
-                i = close;
+                i = end;
                 continue;
             }
         }
 
         // ── Italic _text_ ──
-        if (c == '_' && underscoreOpens(src, i)) {
-            const size_t close = findUnderscoreClose(src, i + 1, 1);
-            if (close != npos) {
+        if (c == '_' && !none[4].covers(i + 1) && underscoreOpens(src, i)) {
+            const size_t end = close(none[4], i + 1, findUnderscoreClose(src, i + 1, 1));
+            if (end != npos) {
                 b.appendNested(
                     Kind::Italic,
-                    parseImpl(src.substr(i + 1, close - 1 - (i + 1)), depth + 1, inQuote)
+                    parseImpl(src.substr(i + 1, end - 1 - (i + 1)), depth + 1, inQuote)
                 );
-                i = close;
+                i = end;
                 continue;
             }
         }
 
         // ── Strikethrough ~text~ ──
-        if (c == '~') {
-            const size_t close = findClose(src, i + 1, '~');
-            if (close != npos) {
+        if (c == '~' && !none[2].covers(i + 1)) {
+            const size_t end = close(none[2], i + 1, findClose(src, i + 1, '~'));
+            if (end != npos) {
                 b.appendNested(
                     Kind::Strike,
-                    parseImpl(src.substr(i + 1, close - 1 - (i + 1)), depth + 1, inQuote)
+                    parseImpl(src.substr(i + 1, end - 1 - (i + 1)), depth + 1, inQuote)
                 );
-                i = close;
+                i = end;
                 continue;
             }
         }
 
         // ── Angle-bracket constructs <…> ──
-        if (c == '<') {
-            const size_t close = src.find('>', i + 1);
-            if (close != npos) {
-                const std::string_view inner = src.substr(i + 1, close - i - 1);
-                i                            = close + 1;
+        if (c == '<' && !noGt) {
+            const size_t end = src.find('>', i + 1);
+            if (end != npos) {
+                const std::string_view inner = src.substr(i + 1, end - i - 1);
+                i                            = end + 1;
                 appendAngleConstruct(b, inner, /*requireScheme=*/false);
                 continue;
             }
+            noGt = true;
         }
 
         // ── Emoji :name: ──

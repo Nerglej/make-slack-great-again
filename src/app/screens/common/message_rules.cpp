@@ -32,7 +32,7 @@ bool isBot(const model::Store &st, const model::Message &m) {
 }
 
 bool groupable(const model::Message &prev, const model::Message &cur) {
-    if (isSystem(prev) || isSystem(cur) || prev.user != cur.user || botName(prev) != botName(cur))
+    if (prev.user != cur.user || isSystem(prev) || isSystem(cur) || botName(prev) != botName(cur))
         return false;
     if (prev.isHuddle() || cur.isHuddle()) // each huddle its own row (its tile and name)
         return false;

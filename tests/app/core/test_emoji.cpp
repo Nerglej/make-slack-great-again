@@ -1,6 +1,7 @@
 #include "app/mrkdwn/emoji.h"
 #include "base/json.h"
 #include "base/file.h"
+#include "base/utf8.h"
 #include "support/test.h"
 
 TEST("emoji: shortcodes resolve") {
@@ -69,4 +70,15 @@ TEST("emoji: expand, complete, iterate") {
     });
     CHECK(sorted);
     CHECK(seen == emoji::count());
+    // Names only, the same ones, already case-folded (the picker's search
+    // matches against them as they are).
+    int  named  = 0;
+    bool folded = true;
+    emoji::forEachName([&](std::string_view name) {
+        folded = folded && utf8::foldCase(name) == name;
+        ++named;
+        return true;
+    });
+    CHECK(folded);
+    CHECK(named == emoji::count());
 }

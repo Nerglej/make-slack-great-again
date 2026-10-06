@@ -460,13 +460,8 @@ void SettingsDialog::showAiEditor(const std::string &id) {
         }
     }
     if (preset) {
-        const std::string text = arg(tr("Get an API key from %1\xE2\x80\xA6"), p->name);
-        text::Style       st   = font(Font::Control, C::FormLink);
-        st.color               = themed(C::FormLink);
-        st.underline           = true;
-        st.linkId              = 1;
         text::AttributedText t;
-        t.append(text, st);
+        t.append(arg(tr("Get an API key from %1\xE2\x80\xA6"), p->name), linkStyle());
         _p->aiKeyLink->setRichText(std::move(t));
         const std::string url = pi->keyUrl;
         _p->aiKeyLink->onLink = [this, url](uint32_t) {
@@ -1017,11 +1012,7 @@ void SettingsDialog::buildAbout() {
         const size_t           at    = fmt.find("%1");
         text::AttributedText   t;
         t.append(fmt.substr(0, at), font(Font::Control, C::FormText));
-        text::Style st = font(Font::Control, C::FormLink);
-        st.color       = themed(C::FormLink);
-        st.underline   = true;
-        st.linkId      = 1;
-        t.append(email, st);
+        t.append(email, linkStyle());
         if (at != std::string_view::npos)
             t.append(fmt.substr(at + 2), font(Font::Control, C::FormText));
         auto *l = _content->add<Label>(arg(fmt, email), Font::Control);

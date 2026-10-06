@@ -443,7 +443,12 @@ public:
         setFocusable(true);
         style().dir = ui::Dir::None;
     }
-    void layout() override { _built = false; }
+    void layout() override {
+        if (width() != _laidW) { // the table is fitted to the width only
+            _laidW = width();
+            _built = false;
+        }
+    }
     void styleChanged() override {
         _grid  = TableGrid(); // the cells' colours and sizes are the style's
         _built = false;
@@ -558,7 +563,7 @@ private:
     std::unique_ptr<EmojiFrameTimer>      _anim;
     std::vector<std::string>              _images; // emoji box id i: [i - 1]
     TableGrid                             _grid;
-    float                                 _idealW = 0, _docH = 0, _scroll = 0;
+    float                                 _idealW = 0, _docH = 0, _scroll = 0, _laidW = -1;
     bool                                  _built = false;
 };
 

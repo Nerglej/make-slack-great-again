@@ -62,8 +62,9 @@ bool isUrlLabel(std::string_view label, std::string_view url) {
 }
 
 bool isShortenedUrlLabel(std::string_view label, std::string_view url) {
-    if (url.empty())
-        return false;
+    if (url.empty() || (label.find(kEllipsis) == std::string_view::npos &&
+                        label.find("...") == std::string_view::npos))
+        return false; // nothing cut (most labels): no copy made
     // "..." reads as "…" too.
     std::string l;
     for (size_t i = 0; i < label.size(); ++i) {

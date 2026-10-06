@@ -170,12 +170,11 @@ public:
             p.strokeRoundRect(m, 8, 1, color(hovered() ? C::FormDividerStrong : C::FormDivider));
         if (!_l || _lSel != sel) {
             _lSel = sel;
-            text::AttributedText t;
-            t.append(
+            _l    = text::layoutPlain(
                 tr(kPaletteNames[size_t(_p)]),
-                font(sel ? Font::SmallBold : Font::Small, sel ? C::Accent : C::FormTextMuted)
+                font(sel ? Font::SmallBold : Font::Small, sel ? C::Accent : C::FormTextMuted),
+                windowScale()
             );
-            _l = text::Layout::build(t, {}, windowScale());
         }
         _l->paint(
             p,
@@ -294,13 +293,17 @@ Label *SettingsDialog::body(View *parent, std::string_view text, C c) {
     return parent->add<Label>(std::string(text), Font::Control, c);
 }
 
-Label *SettingsDialog::link(View *parent, std::string text, std::string url) {
+text::Style linkStyle() {
     text::Style st = font(Font::Control, C::FormLink);
     st.color       = themed(C::FormLink);
     st.underline   = true;
     st.linkId      = 1;
+    return st;
+}
+
+Label *SettingsDialog::link(View *parent, std::string text, std::string url) {
     text::AttributedText t;
-    t.append(text, st);
+    t.append(text, linkStyle());
     auto *l = parent->add<Label>(std::move(text), Font::Control, C::FormLink);
     l->setRichText(std::move(t));
     l->style().alignSelf(Align::Start);

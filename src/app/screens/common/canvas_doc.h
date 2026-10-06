@@ -31,6 +31,7 @@ std::string
 editorHtml(std::string_view html, const std::vector<std::string> &titles, std::string *title);
 // The editor's text back to canvas markdown: block prefixes as typed,
 // formats as **b** _i_ ~~s~~ `c` [t](u), a blank line between paragraphs.
+// `runs` in order, as TextEdit::runs() gives them.
 std::string markdown(const std::string &text, const std::vector<ui::TextEdit::Run> &runs);
 // The same from rich::fromHtml's per-byte formats.
 std::string markdown(

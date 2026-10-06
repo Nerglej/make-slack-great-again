@@ -57,9 +57,11 @@ private:
             fg = ui::byTheme(0xffd9b45cU, 0xff8a6508U);
         else
             fg = lightRail() ? 0xff8a6508U : 0xffe6c98aU;
-        text::AttributedText t;
-        t.append(_ext ? tr("EXT") : tr("APP"), ui::pxFont(15 * 0.62f, text::Weight::Bold, fg));
-        _l = text::Layout::build(t, {}, windowScale());
+        _l = text::layoutPlain(
+            _ext ? tr("EXT") : tr("APP"),
+            ui::pxFont(15 * 0.62f, text::Weight::Bold, fg),
+            windowScale()
+        );
     }
     std::unique_ptr<text::Layout> _l;
     bool                          _ext, _sidebar;

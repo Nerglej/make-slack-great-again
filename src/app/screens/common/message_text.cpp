@@ -9,13 +9,21 @@
 
 namespace screens {
 
+std::string userMentionText(const model::Store &store, model::UserRef u) {
+    // The display name in either Names mode, as in Slack.
+    if (u != model::kNoUser && !store.user(u).mentionLabel().empty())
+        return "@" + std::string(store.user(u).mentionLabel());
+    return {};
+}
+
+std::string emojiText(std::string unicode, uint8_t skinTone) {
+    return skinTone && !unicode.empty() ? emoji::applySkinTone(unicode, skinTone) : unicode;
+}
+
 std::string entityText(const model::Store &store, const mrkdwn::Entity &e, uint8_t skinTone) {
     switch (e.kind) {
-    case mrkdwn::Kind::User: // the display name in either Names mode, as in Slack
-        if (const model::UserRef u = store.findUser(e.data);
-            u != model::kNoUser && !store.user(u).mentionLabel().empty())
-            return "@" + std::string(store.user(u).mentionLabel());
-        break;
+    case mrkdwn::Kind::User:
+        return userMentionText(store, store.findUser(e.data));
     case mrkdwn::Kind::Channel:
         if (const model::ConvRef c = store.findConversation(e.data);
             c != model::kNoConv && !store.conversation(c).name.empty())
@@ -29,9 +37,7 @@ std::string entityText(const model::Store &store, const mrkdwn::Entity &e, uint8
             return "@" + (g->handle.empty() ? g->name : g->handle);
         break;
     case mrkdwn::Kind::Emoji:
-        if (std::string u = store.emojiFor(e.data).unicode; !u.empty())
-            return skinTone ? emoji::applySkinTone(u, skinTone) : u;
-        break;
+        return emojiText(store.emojiFor(e.data).unicode, skinTone);
     default:
         break;
     }

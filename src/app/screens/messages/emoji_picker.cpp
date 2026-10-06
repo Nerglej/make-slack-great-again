@@ -43,20 +43,6 @@ void stateChanged() {
         stateObserver()(recents(), g_tone);
 }
 
-// Every built-in emoji name through utf8::foldCase, in emoji::forEach order
-// (folded once for the process; the search matches against these).
-const std::vector<std::string> &foldedBuiltInNames() {
-    static const std::vector<std::string> names = [] {
-        std::vector<std::string> v;
-        emoji::forEach([&](std::string_view n, const std::string &) {
-            v.push_back(utf8::foldCase(n));
-            return true;
-        });
-        return v;
-    }();
-    return names;
-}
-
 std::string toneGlyph(int tone) {
     return tone >= 2 && tone <= 6
                ? emoji::toUnicode(str::concat({"skin-tone-", str::number(int64_t(tone))}))
@@ -212,21 +198,19 @@ public:
         return _hover >= 0 ? str::concat({":", _cells[size_t(_hover)].name, ":"}) : std::string();
     }
     void paint(gfx::Painter &p) override {
-        const float       top   = scroll ? scroll->scrollOffset() : 0,
-                          vh    = scroll ? scroll->height() : height();
-        const float       scale = windowScale();
-        const std::string tg    = toneGlyph(g_tone);
+        const float top   = scroll ? scroll->scrollOffset() : 0,
+                    vh    = scroll ? scroll->height() : height();
+        const float scale = windowScale();
+        std::string tg; // the tone's glyph, once a cell is shaped
         for (const Row &r : _rows) {
             if (r.y + r.h < top || r.y > top + vh)
                 continue;
             if (r.header) {
                 auto &l = _headers[size_t(r.section)];
                 if (!l) {
-                    text::AttributedText t;
-                    text::Style          st = font(Font::Caption, C::FormTextMuted);
-                    st.weight               = text::Weight::Bold;
-                    t.append(_sections[size_t(r.section)].label, st);
-                    l = text::Layout::build(t, {}, scale);
+                    text::Style st = font(Font::Caption, C::FormTextMuted);
+                    st.weight      = text::Weight::Bold;
+                    l = text::layoutPlain(_sections[size_t(r.section)].label, st, scale);
                 }
                 l->paint(p, snapPx(PointF{kMargin + 2, r.y + std::floor((r.h - l->height()) / 2)}));
                 continue;
@@ -242,6 +226,8 @@ public:
                 if (!c.glyph.empty()) {
                     auto &l = _glyphs[size_t(idx)];
                     if (!l) {
+                        if (g_tone && c.skinnable && tg.empty())
+                            tg = toneGlyph(g_tone);
                         text::AttributedText t;
                         text::Style          st = font(Font::Body);
                         st.size                 = kGlyph;
@@ -528,8 +514,8 @@ void EmojiPicker::filter(std::string_view q) {
     if (_searching) {
         // One "Search results" section: workspace emoji first, then every
         // built-in whose name contains the query.
-        // The query folded once, the names folded once (built-ins for the
-        // process, the workspace's per picker until they change).
+        // The query folded once, the names folded once (the workspace's per
+        // picker until they change; built-in names are folded as they are).
         const std::string fq = utf8::foldCase(q);
         if (_customRev != store.customEmojiRevision()) {
             _customRev = store.customEmojiRevision();
@@ -544,20 +530,19 @@ void EmojiPicker::filter(std::string_view q) {
                 hits.push_back(
                     {std::string(customs[i].name), {}, std::string(customs[i].image), false}
                 );
-        const std::vector<std::string> &builtIn = foldedBuiltInNames();
-        size_t                          at      = 0;
-        emoji::forEach([&](std::string_view n, const std::string &u) {
-            if (utf8::containsPrefolded(builtIn[at++], fq))
-                hits.push_back({std::string(n), u, {}, emoji::supportsSkinTone(n)});
+        emoji::forEachName([&](std::string_view n) {
+            if (utf8::containsPrefolded(n, fq)) // only a hit's glyph is decoded
+                hits.push_back(
+                    {std::string(n), emoji::toUnicode(n), {}, emoji::supportsSkinTone(n)}
+                );
             return true;
         });
         add(tr("Search results"), Icon::Search, false, std::move(hits));
     } else {
         std::vector<EmojiGrid::Cell> freq;
         for (const std::string &n : recents()) {
-            const std::string u = emoji::toUnicode(n);
-            if (!u.empty()) {
-                freq.push_back({n, u, {}, emoji::supportsSkinTone(n)});
+            if (std::string u = emoji::toUnicode(n); !u.empty()) {
+                freq.push_back({n, std::move(u), {}, emoji::supportsSkinTone(n)});
                 continue;
             }
             // customEmojiImages is sorted by name (and names are unique).
@@ -576,8 +561,10 @@ void EmojiPicker::filter(std::string_view q) {
             emoji::categoryEntries(c, entries);
             std::vector<EmojiGrid::Cell> sec;
             sec.reserve(entries.size());
-            for (auto &[n, u] : entries)
-                sec.push_back({n, u, {}, emoji::supportsSkinTone(n)});
+            for (auto &[n, u] : entries) {
+                const bool skin = emoji::supportsSkinTone(n);
+                sec.push_back({std::move(n), std::move(u), {}, skin});
+            }
             Icon icon = Icon::Smile;
             for (const CatDef &d : kCatIcons)
                 if (std::string_view(d.id) == emoji::categoryId(c))

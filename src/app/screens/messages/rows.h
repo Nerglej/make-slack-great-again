@@ -1,7 +1,10 @@
 // The rows of a MessageList (internal to screens/messages). A row is rebuilt
-// from the Store on every bind; ~20 are on screen and a few dozen more kept
-// built off screen for scrolling back (VirtualList::setKeep), the rest
-// recycled per kind. A row holds views, never a second copy of a message.
+// from the Store on every bind — but for its body (text, blocks, files,
+// attachments), kept when only the message's reactions, replies, pin or
+// saved state changed; ~20 are on screen and a few dozen more kept built off
+// screen for scrolling back (VirtualList::setKeep), the rest recycled per
+// kind. A row holds views and a fingerprint of what its body was built from,
+// never a second copy of a message's text.
 #pragma once
 
 #include "app/screens/messages/image_cache.h"
@@ -78,6 +81,13 @@ public:
 
 private:
     void      buildMessage(const model::Message &m, bool grouped);
+    // The body as built still shows `m` (see bind): only the rest is rebuilt.
+    bool      bodyHolds(const model::Message &m) const;
+    void      rememberBody(const model::Message &m);
+    // The banners' texts and the row's padding (they take room above it).
+    void      applyBanners(const model::Message &m, bool grouped);
+    // What follows the body: reactions, the reply bar, an inline thread.
+    void      buildTail(ui::View *col, const model::Message &m);
     // The author's avatar (the profile card on hover) or, for a bot, its
     // picture over its name's letter.
     ui::View *addAvatar(ui::View *parent, const model::Message &m);
@@ -87,12 +97,13 @@ private:
     // files, attachments (index ≥ 0 cards get the dismiss "×"), reactions.
     void      buildContent(ui::View *col, const model::Message &m, bool root);
     void      buildBlocks(
-        ui::View                        *col,
-        const std::vector<model::Block> &blocks,
-        Ts                               ts,
-        int                              attachment,
-        bool                             edited,
-        std::vector<SelectableText *>   *labels
+        ui::View                      *col,
+        const model::Block            *blocks,
+        size_t                         count,
+        Ts                             ts,
+        int                            attachment,
+        bool                           edited,
+        std::vector<SelectableText *> *labels
     );
     void      buildReactions(ui::View *col, const model::Message &m);
     void      buildThreadSummary(ui::View *col, const model::Message &m);
@@ -137,6 +148,18 @@ private:
     bool                          _reminded   = false;
     int                           _kind;
     bool                          _pending = false, _overDismiss = false;
+
+    // The body's column and where its tail starts (null: not a message's).
+    // What the body was built from: the text's hash (with author, edited,
+    // pending), the extras, and the list's epoch then.
+    ui::View                             *_col    = nullptr;
+    size_t                                _tailAt = 0;
+    std::unique_ptr<model::MessageExtras> _bodyExtras;
+    uint64_t                              _bodyHash  = 0;
+    uint32_t                              _bodyEpoch = 0;
+
+    friend class MessageList; // links every row of the list (MessageList::_rows)
+    MessageRow *_prevRow = nullptr, *_nextRow = nullptr;
 };
 
 // "Today" pill on a hairline.

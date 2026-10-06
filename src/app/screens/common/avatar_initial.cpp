@@ -55,11 +55,11 @@ void paintInitial(
         return;
     if (!cache) {
         // setPointSizeF(h · 0.38): points at 96 dpi are 4/3 px.
-        text::AttributedText t;
         if (px <= 0)
             px = r.h * 0.38f * 4 / 3;
-        t.append(letter, ui::pxFont(px, text::Weight::Bold, 0xffffffffU));
-        cache = text::Layout::build(t, {}, v.windowScale());
+        cache = text::layoutPlain(
+            letter, ui::pxFont(px, text::Weight::Bold, 0xffffffffU), v.windowScale()
+        );
     }
     const text::Layout &l = *cache;
     l.paint(

@@ -32,6 +32,9 @@ std::string expandShortcodes(std::string_view text);
 void complete(std::string_view prefix, size_t max, std::vector<std::string> &out);
 // Every entry in sorted order (the picker); stop early by returning false.
 void forEach(const std::function<bool(std::string_view name, const std::string &unicode)> &fn);
+// The same, names only (nothing decoded). Names are lowercase ASCII:
+// already case-folded.
+void forEachName(const std::function<bool(std::string_view name)> &fn);
 int  count();
 
 // The picker's categories (iamcal/emoji-data order: "Smileys &

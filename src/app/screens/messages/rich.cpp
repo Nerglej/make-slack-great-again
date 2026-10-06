@@ -11,6 +11,7 @@
 #include "base/process.h"
 #include "base/str.h"
 #include "net/net.h"
+#include "ui/controls.h"
 
 #include <algorithm>
 #include <cmath>
@@ -164,7 +165,7 @@ struct Builder {
                 break;
             case Kind::User: {
                 const model::UserRef u    = store.findUser(e.data);
-                const std::string    name = entityText(store, e);
+                const std::string    name = userMentionText(store, u);
                 text::Style          ps   = pill(s, u != model::kNoUser && u == store.me);
                 ps.linkId                 = target(e.kind, e.data);
                 t.append(name.empty() ? std::string(slice) : name, ps);
@@ -194,7 +195,7 @@ struct Builder {
             case Kind::Emoji: {
                 const Store::EmojiGlyph g = store.emojiFor(e.data);
                 if (!g.unicode.empty()) {
-                    t.append(entityText(store, e, run.skinTone), s);
+                    t.append(emojiText(g.unicode, run.skinTone), s);
                 } else if (!g.image.empty()) {
                     images.push_back(g.image);
                     s.inlineBoxId = uint32_t(images.size());
@@ -367,11 +368,15 @@ bool RichLabel::onEvent(ui::Event &e) {
     switch (e.type) {
     case ui::EventType::PointerMove:
     case ui::EventType::PointerLeave: {
-        hoverLink(e.type == ui::EventType::PointerMove ? linkAt(e.pos) : 0, e.windowPos);
+        // One hit test per move; the user looked up when the link changes.
+        const uint32_t id   = e.type == ui::EventType::PointerMove ? linkAt(e.pos) : 0;
+        const bool     same = id && id == _hoverLink;
+        hoverLink(id, e.windowPos);
         // Hovering a mention or a name: the profile card after a delay.
-        const Target  *tg = e.type == ui::EventType::PointerMove ? targetAt(e.pos) : nullptr;
-        model::UserRef u =
-            tg && tg->kind == Kind::User ? _ctx.store().findUser(tg->data) : model::kNoUser;
+        const Target  *tg = id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
+        model::UserRef u  = same                           ? _hoverUser
+                            : tg && tg->kind == Kind::User ? _ctx.store().findUser(tg->data)
+                                                           : model::kNoUser;
         if (u != _hoverUser && _ctx.profileHover) {
             if (_hoverUser != model::kNoUser)
                 _ctx.profileHover(_hoverUser, windowRect(), 0);
@@ -498,9 +503,26 @@ void EmojiFrameTimer::schedule(double ms) {
 
 namespace {
 
+// RichOptions::cutChars/cutLines over the parsed text `s`: the byte offset
+// where the preview ends, or UINT32_MAX when all of it fits.
+uint32_t previewCut(std::string_view s, int *maxChars, int *maxLines) {
+    int lines = 1;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if ((s[i] & 0xc0) == 0x80)
+            continue; // a continuation byte: the same character
+        if (*maxChars <= 0 || (s[i] == '\n' && ++lines > *maxLines)) {
+            *maxChars = *maxLines = 0;
+            return uint32_t(i);
+        }
+        --*maxChars;
+    }
+    *maxLines -= lines - 1;
+    return UINT32_MAX;
+}
+
 // buildBody and bodyTexts in one: with a column, the labels are made; with
 // none, only their texts are collected (the same ones, in the same order).
-void walkBody(
+uint32_t walkBody(
     Context                  &ctx,
     ui::View                 *column,
     std::string_view          text,
@@ -510,7 +532,8 @@ void walkBody(
 ) {
     const mrkdwn::Rich               r      = mrkdwn::parse(text);
     const std::vector<mrkdwn::Block> blocks = mrkdwn::blocks(r);
-    Builder                          b{ctx, r, ui::font(o.font), {}, {}, {}};
+    const uint32_t cut = o.cutChars ? previewCut(r.text, o.cutChars, o.cutLines) : UINT32_MAX;
+    Builder        b{ctx, r, ui::font(o.font), {}, {}, {}};
     b.base.color = ui::themed(o.color);
     b.base.size *= o.scale;
     auto label = [&](ui::View *parent) -> RichLabel * {
@@ -546,11 +569,11 @@ void walkBody(
     ui::View *quote = nullptr; // content column of the current quoted run
     for (size_t i = 0; i < blocks.size(); ++i) {
         mrkdwn::Block bl = blocks[i];
-        if (bl.start >= o.cut)
+        if (bl.start >= cut)
             break;
-        const bool cutHere = bl.end > o.cut;
+        const bool cutHere = bl.end > cut;
         if (cutHere)
-            bl.end = o.cut;
+            bl.end = cut;
         const bool last   = i + 1 == blocks.size() || cutHere;
         ui::View  *parent = column;
         if (bl.quoted && column) {
@@ -617,14 +640,15 @@ void walkBody(
     }
     if (blocks.empty() && o.edited)
         edited();
+    return cut;
 }
 
 } // namespace
 
-void buildBody(
+uint32_t buildBody(
     Context &ctx, ui::View *column, std::string_view text, const RichOptions &o, ui::View *waiter
 ) {
-    walkBody(ctx, column, text, o, waiter, nullptr);
+    return walkBody(ctx, column, text, o, waiter, nullptr);
 }
 
 text::AttributedText richText(
@@ -645,28 +669,20 @@ text::AttributedText richText(
     return t;
 }
 
-uint32_t previewCut(std::string_view text, int *maxChars, int *maxLines) {
-    const std::string s     = mrkdwn::parse(text).text;
-    int               lines = 1;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if ((s[i] & 0xc0) == 0x80)
-            continue; // a continuation byte: the same character
-        if (*maxChars <= 0 || (s[i] == '\n' && ++lines > *maxLines)) {
-            *maxChars = *maxLines = 0;
-            return uint32_t(i);
-        }
-        --*maxChars;
-    }
-    *maxLines -= lines - 1;
-    return UINT32_MAX;
-}
-
 std::vector<std::string> bodyTexts(Context &ctx, std::string_view text, const RichOptions &o) {
     std::vector<std::string> out;
     RichOptions              x = o;
     x.labels                   = nullptr;
     walkBody(ctx, nullptr, text, x, nullptr, &out);
     return out;
+}
+
+void flashCopied(Context &ctx, ui::Button *copy, std::weak_ptr<char> alive) {
+    copy->setLabel(i18n::tr("Copied"));
+    ctx.app.addTimer(1400, false, [copy, alive = std::move(alive)] {
+        if (!alive.expired())
+            copy->setLabel(i18n::tr("Copy"));
+    });
 }
 
 // ── Links ───────────────────────────────────────────────────────────────────

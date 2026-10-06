@@ -648,3 +648,23 @@ TEST("link labels: shortened labels, URL labels, GIPHY media") {
     CHECK_FALSE(isGiphyMediaUrl("https://giphy.com/gifs/cat-xyz"));
     CHECK_FALSE(isGiphyMediaUrl("https://notgiphy.com/a.gif"));
 }
+
+TEST("mrkdwn: openers without a closer on their line are scanned once") {
+    // A line's failed search answers its later openers; the next line
+    // looks again.
+    {
+        auto r = mrkdwn::parse("a _b_c _d *e ~f `g\n_i_ *j* ~k~ `l`");
+        CHECK_STR(r.text, "a _b_c _d *e ~f `g\ni j k l");
+        CHECK(r.entities.size() == 4);
+    }
+    // Pathological lines (tens of thousands of openers, no closer and no
+    // '>' at all): linear, not quadratic (seconds before).
+    std::string line;
+    for (int i = 0; i < 40000; ++i)
+        line += " _a_b <f";
+    const int64_t t0 = base::monotonicMs();
+    const Rich    r  = mrkdwn::parse(line);
+    CHECK(base::monotonicMs() - t0 < 2000);
+    CHECK(r.text.size() == line.size());
+    CHECK(r.entities.empty());
+}

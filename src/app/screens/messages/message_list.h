@@ -149,15 +149,16 @@ public:
     Context              &ctx() { return _ctx; }
     const model::Message *message(Ts ts) const;
     void                  rowHovered(MessageRow *row, bool on);
-    void                  rowGone(MessageRow *row) {
-        if (_toolbarRow == row)
-            _toolbarRow = nullptr;
-    }
-    MessageRow *toolbarRow() const { return _toolbarRow; }
+    void                  rowMade(MessageRow *row);
+    void                  rowGone(MessageRow *row);
+    // Moves on whenever rows are bound again for anything but their own
+    // message changing (MessageRow keeps its body only within one epoch).
+    uint32_t              bodyEpoch() const { return _bodyEpoch; }
+    MessageRow           *toolbarRow() const { return _toolbarRow; }
     // Tests: how many times a message row was (re)bound so far.
-    int         rowBinds() const { return _rowBinds; }
-    bool        flashing(Ts ts) const { return ts == _flashTs; }
-    void        openMenu(Ts ts, ui::PointF windowPos);
+    int                   rowBinds() const { return _rowBinds; }
+    bool                  flashing(Ts ts) const { return ts == _flashTs; }
+    void                  openMenu(Ts ts, ui::PointF windowPos);
     // The menus as data, and what their items do (tests drive these). Items,
     // order, wording and icons are in message_list.cpp.
     enum MenuId : int {
@@ -270,6 +271,8 @@ private:
     void        saveAnchor();
     bool        applyOpenTarget();
     void        rowChanged(Ts ts);
+    void        rowsChanged(int index, int n); // itemsChanged, new epoch
+    void        resetRows();                   // reset, new epoch
     void        loadInline(Ts root);
     void        copySelection();
     // A drag's end: the nearest message text to a window point (a header,
@@ -326,7 +329,9 @@ private:
     // The Store revisions the rows were last bound against (usersChanged).
     const model::Store        *_seenStore   = nullptr;
     uint64_t                   _seenProfile = 0, _seenText = 0;
-    int                        _rowBinds     = 0;
+    int                        _rowBinds  = 0;
+    uint32_t                   _bodyEpoch = 0;
+    MessageRow                *_rows = nullptr; // every message row (live, kept, spare), linked
     bool                       _loadingOlder = false, _loadingThread = false, _waiting = false;
     // Selection.
     TextPos                    _selAnchor, _selFocus;

@@ -308,13 +308,17 @@ std::string markdown(const std::string &t, const std::vector<ui::TextEdit::Run> 
     };
     std::string out, prev;
     bool        inFence = false;
+    size_t      first   = 0; // runs are in order: the first one not before this line
     for (size_t at = 0; at <= t.size();) {
         const size_t           nl = std::min(t.find('\n', at), t.size());
         const std::string_view raw(t.data() + at, nl - at);
         std::string            line;
-        for (const ui::TextEdit::Run &r : runs) {
-            const uint32_t a = std::max<uint32_t>(r.start, uint32_t(at));
-            const uint32_t b = std::min<uint32_t>(r.end, uint32_t(nl));
+        while (first < runs.size() && runs[first].end <= at)
+            ++first;
+        for (size_t k = first; k < runs.size() && runs[k].start < nl; ++k) {
+            const ui::TextEdit::Run &r = runs[k];
+            const uint32_t           a = std::max<uint32_t>(r.start, uint32_t(at));
+            const uint32_t           b = std::min<uint32_t>(r.end, uint32_t(nl));
             if (a >= b)
                 continue;
             std::string_view piece(t.data() + a, b - a);
@@ -609,31 +613,40 @@ bool diff(const std::vector<Chunk> &base, const std::vector<Chunk> &cur, std::ve
     using Op    = Change::Op;
     const int n = int(base.size()), m = int(cur.size());
     auto eq = [&](int i, int j) { return base[i].kind == cur[j].kind && base[i].md == cur[j].md; };
+    // The sections an edit left alone at both ends match as they are: the
+    // table covers only the middle [p, n2) × [p, m2) (one edit in a long
+    // canvas is a few cells, not n × m).
+    int  p = 0, s = 0;
+    while (p < n && p < m && eq(p, p))
+        ++p;
+    while (s < n - p && s < m - p && eq(n - 1 - s, m - 1 - s))
+        ++s;
+    const int        n2 = n - s, m2 = m - s, w = m2 - p + 1;
     // Longest common subsequence, suffix table.
-    std::vector<int> dp(size_t(n + 1) * size_t(m + 1), 0);
-    auto at = [&](int i, int j) -> int & { return dp[size_t(i) * size_t(m + 1) + size_t(j)]; };
-    for (int i = n - 1; i >= 0; --i)
-        for (int j = m - 1; j >= 0; --j)
+    std::vector<int> dp(size_t(n2 - p + 1) * size_t(w), 0);
+    auto at = [&](int i, int j) -> int & { return dp[size_t(i - p) * size_t(w) + size_t(j - p)]; };
+    for (int i = n2 - 1; i >= p; --i)
+        for (int j = m2 - 1; j >= p; --j)
             at(i, j) = eq(i, j) ? at(i + 1, j + 1) + 1 : std::max(at(i + 1, j), at(i, j + 1));
     std::vector<Change> inserts, replaces, deletes;
     // Slack rejects an empty document_content; a lone space is an empty line.
     auto safe = [](const std::string &md) { return md.empty() ? std::string(" ") : md; };
-    int  i = 0, j = 0;
-    while (i < n || j < m) {
-        if (i < n && j < m && eq(i, j)) {
+    int  i = p, j = p;
+    while (i < n2 || j < m2) {
+        if (i < n2 && j < m2 && eq(i, j)) {
             ++i, ++j;
             continue;
         }
         // The maximal unmatched gap [i, bi) × [j, cj).
         int bi = i, cj = j;
-        while (bi < n || cj < m) {
-            if (bi < n && cj < m && eq(bi, cj) && at(bi, cj) == at(i, j))
+        while (bi < n2 || cj < m2) {
+            if (bi < n2 && cj < m2 && eq(bi, cj) && at(bi, cj) == at(i, j))
                 break; // the next match
-            if (bi < n && at(bi + 1, cj) == at(i, j)) {
+            if (bi < n2 && at(bi + 1, cj) == at(i, j)) {
                 ++bi;
                 continue;
             }
-            if (cj < m && at(bi, cj + 1) == at(i, j)) {
+            if (cj < m2 && at(bi, cj + 1) == at(i, j)) {
                 ++cj;
                 continue;
             }
