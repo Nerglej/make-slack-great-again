@@ -539,25 +539,23 @@ TEST("slack realtime: a reconnect soon after a full DM sweep asks only the most 
         ctl("POST", "/_ctl/ws/close", R"({"code": 1001})");
         REQUIRE(pumpUntil([&] { return count("ws-open") == opens && e.socket->connected(); }));
     };
-    // The DM activity sweep after connect first; then nothing more asks.
-    const auto settled = [] {
-        int n = count("conversations.info");
-        for (int now = -1; now != n;) {
-            if (now >= 0)
-                n = now;
-            pumpFor(300);
-            now = count("conversations.info");
-        }
-        return n;
+    // A sweep's calls past `from`: waited for (the paced lane stalls under
+    // load), then a quiet spell for any beyond them.
+    const auto swept = [](int from, int expect) {
+        pumpUntil([&] { return count("conversations.info") - from >= expect; }, 5000);
+        pumpFor(300);
+        return count("conversations.info") - from;
     };
-    int infos = settled();
+    // The DM activity sweep after connect first.
+    int infos = swept(0, 30);
+    REQUIRE(infos == 30);
     reconnect(2);
-    CHECK(settled() - infos == 30); // the first: every DM
+    CHECK(swept(infos, 30) == 30); // the first: every DM
     // Past the 2 min gap (1.2 s here), inside the full sweep's 10 min (6 s).
     pumpFor(1000);
-    infos = settled();
+    infos = count("conversations.info");
     reconnect(3);
-    CHECK(settled() - infos == 24);
+    CHECK(swept(infos, 24) == 24);
 }
 
 TEST("slack realtime: user group events patch the groups; only the unclear reload them") {

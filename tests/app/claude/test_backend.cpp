@@ -2789,7 +2789,8 @@ fi
 short=$(echo "$sid" | cut -c1-8)
 T="$H/projects/-fake/$sid.jsonl"
 [ -n "$copied" ] && cp "$copied" "$T"
-ts=$(perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000')
+# Milliseconds: perl (no %N in macOS's date), python3 where it's missing (Alpine).
+ts=$(perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000' 2>/dev/null || python3 -c 'import datetime as d; print(d.datetime.now(d.timezone.utc).isoformat(timespec="milliseconds")[:-6] + "Z")')
 u=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 mkdir -p "$H/jobs/$short"
 echo "{\"state\":\"done\",\"sessionId\":\"$sid\",\"cwd\":\"$PWD\",\"name\":\"fake-$short\",\"linkScanPath\":\"$T\"}" > "$H/jobs/$short/state.json"
@@ -3065,7 +3066,7 @@ done
 [ -z "$sid" ] && sid="$FAKE_SID"
 short=$(echo "$sid" | cut -c1-8)
 T="$H/projects/-fake/$sid.jsonl"
-ts=$(perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000')
+ts=$(perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000' 2>/dev/null || python3 -c 'import datetime as d; print(d.datetime.now(d.timezone.utc).isoformat(timespec="milliseconds")[:-6] + "Z")')
 mkdir -p "$H/jobs/$short"
 echo "{\"state\":\"working\",\"sessionId\":\"$sid\",\"cwd\":\"$PWD\",\"name\":\"fake-$short\",\"linkScanPath\":\"$T\"}" > "$H/jobs/$short/state.json"
 kill $(cat "$H/wpid-$short" 2>/dev/null) 2>/dev/null
@@ -3445,7 +3446,7 @@ fi
 short=$(echo "$sid" | cut -c1-8)
 T="$H/projects/-fake/$sid.jsonl"
 [ -n "$fork" ] && cp "$H/projects/-fake/$parent.jsonl" "$T"
-now() { perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000'; }
+now() { perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000' 2>/dev/null || python3 -c 'import datetime as d; print(d.datetime.now(d.timezone.utc).isoformat(timespec="milliseconds")[:-6] + "Z")'; }
 ts=$(now)
 u=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 mkdir -p "$H/jobs/$short"

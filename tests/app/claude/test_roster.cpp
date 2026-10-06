@@ -290,12 +290,9 @@ TEST("roster: a folder is trusted when it or a parent was accepted") {
     const std::string dir = tempDir();
     const std::string old = base::env("CLAUDE_CONFIG_DIR");
     base::test::setEnv("CLAUDE_CONFIG_DIR", dir);
-    // Claude Code's project keys are absolute paths: a drive's on Windows.
-#ifdef _WIN32
-    const std::string r = "C:";
-#else
-    const std::string r;
-#endif
+    // Absolute folders outside any repository: a bare /src may be one (the
+    // static release build mounts the checkout there).
+    const std::string r = file::absolute(base::test::makeTempDir("roster-parent-"));
     CHECK_FALSE(isFolderTrusted(r + "/src/app")); // no config at all
     REQUIRE(
         file::writeAtomic(
