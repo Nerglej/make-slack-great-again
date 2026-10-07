@@ -10,7 +10,10 @@ add_library(msga_screens_settings STATIC
 target_include_directories(msga_screens_settings PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
     ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
-target_link_libraries(msga_screens_settings PUBLIC msga_screens_common msga_app_core msga_app_llm msga_app_spell msga_app_update msga_ui msga_flags)
+target_link_libraries(msga_screens_settings PUBLIC msga_screens_common msga_app_core msga_app_llm msga_app_spell msga_ui msga_flags)
+if(TARGET msga_app_update)
+    target_link_libraries(msga_screens_settings PUBLIC msga_app_update)
+endif()
 target_compile_definitions(msga_screens_settings PRIVATE
     MSGA_VERSION=${MSGA_VERSION} MSGA_BUILD_TIMESTAMP="${MSGA_BUILD_TIMESTAMP}")
 # The build's GIPHY key (credentials.cmake, never committed): only the

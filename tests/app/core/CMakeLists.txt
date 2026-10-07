@@ -3,12 +3,16 @@
 # (../../support/fake_slack.py). Suites of msga_app_tests (../CMakeLists.txt),
 # ctest test core_<suite> each.
 set(core_suites mrkdwn markdown_compose emoji store jobs fixture languages slack slack_write
-    slack_read slack_cache slack_realtime slack_features slack_links update)
+    slack_read slack_cache slack_realtime slack_features slack_links)
+if(TARGET msga_app_update)
+    list(APPEND core_suites update)
+    target_link_libraries(msga_app_tests PRIVATE msga_app_update)
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND core_suites local_import)
 endif()
 target_sources(msga_app_tests PRIVATE ../../support/fake_slack_server.cpp)
-target_link_libraries(msga_app_tests PRIVATE msga_app_fake msga_app_slack msga_app_update)
+target_link_libraries(msga_app_tests PRIVATE msga_app_fake msga_app_slack)
 target_compile_definitions(msga_app_tests PRIVATE
     FAKE_SLACK_SCRIPT="${MSGA_ROOT}/tests/support/fake_slack.py")
 # The fake backend's timers run on plat's headless loop; times pin a zone.

@@ -20,7 +20,3 @@ msga_add_test(links_ui_tests COMMAND msga_app_tests test_links_ui TZ HOME ${_hom
 target_sources(msga_app_tests PRIVATE test_identity.cpp)
 msga_add_test(identity_tests COMMAND msga_app_tests test_identity
     HOME ${CMAKE_CURRENT_BINARY_DIR}/test-home-identity LABELS shell)
-# Whether the build writes that launcher entry (MSGA_INSTALL_LAUNCHER).
-if(MSGA_INSTALL_LAUNCHER)
-    target_compile_definitions(msga_app_tests PRIVATE MSGA_INSTALL_LAUNCHER)
-endif()

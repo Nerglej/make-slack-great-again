@@ -273,9 +273,7 @@ bool checksumMatches(std::string_view bytes, std::string_view expectedHex) {
 Updater::Updater(plat::App &app, net::Client &client, int currentVersion)
     : _app(app), _client(client), _current(currentVersion), _manifestUrl(manifestUrl()),
       _assetUrl(assetUrl()) {
-#if !defined(MSGA_SELF_UPDATE)
-    // No target: a package manager updates msga, checks say "not supported".
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
     const std::string dl = app.standardDir(plat::StandardDir::Downloads);
     if (!dl.empty() && !asset().empty())
         _target = file::join(dl, asset());

@@ -9,7 +9,9 @@
 #include "app/llm/wire.h"
 #include "app/screens/common/remote_images.h"
 #include "app/spell/spell.h"
+#ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
+#endif
 #include "base/i18n.h"
 #include "base/str.h"
 #include "base/time.h"
@@ -693,6 +695,7 @@ void SettingsDialog::buildSystem() {
             arg(tr("Version %1, built %2"), str::number(MSGA_VERSION), MSGA_BUILD_TIMESTAMP),
             C::FormTextMuted
         );
+#ifdef MSGA_SELF_UPDATE // without it a package manager updates msga
         auto *g = group(_content);
         check(g, tr("Check for updates automatically"), &_s.autoUpdates, false);
         caption(
@@ -768,6 +771,7 @@ void SettingsDialog::buildSystem() {
                 }
             });
         }
+#endif
     }
 
 #ifndef __APPLE__ // macOS minimizes to the Dock; hiding the window there would surprise

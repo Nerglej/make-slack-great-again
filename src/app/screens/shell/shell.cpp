@@ -38,9 +38,13 @@
 #include "screens/shell/standin.h"
 #include "screens/shell/status_dialog.h"
 #include "screens/shell/typing_indicator.h"
+#ifdef MSGA_SELF_UPDATE
 #include "screens/shell/update_bar.h"
+#endif
 #include "app/model/jobs.h"
+#ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
+#endif
 #include "base/process.h"
 
 #ifdef MSGA_HAVE_MESSAGES
@@ -792,9 +796,11 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
     auto *screen = win.root().add<View>();
     screen->style().column();
     buildTitleBar(screen);
+#ifdef MSGA_SELF_UPDATE
     _updateBar            = screen->add<UpdateBar>();
     _updateBar->onRestart = [this] { applyUpdate(); };
-    auto *body            = screen->add<View>();
+#endif
+    auto *body = screen->add<View>();
     body->style().row().flex(1);
     buildRail(body);
     _sidebar = body->add<Sidebar>(ctx, _avatars);
@@ -1094,6 +1100,7 @@ Shell::~Shell() {
     _ctx.app.cancelTimer(_visitedTimer);
     if (_saveTimer) // a change still waiting is written now
         saveSettingsNow();
+#ifdef MSGA_SELF_UPDATE
     // The updater outlives us (main owns it): no event or check may reach
     // a dead shell.
     _ctx.app.cancelTimer(_updateTimer);
@@ -1101,6 +1108,7 @@ Shell::~Shell() {
         _updater->unlisten(_updateListener);
         _updater->onChecked = nullptr;
     }
+#endif
     // The views die with us, not later with the window: the composers stash
     // their drafts into _drafts from their destructors.
     _win.closeAllPopups();
@@ -2275,6 +2283,7 @@ void Shell::updateReading() {
 
 // ── Updates and restarts ────────────────────────────────────────────────────
 
+#ifdef MSGA_SELF_UPDATE
 void Shell::setUpdater(update::Updater *u) {
     if (_updater)
         _updater->unlisten(_updateListener);
@@ -2311,6 +2320,7 @@ void Shell::applyUpdate() {
     restart();
 #endif
 }
+#endif
 
 void Shell::restart() {
     base::relaunchOnExit(restartArgs);
@@ -2595,7 +2605,9 @@ void Shell::openSettingsAt(uint8_t page) {
         saveSettingsAsync();
         applySettings();
     };
+#ifdef MSGA_SELF_UPDATE
     hooks.updater = _updater;
+#endif
     hooks.restart = [this] { restart(); };
     hooks.testNotification =
         [this](plat::Notification n, std::function<void(const std::string &)> result) {

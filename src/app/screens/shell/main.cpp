@@ -27,7 +27,9 @@
 #include "app/media/audio_player.h"
 #include "app/model/backend_proxy.h"
 #include "app/model/null_backend.h"
+#ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
+#endif
 #include "base/file.h"
 #include "base/i18n.h"
 #include "base/time.h"
@@ -292,15 +294,17 @@ int main(int argc, char **argv) {
 
     // The demo workspace, or the signed-in one (Accounts swaps it in behind
     // the proxy the screens hold).
-    model::Store          store;
-    model::NullBackend    noWorkspace(store);
-    model::BackendProxy   backend(store, noWorkspace);
-    net::Client           client(pa);
+    model::Store        store;
+    model::NullBackend  noWorkspace(store);
+    model::BackendProxy backend(store, noWorkspace);
+    net::Client         client(pa);
     // Pictures and the update's download on a worker pool of their own, so
     // a screenful of avatars never holds up the workspace's API calls.
-    net::Client           transfers(pa);
+    net::Client         transfers(pa);
+#ifdef MSGA_SELF_UPDATE
     // The update check (msga.app's manifest; the shell drives it).
-    update::Updater       updater(pa, transfers, MSGA_VERSION);
+    update::Updater updater(pa, transfers, MSGA_VERSION);
+#endif
     // Avatars, files, emoji and previews from URLs, cached on disk.
     screens::RemoteImages remote(pa, &transfers, screens::RemoteImages::defaultDir(pa));
     // The rest of the cache limit: the inline player's
@@ -394,8 +398,10 @@ int main(int argc, char **argv) {
     for (const std::string &a : args)
         if (!str::startsWith(a, "msga://"))
             sh.restartArgs.push_back(a);
+#ifdef MSGA_SELF_UPDATE
     if (!demoMode)
         sh.setUpdater(&updater);
+#endif
 #ifdef MSGA_DEMO
     const std::string           tourPath = demo::tourPathFromArgs(argc, argv);
     std::unique_ptr<demo::Tour> tour;
