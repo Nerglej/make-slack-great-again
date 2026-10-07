@@ -6,7 +6,9 @@
 
 #include "app/media/sounds.h"
 #include "app/spell/spell.h"
+#ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
+#endif
 #include "base/i18n.h"
 #include "base/json.h"
 #include "base/str.h"
@@ -240,8 +242,10 @@ SettingsDialog::~SettingsDialog() {
         saveGlossary();
     }
     _ctx.app.cancelTimer(_ramTimer);
+#ifdef MSGA_SELF_UPDATE
     if (_hooks.updater)
         _hooks.updater->unlisten(_updListener);
+#endif
 }
 
 void SettingsDialog::showPage(Page p) {

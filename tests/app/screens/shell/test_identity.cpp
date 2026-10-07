@@ -78,11 +78,19 @@ TEST("desktop entry: the launcher earlier versions installed") {
     file::remove(path);
     file::remove(icon);
     shell::installDesktopEntry(pa);
+#ifdef MSGA_INSTALL_LAUNCHER
     for (int i = 0; i < 500 && !file::exists(path); ++i)
         app().pump(10);
     REQUIRE(file::exists(path));
     CHECK(read(path).find("Icon=" + icon + "\n") != std::string::npos);
     CHECK(str::startsWith(read(icon), "\x89PNG"));
+#else
+    // A package installs the entry: the app writes none of its own.
+    for (int i = 0; i < 50; ++i)
+        app().pump(10);
+    CHECK_FALSE(file::exists(path));
+    CHECK_FALSE(file::exists(icon));
+#endif
 #endif
 }
 

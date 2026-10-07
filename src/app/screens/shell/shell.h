@@ -274,10 +274,12 @@ public:
     // restartArgs (base::relaunchOnExit) — an applied update, Slack app keys.
     void                     restart();
     std::vector<std::string> restartArgs;
+#ifdef MSGA_SELF_UPDATE
     // The in-app updater (main's; null: none): the update bar, Settings'
     // "Check for updates", a silent check 5 s in.
-    void                     setUpdater(update::Updater *u);
-    UpdateBar               *updateBar() const { return _updateBar; }
+    void       setUpdater(update::Updater *u);
+    UpdateBar *updateBar() const { return _updateBar; }
+#endif
 
 private:
     void        openSettingsAt(uint8_t page); // a settings::SettingsDialog::Page
@@ -379,7 +381,9 @@ private:
     void
     showSampleNotification(plat::Notification n, std::function<void(const std::string &)> result);
     void sampleNotificationReady(const plat::Notification &n); // its picture is there
-    void applyUpdate();                                        // the update bar's button
+#ifdef MSGA_SELF_UPDATE
+    void applyUpdate(); // the update bar's button
+#endif
     void storeVisited(); // the sidebar's visit stamps into _settings
     // Claude Code UI for agent sessions: the
     // composer's lock and suggestion, slash commands that msga runs itself,
@@ -499,11 +503,14 @@ private:
 
     // The visit stamps' save (coalesced), the update bar and checker,
     // Settings' sample notification and where its outcome goes.
-    plat::TimerId                            _visitedTimer = 0, _updateTimer = 0;
-    plat::TimerId                            _saveTimer          = 0; // saveSettingsSoon's
-    UpdateBar                               *_updateBar          = nullptr;
-    update::Updater                         *_updater            = nullptr;
-    int                                      _updateListener     = 0;
+    plat::TimerId _visitedTimer = 0;
+    plat::TimerId _saveTimer    = 0; // saveSettingsSoon's
+#ifdef MSGA_SELF_UPDATE
+    plat::TimerId    _updateTimer    = 0;
+    UpdateBar       *_updateBar      = nullptr;
+    update::Updater *_updater        = nullptr;
+    int              _updateListener = 0;
+#endif
     uint64_t                                 _sampleNotification = 0;
     std::function<void(const std::string &)> _sampleResult;
 };
