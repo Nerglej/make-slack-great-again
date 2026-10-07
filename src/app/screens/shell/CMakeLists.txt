@@ -45,6 +45,9 @@ add_library(msga_screens_shell STATIC
     voice_strip.cpp
 )
 target_include_directories(msga_screens_shell PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+if(MSGA_INSTALL_LAUNCHER)
+    target_compile_definitions(msga_screens_shell PRIVATE MSGA_INSTALL_LAUNCHER)
+endif()
 # Linux: the logo the launcher entry names (desktop_entry.cpp), as the old
 # app's :/icon.png — gfx/icon_256.png as a byte array.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
