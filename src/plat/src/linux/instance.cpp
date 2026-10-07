@@ -555,10 +555,19 @@ bool registerUrlScheme(BackendApp &app, std::string_view schemeIn) {
     std::string       name      = app.appInfo().name;
     std::replace(name.begin(), name.end(), '\n', ' ');
 
-    // The app's own launcher entry (<id>.desktop, which the app installed)
-    // already handles the scheme: it is the handler, and no hidden one is
-    // needed (one left from before goes).
-    const std::string own = readFile(appsDir + "/" + id + ".desktop").value_or("");
+    // The app's own launcher entry (<id>.desktop, which the app installed,
+    // or its package did system-wide: the first one in the XDG data dirs is
+    // the one in effect) already handles the scheme: it is the handler, and
+    // no hidden one is needed (one left from before goes).
+    std::string       own;
+    const char       *sysDirs = std::getenv("XDG_DATA_DIRS");
+    const std::string dataDirs =
+        dataHome + ":" + (sysDirs && *sysDirs ? sysDirs : "/usr/local/share:/usr/share");
+    for (const std::string &dir : split(dataDirs, ':'))
+        if (auto text = readFile(dir + "/applications/" + id + ".desktop")) {
+            own = std::move(*text);
+            break;
+        }
     if (own.find("x-scheme-handler/" + scheme + ";") != std::string::npos) {
         unlink((appsDir + "/" + desktopId).c_str());
         desktopId = id + ".desktop";

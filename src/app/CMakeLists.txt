@@ -78,8 +78,10 @@ target_link_libraries(msga_app_slack PUBLIC msga_app_core msga_net msga_flags)
 
 # msga_app_update — the in-app updater (msga.app manifests, the download, the
 # binary swap).
-add_library(msga_app_update STATIC update/updater.cpp)
-target_link_libraries(msga_app_update PUBLIC msga_app_core msga_net msga_flags)
+if(MSGA_SELF_UPDATE)
+    add_library(msga_app_update STATIC update/updater.cpp)
+    target_link_libraries(msga_app_update PUBLIC msga_app_core msga_net msga_flags)
+endif()
 
 # msga_app_claude — the Claude Code workspace (claude/CMakeLists.txt).
 add_subdirectory(claude)

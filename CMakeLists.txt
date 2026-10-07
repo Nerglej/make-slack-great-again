@@ -133,6 +133,20 @@ elseif(MSGA_STATIC)
         -Wl,-z,stack-size=8388608)
 endif()
 
+# What a distribution's package turns off, its package manager doing both:
+# msga replacing its own binary with the next release (app/update), and, on
+# Linux, writing its own ~/.local/share/applications/msga.desktop on every
+# start (screens/shell/desktop_entry.cpp), which names this build's path.
+option(MSGA_SELF_UPDATE "Check msga.app for new releases and install them" ON)
+option(MSGA_INSTALL_LAUNCHER "Linux: write the user's msga.desktop launcher entry at startup" ON)
+# On msga_flags: the updater's UI (the update bar, Settings' update checks)
+# and its tests compile out with it, not only app/update.
+foreach(opt MSGA_SELF_UPDATE MSGA_INSTALL_LAUNCHER)
+    if(${opt})
+        target_compile_definitions(msga_flags INTERFACE ${opt})
+    endif()
+endforeach()
+
 # Linker maps for tools/size_report.py (per-module size + budgets).
 option(MSGA_SIZE_MAP "Write <exe>.map linker maps for the size report" ON)
 function(msga_size_map target)

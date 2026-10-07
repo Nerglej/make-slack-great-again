@@ -17,7 +17,9 @@
 #include "screens/shell/saved_page.h"
 #include "screens/shell/shell.h"
 #include "screens/shell/shell_dialogs.h"
+#ifdef MSGA_SELF_UPDATE
 #include "screens/shell/update_bar.h"
+#endif
 #include "plat/testing.h"
 #include "ui/controls.h"
 
@@ -578,11 +580,18 @@ TEST("settings: \"Save and restart\" restarts; the sample notification reports b
     pump();
     settings::SettingsDialog *d = h.sh->settingsDialog();
     REQUIRE(d);
-    // Without an updater: the state without a checker.
     d->showPage(settings::SettingsDialog::Page::System);
     pump();
+#ifdef MSGA_SELF_UPDATE
+    // Without an updater: the state without a checker.
     CHECK(d->find("Update checks not available.") != nullptr);
     CHECK_FALSE(d->find("Check for updates")->enabled());
+#else
+    // Built without self-updates: no update checks at all.
+    CHECK(d->find("Check for updates") == nullptr);
+    CHECK(d->find("Check for updates automatically") == nullptr);
+    CHECK(d->find("Update checks not available.") == nullptr);
+#endif
     d->close();
     pump();
 
@@ -602,6 +611,7 @@ TEST("settings: \"Save and restart\" restarts; the sample notification reports b
     CHECK_FALSE(quit);
 }
 
+#ifdef MSGA_SELF_UPDATE
 TEST("update bar: hidden until an update is ready, then its wording") {
     Harness           h;
     shell::UpdateBar *bar = h.sh->updateBar();
@@ -617,6 +627,7 @@ TEST("update bar: hidden until an update is ready, then its wording") {
     CHECK(findIn(bar, "Restart now") != nullptr);
 #endif
 }
+#endif
 
 // ── Tray picture ────────────────────────────────────────────────────────────
 

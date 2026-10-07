@@ -380,8 +380,10 @@ TEST("settings: the pages and their sections, in order") {
           "Clear state"}},
         {SettingsDialog::Page::System,
          {"Version",
+#ifdef MSGA_SELF_UPDATE // built without it: no update checks
           "Check for updates automatically",
           "Check for updates",
+#endif
 #ifndef __APPLE__ // macOS minimizes to the Dock: no Window section
           "Window",
           "Minimize to tray",
@@ -872,6 +874,7 @@ TEST("settings: System and Storage controls persist at once") {
     file::remove(path);
 }
 
+#ifdef MSGA_SELF_UPDATE
 TEST("settings: the last update check reads as a relative time") {
     Harness h;
     h.settings.lastUpdateCheck = 0;
@@ -892,6 +895,7 @@ TEST("settings: the last update check reads as a relative time") {
     pump();
     CHECK(d3.find("Last checked: 1 day ago") != nullptr);
 }
+#endif
 
 TEST("settings: Send with Ctrl+Enter makes Enter a new line") {
     Harness h;

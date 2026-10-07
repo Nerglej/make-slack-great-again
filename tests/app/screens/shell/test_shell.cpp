@@ -8,7 +8,9 @@
 #include "app/llm/voice_input.h"
 #include "app/model/backend_proxy.h"
 #include "app/model/jobs.h"
+#ifdef MSGA_SELF_UPDATE
 #include "app/update/updater.h"
+#endif
 #include "net/net.h"
 #include "app/mrkdwn/mrkdwn.h"
 #include "app/mrkdwn/markdown.h"
@@ -2599,6 +2601,7 @@ TEST("header: names, presence, DND and my phantom state follow the Store") {
     CHECK(w.sh->composer().edit().accessibleName().find("Mira O.") != std::string::npos);
 }
 
+#ifdef MSGA_SELF_UPDATE
 TEST("updates: opening chats leaves the update check and its events alone") {
     Harness         h;
     net::Client     client(app().platform());
@@ -2617,6 +2620,7 @@ TEST("updates: opening chats leaves the update check and its events alone") {
     CHECK_FALSE(h.sh->errorBanner()->text().empty());
     h.sh->setUpdater(nullptr);
 }
+#endif
 
 TEST("window: fit to screen — shrink to the work area, pull back, refit (issue #45)") {
     Harness       h;

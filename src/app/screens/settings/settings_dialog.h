@@ -44,10 +44,13 @@ public:
         std::function<void()> importSlackSession;       // "Import Slack session…"
         std::function<void()> convertToSession;         // "Convert them to session"
         int                   oauthSlackWorkspaces = 0; // Slack workspaces on app keys
+#ifdef MSGA_SELF_UPDATE
         // System → Version: "Check for updates" (null: "Update checks not
-        // available."); "Save and restart" (the Slack app keys).
-        update::Updater      *updater              = nullptr;
-        std::function<void()> restart;
+        // available.").
+        update::Updater *updater = nullptr;
+#endif
+        // System → "Save and restart" (the Slack app keys).
+        std::function<void()>                            restart;
         // Appearance → Tray icon: the tray icon dialog; it updates the
         // settings itself, then calls `after` (also when cancelled).
         std::function<void(std::function<void()> after)> pickTrayIcon;
@@ -141,8 +144,10 @@ private:
     ui::View              *_content  = nullptr;
     std::unique_ptr<Parts> _p;
     plat::TimerId          _ramTimer = 0, _glossaryTimer = 0;
-    int                    _updListener = 0; // on _hooks.updater (the System page)
-    Page                   _page        = Page::Count;
+#ifdef MSGA_SELF_UPDATE
+    int _updListener = 0; // on _hooks.updater (the System page)
+#endif
+    Page _page = Page::Count;
 };
 
 // A Slack theme as text — the ia_theme JSON (with the app's own "gradient"

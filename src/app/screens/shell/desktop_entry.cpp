@@ -10,7 +10,7 @@
 
 #include <string_view>
 
-#ifdef __linux__
+#if defined(__linux__) && defined(MSGA_INSTALL_LAUNCHER)
 #include <unistd.h>
 
 // gfx/icon_256.png, embedded by CMake.
@@ -41,7 +41,8 @@ std::string desktopEntry(const std::string &exePath, const std::string &icon) {
     });
 }
 
-#ifdef __linux__
+// Without MSGA_INSTALL_LAUNCHER the entry comes from a package.
+#if defined(__linux__) && defined(MSGA_INSTALL_LAUNCHER)
 
 namespace {
 

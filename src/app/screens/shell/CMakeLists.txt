@@ -41,10 +41,12 @@ add_library(msga_screens_shell STATIC
     status_dialog.cpp
     swipe_nav.cpp
     typing_indicator.cpp
-    update_bar.cpp
     voice_strip.cpp
 )
 target_include_directories(msga_screens_shell PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+if(MSGA_SELF_UPDATE)
+    target_sources(msga_screens_shell PRIVATE update_bar.cpp)
+endif()
 # Linux: the logo the launcher entry names (desktop_entry.cpp), as the old
 # app's :/icon.png — gfx/icon_256.png as a byte array.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -68,7 +70,10 @@ endif()
 # The app itself: <build>/msga. With -DMSGA_DEMO=ON it also carries the fake
 # backend: `msga --demo <dir>` runs the demo workspace.
 add_executable(msga main.cpp)
-target_link_libraries(msga PRIVATE msga_screens_shell msga_app_update)
+target_link_libraries(msga PRIVATE msga_screens_shell)
+if(TARGET msga_app_update)
+    target_link_libraries(msga PRIVATE msga_app_update)
+endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../version.cmake)
 target_compile_definitions(msga PRIVATE MSGA_VERSION=${MSGA_VERSION}) # the updater compares it
 # Linux: msga's own std::terminate handler in place of libstdc++'s verbose one,
