@@ -16,7 +16,10 @@
 // straight blit with no per-frame resampling or clipping. Entries are evicted
 // least-recently-used once the total passes the budget (default 48 MB);
 // handed-out bitmaps are shared_ptrs, so eviction never pulls pixels from
-// under a paint. A file that fails to decode is remembered (no retry storm).
+// under a paint. One a view still holds is neither evicted nor counted
+// against the budget: dropping it would free nothing, only cost a decode
+// (a GIF bigger than the whole budget stays while shown, and goes once no
+// view holds it). A file that fails to decode is remembered (no retry storm).
 //
 // A path is an absolute local file (fixture assets, uploads) or an http(s)
 // URL: URLs are downloaded to disk by RemoteImages (setRemote; without one
@@ -114,7 +117,8 @@ public:
     void setAnimateEmoji(bool on) { _animateEmoji = on; }
     bool animateEmoji() const { return _animateEmoji; }
 
-    size_t bytes() const { return _bytes; }
+    size_t bytes() const { return _bytes; } // pictures held by views included
+    size_t cachedBytes() const;             // without them: what clearing frees
     size_t budget() const { return _budget; }
     void   setBudget(size_t b);
     size_t entryCount() const;

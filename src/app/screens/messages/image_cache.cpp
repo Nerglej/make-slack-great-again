@@ -21,6 +21,9 @@ constexpr int64_t kMissingMemoMs = 5000;
 // Failed entries kept (each answers failed() and stops a retry storm); the
 // oldest beyond go, so a long session's dead links don't pile up.
 constexpr size_t  kMaxFailed     = 256;
+// A picture delivered to waiting views counts as in use this long, until
+// they paint and take it (a frame, give or take a busy loop).
+constexpr int64_t kFreshMs       = 1000;
 
 } // namespace
 
@@ -54,6 +57,7 @@ struct ImageCache::Entry {
     std::vector<ui::View *> waiters;
     size_t                  bytes = 0;
     uint64_t                id    = 0;
+    int64_t                 fresh = 0; // ms delivered to waiters, until one asks again
     Entry                  *prev = nullptr, *next = nullptr; // the LRU list (Ready only)
     bool                    retry = false; // a failed download: ask again once RemoteImages would
     enum : uint8_t { Loading, Ready, Failed } state = Loading;
@@ -62,6 +66,13 @@ struct ImageCache::Entry {
 
     Key     key() const { return keyOf(Ref{path, width, height, shape, radius}, animated); }
     Request request() const { return {path, width, height, shape, radius}; }
+    // Whether something besides the cache keeps the pixels: a view painting
+    // them (CachedImage holds them between lookups), or one they were just
+    // delivered to and that hasn't taken them yet.
+    bool    inUse(int64_t now) const {
+        return (animated ? frames.use_count() : still.use_count()) > 1 ||
+               (fresh && now - fresh < kFreshMs);
+    }
 };
 
 // ── Worker ──────────────────────────────────────────────────────────────────
@@ -190,6 +201,8 @@ ImageCache::Entry *ImageCache::lookup(const Ref &r, bool animated, ui::View *wai
         return nullptr;
     if (const auto it = _entries.find(keyOf(r, animated)); it != _entries.end()) {
         Entry &e = *it->second;
+        // Asked again: a view holds it from here, or doesn't.
+        e.fresh  = 0;
         if (e.inLru && _lruHead != &e) { // now the most recently used
             lruUnlink(e);
             lruPushFront(e);
@@ -349,6 +362,8 @@ void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool o
         }
         _bytes += e->bytes;
         lruPushFront(*e);
+        if (!e->waiters.empty())
+            e->fresh = base::monotonicMs();
     } else {
         e->state = Entry::Failed;
         e->retry = transient; // the download failed, not the decode: ask again later
@@ -363,12 +378,25 @@ void ImageCache::deliver(uint64_t id, std::vector<gfx::AnimFrame> frames, bool o
 }
 
 void ImageCache::evict() {
-    // The least recently used ready entry goes first, O(1) each.
-    while (_bytes > _budget && _lruTail) {
-        Entry &victim = *_lruTail;
-        lruUnlink(victim);
-        _bytes -= victim.bytes;
-        _entries.erase(victim.key()); // destroys it; held handles expire
+    // Pictures in use stay whatever goes, so they don't count against the
+    // budget (one bigger than all of it neither goes nor pushes the rest
+    // out); of the others, the least recently used goes first. A walk over
+    // the ready entries, only while over budget.
+    if (_bytes > _budget) {
+        const int64_t now  = base::monotonicMs();
+        size_t        held = 0;
+        for (const Entry *e = _lruHead; e; e = e->next)
+            if (e->inUse(now))
+                held += e->bytes;
+        for (Entry *e = _lruTail; e && _bytes - held > _budget;) {
+            Entry *const prev = e->prev;
+            if (!e->inUse(now)) {
+                lruUnlink(*e);
+                _bytes -= e->bytes;
+                _entries.erase(e->key()); // destroys it; held handles expire
+            }
+            e = prev;
+        }
     }
     // Failed ones, oldest first (one asked for again since is not failed now).
     if (_failed.size() <= kMaxFailed)
@@ -383,6 +411,15 @@ void ImageCache::evict() {
 void ImageCache::setBudget(size_t b) {
     _budget = b;
     evict();
+}
+
+size_t ImageCache::cachedBytes() const {
+    const int64_t now = base::monotonicMs();
+    size_t        n   = 0;
+    for (const Entry *e = _lruHead; e; e = e->next)
+        if (!e->inUse(now))
+            n += e->bytes;
+    return n;
 }
 
 size_t ImageCache::entryCount() const {

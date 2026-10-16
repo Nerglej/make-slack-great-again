@@ -677,7 +677,7 @@ void SettingsDialog::refreshCache() {
                 return;
             }
 #ifdef MSGA_HAVE_MESSAGES
-            _p->cacheSize->setText(str::byteSize(int64_t(_ctx.images.bytes()) + data));
+            _p->cacheSize->setText(str::byteSize(int64_t(_ctx.images.cachedBytes()) + data));
 #else
             _p->cacheSize->setText(str::byteSize(data));
 #endif

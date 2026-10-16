@@ -251,12 +251,59 @@ TEST("image: decodes off the UI thread, scales, masks circles, evicts by bytes")
     ImageCache::Frames f = cache.frames(gif);
     REQUIRE(f != nullptr);
     CHECK(f->size() > 1 && (*f)[0].frame.width() == 80);
-    // Eviction: a budget of one avatar keeps the newest.
+    // Eviction: with a budget of one avatar, the GIF nobody holds goes and
+    // the held avatar stays (dropping it would free nothing).
+    f.reset();
     cache.setBudget(64 * 64 * 4);
-    CHECK(cache.bytes() <= 64 * 64 * 4);
-    CHECK(b->width() == 64); // handed-out bitmaps survive eviction
+    CHECK(cache.bytes() == 64 * 64 * 4);
+    CHECK(cache.get(r) == b);
     int w = 0, h = 0;
     CHECK(cache.naturalSize(asset("avatars/mira.png"), &w, &h) && w == 256 && h == 256);
+}
+
+TEST("image: a held picture bigger than the budget stays, and doesn't push others out") {
+    ImageCache                cache(app().platform(), 1000);
+    ui::View                  view;
+    const ImageCache::Request big{asset("avatars/mira.png"), 64, 64}; // 16384 bytes
+    cache.get(big, &view);
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    ImageCache::Bitmap shown = cache.get(big); // what a view painting it holds
+    REQUIRE(shown != nullptr);
+    const ImageCache::Request small{asset("avatars/jonas.png"), 8, 8};
+    cache.get(small);
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    CHECK(cache.get(big) == shown);     // not evicted (and decoded again)
+    CHECK(cache.get(small) != nullptr); // nor pushed out by it
+    CHECK(cache.bytes() == 16384 + 256);
+    CHECK(cache.cachedBytes() == 256); // what clearing would free
+    // Once no view holds it, the next delivery evicts it.
+    shown.reset();
+    const ImageCache::Request other{asset("avatars/lena.png"), 8, 8};
+    cache.get(other);
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    CHECK(cache.bytes() == 256 + 256);
+    CHECK(cache.get(small) != nullptr);
+    CHECK(cache.get(other) != nullptr);
+}
+
+TEST("image: a picture delivered to a waiting view stays until the view asks again") {
+    ImageCache                cache(app().platform(), 1000);
+    ui::View                  waiter;
+    const ImageCache::Request big{asset("avatars/mira.png"), 64, 64}; // 16384 bytes
+    cache.get(big, &waiter);
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    // Another delivery before the waiter repaints: its picture stays.
+    const ImageCache::Request small{asset("avatars/jonas.png"), 8, 8};
+    cache.get(small);
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    CHECK(cache.get(big) != nullptr);
+    // Asked again but not held: an ordinary entry, evicted on the next one
+    // (and the small one, least recently used, with it).
+    const ImageCache::Request other{asset("avatars/lena.png"), 8, 8};
+    cache.get(other);
+    REQUIRE(until([&] { return cache.pending() == 0; }));
+    CHECK(cache.bytes() == 256);
+    CHECK(cache.get(other) != nullptr);
 }
 
 TEST("image: CachedImage shows a placeholder, then the image, without blocking") {
@@ -318,8 +365,9 @@ TEST("image: CachedImage keeps its ready picture; an eviction doesn't blank or r
     uint32_t shown = 0;
     REQUIRE(app().platform().testHooks()->readPixel(e.win->native(), 18, 18, &shown));
     CHECK(shown != ui::color(ui::C::Border));
-    e.images.setBudget(0); // everything evicted
-    CHECK(e.images.bytes() == 0);
+    const size_t held = e.images.bytes();
+    e.images.setBudget(0); // everything but what a view holds evicted
+    CHECK(held > 0 && e.images.bytes() == held);
     img->update();
     pump();
     CHECK(e.images.pending() == 0); // no decode asked for again
