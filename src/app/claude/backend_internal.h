@@ -193,6 +193,7 @@ struct Backend::Tracked {
         // subagent (subagentReplyPrompt); the copy shows the reply, in the thread.
         model::Ts   threadRoot = 0;
         std::string shown;
+        Unsent      back; // the composer's, for onUnsent should it fail
     };
     std::deque<Outgoing>       outbox;
     std::optional<Outgoing>    flying; // taken from the outbox, prompt not landed yet
@@ -210,6 +211,7 @@ struct Backend::Tracked {
     bool                       handedOver      = false;
     int64_t                    typeLiveAfterMs = 0; // not typed live before this (kTypeRetryMs)
     Done                       inFlight;            // a /btw's done(), until its root lands
+    Unsent                     inFlightBack;        // its question, for onUnsent
     // typeLive's, while it runs. Weak: an AttachInput holds itself until
     // `attach` has exited (a moment after its done ran), and its done can
     // run from inside the call that starts it (nothing to type, no terminal)

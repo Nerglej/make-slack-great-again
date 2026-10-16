@@ -543,10 +543,15 @@ struct Rig {
     std::unique_ptr<Backend>   backend;
     std::vector<model::Change> changes;
     std::vector<std::string>   errors;
+    std::vector<Unsent>        unsent; // given back (onUnsent), in order
 
     explicit Rig(Credentials creds = {}, bool connect = true) {
         backend          = std::make_unique<Backend>(store, *app, std::move(creds));
         backend->onError = [this](const std::string &m) { errors.push_back(m); };
+        backend->onUnsent =
+            [this](
+                ConvRef c, Ts thread, const std::string &text, const std::vector<std::string> &f
+            ) { unsent.push_back({c, thread, text, f}); };
         store.observe(model::Store::kAnyConv, [this](const model::Change &c) {
             changes.push_back(c);
         });
@@ -2746,6 +2751,60 @@ TEST("backend: files sent to a session go with its prompt") {
     REQUIRE(rig.wait([&] { return order.size() == 2; }));
     CHECK_STR(order[0], "first");
     CHECK_STR(order[1], "second");
+}
+
+TEST("backend: a message that never went out is given back, files and all") {
+    FakeClaudeHome    home;
+    const std::string work = tempDir("work");
+    home.trust(work);
+    // Every turn is refused (exit 1).
+    const std::string cli = writeCli(work, "#!/bin/sh\n[ \"$1\" = auth ] && exit 1\nexit 1\n");
+    writeFile(work + "/pasted.png", pngBytes(4, 4));
+
+    Rig           rig(Credentials{cli});
+    const ConvRef conv = rig.start(work);
+    REQUIRE(conv != kNoConv);
+    rig.load(conv);
+
+    // Taken (done says so), then refused: both come back as the composer
+    // gave them — the file as attached, not the cache's copy — the later one
+    // first (each goes in front of what the composer holds).
+    rig.backend->sendWithFiles(conv, "look *here*", 0, {work + "/pasted.png"}, nullptr);
+    rig.backend->send(conv, "and <@claude:role:x>", 0, nullptr);
+    REQUIRE(rig.wait([&] { return rig.unsent.size() == 2; }));
+    CHECK(rig.unsent[0].conv == conv);
+    CHECK(rig.unsent[0].thread == 0);
+    CHECK_STR(rig.unsent[0].text, "and <@claude:role:x>");
+    CHECK(rig.unsent[0].files.empty());
+    CHECK_STR(rig.unsent[1].text, "look *here*");
+    REQUIRE(rig.unsent[1].files.size() == 1);
+    CHECK_STR(rig.unsent[1].files[0], work + "/pasted.png");
+    // Their copies are gone from the chat.
+    CHECK(rig.byText(conv, "look here") == nullptr);
+    rig.pump(200);
+    CHECK(rig.unsent.size() == 2);
+
+    // A file that can't be read: the message comes back at once.
+    rig.unsent.clear();
+    rig.backend->sendWithFiles(conv, "x", 0, {work + "/gone.png"}, nullptr);
+    REQUIRE(rig.wait([&] { return rig.unsent.size() == 1; }));
+    CHECK_STR(rig.unsent[0].text, "x");
+    REQUIRE(rig.unsent[0].files.size() == 1);
+    CHECK_STR(rig.unsent[0].files[0], work + "/gone.png");
+
+    // Refused before it's taken (no such session): back too.
+    rig.unsent.clear();
+    std::optional<bool> ok;
+    rig.backend->send(kNoConv - 1, "lost?", 0, [&](bool s, const std::string &) { ok = s; });
+    REQUIRE(rig.wait([&] { return ok.has_value(); }));
+    CHECK(!*ok);
+    REQUIRE(rig.wait([&] { return rig.unsent.size() == 1; }));
+    CHECK_STR(rig.unsent[0].text, "lost?");
+    // A /btw that can't be asked yet: the question comes back as typed.
+    rig.unsent.clear();
+    rig.backend->send(conv, "/btw", 0, nullptr);
+    REQUIRE(rig.wait([&] { return rig.unsent.size() == 1; }));
+    CHECK_STR(rig.unsent[0].text, "/btw");
 }
 
 namespace {

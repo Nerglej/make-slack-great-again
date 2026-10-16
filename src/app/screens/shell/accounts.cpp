@@ -371,8 +371,18 @@ Accounts::Running *Accounts::ensure(const std::string &key) {
     };
     if (rec->service == claude::kService) {
         setClaudeDirs(pa);
-        auto backend     = std::make_unique<claude::Backend>(st, pa, claude::fromRecord(*rec));
-        backend->onError = onError;
+        auto backend      = std::make_unique<claude::Backend>(st, pa, claude::fromRecord(*rec));
+        backend->onError  = onError;
+        // A message it never sent: back in its composer, whichever workspace is shown.
+        backend->onUnsent = [this, serial](
+                                model::ConvRef                  conv,
+                                model::Ts                       thread,
+                                const std::string              &text,
+                                const std::vector<std::string> &files
+                            ) {
+            if (Running *x = bySerial(serial))
+                _shell.giveBackUnsent(x->key, x->store, conv, thread, text, files);
+        };
         backend->setZenMode(_settings.zenMode(key));
         backend->setWindowVisible(_shell.windowVisible());
         r->claude  = backend.get();

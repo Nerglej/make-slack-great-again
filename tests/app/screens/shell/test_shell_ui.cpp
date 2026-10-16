@@ -1258,6 +1258,39 @@ TEST("composer: undo send takes the message back and returns the text") {
     CHECK_FALSE(c.undoOffered());
 }
 
+TEST("composer: a message that never went out comes back, in front of what's typed") {
+    Harness           h;
+    const ConvRef     design = h.conv("C0DESIGN");
+    const ConvRef     jonas  = h.conv("D0JONAS");
+    const std::string png    = MSGA_TEST_ASSETS "/images/blog-hero.png";
+    const std::string scope  = h.sh->drafts().scope();
+    auto             &c      = h.composer();
+    // Shown: the editor gets it, what was typed since on the next line.
+    c.edit().insertText("typed since");
+    h.sh->giveBackUnsent(scope, h.store, design, 0, "lost *bold* & <@U0MIRA>", {png});
+    CHECK_STR(c.mrkdwn(), "lost *bold* & <@U0MIRA>\ntyped since");
+    CHECK(c.attachments() == std::vector<std::string>{png});
+    c.clearAttachments();
+    c.edit().clear();
+    // Moved on: it waits in front of that conversation's draft.
+    h.sh->open(jonas);
+    pump();
+    c.edit().insertText("draft");
+    h.sh->open(design);
+    pump();
+    h.sh->giveBackUnsent(scope, h.store, jonas, 0, "lost", {png});
+    CHECK(c.edit().empty());
+    h.sh->open(jonas);
+    pump();
+    CHECK_STR(c.mrkdwn(), "lost\ndraft");
+    CHECK(c.attachments() == std::vector<std::string>{png});
+    // Another workspace's: its own drafts, not the one shown.
+    c.clearAttachments();
+    c.edit().clear();
+    h.sh->giveBackUnsent(scope + "-other", h.store, jonas, 0, "elsewhere", {});
+    CHECK(c.edit().empty());
+}
+
 TEST("composer: a suggested reply is the placeholder, Tab takes it") {
     Harness h;
     h.backend.suggestFor = h.conv("D0JONAS");

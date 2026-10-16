@@ -84,6 +84,11 @@ public:
     // Adds plain `text` at the end of the draft of (scope, k), after a space
     // (a dictation that finished after its composer moved on).
     void                     appendText(const std::string &scope, Key k, std::string_view text);
+    // Puts `html` in front of the draft of (scope, k), what it held on the
+    // next line, and adds `files` to its own (a message that never went out,
+    // Composer::giveBack).
+    void
+    putBack(const std::string &scope, Key k, std::string_view html, std::vector<std::string> files);
 
 private:
     struct Draft {
@@ -184,6 +189,10 @@ public:
     // chip) deletes the message and puts the text and files back.
     bool      undoOffered() const { return _undoTs != 0; }
     bool      undoSend();
+    // A message that never went out (Backend::onUnsent), as undo send puts
+    // one back: its mrkdwn in front of what's typed since, its files
+    // attached again. While editing, the draft set aside takes the text.
+    void      giveBack(std::string_view mrkdwn, const std::vector<std::string> &files);
 
     // Avatars for the @ list (the shell's).
     void                                     setAvatars(Avatars *a) { _avatars = a; }

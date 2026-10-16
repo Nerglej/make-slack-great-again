@@ -60,6 +60,15 @@ class AttachInput;
 class AttachAnswer;
 struct WorktreeRef;
 
+// A message as the composer handed it over (its text and files as given):
+// Backend::onUnsent gets it back should it never go out.
+struct Unsent {
+    model::ConvRef           conv   = model::kNoConv;
+    model::Ts                thread = 0;
+    std::string              text;
+    std::vector<std::string> files;
+};
+
 class Backend final : public model::Backend {
 public:
     Backend(model::Store &store, plat::App &app, Credentials creds);
@@ -357,9 +366,11 @@ private:
     void    readAheadHistory(const std::string &dir);
 
     // ── backend_send.cpp ────────────────────────────────────────────────────
-    void        sendText(model::ConvRef conv, std::string text, model::Ts threadTs, Done done);
+    void
+    sendText(model::ConvRef conv, std::string text, model::Ts threadTs, Done done, Unsent back);
     void        sendNext(model::ConvRef conv);
     void        failSends(Tracked &t, const std::string &reason);
+    void        giveBack(Unsent back); // to onUnsent, if anything was in it
     bool        loginKnownGood() const;
     void        whenLoggedIn(std::function<void(bool loggedIn)> then);
     bool        typesLive(const Tracked &t) const;
@@ -379,6 +390,7 @@ private:
         std::vector<std::string> deniedTools;
         AgentTurnFn              turn;
         AgentBranchDone          started;
+        Unsent                   back; // a /btw's, should it fail to start
     };
     void startFork(Tracked &parent, const std::string &question, Done done, ForkOptions opts = {});
     void launchFork(Tracked &parent, const std::string &question, Done done, ForkOptions opts = {});
@@ -390,7 +402,10 @@ private:
     );
     // msga's copy of a message to `target` (a reply relayed to a subagent of
     // it: relayRoot, shown as `shown`), queued; it goes when Claude is free.
-    void enqueue(Tracked &target, std::string text, model::Ts relayRoot, std::string shown);
+    // `back` is what onUnsent gets should it fail.
+    void enqueue(
+        Tracked &target, std::string text, model::Ts relayRoot, std::string shown, Unsent back = {}
+    );
 
     // ── backend_branch.cpp ──────────────────────────────────────────────────
     // The branch's turn followed (Tracked::watch): its phase told as it

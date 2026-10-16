@@ -493,8 +493,17 @@ int main(int argc, char **argv) {
     else {
         fake::FakeBackend *fb = demoBackend ? &*demoBackend : nullptr;
         model::Backend    &db = fb ? static_cast<model::Backend &>(*fb) : *demoClaude;
-        if (demoClaude) // as Accounts does for a workspace
-            demoClaude->onError = [&sh](const std::string &message) { sh.showError(message); };
+        if (demoClaude) { // as Accounts does for a workspace
+            demoClaude->onError  = [&sh](const std::string &message) { sh.showError(message); };
+            demoClaude->onUnsent = [&sh, &db](
+                                       model::ConvRef                  conv,
+                                       model::Ts                       thread,
+                                       const std::string              &text,
+                                       const std::vector<std::string> &files
+                                   ) {
+                sh.giveBackUnsent(sh.drafts().scope(), db.store(), conv, thread, text, files);
+            };
+        }
         const double t0 = app->nowMs();
         sh.setSignedIn(true); // the workspace opening: the first-load state until connected
         // t0 by value: connect answers after this block has ended.

@@ -115,7 +115,18 @@ public:
         const std::string &key, model::Store &store, model::ConvRef conv, model::Ts ts
     );
     // "Session expired", when the window is hidden.
-    void               notifySessionExpired(const std::string &workspace);
+    void notifySessionExpired(const std::string &workspace);
+    // A message workspace `key` never sent (Backend::onUnsent): back in the
+    // composer showing (conv, thread) — in front of what's typed there since,
+    // its files attached again — or else in front of that draft.
+    void giveBackUnsent(
+        const std::string              &key,
+        const model::Store             &store,
+        model::ConvRef                  conv,
+        model::Ts                       thread,
+        const std::string              &text,
+        const std::vector<std::string> &files
+    );
     // The error banner: a message no call waits for (a queued Claude Code
     // message that never went out), shown for a few seconds.
     void               showError(const std::string &message);

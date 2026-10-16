@@ -1490,6 +1490,27 @@ void Shell::addWorkspace(PointF anchor) {
         onAddWorkspace(anchor);
 }
 
+void Shell::giveBackUnsent(
+    const std::string              &key,
+    const model::Store             &store,
+    ConvRef                         conv,
+    Ts                              thread,
+    const std::string              &text,
+    const std::vector<std::string> &files
+) {
+    // The composer holding that conversation's input, shown or not, takes it:
+    // its draft is what it holds.
+    if (key == _drafts.scope())
+        for (Composer *c : {_composer, threadComposer()})
+            if (c && c->conv() == conv && c->thread() == thread) {
+                c->giveBack(text, files);
+                return;
+            }
+    TextEdit edit;
+    loadMrkdwn(edit, store, text);
+    _drafts.putBack(key, {conv, thread}, edit.empty() ? std::string() : edit.html(), files);
+}
+
 // Only when the signed-out page that follows is
 // out of sight (hidden to the tray; plat cannot tell "minimized" on every
 // OS, so a minimized window is not nudged) — the app telling the user

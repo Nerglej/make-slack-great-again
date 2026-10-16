@@ -64,7 +64,8 @@ void Backend::sendWithFiles(
                            return q.conv == conv;
                        });
     if (files.empty() && !waits) {
-        sendText(conv, std::move(text), threadTs, std::move(done));
+        Unsent back{conv, threadTs, text, {}};
+        sendText(conv, std::move(text), threadTs, std::move(done), std::move(back));
         return;
     }
     _sendQueue.push_back({conv, std::move(text), threadTs, std::move(files), std::move(done)});
@@ -81,12 +82,14 @@ void Backend::sendNext(ConvRef conv) {
         Queued q = std::move(*it);
         _sendQueue.erase(it);
         if (q.files.empty()) {
-            sendText(conv, std::move(q.text), q.threadTs, std::move(q.done));
+            Unsent back{conv, q.threadTs, q.text, {}};
+            sendText(conv, std::move(q.text), q.threadTs, std::move(q.done), std::move(back));
             continue;
         }
         _copying.push_back(conv);
-        // Taken before q moves into the callback (argument order is unspecified).
-        std::vector<std::string> files = std::move(q.files);
+        // Taken before q moves into the callback (argument order is unspecified);
+        // q keeps them, for onUnsent.
+        std::vector<std::string> files = q.files;
         uploadFiles(
             std::move(files),
             [this,
@@ -99,8 +102,16 @@ void Backend::sendNext(ConvRef conv) {
                     if (q.done)
                         q.done(false, why);
                     reportError(why);
+                    giveBack({conv, q.threadTs, std::move(q.text), std::move(q.files)});
                 } else {
-                    sendText(conv, withAttachments(q.text, copies), q.threadTs, std::move(q.done));
+                    std::string text = withAttachments(q.text, copies);
+                    sendText(
+                        conv,
+                        std::move(text),
+                        q.threadTs,
+                        std::move(q.done),
+                        {conv, q.threadTs, std::move(q.text), std::move(q.files)}
+                    );
                 }
                 sendNext(conv);
             }
@@ -144,7 +155,18 @@ void Backend::reportError(const std::string &message) {
         onError(message);
 }
 
-void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
+// Posted: it's said from inside the send machinery, which the composer
+// taking it back mustn't run into.
+void Backend::giveBack(Unsent back) {
+    if (back.conv == kNoConv || (str::trim(back.text).empty() && back.files.empty()))
+        return;
+    post([this, back = std::move(back)] {
+        if (onUnsent)
+            onUnsent(back.conv, back.thread, back.text, back.files);
+    });
+}
+
+void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done, Unsent back) {
     Tracked          *t    = findRef(conv);
     // The composer's text as typed: Claude reads markdown best as written.
     std::string       text = unwrapPills(raw);
@@ -158,6 +180,7 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
     const auto        fail = [&](const std::string &why) {
         reportError(i18n::arg(tr("Couldn't send message: %1"), why));
         postDone(std::move(done), false, why);
+        giveBack(std::move(back));
     };
     if (!t) {
         reason = tr("This session no longer exists.");
@@ -187,7 +210,9 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
         else if (_creds.claudePath.empty())
             reason = readOnlyReason(*t);
         if (reason.empty()) {
-            startFork(*t, question, std::move(done));
+            ForkOptions opts;
+            opts.back = std::move(back);
+            startFork(*t, question, std::move(done), std::move(opts));
             return;
         }
     } else {
@@ -218,18 +243,22 @@ void Backend::sendText(ConvRef conv, std::string raw, Ts threadTs, Done done) {
             text += note;
         }
     }
-    enqueue(*target, std::move(text), relayRoot, std::move(shown));
+    enqueue(*target, std::move(text), relayRoot, std::move(shown), std::move(back));
     postDone(std::move(done), true);
 }
 
-void Backend::enqueue(Tracked &target, std::string text, Ts relayRoot, std::string shown) {
+void Backend::enqueue(
+    Tracked &target, std::string text, Ts relayRoot, std::string shown, Unsent back
+) {
     if (!target.announcedInit)
         sync(target); // what's there already isn't news
     // msga's copy of it, from now on: after everything shown, uniquely timed.
     Ts micros = nowMs() * 1000;
     if (const Ts last = lastShownTs(target))
         micros = std::max(micros, last + 1);
-    target.outbox.push_back({std::move(text), micros, relayRoot, std::move(shown)});
+    target.outbox.push_back(
+        {std::move(text), micros, relayRoot, std::move(shown), std::move(back)}
+    );
     // A record timed before that (clocks, the same millisecond) would
     // otherwise be tie-broken onto the copy's very ts, and its prompt never
     // seen landing.
@@ -242,6 +271,14 @@ void Backend::enqueue(Tracked &target, std::string text, Ts relayRoot, std::stri
 void Backend::failSends(Tracked &t, const std::string &reason) {
     if (!t.inFlight && !t.flying && t.outbox.empty())
         return; // nothing on its way
+    // What the composer handed over comes back to it, in the order sent.
+    std::vector<Unsent> backs;
+    if (t.inFlight)
+        backs.push_back(std::exchange(t.inFlightBack, {}));
+    if (t.flying)
+        backs.push_back(std::move(t.flying->back));
+    for (Tracked::Outgoing &o : t.outbox)
+        backs.push_back(std::move(o.back));
     if (auto done = std::exchange(t.inFlight, {})) {
         t.watch.reset(); // a branch that never started: its start says so
         done(false, reason);
@@ -254,6 +291,9 @@ void Backend::failSends(Tracked &t, const std::string &reason) {
     if (copies)
         sync(t); // msga's copies of them go
     reportError(i18n::arg(tr("Couldn't send message: %1"), reason));
+    // The last first: each goes in front of what the composer holds.
+    for (auto it = backs.rbegin(); it != backs.rend(); ++it)
+        giveBack(std::move(*it));
 }
 
 // msga's turn is over once its end is in the transcript — or, failing that,
@@ -790,6 +830,7 @@ void Backend::startFork(Tracked &parent, const std::string &question, Done done,
         const std::string error =
             !t ? std::string(tr("The session was removed from msga.")) : notLoggedInMessage();
         reportError(i18n::arg(tr("Couldn't send message: %1"), error));
+        giveBack(std::move(opts.back));
         if (opts.started)
             opts.started({}, error);
         else if (done)
@@ -819,6 +860,7 @@ void Backend::launchFork(
                 if (error.empty())
                     error = tr("The session was removed from msga.");
                 reportError(i18n::arg(tr("Couldn't send message: %1"), error));
+                giveBack(std::move(opts.back));
                 if (opts.started)
                     opts.started({}, error);
                 else if (done)
@@ -838,6 +880,7 @@ void Backend::launchFork(
             f.sendStartedMs  = nowMs();
             f.promptLanded   = false;
             f.inFlight       = done;
+            f.inFlightBack   = std::move(opts.back);
             f.deniedTools    = std::move(opts.deniedTools);
             if (opts.turn) {
                 f.watch       = std::make_unique<Tracked::TurnWatch>();

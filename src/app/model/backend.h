@@ -739,9 +739,16 @@ public:
     // queued message Claude Code never took): the shell's error banner.
     // Set by whoever puts the backend on screen.
     std::function<void(const std::string &message)> onError;
+    // A message send() took that never went out after all (Claude Code's
+    // session didn't take it): its text and files as given, for the composer
+    // of (conv, thread) to have back. Set like onError.
+    std::function<void(
+        ConvRef conv, Ts thread, const std::string &text, const std::vector<std::string> &files
+    )>
+                                             onUnsent;
     // A message reminder went off: its saved item
     // (Store::findSaved) carries the preview. Set like onError.
-    std::function<void(ConvRef conv, Ts ts)>        onReminderDue;
+    std::function<void(ConvRef conv, Ts ts)> onReminderDue;
 
 protected:
     Store &_store;

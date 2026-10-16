@@ -985,6 +985,30 @@ void Composer::finishVoiceInBackground() {
         _ctx.ai->voice().stop();
 }
 
+void DraftStash::putBack(
+    const std::string &scope, Key k, std::string_view html, std::vector<std::string> files
+) {
+    if (k.conv == model::kNoConv || (html.empty() && files.empty()))
+        return;
+    auto it = std::find_if(_drafts.begin(), _drafts.end(), [&](const Draft &d) {
+        return d.is(scope, k);
+    });
+    if (it == _drafts.end())
+        it = _drafts.insert(_drafts.end(), {scope, k, {}, {}});
+    if (it->html.empty()) {
+        it->html = html;
+    } else if (!html.empty()) {
+        TextEdit edit;
+        edit.insertHtml(html);
+        edit.insertText("\n");
+        edit.insertHtml(it->html);
+        it->html = edit.html();
+    }
+    for (std::string &f : files)
+        if (std::find(it->files.begin(), it->files.end(), f) == it->files.end())
+            it->files.push_back(std::move(f));
+}
+
 void Composer::voiceEnded(const void *owner, const std::string *text, const std::string *error) {
     auto it = std::find_if(_voiceJobs.begin(), _voiceJobs.end(), [owner](const auto &p) {
         return p.get() == owner;
@@ -1447,6 +1471,27 @@ bool Composer::undoSend() {
     compositionChanged();
     _edit->focus();
     return true;
+}
+
+void Composer::giveBack(std::string_view mrkdwn, const std::vector<std::string> &files) {
+    if (_editTs) {
+        TextEdit edit;
+        loadMrkdwn(edit, _ctx.store, mrkdwn);
+        if (!_editStash.empty()) {
+            edit.insertText("\n");
+            edit.insertHtml(_editStash);
+        }
+        _editStash = edit.empty() ? std::string() : edit.html();
+    } else {
+        const std::string typed = _edit->empty() ? std::string() : _edit->html();
+        loadMrkdwn(*_edit, _ctx.store, mrkdwn);
+        if (!typed.empty()) {
+            _edit->insertText("\n");
+            _edit->insertHtml(typed);
+        }
+    }
+    addAttachments(files);
+    refreshLook();
 }
 
 // ── Attachments ─────────────────────────────────────────────────────────────

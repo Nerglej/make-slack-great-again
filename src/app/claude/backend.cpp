@@ -1875,6 +1875,7 @@ void Backend::sync(Tracked &t) {
     if (sawOwnPrompt && t.sending && !t.promptLanded) {
         t.promptLanded   = true;
         t.promptLandedMs = nowMs();
+        t.inFlightBack   = {};
         if (auto done = std::exchange(t.inFlight, {}))
             done(true, {});
     }
