@@ -474,10 +474,46 @@ public:
             update();
         };
         switch (e.type) {
+        // The cells' links work as in the message (TableView's).
+        case ui::EventType::PointerMove:
+        case ui::EventType::PointerLeave: {
+            ui::RectF      cell = windowRect();
+            const uint32_t id   = e.type == ui::EventType::PointerMove ? linkAt(e.pos, &cell) : 0;
+            if (_ctx && _hover.move(*_ctx, _targets, id, e.windowPos, cell, [&] {
+                    return _grid.linkText(id);
+                })) {
+                _grid.setUnderlinedLink(_hover.underlined());
+                update();
+                if (window())
+                    window()->rearmTooltip();
+            }
+            return Popup::onEvent(e);
+        }
         case ui::EventType::PointerDown:
             if (!c.contains(e.pos))
                 close();
+            else if (e.button == plat::Button::Left)
+                _pressedLink = linkAt(e.pos);
             return true;
+        case ui::EventType::PointerUp: {
+            const uint32_t pressed = std::exchange(_pressedLink, 0);
+            ui::RectF      cell;
+            if (pressed && linkAt(e.pos, &cell) == pressed) {
+                const LinkTarget tg = _targets[pressed - 1];
+                ui::Window      *w  = window();
+                // Going to a channel or a message leaves the viewer; a URL
+                // or a profile card keeps it.
+                if (tg.kind != mrkdwn::Kind::Link && tg.kind != mrkdwn::Kind::User)
+                    close();
+                activateTarget(*_ctx, tg, w, e.windowPos, cell);
+            }
+            return true;
+        }
+        case ui::EventType::ContextMenu: {
+            const uint32_t id = e.raw ? linkAt(e.pos) : 0;
+            return id && window() &&
+                   showTargetMenu(*_ctx, _targets[id - 1], *window(), e.windowPos);
+        }
         case ui::EventType::Scroll:
             to(_scroll - e.dy * (e.precise ? 1.f : 40.f) / 2);
             return true;
@@ -512,7 +548,32 @@ public:
         }
     }
 
+    uint8_t cursorAt(ui::PointF local) const override {
+        return linkAt(local) ? uint8_t(plat::Cursor::Hand) : Popup::cursorAt(local);
+    }
+    std::string tooltip() const override { return _hover.tip(); }
+    ui::RectF   tooltipAnchor() const override { return _hover.anchor(); }
+    bool        tooltipImmediate() const override { return true; }
+
 private:
+    // The link under a local point (0: none, or a CSV's plain cells) and
+    // its cell (window coordinates).
+    uint32_t linkAt(ui::PointF local, ui::RectF *cell = nullptr) const {
+        const ui::RectF c = card();
+        const ui::RectF view{c.x + 12, c.y + 12, c.w - 24, c.h - 24}; // the table's clip
+        if (!_ctx || !_built || !view.contains(local))
+            return 0;
+        const float    y0 = view.y - _scroll + 8; // the grid's top
+        ui::RectF      box;
+        const uint32_t id = _grid.linkAt({local.x - view.x, local.y - y0}, &box);
+        if (!id || id > _targets.size())
+            return 0;
+        if (cell) {
+            const ui::PointF o = mapToWindow({box.x + view.x, box.y + y0});
+            *cell              = {o.x, o.y, box.w, box.h};
+        }
+        return id;
+    }
     ui::RectF card() const {
         const float w = std::min(_idealW + 24, width() - 96),
                     h = std::min(_docH + 24, height() - 96);
@@ -529,6 +590,7 @@ private:
             // across the whole table.
             std::vector<std::vector<text::AttributedText>> texts(_rows.size());
             _images.clear();
+            _targets.clear();
             for (size_t r = 0; r < _rows.size(); ++r)
                 for (size_t c = 0; c < _rows[r].size(); ++c) {
                     text::AttributedText &t = texts[r].emplace_back();
@@ -536,7 +598,7 @@ private:
                         RichOptions o;
                         o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
                         o.color = C::FormText;
-                        t       = richText(*_ctx, _rows[r][c], o, &_images);
+                        t       = richText(*_ctx, _rows[r][c], o, &_images, &_targets);
                         ui::resolveSpans(t);
                     } else {
                         t.append(
@@ -561,7 +623,10 @@ private:
     std::vector<std::vector<std::string>> _rows;
     Context                              *_ctx = nullptr;
     std::unique_ptr<EmojiFrameTimer>      _anim;
-    std::vector<std::string>              _images; // emoji box id i: [i - 1]
+    std::vector<std::string>              _images;  // emoji box id i: [i - 1]
+    std::vector<LinkTarget>               _targets; // link id i: [i - 1]
+    TargetHover                           _hover;
+    uint32_t                              _pressedLink = 0;
     TableGrid                             _grid;
     float                                 _idealW = 0, _docH = 0, _scroll = 0, _laidW = -1;
     bool                                  _built = false;

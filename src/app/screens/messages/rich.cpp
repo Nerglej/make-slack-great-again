@@ -267,96 +267,20 @@ void RichLabel::lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const {
 void RichLabel::setContent(
     text::AttributedText t, std::vector<Target> targets, std::vector<std::string> images
 ) {
-    _targets   = std::move(targets);
-    _images    = std::move(images);
-    _hoverLink = 0;
-    _tip.clear();
+    _targets = std::move(targets);
+    _images  = std::move(images);
+    _hover.clear();
     setUnderlinedLink(0);
     setRichText(std::move(t));
 }
 
 ui::RectF RichLabel::tooltipAnchor() const {
-    return {_tipAt.x, _tipAt.y - 2, 1, 4}; // the cursor point
-}
-
-void RichLabel::hoverLink(uint32_t id, ui::PointF at) {
-    _tipAt = at;
-    if (id == _hoverLink)
-        return;
-    _hoverLink       = id;
-    // Every piece of the hovered URL link
-    // underlines together (mentions, channels, message links never).
-    const Target *tg = id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
-    setUnderlinedLink(tg && tg->kind == Kind::Link ? id : 0);
-    std::string shown;
-    if (const text::AttributedText *t = richText(); t && id)
-        for (const text::Span &sp : t->spans)
-            if (sp.style.linkId == id)
-                shown.append(t->text, sp.start, sp.end - sp.start);
-    // The URL tooltip: links and message links (their permalink), unless the
-    // text already is the URL.
-    std::string url;
-    if (tg && tg->kind == Kind::Link) {
-        url = net::percentDecode(tg->data);
-    } else if (tg && tg->kind == Kind::MessageLink) {
-        const mrkdwn::MessageRef ref = mrkdwn::refFromToken(tg->data);
-        const model::ConvRef     c   = _ctx.store().findConversation(ref.conv);
-        if (c != model::kNoConv && !ref.host.empty()) // the app's own links have no permalink
-            url = _ctx.store().permalink(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
-    }
-    _tip = url == shown ? std::string() : url;
-    if (window())
-        window()->rearmTooltip();
+    return _hover.anchor();
 }
 
 void RichLabel::activate(uint32_t id) {
-    if (id == 0 || id > _targets.size())
-        return;
-    const Target &tg = _targets[id - 1];
-    switch (tg.kind) {
-    case Kind::Link:
-        openLink(_ctx, tg.data, window(), _tipAt);
-        break;
-    case Kind::MessageLink: {
-        const mrkdwn::MessageRef ref    = mrkdwn::refFromToken(tg.data);
-        const model::ConvRef     c      = _ctx.store().findConversation(ref.conv);
-        const model::Ts          thread = model::parseTs(ref.threadTs);
-        if (!ref.host.empty()) {
-            // Only this workspace's conversations can be jumped to; a
-            // link into another team (or one we can't see) is still a link.
-            if (c == model::kNoConv) {
-                if (_ctx.openUrl)
-                    _ctx.openUrl(mrkdwn::messagePermalink(ref));
-            } else if (_ctx.openMessage) {
-                _ctx.openMessage(c, model::parseTs(ref.ts), thread);
-            }
-            break;
-        }
-        if (c == model::kNoConv)
-            break;
-        if (thread && _ctx.openThread)
-            _ctx.openThread(c, thread);
-        else if (_ctx.openConversation)
-            _ctx.openConversation(c);
-        break;
-    }
-    case Kind::User: { // a click opens the profile card at once
-        const model::UserRef u = _ctx.store().findUser(tg.data);
-        if (u != model::kNoUser && _ctx.profileHover)
-            _ctx.profileHover(u, windowRect(), 2);
-        else if (u != model::kNoUser && _ctx.openProfile)
-            _ctx.openProfile(u);
-        break;
-    }
-    case Kind::Channel: {
-        const model::ConvRef c = _ctx.store().findConversation(tg.data);
-        if (c != model::kNoConv && _ctx.openConversation)
-            _ctx.openConversation(c);
-        break;
-    }
-    default:
-        break;
-    }
+    if (id && id <= _targets.size())
+        activateTarget(_ctx, _targets[id - 1], window(), _hover.at(), windowRect());
 }
 
 const RichLabel::Target *RichLabel::targetAt(ui::PointF local) const {
@@ -369,47 +293,147 @@ bool RichLabel::onEvent(ui::Event &e) {
     case ui::EventType::PointerMove:
     case ui::EventType::PointerLeave: {
         // One hit test per move; the user looked up when the link changes.
-        const uint32_t id   = e.type == ui::EventType::PointerMove ? linkAt(e.pos) : 0;
-        const bool     same = id && id == _hoverLink;
-        hoverLink(id, e.windowPos);
-        // Hovering a mention or a name: the profile card after a delay.
-        const Target  *tg = id && id <= _targets.size() ? &_targets[id - 1] : nullptr;
-        model::UserRef u  = same                           ? _hoverUser
-                            : tg && tg->kind == Kind::User ? _ctx.store().findUser(tg->data)
-                                                           : model::kNoUser;
-        if (u != _hoverUser && _ctx.profileHover) {
-            if (_hoverUser != model::kNoUser)
-                _ctx.profileHover(_hoverUser, windowRect(), 0);
-            if (u != model::kNoUser)
-                _ctx.profileHover(u, windowRect(), 1);
+        const uint32_t id    = e.type == ui::EventType::PointerMove ? linkAt(e.pos) : 0;
+        const auto     shown = [&] {
+            std::string s;
+            if (const text::AttributedText *t = richText())
+                for (const text::Span &sp : t->spans)
+                    if (sp.style.linkId == id)
+                        s.append(t->text, sp.start, sp.end - sp.start);
+            return s;
+        };
+        if (_hover.move(_ctx, _targets, id, e.windowPos, windowRect(), shown)) {
+            setUnderlinedLink(_hover.underlined());
+            if (window())
+                window()->rearmTooltip();
         }
-        _hoverUser = u;
         return ui::Label::onEvent(e);
     }
     case ui::EventType::ContextMenu: {
         // The link menu, for links only (mentions, channels: nothing), and
         // only from a right click (raw set) — no Menu key or long press.
         const Target *tg = e.raw ? targetAt(e.pos) : nullptr;
-        if (!tg || !window())
-            return false;
-        std::string url;
-        if (tg->kind == Kind::Link) {
-            url = tg->data;
-        } else if (tg->kind == Kind::MessageLink) { // its permalink
-            const mrkdwn::MessageRef ref = mrkdwn::refFromToken(tg->data);
-            const model::ConvRef     c   = _ctx.store().findConversation(ref.conv);
-            if (c != model::kNoConv && !ref.host.empty())
-                url =
-                    _ctx.store().permalink(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
-        }
-        if (url.empty())
-            return false;
-        showLinkMenu(_ctx, *window(), e.windowPos, url);
-        return true;
+        return tg && window() && showTargetMenu(_ctx, *tg, *window(), e.windowPos);
     }
     default:
         return ui::Label::onEvent(e);
     }
+}
+
+// ── Link targets ────────────────────────────────────────────────────────────
+
+namespace {
+
+// A message link's permalink ("" for the app's own links, or a
+// conversation this workspace can't see).
+std::string messageLinkUrl(Context &ctx, const std::string &token) {
+    const mrkdwn::MessageRef ref = mrkdwn::refFromToken(token);
+    const model::ConvRef     c   = ctx.store().findConversation(ref.conv);
+    if (c == model::kNoConv || ref.host.empty())
+        return {};
+    return ctx.store().permalink(c, model::parseTs(ref.ts), model::parseTs(ref.threadTs));
+}
+
+} // namespace
+
+bool TargetHover::move(
+    Context                            &ctx,
+    const std::vector<LinkTarget>      &targets,
+    uint32_t                            id,
+    ui::PointF                          at,
+    ui::RectF                           card,
+    const std::function<std::string()> &shown
+) {
+    _at                       = at;
+    const bool           same = id && id == _link;
+    const LinkTarget    *tg   = id && id <= targets.size() ? &targets[id - 1] : nullptr;
+    // Hovering a mention or a name: the profile card after a delay.
+    const model::UserRef u    = same                           ? _user
+                                : tg && tg->kind == Kind::User ? ctx.store().findUser(tg->data)
+                                                               : model::kNoUser;
+    if (u != _user && ctx.profileHover) {
+        if (_user != model::kNoUser)
+            ctx.profileHover(_user, _card, 0);
+        if (u != model::kNoUser)
+            ctx.profileHover(u, card, 1);
+    }
+    if (u != _user)
+        _card = card;
+    _user = u;
+    if (id == _link)
+        return false;
+    _link       = id;
+    // Every piece of the hovered URL link
+    // underlines together (mentions, channels, message links never).
+    _underlined = tg && tg->kind == Kind::Link ? id : 0;
+    // The URL tooltip: links and message links (their permalink), unless the
+    // text already is the URL.
+    std::string url;
+    if (tg && tg->kind == Kind::Link)
+        url = net::percentDecode(tg->data);
+    else if (tg && tg->kind == Kind::MessageLink)
+        url = messageLinkUrl(ctx, tg->data);
+    _tip = url.empty() || url == shown() ? std::string() : url;
+    return true;
+}
+
+void activateTarget(
+    Context &ctx, const LinkTarget &tg, ui::Window *w, ui::PointF at, ui::RectF card
+) {
+    switch (tg.kind) {
+    case Kind::Link:
+        openLink(ctx, tg.data, w, at);
+        break;
+    case Kind::MessageLink: {
+        const mrkdwn::MessageRef ref    = mrkdwn::refFromToken(tg.data);
+        const model::ConvRef     c      = ctx.store().findConversation(ref.conv);
+        const model::Ts          thread = model::parseTs(ref.threadTs);
+        if (!ref.host.empty()) {
+            // Only this workspace's conversations can be jumped to; a
+            // link into another team (or one we can't see) is still a link.
+            if (c == model::kNoConv) {
+                if (ctx.openUrl)
+                    ctx.openUrl(mrkdwn::messagePermalink(ref));
+            } else if (ctx.openMessage) {
+                ctx.openMessage(c, model::parseTs(ref.ts), thread);
+            }
+            break;
+        }
+        if (c == model::kNoConv)
+            break;
+        if (thread && ctx.openThread)
+            ctx.openThread(c, thread);
+        else if (ctx.openConversation)
+            ctx.openConversation(c);
+        break;
+    }
+    case Kind::User: { // a click opens the profile card at once
+        const model::UserRef u = ctx.store().findUser(tg.data);
+        if (u != model::kNoUser && ctx.profileHover)
+            ctx.profileHover(u, card, 2);
+        else if (u != model::kNoUser && ctx.openProfile)
+            ctx.openProfile(u);
+        break;
+    }
+    case Kind::Channel: {
+        const model::ConvRef c = ctx.store().findConversation(tg.data);
+        if (c != model::kNoConv && ctx.openConversation)
+            ctx.openConversation(c);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+bool showTargetMenu(Context &ctx, const LinkTarget &tg, ui::Window &w, ui::PointF windowPos) {
+    const std::string url = tg.kind == Kind::Link          ? tg.data
+                            : tg.kind == Kind::MessageLink ? messageLinkUrl(ctx, tg.data)
+                                                           : std::string();
+    if (url.empty())
+        return false;
+    showLinkMenu(ctx, w, windowPos, url);
+    return true;
 }
 
 void RichLabel::paint(gfx::Painter &p) {
@@ -652,7 +676,11 @@ uint32_t buildBody(
 }
 
 text::AttributedText richText(
-    Context &ctx, std::string_view text, const RichOptions &o, std::vector<std::string> *images
+    Context                  &ctx,
+    std::string_view          text,
+    const RichOptions        &o,
+    std::vector<std::string> *images,
+    std::vector<LinkTarget>  *targets
 ) {
     const mrkdwn::Rich r = mrkdwn::parse(text);
     Builder            b{ctx, r, ui::font(o.font), {}, {}, {}};
@@ -660,10 +688,15 @@ text::AttributedText richText(
     b.base.size *= o.scale;
     if (images)
         b.images = std::move(*images); // box ids continue after the ones given
+    if (targets)
+        b.targets = std::move(*targets); // link ids likewise
     text::AttributedText t;
     b.append(t, 0, uint32_t(r.text.size()));
-    for (text::Span &sp : t.spans)
-        sp.style.linkId = 0; // no targets kept
+    if (targets)
+        *targets = std::move(b.targets);
+    else
+        for (text::Span &sp : t.spans)
+            sp.style.linkId = 0; // no targets kept
     if (images)
         *images = std::move(b.images);
     return t;

@@ -3069,6 +3069,63 @@ TEST("blocks: a table shapes its cells once; a narrower column shapes only what 
     CHECK(text::layoutBuilds() - shaped == wrapped); // back to the natural ones
 }
 
+TEST("blocks: a link in a table cell is a link, inline and in the full table") {
+    Env e(false);
+    addConv(e.store, {});
+    std::vector<std::string> urls;
+    e.ctx.openUrl = [&](const std::string &u) { urls.push_back(u); };
+    std::vector<std::vector<std::string>> cells{{"*Name*", "Existing uses"}};
+    for (int i = 0; i < 12; ++i)
+        cells.push_back({"Cove", "A framework (<https://example.com/paper|paper>). Obscure"});
+    auto *tv = e.win->root().add<TableView>(e.ctx, cells);
+    pump(3);
+    // Where the hand is over a view: the link's text, nowhere else.
+    auto handAt = [](const ui::View &v, ui::RectF in) {
+        for (float y = in.y + 1; y < in.y + in.h; y += 2)
+            for (float x = in.x + 1; x < in.x + in.w; x += 2)
+                if (v.cursorAt({x, y}) == uint8_t(plat::Cursor::Hand))
+                    return ui::PointF{x, y};
+        return ui::PointF{-1, -1};
+    };
+    // The first data row only: the pill shows at the bottom on hover.
+    const ui::PointF p = handAt(*tv, {0, 0, tv->width(), 60});
+    REQUIRE(p.x >= 0);
+    CHECK(tv->cursorAt({14, 40}) != uint8_t(plat::Cursor::Hand)); // "Cove"
+    // Hover: the URL tooltip; a click opens it.
+    ui::Event move{ui::EventType::PointerMove, p, tv->mapToWindow(p)};
+    tv->onEvent(move);
+    CHECK_STR(tv->tooltip(), "https://example.com/paper");
+    ui::Event down{ui::EventType::PointerDown, p, move.windowPos};
+    CHECK(tv->onEvent(down));
+    ui::Event up{ui::EventType::PointerUp, p, move.windowPos};
+    tv->onEvent(up);
+    REQUIRE(urls.size() == 1);
+    CHECK_STR(urls[0], "https://example.com/paper");
+    // Off the link: no tooltip, a press there is the list's (selection).
+    ui::Event off{ui::EventType::PointerMove, {14, 40}, tv->mapToWindow({14, 40})};
+    tv->onEvent(off);
+    CHECK(tv->tooltip().empty());
+    ui::Event plain{ui::EventType::PointerDown, {14, 40}, off.windowPos};
+    CHECK_FALSE(tv->onEvent(plain));
+    // The full table's cells link as well.
+    tv->onOpenFull();
+    pump(3);
+    ui::Popup *viewer = e.win->topPopup();
+    REQUIRE(viewer != nullptr);
+    const ui::PointF q = handAt(*viewer, {0, 0, viewer->width(), viewer->height()});
+    REQUIRE(q.x >= 0);
+    urls.clear();
+    ui::Event vdown{ui::EventType::PointerDown, q, viewer->mapToWindow(q)};
+    viewer->onEvent(vdown);
+    ui::Event vup{ui::EventType::PointerUp, q, vdown.windowPos};
+    viewer->onEvent(vup);
+    REQUIRE(urls.size() == 1);
+    CHECK_STR(urls[0], "https://example.com/paper");
+    CHECK(e.win->topPopup() == viewer); // a URL keeps the viewer open
+    viewer->close();
+    pump(2);
+}
+
 TEST("blocks: the full table is rich; a canvas card names mentions and draws emoji") {
     Env e(false);
     addConv(e.store, {});

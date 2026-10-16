@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace screens {
 
@@ -20,11 +21,13 @@ constexpr float kPillH = 28, kPillIconPad = 40;
 
 // The rows an inline table shows, rich (mentions, links, emoji) as the body
 // draws them: the header bold, the last row dimmed when rows were cut ("more
-// below"). Custom emoji boxes are numbered across the table.
+// below"). Custom emoji boxes and, with `targets`, links are numbered across
+// the table.
 std::vector<std::vector<text::AttributedText>> inlineCells(
     Context                                     &ctx,
     const std::vector<std::vector<std::string>> &cells,
-    std::vector<std::string>                    *images
+    std::vector<std::string>                    *images,
+    std::vector<LinkTarget>                     *targets = nullptr
 ) {
     const size_t total = cells.size();
     const size_t shown = std::min(total, size_t(kMaxInlineTableRows));
@@ -34,7 +37,7 @@ std::vector<std::vector<text::AttributedText>> inlineCells(
             RichOptions o;
             o.font  = r == 0 ? ui::Font::BodyBold : ui::Font::Body;
             o.color = shown < total && r + 1 == shown ? C::TextFaint : C::Text;
-            texts[r].push_back(richText(ctx, cells[r][c], o, images));
+            texts[r].push_back(richText(ctx, cells[r][c], o, images, targets));
         }
     return texts;
 }
@@ -76,6 +79,9 @@ void TableGrid::setCells(std::vector<std::vector<text::AttributedText>> cells, f
     _naturalW = 0;
     for (float v : _natW)
         _naturalW += v;
+    for (auto &row : _natural)
+        for (auto &l : row)
+            l->setUnderlinedLink(_underlined);
     // Offsets as tableText joins the cells; a row's last entry is its end.
     uint32_t off = 0;
     _base.assign(_texts.size(), {});
@@ -109,21 +115,67 @@ size_t TableGrid::rowIndexAt(float y) const {
     return _rowH.size() - 1;
 }
 
+float TableGrid::rowTop(size_t r) const {
+    float top = 0;
+    for (size_t i = 0; i < r; ++i)
+        top += _rowH[i];
+    return top;
+}
+
+size_t TableGrid::colAt(size_t r, float x, float *left) const {
+    size_t c = 0;
+    *left    = 0;
+    while (c + 1 < _texts[r].size() && x >= *left + _colW[c])
+        *left += _colW[c++];
+    return c;
+}
+
 uint32_t TableGrid::offsetAt(ui::PointF p) const {
     if (_rowH.empty())
         return 0;
-    const size_t r   = rowIndexAt(p.y);
-    float        top = 0;
-    for (size_t i = 0; i < r; ++i)
-        top += _rowH[i];
+    const size_t r = rowIndexAt(p.y);
     if (_texts[r].empty())
         return _base[r].back();
-    // The column under x (past a short row's end: its last cell).
-    size_t c = 0;
-    float  x = 0;
-    while (c + 1 < _texts[r].size() && p.x >= x + _colW[c])
-        x += _colW[c++];
+    float        x   = 0;
+    const size_t c   = colAt(r, p.x, &x);
+    const float  top = rowTop(r);
     return _base[r][c] + cell(r, c).hitTest({p.x - x - kPadX, p.y - top - kPadY}).offset;
+}
+
+uint32_t TableGrid::linkAt(ui::PointF p, ui::RectF *cellBox) const {
+    if (_rowH.empty() || p.y < 0 || p.y >= _tableH || p.x < 0 || p.x >= _tableW)
+        return 0;
+    const size_t r = rowIndexAt(p.y);
+    if (_texts[r].empty())
+        return 0;
+    float                 x   = 0;
+    const size_t          c   = colAt(r, p.x, &x);
+    const float           top = rowTop(r);
+    const text::HitResult h   = cell(r, c).hitTest({p.x - x - kPadX, p.y - top - kPadY});
+    if (!h.inside || !h.linkId)
+        return 0;
+    if (cellBox)
+        *cellBox = {x, top, _colW[c], _rowH[r]};
+    return h.linkId;
+}
+
+std::string TableGrid::linkText(uint32_t id) const {
+    std::string s;
+    for (const auto &row : _texts)
+        for (const text::AttributedText &t : row)
+            for (const text::Span &sp : t.spans)
+                if (sp.style.linkId == id)
+                    s.append(t.text, sp.start, sp.end - sp.start);
+    return s;
+}
+
+void TableGrid::setUnderlinedLink(uint32_t id) {
+    _underlined = id;
+    for (auto *rows : {&_natural, &_wrapped})
+        for (auto &row : *rows)
+            for (auto &l : row)
+                if (l)
+                    l->setUnderlinedLink(id);
 }
 
 void TableGrid::wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const {
@@ -172,7 +224,8 @@ void TableGrid::fit(float width, float minColW, float emptyRowH) {
                 text::LayoutOptions o;
                 o.maxWidth     = maxW;
                 _wrapped[r][c] = text::Layout::build(_texts[r][c], o, _scale);
-                l              = _wrapped[r][c].get();
+                _wrapped[r][c]->setUnderlinedLink(_underlined);
+                l = _wrapped[r][c].get();
             }
             h = std::max(h, l->height());
         }
@@ -243,7 +296,7 @@ TableView::TableView(Context &ctx, std::vector<std::vector<std::string>> cells)
     setRole(ui::Role::Group);
     _anim = std::make_unique<EmojiFrameTimer>(ctx, *this);
     // Made once: their text's length (tableText's) now, shaped on the first build().
-    _made = inlineCells(ctx, _cells, &_images);
+    _made = inlineCells(ctx, _cells, &_images, &_targets);
     for (size_t r = 0; r < _made.size(); ++r) {
         _textSize += r > 0; // '\n'
         for (size_t c = 0; c < _made[r].size(); ++c)
@@ -279,7 +332,8 @@ void TableView::build(float width) {
         _made.clear();
         if (texts.empty()) {
             _images.clear();
-            texts = inlineCells(_ctx, _cells, &_images);
+            _targets.clear();
+            texts = inlineCells(_ctx, _cells, &_images, &_targets);
         }
         for (auto &row : texts)
             for (text::AttributedText &t : row)
@@ -377,35 +431,71 @@ void TableView::paintOver(gfx::Painter &p) {
     );
 }
 
+uint32_t TableView::linkAt(ui::PointF local, ui::RectF *cell) const {
+    if (pillRect().contains(local))
+        return 0;
+    ui::RectF      box;
+    const uint32_t id = _grid.linkAt({local.x, local.y - kMarginV}, &box);
+    if (id && cell) {
+        const ui::PointF o = mapToWindow({box.x, box.y + kMarginV});
+        *cell              = {o.x, o.y, box.w, box.h};
+    }
+    return id;
+}
+
+// Links, mentions and channels in the cells work as in message text
+// (RichLabel): hover, click, the link menu.
 bool TableView::onEvent(ui::Event &e) {
     switch (e.type) {
-    case ui::EventType::PointerMove: {
-        const bool over = pillRect().contains(e.pos);
-        if (over != _overPill) {
+    case ui::EventType::PointerMove:
+    case ui::EventType::PointerLeave: {
+        const bool move = e.type == ui::EventType::PointerMove;
+        const bool over = move && pillRect().contains(e.pos);
+        if (over != _overPill || !move) {
             _overPill = over;
             update();
         }
+        ui::RectF      cell = windowRect();
+        const uint32_t id   = move ? linkAt(e.pos, &cell) : 0;
+        if (_hover.move(_ctx, _targets, id, e.windowPos, cell, [&] {
+                return _grid.linkText(id);
+            })) {
+            _grid.setUnderlinedLink(_hover.underlined());
+            update();
+            if (window())
+                window()->rearmTooltip();
+        }
         return false;
     }
-    case ui::EventType::PointerLeave:
-        _overPill = false;
-        update();
-        return false;
     case ui::EventType::PointerDown:
-        return e.button == plat::Button::Left && pillRect().contains(e.pos);
-    case ui::EventType::PointerUp:
-        if (pillRect().contains(e.pos) && onOpenFull) {
+        if (e.button != plat::Button::Left)
+            return false;
+        _pressedLink = linkAt(e.pos);
+        return _pressedLink || pillRect().contains(e.pos);
+    case ui::EventType::PointerUp: {
+        const uint32_t pressed = std::exchange(_pressedLink, 0);
+        ui::RectF      cell;
+        if (pressed && linkAt(e.pos, &cell) == pressed && pressed <= _targets.size()) {
+            activateTarget(_ctx, _targets[pressed - 1], window(), e.windowPos, cell);
+        } else if (!pressed && pillRect().contains(e.pos) && onOpenFull) {
             auto fn = onOpenFull;
             fn();
         }
         return true;
+    }
+    case ui::EventType::ContextMenu: {
+        // Only from a right click (raw set), as RichLabel's.
+        const uint32_t id = e.raw ? linkAt(e.pos) : 0;
+        return id && id <= _targets.size() && window() &&
+               showTargetMenu(_ctx, _targets[id - 1], *window(), e.windowPos);
+    }
     default:
         return false;
     }
 }
 
 uint8_t TableView::cursorAt(ui::PointF local) const {
-    if (pillRect().contains(local))
+    if (pillRect().contains(local) || linkAt(local))
         return uint8_t(plat::Cursor::Hand);
     if (_selectable)
         return uint8_t(plat::Cursor::IBeam);

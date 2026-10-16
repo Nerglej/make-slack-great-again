@@ -65,18 +65,30 @@ public:
     void     wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const;
     void     rowAt(float y, uint32_t *from, uint32_t *to) const;
 
+    // The cells' links (richText's link ids, numbered across the table): the
+    // one under a point (0: none; after fit; y from the table's top) with
+    // its cell's box, a link's text, and the one painted underlined (the
+    // hovered URL link; 0: none).
+    uint32_t    linkAt(ui::PointF p, ui::RectF *cellBox) const;
+    std::string linkText(uint32_t id) const;
+    void        setUnderlinedLink(uint32_t id);
+
 private:
     const text::Layout &cell(size_t r, size_t c) const {
         return _wrapped[r][c] ? *_wrapped[r][c] : *_natural[r][c];
     }
     size_t rowIndexAt(float y) const;
+    float  rowTop(size_t r) const;
+    // The column under x in row r (past a short row's end: its last cell),
+    // and its left edge.
+    size_t colAt(size_t r, float x, float *left) const;
 
     std::vector<std::vector<text::AttributedText>>          _texts;
     std::vector<std::vector<std::unique_ptr<text::Layout>>> _natural, _wrapped;
     std::vector<float>                                      _colW, _natW, _rowH;
     std::vector<std::vector<uint32_t>>                      _base; // each cell's text offset
     float    _scale = 0, _naturalW = 0, _tableW = 0, _tableH = 0;
-    uint32_t _textSize = 0, _selFrom = 0, _selTo = 0;
+    uint32_t _textSize = 0, _selFrom = 0, _selTo = 0, _underlined = 0;
     bool     _squeezed = false;
 };
 
@@ -112,14 +124,23 @@ public:
     void        styleChanged() override;
     // The header cells, " | " between them.
     std::string accessibleName() const override;
+    // Link hover: the URL above the pointer, at once (RichLabel's).
+    std::string tooltip() const override { return _hover.tip(); }
+    ui::RectF   tooltipAnchor() const override { return _hover.anchor(); }
+    bool        tooltipImmediate() const override { return true; }
 
 private:
-    void build(float width);
+    void     build(float width);
+    // The link under a local point (0: none) and its cell (window coordinates).
+    uint32_t linkAt(ui::PointF local, ui::RectF *cell = nullptr) const;
 
     Context                                       &_ctx;
     std::vector<std::vector<std::string>>          _cells;
     TableGrid                                      _grid;
-    std::vector<std::string>                       _images; // emoji box id i: [i - 1]
+    std::vector<std::string>                       _images;  // emoji box id i: [i - 1]
+    std::vector<LinkTarget>                        _targets; // link id i: [i - 1]
+    TargetHover                                    _hover;
+    uint32_t                                       _pressedLink = 0;
     // The cells as the constructor made them, for the first build().
     std::vector<std::vector<text::AttributedText>> _made;
     std::unique_ptr<EmojiFrameTimer>               _anim;

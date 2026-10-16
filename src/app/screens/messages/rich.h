@@ -9,6 +9,7 @@
 #include "app/screens/messages/context_fwd.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -40,14 +41,64 @@ protected:
     ~SelectableText() = default;
 };
 
+// What a link id in message text points at.
+struct LinkTarget {
+    mrkdwn::Kind kind;
+    std::string  data; // URL, user id, conversation id, …
+};
+
+// The link a view's pointer is over (RichLabel's, a table's): its URL
+// tooltip, and the profile card after a delay over a mention.
+class TargetHover {
+public:
+    // The pointer moved to `windowPos`, over link id `id` of `targets` (0:
+    // none). `shown` gives the link's text, asked when the link changes (no
+    // tooltip when it already is the URL); `card` is where a profile card
+    // anchors (window coordinates). True when the link changed: the view
+    // underlines underlined() and rearms its tooltip.
+    bool move(
+        Context                            &ctx,
+        const std::vector<LinkTarget>      &targets,
+        uint32_t                            id,
+        ui::PointF                          windowPos,
+        ui::RectF                           card,
+        const std::function<std::string()> &shown
+    );
+    // New content: no link hovered (a profile card shown stays).
+    void clear() {
+        _link = _underlined = 0;
+        _tip.clear();
+    }
+    // The hovered link when it is a URL link (mentions, channels and message
+    // links never underline); 0: none.
+    uint32_t           underlined() const { return _underlined; }
+    const std::string &tip() const { return _tip; }
+    ui::PointF         at() const { return _at; }                          // the pointer
+    ui::RectF          anchor() const { return {_at.x, _at.y - 2, 1, 4}; } // the tooltip's
+
+private:
+    std::string    _tip;
+    ui::PointF     _at;
+    ui::RectF      _card;
+    uint32_t       _link = 0, _underlined = 0;
+    model::UserRef _user = model::kNoUser;
+};
+
+// A click on a link target: a URL opens (openLink; its toast at `at`), a
+// message link jumps to the message, a channel opens, a mention shows the
+// profile card at `card` (window coordinates) at once.
+void activateTarget(
+    Context &ctx, const LinkTarget &tg, ui::Window *w, ui::PointF at, ui::RectF card
+);
+// A right click on a link target: the link menu (a URL link's, a message
+// link's permalink). False: none for this target.
+bool showTargetMenu(Context &ctx, const LinkTarget &tg, ui::Window &w, ui::PointF windowPos);
+
 // A Label that knows what its links point at and paints custom emoji boxes.
 // Clicks go through the Context (openUrl / openConversation / openProfile).
 class RichLabel : public ui::Label, public SelectableText {
 public:
-    struct Target {
-        mrkdwn::Kind kind;
-        std::string  data; // URL, user id, conversation id, …
-    };
+    using Target = LinkTarget;
     RichLabel(Context &ctx, ui::View *imageWaiter);
     ~RichLabel() override;
 
@@ -78,21 +129,16 @@ public:
     void        windowChanged() override;
     // Link hover: the URL above the pointer, at once (none when the
     // link's text is the URL itself).
-    std::string tooltip() const override { return _tip; }
+    std::string tooltip() const override { return _hover.tip(); }
     ui::RectF   tooltipAnchor() const override;
     bool        tooltipImmediate() const override { return true; }
 
 private:
-    void hoverLink(uint32_t linkId, ui::PointF windowPos);
-
     Context                 &_ctx;
     ui::View                *_waiter; // repainted when an emoji image lands
     std::vector<Target>      _targets;
     std::vector<std::string> _images;
-    std::string              _tip;
-    ui::PointF               _tipAt;
-    uint32_t                 _hoverLink  = 0;
-    model::UserRef           _hoverUser  = model::kNoUser;
+    TargetHover              _hover;
     plat::TimerId            _animTimer  = 0; // the next frame of an animated emoji
     bool                     _selectable = false;
 };
@@ -124,14 +170,17 @@ uint32_t buildBody(
     ui::View          *imageWaiter
 );
 
-// The whole of a mrkdwn string as one styled run of text (no paragraphs or
-// targets): table cells. With `images`, custom emoji are inline boxes whose
-// id i is (*images)[i - 1] (appended to what it holds; paintEmojiBoxes).
+// The whole of a mrkdwn string as one styled run of text (no paragraphs):
+// table cells. With `images`, custom emoji are inline boxes whose id i is
+// (*images)[i - 1] (appended to what it holds; paintEmojiBoxes). With
+// `targets`, links, mentions and channels keep their link ids, id i being
+// (*targets)[i - 1] (appended likewise); without, they are plain text.
 text::AttributedText richText(
     Context                  &ctx,
     std::string_view          mrkdwnText,
     const RichOptions        &o,
-    std::vector<std::string> *images = nullptr
+    std::vector<std::string> *images  = nullptr,
+    std::vector<LinkTarget>  *targets = nullptr
 );
 
 // Draws the custom emoji boxes of a laid-out text at `origin` (box id i is
