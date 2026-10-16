@@ -67,14 +67,15 @@ void wrapMark(std::string &out, std::string_view s, char mark) {
 void richInline(std::string &out, const Value &el) {
     const std::string_view type = el["type"].str();
     if (type == "text") {
-        const std::string_view t     = el["text"].str();
-        const Value            style = el["style"];
+        // Block text is raw; the mrkdwn it becomes escapes & < > like `text`.
+        const std::string t     = mrkdwn::escapeEntities(el["text"].str());
+        const Value       style = el["style"];
         // One mark, the first that matches in this precedence.
-        const char             mark  = style["code"].boolean()     ? '`'
-                                       : style["bold"].boolean()   ? '*'
-                                       : style["italic"].boolean() ? '_'
-                                       : style["strike"].boolean() ? '~'
-                                                                   : 0;
+        const char        mark  = style["code"].boolean()     ? '`'
+                                  : style["bold"].boolean()   ? '*'
+                                  : style["italic"].boolean() ? '_'
+                                  : style["strike"].boolean() ? '~'
+                                                              : 0;
         if (mark)
             wrapMark(out, t, mark);
         else
@@ -90,7 +91,8 @@ void richInline(std::string &out, const Value &el) {
         if (const int64_t tone = el["skin_tone"].integer(); tone >= 2 && tone <= 6)
             out.append(str::concat({":skin-tone-", str::number(tone), ":"}));
     } else if (type == "link") {
-        const std::string_view url = el["url"].str(), label = el["text"].str();
+        const std::string_view url   = el["url"].str();
+        const std::string      label = mrkdwn::escapeEntities(el["text"].str());
         out.append(
             label.empty() || label == url ? str::concat({"<", url, ">"})
                                           : str::concat({"<", url, "|", label, ">"})
@@ -708,11 +710,13 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
     // they produce nothing. rich_text blocks mirror `text`, so the
     // raw text is kept unless some block says more (or the text is empty).
     const Value blocks = o["blocks"];
-    bool        richer = false;
+    bool        richer = false, rich = false;
     for (const Value b : blocks) {
         richer = richer || !mirrorsText(b["type"].str());
-        if (b["type"].str() == "rich_text")
+        if (b["type"].str() == "rich_text") {
+            rich = true;
             noteLinkedAuthors(b, store);
+        }
     }
     std::vector<model::Block> structure = toBlocks(blocks);
     m.text                              = owned(o["text"]);
@@ -720,6 +724,13 @@ model::Message toMessage(const json::Value &in, model::Store &store) {
         std::string fromBlocks =
             structure.empty() ? blocksToMrkdwn(blocks) : structureMrkdwn(structure);
         if (!fromBlocks.empty())
+            m.text = std::move(fromBlocks);
+    } else if (rich) {
+        // Some clients send a flattened `text` (line breaks turned into
+        // spaces, list items run together); the blocks keep the lines.
+        std::string fromBlocks = blocksToMrkdwn(blocks);
+        if (std::count(fromBlocks.begin(), fromBlocks.end(), '\n') >
+            std::count(m.text.begin(), m.text.end(), '\n'))
             m.text = std::move(fromBlocks);
     }
 

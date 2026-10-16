@@ -1005,6 +1005,23 @@ TEST("slack read: mappers — blocks, rich text, message_changed, conversations"
         nullptr
     ));
     CHECK_STR(slack::mapjson::toMessage(d.root(), store).text, "*raw*");
+    // A flattened text (line breaks gone) gives way to the blocks' lines,
+    // their raw & < > escaped like text.
+    REQUIRE(d.parse(
+        std::string_view(
+            R"({"ts": "3.0", "text": "a &amp; b.  did:  • x -&gt; y • z  end", "blocks": [
+        {"type": "rich_text", "elements": [
+          {"type": "rich_text_section", "elements": [{"type": "text", "text": "a & b.\n\ndid:"}]},
+          {"type": "rich_text_list", "style": "bullet", "indent": 0, "elements": [
+            {"type": "rich_text_section", "elements": [{"type": "text", "text": "x -> y"}]},
+            {"type": "rich_text_section", "elements": [{"type": "text", "text": "z"}]}]},
+          {"type": "rich_text_section", "elements": [{"type": "text", "text": "end"}]}]}]})"
+        ),
+        nullptr
+    ));
+    CHECK_STR(
+        slack::mapjson::toMessage(d.root(), store).text, "a &amp; b.\n\ndid:\n• x -&gt; y\n• z\nend"
+    );
     REQUIRE(d.parse(
         std::string_view(R"({"id": "C5", "name": "dev", "is_private": true,
         "last_read": "10.0", "latest": {"ts": "20.0"}, "unread_count": 0,
