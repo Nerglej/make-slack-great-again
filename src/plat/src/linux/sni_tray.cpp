@@ -150,16 +150,34 @@ SniTray::SniTray(BackendApp &app, const std::string &address)
     _bus.onLost = [this] {
         _watcherOwner.clear();
         _registering = _registered = _hostRegistered = false;
+        cancelRetry();
     };
     // (Re)register whenever a watcher appears; forget everything when it goes.
     _bus.watchName(kWatcher, [this](const std::string &owner) {
-        if (owner == _watcherOwner && (_registering || _registered))
+        if (owner == _watcherOwner && (_registering || _registered || _retryTimer))
             return;
         _watcherOwner = owner;
         _registered = _hostRegistered = false;
+        cancelRetry();
         if (!owner.empty())
             registerWithWatcher();
     });
+    // A watcher busy at login (kded5 in Plasma 5) can answer the registration
+    // after our call has timed out, and still show the icon. Its signal for
+    // our item says so either way.
+    _bus.subscribe(
+        "type='signal',interface='org.kde.StatusNotifierWatcher',"
+        "member='StatusNotifierItemRegistered'",
+        kWatcher,
+        "StatusNotifierItemRegistered",
+        [this](DBusMessage *m) {
+            std::string key;
+            MsgReader(m).str(&key);
+            const std::string &me = _bus.uniqueName();
+            if (!me.empty() && (key == me || key == me + kItemPath))
+                registered();
+        }
+    );
     _bus.subscribe(
         "type='signal',interface='org.kde.StatusNotifierWatcher'",
         kWatcher,
@@ -176,7 +194,10 @@ SniTray::SniTray(BackendApp &app, const std::string &address)
     _bus.start();
 }
 
-SniTray::~SniTray() = default; // closing our connection unregisters us everywhere
+// Closing our connection unregisters us everywhere.
+SniTray::~SniTray() {
+    cancelRetry();
+}
 
 void SniTray::registerWithWatcher() {
     if (!_bus.ready())
@@ -186,12 +207,43 @@ void SniTray::registerWithWatcher() {
     // Our unique name: watchers then look for the item at /StatusNotifierItem,
     // the spec's default, and drop it when the connection closes.
     MsgWriter(m.get()).str(_bus.uniqueName());
-    _bus.call(m, [this](DBusMessage *reply, const char *, const char *) {
+    _bus.call(m, [this, owner = _watcherOwner](DBusMessage *reply, const char *, const char *) {
+        if (owner != _watcherOwner || _registered)
+            return; // a watcher since replaced, or its signal got here first
         _registering = false;
-        _registered  = reply != nullptr;
-        if (_registered)
-            queryHost();
+        if (reply)
+            registered();
+        else
+            retryRegister();
     });
+}
+
+// A failed or timed-out registration is not the watcher's last word: one
+// still starting up may only be slow. Ask again, less and less often; a
+// watcher that already has us just says yes.
+void SniTray::retryRegister() {
+    _retryMs    = _retryMs ? std::min(_retryMs * 2, 60000) : 2000;
+    _retryTimer = _app.addTimer(_retryMs, false, [this] {
+        _retryTimer = 0;
+        if (!_registered && !_registering && !_watcherOwner.empty())
+            registerWithWatcher();
+    });
+}
+
+void SniTray::cancelRetry() {
+    if (_retryTimer)
+        _app.cancelTimer(_retryTimer);
+    _retryTimer = 0;
+    _retryMs    = 0;
+}
+
+void SniTray::registered() {
+    if (_registered)
+        return;
+    _registering = false;
+    _registered  = true;
+    cancelRetry();
+    queryHost();
 }
 
 void SniTray::queryHost() {

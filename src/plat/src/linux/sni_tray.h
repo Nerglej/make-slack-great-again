@@ -47,6 +47,9 @@ private:
     };
 
     void registerWithWatcher();
+    void retryRegister();
+    void cancelRetry();
+    void registered();
     void queryHost();
     bool handleItem(DBusMessage *m);
     bool handleMenu(DBusMessage *m);
@@ -76,7 +79,9 @@ private:
     std::string                           _token; // ProvideXdgActivationToken
     std::chrono::steady_clock::time_point _tokenTime;
     bool                 _registering = false, _registered = false, _hostRegistered = false;
-    std::shared_ptr<int> _alive = std::make_shared<int>(0); // posted emits check it
+    TimerId              _retryTimer = 0;
+    int                  _retryMs    = 0; // the next retry's delay; 0 = none failed yet
+    std::shared_ptr<int> _alive      = std::make_shared<int>(0); // posted emits check it
 };
 
 } // namespace plat::linux_services
