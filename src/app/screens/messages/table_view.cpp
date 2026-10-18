@@ -342,7 +342,11 @@ void TableView::build(float width) {
         _grid.setSelection(_selFrom, _selTo);
         _builtW = -1;
     }
-    if (_builtW == width)
+    // Offered the width the last fit came to (the frame a column gives it):
+    // that fit. Fitting again would squeeze the columns once more (a
+    // squeezed table is a little narrower than its room) and could wrap a
+    // row taller than measured, over what follows.
+    if (_builtW == width || (_builtW >= 0 && std::abs(width - _grid.width()) < 1))
         return;
     _builtW               = width;
     const text::Metrics m = text::metrics(ui::font(ui::Font::Body), scale);

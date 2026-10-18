@@ -3069,6 +3069,35 @@ TEST("blocks: a table shapes its cells once; a narrower column shapes only what 
     CHECK(text::layoutBuilds() - shaped == wrapped); // back to the natural ones
 }
 
+TEST("blocks: a squeezed table laid out at its measured width stays as tall as measured") {
+    Env                                   e(false);
+    std::vector<std::vector<std::string>> cells = {
+        {"*Check*", "Result"},
+        {"Signing key",
+         "The kernel booted with `key=968cb0527f5e6bfc`, your `signing.key`. The stick's "
+         "trusted-key list contains only that key, so `dev.key` images are now refused."},
+        {"Development-key warning",
+         "The \"development key: anything built on robin runs here\" line is gone from this "
+         "boot. It was there in every earlier boot."},
+        {"Build",
+         "`fbb3c1b9` (current master). It booted from the stick's recovery image, which is "
+         "normal right after a re-flash; the slots fill up again with the next install."},
+        {"Pool", "Unlocked normally. Nothing in `security.conf` is turned off."}
+    };
+    auto *tv = e.win->root().add<TableView>(e.ctx, cells);
+    // The list's column: measured at the room it has, framed at the
+    // (squeezed, a little narrower) width that gave. The rows below start
+    // at the measured height, so the table must not wrap taller there.
+    for (float aw = 300; aw < 900; aw += 7) {
+        const ui::SizeF m = tv->measure(aw, ui::kInf);
+        tv->setFrame({0, 0, m.w, m.h});
+        tv->layout();
+        const ui::SizeF again = tv->measure(m.w, ui::kInf);
+        CHECK(again.h == m.h);
+        CHECK(again.w == m.w);
+    }
+}
+
 TEST("blocks: a link in a table cell is a link, inline and in the full table") {
     Env e(false);
     addConv(e.store, {});
