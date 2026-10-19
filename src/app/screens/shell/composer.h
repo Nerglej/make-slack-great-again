@@ -58,6 +58,9 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
 // links, which become pills; &amp; &lt; &gt; are shown decoded.
 void loadMrkdwn(ui::TextEdit &edit, const model::Store &store, std::string_view mrkdwn);
 
+// The composer's unsent message lives in the workspace's Store
+// (model::Store::setDraft), which is what the workspace cache persists. What
+// is left here is which workspace's Store a key belongs to.
 class DraftStash {
 public:
     struct Key {
@@ -65,6 +68,12 @@ public:
         model::Ts      thread = 0;
         bool operator==(const Key &o) const { return conv == o.conv && thread == o.thread; }
     };
+    // The Store of a workspace key, for a draft touched while it is not the
+    // open one. The shell's: nullptr for a workspace that is gone.
+    void                     setStoreOf(std::function<model::Store *(const std::string &scope)> fn);
+    // The open workspace's key.
+    void                     setScope(std::string scope) { _scope = std::move(scope); }
+    const std::string       &scope() const { return _scope; }
     // Stores `html` and attached files for key (both empty erases the draft).
     void                     stash(Key k, std::string html, std::vector<std::string> files = {});
     // The stashed html ("" when none); the draft stays stashed.
@@ -73,14 +82,6 @@ public:
     std::vector<std::string> files(Key k) const;
     bool                     has(Key k) const;
     void                     erase(Key k);
-    size_t                   size() const { return _drafts.size(); }
-    // The workspace the keys belong to (a draft is keyed by team + conversation):
-    // every workspace keeps its own drafts, the same ConvRef in another
-    // workspace is another conversation. dropScope forgets one's drafts
-    // (signed out).
-    void                     setScope(std::string scope) { _scope = std::move(scope); }
-    const std::string       &scope() const { return _scope; }
-    void                     dropScope(const std::string &scope);
     // Adds plain `text` at the end of the draft of (scope, k), after a space
     // (a dictation that finished after its composer moved on).
     void                     appendText(const std::string &scope, Key k, std::string_view text);
@@ -91,15 +92,10 @@ public:
     putBack(const std::string &scope, Key k, std::string_view html, std::vector<std::string> files);
 
 private:
-    struct Draft {
-        std::string              scope;
-        Key                      key;
-        std::string              html;
-        std::vector<std::string> files;
-        bool is(const std::string &s, Key k) const { return scope == s && key == k; }
-    };
-    std::vector<Draft> _drafts; // few; linear is fine
-    std::string        _scope;
+    model::Store *storeOf(const std::string &scope) const;
+
+    std::function<model::Store *(const std::string &scope)> _storeOf;
+    std::string                                             _scope;
 };
 
 class Composer : public ui::View {

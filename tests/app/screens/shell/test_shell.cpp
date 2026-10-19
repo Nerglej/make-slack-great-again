@@ -1018,8 +1018,10 @@ TEST("files: dropped URIs decode to local paths") {
 }
 
 TEST("drafts: files are stashed with the text") {
+    Store                        store;
     shell::DraftStash            d;
     const shell::DraftStash::Key k{3, 0};
+    d.setStoreOf([&store](const std::string &) { return &store; });
     d.stash(k, "", {"/tmp/a"});
     CHECK(d.has(k));
     CHECK(d.files(k) == std::vector<std::string>{"/tmp/a"});
@@ -1028,9 +1030,11 @@ TEST("drafts: files are stashed with the text") {
 }
 
 TEST("drafts: a message put back goes in front, its files join") {
+    Store                        ws, other;
     shell::DraftStash            d;
     const shell::DraftStash::Key k{3, 0};
     d.setScope("ws");
+    d.setStoreOf([&](const std::string &scope) { return scope == "ws" ? &ws : &other; });
     d.putBack("ws", k, "lost", {"/tmp/a"});
     CHECK_STR(d.get(k), "lost");
     d.putBack("ws", k, "first", {"/tmp/a", "/tmp/b"});

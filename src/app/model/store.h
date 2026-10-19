@@ -63,6 +63,13 @@ public:
     struct AiTranscript {
         std::string text, by;
     };
+    // An unsent composer message: app-local, the workspace cache keeps it.
+    struct Draft {
+        ConvRef                  conv   = kNoConv;
+        Ts                       thread = 0;
+        std::string              html;
+        std::vector<std::string> files; // absolute paths
+    };
     Store();
     ~Store();
     Store(const Store &)            = delete;
@@ -240,6 +247,13 @@ public:
     // Whether an unread message `m` counts as a mention (see above).
     bool           mentions(const Message &m) const;
 
+    // ── Composer drafts ─────────────────────────────────────────────────────
+    // The unsent message of (conversation, thread). Setting neither text nor
+    // files erases the draft.
+    const std::vector<Draft> &drafts() const { return _drafts; }
+    const Draft              *draft(ConvRef c, Ts thread) const;
+    void setDraft(ConvRef c, Ts thread, std::string html, std::vector<std::string> files);
+
     // ── Saved messages ──────────────────────────────────────────────────────
     // Message reminders (Slack's "Later" list): every saved message,
     // loaded or not, with what the Saved messages page shows of it. Backends
@@ -375,6 +389,7 @@ private:
     void                                         customEmojiChanged();
     void                                         sortCustomEmoji() const;
     std::vector<Mark>                            _mutedThreads, _reminders; // few: linear is fine
+    std::vector<Draft>                           _drafts;                   // few: linear is fine
     std::vector<SavedItem>                       _saved;
     std::vector<ScheduledItem>                   _scheduled;
     std::vector<Usergroup>                       _usergroups;

@@ -802,6 +802,12 @@ std::vector<Store::Mark>::iterator findMark(std::vector<Store::Mark> &v, ConvRef
         return m.conv == c && m.ts == ts;
     });
 }
+
+std::vector<Store::Draft>::iterator findDraft(std::vector<Store::Draft> &v, ConvRef c, Ts thread) {
+    return std::find_if(v.begin(), v.end(), [&](const Store::Draft &d) {
+        return d.conv == c && d.thread == thread;
+    });
+}
 } // namespace
 
 bool Store::threadMuted(ConvRef c, Ts root) const {
@@ -817,6 +823,31 @@ void Store::setThreadMuted(ConvRef c, Ts root, bool on) {
         _mutedThreads.erase(it);
     else
         return;
+    ++_localRev;
+    emit({ChangeKind::Meta, c}); // app-local state: the workspace cache keeps it
+}
+
+const Store::Draft *Store::draft(ConvRef c, Ts thread) const {
+    auto &v  = const_cast<std::vector<Draft> &>(_drafts);
+    auto  it = findDraft(v, c, thread);
+    return it == v.end() ? nullptr : &*it;
+}
+
+void Store::setDraft(ConvRef c, Ts thread, std::string html, std::vector<std::string> files) {
+    const bool none = html.empty() && files.empty();
+    auto       it   = findDraft(_drafts, c, thread);
+    if (it == _drafts.end()) {
+        if (none)
+            return;
+        _drafts.push_back({c, thread, std::move(html), std::move(files)});
+    } else if (none) {
+        _drafts.erase(it);
+    } else {
+        if (it->html == html && it->files == files)
+            return;
+        it->html  = std::move(html);
+        it->files = std::move(files);
+    }
     ++_localRev;
     emit({ChangeKind::Meta, c}); // app-local state: the workspace cache keeps it
 }

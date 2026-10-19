@@ -183,23 +183,19 @@ std::string toMrkdwn(std::string_view text, const std::vector<TextEdit::Run> &ru
 
 // ── Drafts ──────────────────────────────────────────────────────────────────
 
+void DraftStash::setStoreOf(std::function<model::Store *(const std::string &)> fn) {
+    _storeOf = std::move(fn);
+}
+
+model::Store *DraftStash::storeOf(const std::string &scope) const {
+    return _storeOf ? _storeOf(scope) : nullptr;
+}
+
 void DraftStash::stash(Key k, std::string html, std::vector<std::string> files) {
     if (k.conv == model::kNoConv)
         return;
-    const bool none = html.empty() && files.empty();
-    for (auto &d : _drafts) {
-        if (d.is(_scope, k)) {
-            if (none) {
-                erase(k);
-            } else {
-                d.html  = std::move(html);
-                d.files = std::move(files);
-            }
-            return;
-        }
-    }
-    if (!none)
-        _drafts.push_back({_scope, k, std::move(html), std::move(files)});
+    if (model::Store *s = storeOf(_scope))
+        s->setDraft(k.conv, k.thread, std::move(html), std::move(files));
 }
 
 std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::string_view q) {
@@ -250,52 +246,43 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
 }
 
 std::string DraftStash::get(Key k) const {
-    for (const auto &d : _drafts)
-        if (d.is(_scope, k))
-            return d.html;
-    return {};
+    const model::Store        *s = storeOf(_scope);
+    const model::Store::Draft *d = s ? s->draft(k.conv, k.thread) : nullptr;
+    return d ? d->html : std::string();
 }
 
 std::vector<std::string> DraftStash::files(Key k) const {
-    for (const auto &d : _drafts)
-        if (d.is(_scope, k))
-            return d.files;
-    return {};
+    const model::Store        *s = storeOf(_scope);
+    const model::Store::Draft *d = s ? s->draft(k.conv, k.thread) : nullptr;
+    return d ? d->files : std::vector<std::string>();
 }
 
 bool DraftStash::has(Key k) const {
-    for (const auto &d : _drafts)
-        if (d.is(_scope, k))
-            return true;
-    return false;
+    const model::Store *s = storeOf(_scope);
+    return s && s->draft(k.conv, k.thread) != nullptr;
 }
 
 void DraftStash::erase(Key k) {
-    std::erase_if(_drafts, [&](const Draft &d) { return d.is(_scope, k); });
-}
-
-void DraftStash::dropScope(const std::string &scope) {
-    std::erase_if(_drafts, [&](const Draft &d) { return d.scope == scope; });
+    if (model::Store *s = storeOf(_scope))
+        s->setDraft(k.conv, k.thread, {}, {});
 }
 
 void DraftStash::appendText(const std::string &scope, Key k, std::string_view add) {
-    if (k.conv == model::kNoConv || add.empty())
-        return;
-    auto it = std::find_if(_drafts.begin(), _drafts.end(), [&](const Draft &d) {
-        return d.is(scope, k);
-    });
-    if (it == _drafts.end())
-        it = _drafts.insert(_drafts.end(), {scope, k, {}, {}});
+    model::Store              *s   = storeOf(scope);
+    const model::Store::Draft *old = s ? s->draft(k.conv, k.thread) : nullptr;
+    if (!s || k.conv == model::kNoConv || add.empty())
+        return; // its workspace is closed, or nothing to add
+    std::vector<std::string> files = old ? old->files : std::vector<std::string>();
     std::string              text;
     std::vector<uint16_t>    fmt;
     std::vector<std::string> links;
-    rich::fromHtml(it->html, &text, &fmt, &links);
+    rich::fromHtml(old ? old->html : std::string(), &text, &fmt, &links);
     if (size_t last = utf8::prevBoundary(text, text.size());
         !text.empty() && !utf8::isSpace(utf8::decode(text, last)))
         text += ' ';
     text += add;
     fmt.resize(text.size(), 0); // the dictation is plain text
-    it->html = rich::toHtml(text, fmt.data(), links);
+    s->setDraft(k.conv, k.thread, rich::toHtml(text, fmt.data(), links), std::move(files));
 }
 
 // ── Undo send ───────────────────────────────────────────────────────────────
@@ -988,25 +975,25 @@ void Composer::finishVoiceInBackground() {
 void DraftStash::putBack(
     const std::string &scope, Key k, std::string_view html, std::vector<std::string> files
 ) {
-    if (k.conv == model::kNoConv || (html.empty() && files.empty()))
+    model::Store              *s   = storeOf(scope);
+    const model::Store::Draft *old = s ? s->draft(k.conv, k.thread) : nullptr;
+    if (!s || k.conv == model::kNoConv || (html.empty() && files.empty()))
         return;
-    auto it = std::find_if(_drafts.begin(), _drafts.end(), [&](const Draft &d) {
-        return d.is(scope, k);
-    });
-    if (it == _drafts.end())
-        it = _drafts.insert(_drafts.end(), {scope, k, {}, {}});
-    if (it->html.empty()) {
-        it->html = html;
+    std::string merged = old ? old->html : std::string();
+    if (merged.empty()) {
+        merged = html;
     } else if (!html.empty()) {
         TextEdit edit;
         edit.insertHtml(html);
         edit.insertText("\n");
-        edit.insertHtml(it->html);
-        it->html = edit.html();
+        edit.insertHtml(merged);
+        merged = edit.html();
     }
+    std::vector<std::string> all = old ? old->files : std::vector<std::string>();
     for (std::string &f : files)
-        if (std::find(it->files.begin(), it->files.end(), f) == it->files.end())
-            it->files.push_back(std::move(f));
+        if (std::find(all.begin(), all.end(), f) == all.end())
+            all.push_back(std::move(f));
+    s->setDraft(k.conv, k.thread, std::move(merged), std::move(all));
 }
 
 void Composer::voiceEnded(const void *owner, const std::string *text, const std::string *error) {

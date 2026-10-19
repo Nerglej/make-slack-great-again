@@ -872,8 +872,7 @@ void Accounts::signOut(const std::string &key) {
     const bool open = k == _activeKey;
     removeCustomWorkspaceIcon(_ctx.app.platform(), rec->id);
     drop(find(k), false);
-    cache::WorkspaceCache::remove(_ctx.app.platform(), k);
-    _shell.drafts().dropScope(k);
+    cache::WorkspaceCache::remove(_ctx.app.platform(), k); // its drafts go with it
     _shell.purgeHistory(k);
     _store.remove(k);
     std::erase(_pending, k);

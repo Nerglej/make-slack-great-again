@@ -762,6 +762,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         _win.damageShowing(landed);
     };
     shortcuts::setCtrlEnterSends(settings.ctrlEnterSends);
+    _drafts.setStoreOf([this](const std::string &key) { return storeFor(key); });
     ctx.openConversation = [this](ConvRef c) { open(c); };
     ctx.openThread       = [this](ConvRef c, Ts root) { openThread(c, root); };
     ctx.closeThread      = [this] { closeThread(); };
@@ -1110,11 +1111,12 @@ Shell::~Shell() {
     }
 #endif
     // The views die with us, not later with the window: the composers stash
-    // their drafts into _drafts from their destructors.
+    // their drafts into the store from their destructors, so nothing of ours
+    // may answer a store change once the tree below is cleared.
+    _ctx.store.unobserve(_observer);
     _win.closeAllPopups();
     _win.keyFilter = nullptr;
     _win.root().clearChildren();
-    _ctx.store.unobserve(_observer);
     _ctx.window         = nullptr;
     _ctx.attachFiles    = nullptr;
     _ctx.openAiSettings = nullptr;
@@ -2842,6 +2844,13 @@ model::Backend &Shell::backendFor(const model::Store &st) {
         if (r->store == &st)
             return *r->backend;
     return _ctx.backend;
+}
+
+model::Store *Shell::storeFor(const std::string &key) const {
+    for (const auto &r : _running)
+        if (r->key == key)
+            return r->store;
+    return key == _activeKey ? &_ctx.store() : nullptr; // the open one: attached or not
 }
 
 bool Shell::storeAlive(const model::Store *st) const {

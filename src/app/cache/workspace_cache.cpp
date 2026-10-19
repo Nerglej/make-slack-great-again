@@ -645,6 +645,13 @@ bool WorkspaceCache::load(json::Document *meta) {
             _store.setAiTranscript(
                 std::string(t.key()), std::string(t[0].str()), std::string(t[1].str())
             );
+        for (const json::Value d : r["drafts"])
+            if (const ConvRef c = _store.findConversation(d[0].str()); c != model::kNoConv) {
+                std::vector<std::string> files;
+                for (const json::Value f : d[3])
+                    files.emplace_back(f.str());
+                _store.setDraft(c, d[1].integer(), std::string(d[2].str()), std::move(files));
+            }
     }
     // The user groups: their own file, or where meta.json kept them before.
     std::vector<model::Store::Usergroup> ug;
@@ -988,6 +995,17 @@ void WorkspaceCache::writePending() {
         for (const auto &[fileId, t] : s.aiTranscripts())
             w.key(fileId).beginArray().value(t.text).value(t.by).endArray();
         w.endObject();
+        w.key("drafts").beginArray();
+        for (const model::Store::Draft &d : s.drafts()) {
+            if (d.conv >= s.conversationCount())
+                continue;
+            w.beginArray().value(s.conversation(d.conv).id).value(int64_t(d.thread)).value(d.html);
+            w.beginArray();
+            for (const std::string &f : d.files)
+                w.value(f);
+            w.endArray().endArray();
+        }
+        w.endArray();
         w.key("x").beginObject();
         if (saveExtras)
             saveExtras(w);
