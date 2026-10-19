@@ -1,0 +1,21 @@
+# The test suites, on every push and pull request: the release workflow only
+# builds artifacts, so nothing else runs them. Linux only, because the suites
+# use plat's headless backend and get a HOME of their own per test.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the build dependencies
+        run: scripts/configure-linux.sh
+      - name: Build and run the test suites
+        run: scripts/build.sh --test
