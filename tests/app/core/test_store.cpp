@@ -55,6 +55,22 @@ struct Fixture {
 
 } // namespace
 
+TEST("store: a composer draft is kept per conversation and thread") {
+    Fixture            f;
+    const uint64_t     rev = f.s.localRevision();
+    f.s.setDraft(f.c, 0, "half a thought", {"/tmp/a"});
+    REQUIRE(f.s.draft(f.c, 0));
+    CHECK_STR(f.s.draft(f.c, 0)->html, "half a thought");
+    CHECK(f.s.draft(f.c, 0)->files == std::vector<std::string>{"/tmp/a"});
+    CHECK(f.s.localRevision() > rev);
+    CHECK_FALSE(f.s.draft(f.c, 1)); // another thread, another draft
+    const uint64_t same = f.s.localRevision();
+    f.s.setDraft(f.c, 0, "half a thought", {"/tmp/a"});
+    CHECK(f.s.localRevision() == same); // the same draft again: nothing moved
+    f.s.setDraft(f.c, 0, {}, {});
+    CHECK_FALSE(f.s.draft(f.c, 0));
+}
+
 TEST("store: ts strings round-trip as micros") {
     CHECK(parseTs("1758445200.123456") == 1758445200123456);
     CHECK(parseTs("1758445200.1") == 1758445200100000);

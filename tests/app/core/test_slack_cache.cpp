@@ -125,6 +125,7 @@ void coldStart() {
     });
     e.store.setAiTranscript("F1", "Hello there", "OpenAI"); // "Transcribe with AI"
     e.store.setThreadMuted(general, model::parseTs("1700000002.000000"), true);
+    e.store.setDraft(general, 0, "half a thought", {"/tmp/a.txt"});
 }
 
 } // namespace
@@ -171,6 +172,10 @@ TEST("slack cache: a cold start writes it, a warm start shows it before the netw
     REQUIRE(e.store.aiTranscript("F1") != nullptr);
     CHECK_STR(e.store.aiTranscript("F1")->text, "Hello there");
     CHECK_STR(e.store.aiTranscript("F1")->by, "OpenAI");
+    // The draft the composer was holding when the app was closed.
+    REQUIRE(e.store.draft(e.conv("C1"), 0));
+    CHECK_STR(e.store.draft(e.conv("C1"), 0)->html, "half a thought");
+    CHECK((e.store.draft(e.conv("C1"), 0)->files == std::vector<std::string>{"/tmp/a.txt"}));
     // The chat that was open, and its messages the moment it opens again.
     CHECK(e.be->lastConversation() == e.conv("C1"));
     e.be->setActiveConversation(e.conv("C1"), 0);

@@ -762,6 +762,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         _win.damageShowing(landed);
     };
     shortcuts::setCtrlEnterSends(settings.ctrlEnterSends);
+    _drafts.setStoreOf([this](const std::string &key) { return storeFor(key); });
     ctx.openConversation = [this](ConvRef c) { open(c); };
     ctx.openThread       = [this](ConvRef c, Ts root) { openThread(c, root); };
     ctx.closeThread      = [this] { closeThread(); };
@@ -2842,6 +2843,13 @@ model::Backend &Shell::backendFor(const model::Store &st) {
         if (r->store == &st)
             return *r->backend;
     return _ctx.backend;
+}
+
+model::Store *Shell::storeFor(const std::string &key) const {
+    for (const auto &r : _running)
+        if (r->key == key)
+            return r->store;
+    return key == _activeKey ? &_ctx.store() : nullptr; // the open one: attached or not
 }
 
 bool Shell::storeAlive(const model::Store *st) const {
