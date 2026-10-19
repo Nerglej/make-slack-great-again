@@ -56,8 +56,8 @@ struct Fixture {
 } // namespace
 
 TEST("store: a composer draft is kept per conversation and thread") {
-    Fixture            f;
-    const uint64_t     rev = f.s.localRevision();
+    Fixture        f;
+    const uint64_t rev = f.s.localRevision();
     f.s.setDraft(f.c, 0, "half a thought", {"/tmp/a"});
     REQUIRE(f.s.draft(f.c, 0));
     CHECK_STR(f.s.draft(f.c, 0)->html, "half a thought");

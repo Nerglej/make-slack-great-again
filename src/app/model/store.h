@@ -199,13 +199,6 @@ public:
     // Backends keep it here (a reminder is a saved item with a due date).
     int64_t                  reminderAt(ConvRef c, Ts ts) const;
     void                     setReminderAt(ConvRef c, Ts ts, int64_t due);
-
-    // ── Composer drafts ─────────────────────────────────────────────────────
-    // The unsent message of (conversation, thread). Setting neither text nor
-    // files erases the draft.
-    const std::vector<Draft> &drafts() const { return _drafts; }
-    const Draft              *draft(ConvRef c, Ts thread) const;
-    void                     setDraft(ConvRef c, Ts thread, std::string html, std::vector<std::string> files);
     // "Mark unread": the read cursor moves back to just before ts (and
     // unread is recounted from there). Fires Meta.
     void                     markUnread(ConvRef c, Ts ts);
@@ -253,6 +246,13 @@ public:
     bool           answersAreMentions = false;
     // Whether an unread message `m` counts as a mention (see above).
     bool           mentions(const Message &m) const;
+
+    // ── Composer drafts ─────────────────────────────────────────────────────
+    // The unsent message of (conversation, thread). Setting neither text nor
+    // files erases the draft.
+    const std::vector<Draft> &drafts() const { return _drafts; }
+    const Draft              *draft(ConvRef c, Ts thread) const;
+    void setDraft(ConvRef c, Ts thread, std::string html, std::vector<std::string> files);
 
     // ── Saved messages ──────────────────────────────────────────────────────
     // Message reminders (Slack's "Later" list): every saved message,

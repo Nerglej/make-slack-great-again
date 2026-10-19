@@ -246,13 +246,13 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
 }
 
 std::string DraftStash::get(Key k) const {
-    const model::Store       *s = storeOf(_scope);
+    const model::Store        *s = storeOf(_scope);
     const model::Store::Draft *d = s ? s->draft(k.conv, k.thread) : nullptr;
     return d ? d->html : std::string();
 }
 
 std::vector<std::string> DraftStash::files(Key k) const {
-    const model::Store       *s = storeOf(_scope);
+    const model::Store        *s = storeOf(_scope);
     const model::Store::Draft *d = s ? s->draft(k.conv, k.thread) : nullptr;
     return d ? d->files : std::vector<std::string>();
 }

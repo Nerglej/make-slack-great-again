@@ -335,7 +335,7 @@ private:
     bool            storeAlive(const model::Store *st) const; // open or attached
     // The Store of a workspace key: nullptr once it is gone (a draft of one is
     // then gone too).
-    model::Store *storeFor(const std::string &key) const;
+    model::Store   *storeFor(const std::string &key) const;
     std::string     teamTitle(const model::Store &st, const std::string &key, std::string title);
     // The first of `paths` with a picture, for an OS notification, to `fn`:
     // at once when decoded already (or there is none to wait for), else once

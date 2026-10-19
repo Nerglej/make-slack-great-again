@@ -95,7 +95,7 @@ private:
     model::Store *storeOf(const std::string &scope) const;
 
     std::function<model::Store *(const std::string &scope)> _storeOf;
-    std::string                                            _scope;
+    std::string                                             _scope;
 };
 
 class Composer : public ui::View {
