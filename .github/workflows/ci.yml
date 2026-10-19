@@ -17,5 +17,9 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install the build dependencies
         run: scripts/configure-linux.sh
+      # What a desktop has and a bare runner does not: a font from the UI's own
+      # preference list (text/fonts.cpp kUiFamilies) and a spell dictionary.
+      - name: Install the fonts and dictionary the suites render with
+        run: sudo apt-get install -y --no-install-recommends fonts-inter hunspell-en-us
       - name: Build and run the test suites
         run: scripts/build.sh --test
