@@ -1111,11 +1111,12 @@ Shell::~Shell() {
     }
 #endif
     // The views die with us, not later with the window: the composers stash
-    // their drafts into _drafts from their destructors.
+    // their drafts into the store from their destructors, so nothing of ours
+    // may answer a store change once the tree below is cleared.
+    _ctx.store.unobserve(_observer);
     _win.closeAllPopups();
     _win.keyFilter = nullptr;
     _win.root().clearChildren();
-    _ctx.store.unobserve(_observer);
     _ctx.window         = nullptr;
     _ctx.attachFiles    = nullptr;
     _ctx.openAiSettings = nullptr;
