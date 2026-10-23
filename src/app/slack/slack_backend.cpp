@@ -302,8 +302,6 @@ struct SlackBackend::Read {
     std::vector<uint64_t> completedPoll;
     uint64_t              pollRevision = 0;
     Ts                   &baselineOf(ConvRef c);
-    ConvRef               snapshotConv = kNoConv;
-    std::vector<Ts>       snapshotTs;
     size_t                bgIdx             = 0;
     bool                  countsUnavailable = false, countsDisabled = false, activityPrimed = false;
     int                   countsFailures = 0;
@@ -1914,11 +1912,8 @@ void SlackBackend::Read::loadThreadPages(ConvRef c, Ts root, bool live, Backend:
 void SlackBackend::setActiveConversation(ConvRef conv, Ts thread) {
     Read &r = *_read;
     if (r.openConv != conv) {
-        // The deletion baseline belongs to the chat that was open; and the
-        // newly opened one is polled on the next tick (the shared
+        // The newly opened chat is polled on the next tick (the shared
         // cooldown resets, so hopping between chats can't starve one).
-        r.snapshotConv = kNoConv;
-        r.snapshotTs.clear();
         r.lastFg = 0;
     }
     r.openConv   = conv;
@@ -2362,10 +2357,16 @@ void SlackBackend::Read::pollConversation(ConvRef c, bool foreground, Ts hint) {
     // Never scanned: record the head without injecting (that page is old news).
     const bool     priming  = !lastKnown;
     const uint64_t revision = ++pollRevision;
+    // The newest message held as the request leaves: anything newer arrived
+    // while it was out, so the page can't speak for it.
+    Ts             held     = 0;
+    for (const model::Message &m : s.conversation(c).messages)
+        if (!m.pending)
+            held = std::max(held, m.ts);
     call(
         "conversations.history",
         net::formEncode({{"channel", b.convId(c)}, {"limit", kHistoryLimit}}),
-        [this, c, foreground, lastKnown, priming, revision](
+        [this, c, foreground, lastKnown, priming, revision, held](
             const json::Document &doc, const std::string &err
         ) {
             if (!err.empty() || c >= s.conversationCount())
@@ -2398,24 +2399,25 @@ void SlackBackend::Read::pollConversation(ConvRef c, bool foreground, Ts hint) {
                 b.realtimeMissed();
             if (!foreground || page.empty())
                 return;
-            // Deleted elsewhere: in the last snapshot, gone now, and not
-            // merely pushed below the page by newer traffic (the page is
-            // sorted: mapPage).
-            const Ts oldest = page.front().ts;
-            if (snapshotConv == c)
-                for (Ts ts : snapshotTs) {
-                    const auto at = std::lower_bound(
-                        page.begin(), page.end(), ts, [](const model::Message &m, Ts t) {
-                            return m.ts < t;
-                        }
-                    );
-                    if (ts >= oldest && (at == page.end() || at->ts != ts))
-                        s.removeMessage(c, ts);
-                }
-            snapshotConv = c;
-            snapshotTs.clear();
-            for (const model::Message &m : page)
-                snapshotTs.push_back(m.ts);
+            // Deleted elsewhere: held from the page's oldest on, but not on
+            // it (the page is sorted: mapPage). Judged against what we hold,
+            // not an earlier page, so a deletion the socket never brought (or
+            // made while another chat was open) goes on the first poll too.
+            const Ts        oldest = page.front().ts;
+            std::vector<Ts> gone;
+            for (const model::Message &m : s.conversation(c).messages) {
+                if (m.pending || m.ts < oldest || m.ts > held)
+                    continue;
+                const auto at = std::lower_bound(
+                    page.begin(), page.end(), m.ts, [](const model::Message &x, Ts t) {
+                        return x.ts < t;
+                    }
+                );
+                if (at == page.end() || at->ts != m.ts)
+                    gone.push_back(m.ts);
+            }
+            for (Ts ts : gone)
+                s.removeMessage(c, ts);
             // An open thread: its root's latest_reply moving is the cue to
             // re-read the replies. A root off the page is asked for alone.
             if (openThread) {

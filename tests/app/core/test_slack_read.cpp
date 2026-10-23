@@ -439,6 +439,29 @@ TEST("slack read: the open chat's poll delivers new messages and deletions") {
     REQUIRE(pumpUntil([&] { return e.store.findMessage(c, hi) == nullptr; }, 3000));
 }
 
+TEST("slack read: a message deleted while its chat was closed goes on the first poll") {
+    if (!haveServer())
+        return;
+    Env e;
+    set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
+              {"type": "message", "ts": "1700000300.000000", "user": "UMIRA", "text": "two"},
+              {"type": "message", "ts": "1700000200.000000", "user": "UMIRA", "text": "one"},
+              {"type": "message", "ts": "1700000100.000000", "user": "UJONAS", "text": "old"}]}})");
+    REQUIRE(e.connect());
+    const ConvRef c = e.conv("C1");
+    REQUIRE(e.history(c, 0));
+    const Ts one = model::parseTs("1700000200.000000");
+    REQUIRE(e.store.findMessage(c, one) != nullptr);
+    // Deleted with no event reaching us; the chat is opened afterwards.
+    set(R"({"conversations.history?channel=C1": {"ok": true, "has_more": false, "messages": [
+              {"type": "message", "ts": "1700000300.000000", "user": "UMIRA", "text": "two"},
+              {"type": "message", "ts": "1700000100.000000", "user": "UJONAS", "text": "old"}]}})");
+    e.be->setActiveConversation(c, 0);
+    REQUIRE(pumpUntil([&] { return e.store.findMessage(c, one) == nullptr; }, 3000));
+    CHECK(e.store.findMessage(c, model::parseTs("1700000300.000000")) != nullptr);
+    CHECK(e.store.findMessage(c, model::parseTs("1700000100.000000")) != nullptr);
+}
+
 TEST("slack read: hidden, the open chat polls slowly, client.counts brings it forward") {
     if (!haveServer())
         return;
