@@ -2369,7 +2369,7 @@ bool giphy(std::string_view url) {
 void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text) {
     struct Pill {
         uint32_t    from, to;
-        std::string raw;
+        std::string raw; // the token, or a link's URL
     };
     std::string       plain;
     std::vector<Pill> pills;
@@ -2413,7 +2413,15 @@ void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text
         } else if (giphy(head)) {
             display = lab.empty() ? std::string(tr("GIF")) : i18n::arg(tr("GIF \xC2\xB7 %1"), lab);
         }
-        if (display.empty()) { // any other <url|label> stays literal
+        if (display.empty() && mrkdwn::looksLikeUrl(head)) {
+            // <url|label> or <url>: its label (the URL when bare) linked, so
+            // toMrkdwn writes the token back. Left literal, the brackets
+            // would go out as typed text and Slack would escape them.
+            const std::string url  = mrkdwn::decodeEntities(head);
+            const uint32_t    from = uint32_t(plain.size());
+            plain += lab.empty() ? url : mrkdwn::decodeEntities(lab);
+            pills.push_back({from, uint32_t(plain.size()), url});
+        } else if (display.empty()) { // any other <…> stays literal
             plain += tok;
         } else {
             const uint32_t from = uint32_t(plain.size());

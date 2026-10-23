@@ -1165,6 +1165,39 @@ TEST("composer: a mention pill shows the name as Settings → Names does") {
     }
 }
 
+TEST("composer: an edit reopens links as links, so saving sends them back as tokens") {
+    Harness h;
+    auto   &c = h.composer();
+    // A bare link shows its URL; brackets left in the text would go out as
+    // typed and Slack would escape them (issue #111).
+    shell::loadMrkdwn(c.edit(), h.store, "<https://www.anthropic.com/research/x> ddd");
+    CHECK_STR(c.edit().text(), "https://www.anthropic.com/research/x ddd");
+    CHECK_STR(c.mrkdwn(), "<https://www.anthropic.com/research/x> ddd");
+    const mrkdwn::Composed composed = mrkdwn::compose(c.mrkdwn());
+    CHECK_STR(composed.mrkdwn, "<https://www.anthropic.com/research/x> ddd");
+    CHECK(composed.blocks.empty());
+    // A label shows alone; URL and label come back decoded (Slack escapes
+    // what goes out).
+    shell::loadMrkdwn(
+        c.edit(), h.store, "see <https://x.test/a?b=1&amp;c=2|the &lt;docs&gt;> &amp; more"
+    );
+    CHECK_STR(c.edit().text(), "see the <docs> & more");
+    CHECK_STR(c.mrkdwn(), "see <https://x.test/a?b=1&c=2|the <docs&gt;> & more");
+    shell::loadMrkdwn(c.edit(), h.store, "<mailto:a@b.test|a@b.test>");
+    CHECK_STR(c.edit().text(), "a@b.test");
+    CHECK_STR(c.mrkdwn(), "<mailto:a@b.test|a@b.test>");
+    // Inside a list the link travels as a link element too.
+    shell::loadMrkdwn(c.edit(), h.store, "- <https://x.test>");
+    CHECK(
+        mrkdwn::compose(c.mrkdwn()).blocks.find(R"("type":"link","url":"https://x.test")") !=
+        std::string::npos
+    );
+    // Anything else in brackets is not a link and stays as it was.
+    shell::loadMrkdwn(c.edit(), h.store, "a <word> b");
+    CHECK_STR(c.edit().text(), "a <word> b");
+    CHECK_STR(c.mrkdwn(), "a <word> b");
+}
+
 TEST("composer: @ lists people and @channel & co.; a pick is a pill that sends the token") {
     Harness h;
     auto   &c = h.composer();
