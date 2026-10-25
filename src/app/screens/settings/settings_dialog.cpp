@@ -51,6 +51,7 @@ bool shell::Settings::*const kAppearanceBools[] = {
     &shell::Settings::linkPreviews,
     &shell::Settings::ctrlEnterSends,
     &shell::Settings::spellCheck,
+    &shell::Settings::markdownFormatting,
     &shell::Settings::showAgentsApps,
     &shell::Settings::unreadsOnly,
     &shell::Settings::animateEmoji,
@@ -497,6 +498,18 @@ void SettingsDialog::buildAppearance() {
             sec->setVisible(on);
         };
     }
+
+    heading(_content, tr("Formatting"));
+    boolRadios(
+        _content,
+        {tr("Slack (*bold*, _italic_)"), tr("Markdown (**bold**, *italic*)")},
+        &d.markdownFormatting
+    );
+    caption(
+        _content,
+        tr("How the message box reads what you type.\n"
+           "Messages are sent in Slack's format either way.")
+    );
 
     heading(_content, tr("Conversations"));
     {

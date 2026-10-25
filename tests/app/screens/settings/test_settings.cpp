@@ -16,6 +16,8 @@
 #include "base/time.h"
 #include "plat/testing.h"
 #include "screens/settings/settings_dialog.h"
+#include "app/mrkdwn/markdown.h"
+#include "screens/shell/composer.h"
 #include "screens/shell/shell.h"
 #include "screens/shell/shortcuts.h"
 
@@ -102,6 +104,7 @@ struct Harness {
         base::setUse24h(false);
         base::setDateLanguage("en");
         shell::shortcuts::setCtrlEnterSends(false);
+        shell::setMarkdownFormatting(false);
     }
 
     SettingsDialog &open() {
@@ -331,7 +334,7 @@ TEST("settings: the pages and their sections, in order") {
 
     static const struct {
         SettingsDialog::Page page;
-        const char          *items[12];
+        const char          *items[13];
     } kPages[] = {
         {SettingsDialog::Page::Appearance,
          {"Color mode",
@@ -344,6 +347,7 @@ TEST("settings: the pages and their sections, in order") {
           "Threads",
           "Link previews",
           "Composer",
+          "Formatting",
           "Conversations",
           "Visual effects"}},
         {SettingsDialog::Page::Notifications,
@@ -488,6 +492,26 @@ TEST("settings: color mode and theme cards apply and persist at once") {
         nullptr
     );
     file::remove(path);
+}
+
+TEST("settings: the Markdown formatting choice reaches the composer on Save") {
+    const std::string path = testPath();
+    file::remove(path);
+    Harness         h(path);
+    SettingsDialog &d = h.open();
+    CHECK(d.find("Slack (*bold*, _italic_)") != nullptr);
+    h.click(d.find("Markdown (**bold**, *italic*)"));
+    CHECK(d.draft().markdownFormatting);
+    CHECK_FALSE(shell::markdownFormatting()); // until Save
+    ui::View *save = d.find("Save");
+    REQUIRE(save != nullptr);
+    h.click(save);
+    CHECK(h.settings.markdownFormatting);
+    CHECK(shell::markdownFormatting());
+    auto &c = h.sh->composer();
+    c.edit().insertText("*it* **bold**");
+    CHECK_STR(mrkdwn::compose(c.mrkdwn()).mrkdwn, "_it_ *bold*");
+    CHECK(shell::Settings::load(path).markdownFormatting); // saved
 }
 
 TEST("settings: Appearance changes wait for Save, which applies them and closes") {

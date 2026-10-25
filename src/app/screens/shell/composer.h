@@ -56,7 +56,20 @@ std::vector<EmojiCompletion> emojiCompletions(const model::Store &store, std::st
 // The other way, for editing a sent message: the
 // mrkdwn stays literal text, except <@U…>, <#C…|name>, <!here> and GIPHY
 // links, which become pills; &amp; &lt; &gt; are shown decoded.
-void loadMrkdwn(ui::TextEdit &edit, const model::Store &store, std::string_view mrkdwn);
+void        loadMrkdwn(ui::TextEdit &edit, const model::Store &store, std::string_view mrkdwn);
+// The formatting the editors are typed in (Settings → Appearance): Slack's
+// (*bold*, _italic_), or Markdown's (**bold**, *italic*). Either way what
+// leaves an editor is mrkdwn: Composer::mrkdwn() rewrites Markdown's *x* to
+// _x_ (mrkdwn::markdownItalics), and loadMrkdwn writes Slack's *x* as **x**
+// (mrkdwn::markdownBold).
+bool        markdownFormatting();
+void        setMarkdownFormatting(bool on);
+// An editor's text and runs as mrkdwn, its typing in Markdown's formatting
+// or not (what Composer::mrkdwn() gives for the current one).
+std::string editorMrkdwn(const ui::TextEdit &edit, bool markdown);
+// A draft's html typed in one formatting, written in the other (only when a
+// '*' in it reads differently; else as it is).
+std::string redialectDraft(const model::Store &store, const std::string &html, bool toMarkdown);
 
 // The composer's unsent message lives in the workspace's Store
 // (model::Store::setDraft), which is what the workspace cache persists. What
@@ -112,6 +125,10 @@ public:
     ui::TextEdit  &edit() { return *_edit; }
     // The current input as mrkdwn.
     std::string    mrkdwn() const;
+    // The Markdown formatting option changed: what is typed (and an edit's
+    // set-aside draft) is rewritten from the other formatting, call it
+    // before setMarkdownFormatting(toMarkdown).
+    void           redialect(bool toMarkdown);
     // Sends the input (if any) and clears it (and its draft).
     bool           send();
     // "Edit message": the input becomes my message ts (the draft is set

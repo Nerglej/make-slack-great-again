@@ -1,6 +1,7 @@
 #include "screens/shell/shell_dialogs.h"
 
 #include "app/identity.h"
+#include "app/mrkdwn/markdown.h"
 #include "app/mrkdwn/mrkdwn.h"
 #include "app/model/jobs.h"
 #include "app/screens/common/downloads.h"
@@ -577,7 +578,7 @@ private:
         // become the words they read as here) — after
         // the comment on its own line.
         const bool              same = to.store == &_src->store();
-        const std::string       comment(str::trim(_composer->mrkdwn()));
+        const std::string       comment(str::trim(mrkdwn::convertOutgoing(_composer->mrkdwn())));
         const std::string       fwd     = !_onlyFile.empty() ? std::string()
                                           : same ? m->text
                                                  : portableMrkdwn(_src->store(), m->text);

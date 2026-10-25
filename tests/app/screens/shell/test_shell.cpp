@@ -844,6 +844,103 @@ TEST("composer: editing a message saves through the backend and gives the draft 
     CHECK(c.editing() == 0);
 }
 
+// ── Markdown formatting (Settings → Appearance) ─────────────────────────────
+
+TEST("composer: in Markdown formatting *x* goes out as italic, **x** as bold") {
+    Harness       h;
+    const ConvRef design          = h.conv("C0DESIGN");
+    auto         &c               = h.sh->composer();
+    h.settings.markdownFormatting = true;
+    h.sh->applySettings();
+    const size_t before = h.store.conversation(design).messages.size();
+    c.edit().insertText("*it* and **bold**, ***both*** `*code*`");
+    CHECK(c.send());
+    for (int i = 0; i < 200 && h.store.conversation(design).messages.size() == before; ++i)
+        app().pump(5);
+    REQUIRE(h.store.conversation(design).messages.size() == before + 1);
+    CHECK_STR(
+        h.store.conversation(design).messages.back().text, "_it_ and *bold*, *_both_* `*code*`"
+    );
+    // Slack's formatting again: *x* is bold, as before.
+    h.settings.markdownFormatting = false;
+    h.sh->applySettings();
+    c.edit().insertText("*bold*");
+    CHECK(c.send());
+    for (int i = 0; i < 200 && h.store.conversation(design).messages.size() == before + 1; ++i)
+        app().pump(5);
+    CHECK_STR(h.store.conversation(design).messages.back().text, "*bold*");
+}
+
+TEST("composer: in Markdown formatting an edit shows **bold** and saves the same mrkdwn") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN");
+    auto         &c      = h.sh->composer();
+    bool          sent   = false;
+    h.backend.send(design, "*bold* _it_ <@U0MIRA>", 0, [&](bool ok, const std::string &) {
+        sent = ok;
+    });
+    for (int i = 0; i < 200 && !sent; ++i)
+        app().pump(5);
+    const Ts mine                 = h.store.conversation(design).messages.back().ts;
+    h.settings.markdownFormatting = true;
+    h.sh->applySettings();
+    c.beginEdit(mine);
+    CHECK_STR(c.edit().text(), "**bold** _it_ @Mira Okafor");
+    c.edit().insertText(" *new*");
+    CHECK(c.send());
+    pump();
+    CHECK_STR(h.store.findMessage(design, mine)->text, "*bold* _it_ <@U0MIRA> _new_");
+}
+
+TEST("composer: the Bold and Italic buttons type the formatting's marks") {
+    Harness h;
+    auto   &c = h.sh->composer();
+    c.edit().insertText("x");
+    c.edit().selectAll();
+    c.button(shell::shortcuts::Id::Bold)->onClick();
+    CHECK_STR(c.edit().text(), "*x*");
+    h.settings.markdownFormatting = true;
+    h.sh->applySettings();
+    c.edit().clear();
+    c.edit().insertText("x");
+    c.edit().selectAll();
+    c.button(shell::shortcuts::Id::Bold)->onClick();
+    CHECK_STR(c.edit().text(), "**x**");
+    c.edit().clear();
+    c.edit().insertText("y");
+    c.edit().selectAll();
+    c.button(shell::shortcuts::Id::Italic)->onClick();
+    CHECK_STR(c.edit().text(), "*y*");
+    CHECK_STR(mrkdwn::compose(c.mrkdwn()).mrkdwn, "_y_");
+}
+
+TEST("settings: switching the formatting rewrites what is typed and the drafts") {
+    Harness       h;
+    const ConvRef design = h.conv("C0DESIGN"), eng = h.conv("C0ENG");
+    auto         &c = h.sh->composer();
+    c.edit().insertText("*bold* draft _it_");
+    h.sh->open(eng); // stashed
+    c.edit().insertText("*typed* 2 * 3");
+    h.settings.markdownFormatting = true;
+    h.sh->applySettings();
+    CHECK_STR(c.edit().text(), "**typed** 2 * 3");
+    CHECK_STR(mrkdwn::compose(c.mrkdwn()).mrkdwn, "*typed* 2 * 3");
+    h.sh->open(design);
+    CHECK_STR(c.edit().text(), "**bold** draft _it_");
+    CHECK_STR(mrkdwn::compose(c.mrkdwn()).mrkdwn, "*bold* draft _it_");
+    // A draft typed in Markdown's formatting, back to Slack's.
+    c.edit().clear();
+    c.edit().insertText("*it* **bold**");
+    h.settings.markdownFormatting = false;
+    h.sh->applySettings();
+    CHECK_STR(c.edit().text(), "_it_ **bold**");
+    CHECK_STR(mrkdwn::compose(c.mrkdwn()).mrkdwn, "_it_ *bold*");
+    // **x** is bold in Slack's formatting too: that draft stays as it is.
+    h.sh->open(eng);
+    CHECK_STR(c.edit().text(), "**typed** 2 * 3");
+    CHECK_STR(mrkdwn::compose(c.mrkdwn()).mrkdwn, "*typed* 2 * 3");
+}
+
 TEST("files: the attach button asks the OS dialog, chips show, send carries the files") {
     Harness h;
     Files   f;
@@ -1097,6 +1194,25 @@ TEST("forward: pick a channel, add a comment, the message is re-posted there") {
     REQUIRE(h.store.conversation(general).messages.size() == before + 1);
     CHECK_STR(h.store.conversation(general).messages.back().text, "fyi\n" + text);
     CHECK(h.store.conversation(general).messages.back().user == h.store.me);
+
+    // The comment is converted like any message: in Markdown's formatting
+    // **x** is bold and *x* italic.
+    h.settings.markdownFormatting = true;
+    h.sh->applySettings();
+    h.ctx.forwardMessage(design, ts, {});
+    pump();
+    dlg = static_cast<ui::Dialog *>(h.win->topPopup());
+    REQUIRE(dlg != nullptr);
+    typeInto(*h.win, "#gen");
+    press(*h.win, plat::Key::Enter);
+    comment = byName(dlg);
+    REQUIRE(comment != nullptr);
+    comment->focus();
+    typeInto(*h.win, "**fyi** *now*");
+    press(*h.win, plat::Key::Enter);
+    pump();
+    REQUIRE(h.store.conversation(general).messages.size() == before + 2);
+    CHECK_STR(h.store.conversation(general).messages.back().text, "*fyi* _now_\n" + text);
 }
 
 TEST("forward: the picker matches people case-insensitively beyond ASCII") {

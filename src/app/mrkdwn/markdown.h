@@ -32,6 +32,18 @@ struct Composed {
 Composed    compose(std::string_view composerText, bool alwaysBlocks = false);
 std::string convertOutgoing(std::string_view composerText); // compose().mrkdwn
 std::string convertInline(std::string_view line);           // one line's inline rewrites
+// The composer's Markdown formatting (Settings → Appearance): a single *x*
+// is italic there, as in CommonMark, and bold is **x**. The two directions
+// between that and the text above, both leaving code (``` blocks, `spans`)
+// and <…> tokens alone, and neither crossing a line:
+//   - markdownItalics: *x* → _x_ (same length, byte for byte, so editor
+//     offsets still hold); **, *** and list markers ("* a") stay for
+//     compose(). An opener follows no word character and touches text, a
+//     closer follows text and precedes no word character.
+//   - markdownBold: Slack's *x* → **x**, for mrkdwn loaded into that editor;
+//     runs of two or more '*' stay as they are.
+std::string markdownItalics(std::string_view composerText);
+std::string markdownBold(std::string_view mrkdwn);
 // Parsed mrkdwn → {"elements":[…]}: rich_text inline elements ("text" with
 // a style object, "user", "channel", "usergroup", "emoji", "link",
 // "broadcast"), adjacent same-style text merged. For tests.

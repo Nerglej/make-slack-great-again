@@ -35,6 +35,7 @@ const struct {
     {"linkPreviews", &Settings::linkPreviews},
     {"ctrlEnterSends", &Settings::ctrlEnterSends},
     {"spellCheck", &Settings::spellCheck},
+    {"markdownFormatting", &Settings::markdownFormatting},
     {"showAgentsApps", &Settings::showAgentsApps},
     {"unreadsOnly", &Settings::unreadsOnly},
     {"animateEmoji", &Settings::animateEmoji},

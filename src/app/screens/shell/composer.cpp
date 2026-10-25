@@ -48,7 +48,31 @@ bool isBlank(char c) {
     return c == ' ' || c == '\t';
 }
 
+bool g_markdown = false; // markdownFormatting()
+
 } // namespace
+
+bool markdownFormatting() {
+    return g_markdown;
+}
+
+void setMarkdownFormatting(bool on) {
+    g_markdown = on;
+}
+
+std::string editorMrkdwn(const TextEdit &edit, bool markdown) {
+    const std::vector<TextEdit::Run> runs = edit.runs();
+    if (!markdown)
+        return toMrkdwn(edit.text(), runs);
+    // *x* → _x_ in what is typed; a link's label (a pill's name too) is no
+    // markup and keeps its bytes. Same length, so the runs still fit.
+    std::string text = mrkdwn::markdownItalics(edit.text());
+    for (const TextEdit::Run &r : runs)
+        if (!r.link.empty())
+            for (uint32_t i = r.start; i < r.end && i < text.size(); ++i)
+                text[i] = edit.text()[i];
+    return toMrkdwn(text, runs);
+}
 
 std::string toMrkdwn(std::string_view text, const std::vector<TextEdit::Run> &runs) {
     // Per byte: mark bits and a link index (0 = none), then normalise so each
@@ -842,9 +866,9 @@ void Composer::formatAction(shortcuts::Id id) {
     using shortcuts::Id;
     switch (id) {
     case Id::Bold:
-        return wrapInline("*");
+        return wrapInline(markdownFormatting() ? "**" : "*");
     case Id::Italic:
-        return wrapInline("_");
+        return wrapInline(markdownFormatting() ? "*" : "_");
     case Id::Underline:
         return wrapInline("__");
     case Id::Strikethrough:
@@ -1304,7 +1328,23 @@ void Composer::setPlaceholder(std::string s) {
 }
 
 std::string Composer::mrkdwn() const {
-    return toMrkdwn(_edit->text(), _edit->runs());
+    return editorMrkdwn(*_edit, markdownFormatting());
+}
+
+void Composer::redialect(bool toMarkdown) {
+    if (!_edit->empty()) {
+        const uint32_t end = uint32_t(_edit->text().size());
+        _edit->setSelection(end, end); // html() is the selection's otherwise
+        const std::string html  = _edit->html();
+        const std::string other = redialectDraft(_ctx.store, html, toMarkdown);
+        if (other != html) {
+            _edit->clear();
+            _edit->insertHtml(other);
+            refreshLook();
+        }
+    }
+    if (!_editStash.empty())
+        _editStash = redialectDraft(_ctx.store, _editStash, toMarkdown);
 }
 
 bool Composer::send() {
@@ -2366,7 +2406,15 @@ bool giphy(std::string_view url) {
 
 } // namespace
 
-void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text) {
+namespace {
+
+void loadMrkdwnAs(TextEdit &edit, const model::Store &store, std::string_view text, bool markdown) {
+    // Markdown's editor shows Slack's *bold* as **bold**.
+    std::string md;
+    if (markdown) {
+        md   = mrkdwn::markdownBold(text);
+        text = md;
+    }
     struct Pill {
         uint32_t    from, to;
         std::string raw; // the token, or a link's URL
@@ -2436,6 +2484,22 @@ void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text
         edit.setLink(p.raw);
     }
     edit.setSelection(uint32_t(plain.size()), uint32_t(plain.size()));
+}
+
+} // namespace
+
+void loadMrkdwn(TextEdit &edit, const model::Store &store, std::string_view text) {
+    loadMrkdwnAs(edit, store, text, markdownFormatting());
+}
+
+std::string redialectDraft(const model::Store &store, const std::string &html, bool toMarkdown) {
+    TextEdit from;
+    from.insertHtml(html);
+    if (from.text().find('*') == std::string::npos)
+        return html; // nothing reads differently
+    TextEdit to;
+    loadMrkdwnAs(to, store, editorMrkdwn(from, !toMarkdown), toMarkdown);
+    return to.text() == from.text() ? html : to.html();
 }
 
 } // namespace shell

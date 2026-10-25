@@ -762,6 +762,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         _win.damageShowing(landed);
     };
     shortcuts::setCtrlEnterSends(settings.ctrlEnterSends);
+    setMarkdownFormatting(settings.markdownFormatting);
     _drafts.setStoreOf([this](const std::string &key) { return storeFor(key); });
     ctx.openConversation = [this](ConvRef c) { open(c); };
     ctx.openThread       = [this](ConvRef c, Ts root) { openThread(c, root); };
@@ -2996,6 +2997,27 @@ void Shell::applySettings() {
         if (_thread)
             _thread->composer->refreshTips();
         static_cast<ShortcutsPanel *>(_welcome)->rebuild();
+    }
+    // The formatting the composers are typed in: what is typed and every
+    // draft keep their meaning — rewritten into the new formatting first.
+    if (_settings.markdownFormatting != markdownFormatting()) {
+        const bool md = _settings.markdownFormatting;
+        for (Composer *c : {_composer, threadComposer()})
+            if (c)
+                c->redialect(md);
+        std::vector<model::Store *> stores{&_ctx.store()};
+        for (const auto &r : _running)
+            if (r->store != &_ctx.store())
+                stores.push_back(r->store);
+        for (model::Store *st : stores) {
+            const std::vector<model::Store::Draft> drafts = st->drafts();
+            for (const model::Store::Draft &d : drafts) {
+                std::string html = redialectDraft(*st, d.html, md);
+                if (html != d.html)
+                    st->setDraft(d.conv, d.thread, std::move(html), d.files);
+            }
+        }
+        setMarkdownFormatting(md);
     }
     base::setUse24h(_settings.use24h);
     // Dates follow a language change at once (UI text at the next start).

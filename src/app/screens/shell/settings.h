@@ -50,6 +50,9 @@ struct Settings {
     // (Japanese convention is 24-hour).
     bool                     use24hSaved    = false;
     bool                     ctrlEnterSends = false, spellCheck = false;
+    // The composer reads *x* as Markdown's italic, **x** as bold (shell::
+    // markdownFormatting); what is sent is mrkdwn either way.
+    bool                     markdownFormatting = false;
     // The spell checker's languages (the spell backend's
     // codes, "en_US" / "en-US"); empty = the system language's.
     std::vector<std::string> spellLanguages;

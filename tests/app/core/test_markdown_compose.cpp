@@ -178,3 +178,65 @@ TEST("compose: a bare <word> is given back as text, a bare URL as a link") {
     );
     CHECK_STR(mrkdwn::richTextElements("__u__"), R"({"elements":[{"type":"text","text":"u"}]})");
 }
+
+// ── Markdown formatting (Settings → Appearance) ─────────────────────────────
+
+// What a composer in Markdown's formatting sends: markdownItalics, then the
+// usual compose().
+static std::string sentFromMarkdown(std::string_view typed) {
+    return mrkdwn::compose(mrkdwn::markdownItalics(typed)).mrkdwn;
+}
+
+TEST("markdown formatting: *x* is italic, **x** bold, ***x*** both") {
+    CHECK_STR(sentFromMarkdown("*this*"), "_this_");
+    CHECK_STR(sentFromMarkdown("**this**"), "*this*");
+    CHECK_STR(sentFromMarkdown("***this***"), "*_this_*");
+    CHECK_STR(sentFromMarkdown("a *b* c **d** e"), "a _b_ c *d* e");
+    CHECK_STR(sentFromMarkdown("*a **b** c*"), "_a *b* c_");
+    CHECK_STR(sentFromMarkdown("**a *b* c**"), "*a _b_ c*");
+    CHECK_STR(sentFromMarkdown("(*x*), *y*."), "(_x_), _y_.");
+    CHECK_STR(sentFromMarkdown("_x_ and ~~s~~"), "_x_ and ~s~");
+}
+
+TEST("markdown formatting: stars that are no emphasis stay as typed") {
+    CHECK_STR(mrkdwn::markdownItalics("2 * 3 * 4"), "2 * 3 * 4");
+    CHECK_STR(mrkdwn::markdownItalics("* item\n* other"), "* item\n* other");
+    CHECK_STR(mrkdwn::markdownItalics("a*b*c"), "a*b*c");                 // intraword
+    CHECK_STR(mrkdwn::markdownItalics("*open\nclose*"), "*open\nclose*"); // never across lines
+    CHECK_STR(mrkdwn::markdownItalics("* x*"), "* x*");
+    CHECK_STR(mrkdwn::markdownItalics("lone *"), "lone *");
+    // Code and Slack tokens are left alone.
+    CHECK_STR(mrkdwn::markdownItalics("`*a*` *b*"), "`*a*` _b_");
+    CHECK_STR(mrkdwn::markdownItalics("```\n*a*\n```\n*b*"), "```\n*a*\n```\n_b_");
+    CHECK_STR(mrkdwn::markdownItalics("<https://x.io/*a*|l> *b*"), "<https://x.io/*a*|l> _b_");
+    // A list item keeps its marker; its text converts.
+    CHECK_STR(sentFromMarkdown("* *a*\n* **b**"), "\xE2\x80\xA2 _a_\n\xE2\x80\xA2 *b*");
+}
+
+TEST("markdown formatting: markdownItalics keeps every byte offset") {
+    for (std::string_view s : {"*a* **b** ***c***", "x *y* `*z*` <@U1> *é*", "* a\n*b*"})
+        CHECK(mrkdwn::markdownItalics(s).size() == s.size());
+}
+
+TEST("markdown formatting: Slack's *bold* loads as **bold**") {
+    CHECK_STR(mrkdwn::markdownBold("*bold* and _it_"), "**bold** and _it_");
+    CHECK_STR(mrkdwn::markdownBold("*_both_*"), "**_both_**");
+    CHECK_STR(mrkdwn::markdownBold("**already**"), "**already**");
+    CHECK_STR(mrkdwn::markdownBold("`*code*` <@U1> *b*"), "`*code*` <@U1> **b**");
+    CHECK_STR(mrkdwn::markdownBold("2 * 3 * 4"), "2 * 3 * 4");
+    CHECK_STR(mrkdwn::markdownBold("\xE2\x80\xA2 *x*"), "\xE2\x80\xA2 **x**");
+}
+
+TEST("markdown formatting: a Slack message loaded and sent again is unchanged") {
+    for (std::string_view s :
+         {"*bold* _it_ *_both_* ~s~ `*c*`",
+          "plain",
+          "2 * 3 * 4",
+          "*a*b",
+          "a*b*c",
+          "*x* *y*",
+          "> *quoted*",
+          "```\n*pre*\n```",
+          "<https://x.io|*l*> *b*"})
+        CHECK_STR(sentFromMarkdown(mrkdwn::markdownBold(s)), std::string(s));
+}

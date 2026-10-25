@@ -3,6 +3,7 @@
 #include "app/mrkdwn/mrkdwn.h"
 #include "base/json.h"
 #include "base/str.h"
+#include "base/utf8.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -255,6 +256,129 @@ std::string convertInline(std::string_view s) {
         }
         out += c;
         ++i;
+    }
+    return out;
+}
+
+// ── Markdown emphasis ───────────────────────────────────────────────────────
+
+namespace {
+
+// Bytes of `s` no mark applies to: ``` blocks, `spans` (closed on their
+// line by a run of the same length) and <…> Slack tokens.
+std::vector<bool> codeMask(std::string_view s) {
+    constexpr size_t  npos = std::string_view::npos;
+    std::vector<bool> code(s.size(), false);
+    size_t            i = 0;
+    while (i < s.size()) {
+        size_t end = npos, skip = 1;
+        if (s[i] == '`') {
+            const size_t r = run(s, i, '`');
+            skip           = r;
+            if (r >= 3) {
+                const size_t close = s.find("```", i + r);
+                if (close != npos)
+                    end = close + run(s, close, '`');
+            } else {
+                for (size_t j = i + r; j < s.size() && s[j] != '\n';) {
+                    const size_t rr = run(s, j, '`');
+                    if (rr == r) {
+                        end = j + rr;
+                        break;
+                    }
+                    j += rr ? rr : 1;
+                }
+            }
+        } else if (s[i] == '<') {
+            const size_t close = s.find('>', i + 1);
+            const auto inner = close == npos ? std::string_view() : s.substr(i + 1, close - i - 1);
+            if (close != npos && inner.find('\n') == npos && isSlackToken(inner))
+                end = close + 1;
+        }
+        if (end == npos) {
+            i += skip;
+            continue;
+        }
+        std::fill(code.begin() + i, code.begin() + end, true);
+        i = end;
+    }
+    return code;
+}
+
+// The closer of a single '*' opened just before `from`: the first lone '*'
+// on the line that follows text, or npos. Longer runs are passed over.
+size_t loneStarClose(std::string_view s, const std::vector<bool> &code, size_t from) {
+    for (size_t j = from; j < s.size() && s[j] != '\n';) {
+        if (s[j] != '*' || code[j]) {
+            ++j;
+            continue;
+        }
+        const size_t r = run(s, j, '*');
+        if (r == 1 && !space(s[j - 1]))
+            return j;
+        j += r;
+    }
+    return std::string_view::npos;
+}
+
+// A single '*' at `i` that touches the text after it.
+bool loneStarOpens(std::string_view s, const std::vector<bool> &code, size_t i) {
+    return s[i] == '*' && !code[i] && run(s, i, '*') == 1 && i + 1 < s.size() && !space(s[i + 1]);
+}
+
+bool wordAt(std::string_view s, size_t pos) {
+    return pos < s.size() && utf8::isWordChar(utf8::decode(s, pos));
+}
+
+bool wordBefore(std::string_view s, size_t pos) {
+    return pos > 0 && wordAt(s, utf8::prevBoundary(s, pos));
+}
+
+} // namespace
+
+std::string markdownItalics(std::string_view s) {
+    std::string             out(s);
+    const std::vector<bool> code = codeMask(s);
+    size_t                  i    = 0;
+    while (i < s.size()) {
+        if (s[i] != '*' || code[i]) {
+            ++i;
+            continue;
+        }
+        if (loneStarOpens(s, code, i) && !wordBefore(s, i)) {
+            const size_t close = loneStarClose(s, code, i + 1);
+            if (close != std::string_view::npos && !wordAt(s, close + 1)) {
+                out[i] = out[close] = '_';
+                i                   = close + 1;
+                continue;
+            }
+        }
+        i += run(s, i, '*');
+    }
+    return out;
+}
+
+std::string markdownBold(std::string_view s) {
+    std::string             out;
+    const std::vector<bool> code = codeMask(s);
+    size_t                  i    = 0;
+    out.reserve(s.size() + 8);
+    while (i < s.size()) {
+        if (s[i] != '*' || code[i]) {
+            out += s[i++];
+            continue;
+        }
+        if (loneStarOpens(s, code, i)) {
+            const size_t close = loneStarClose(s, code, i + 1);
+            if (close != std::string_view::npos) {
+                out += str::concat({"**", s.substr(i + 1, close - i - 1), "**"});
+                i = close + 1;
+                continue;
+            }
+        }
+        const size_t r = run(s, i, '*');
+        out += s.substr(i, r);
+        i += r;
     }
     return out;
 }

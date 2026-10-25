@@ -1580,6 +1580,26 @@ msgid "A word is underlined when none of the checked languages knows it."
 msgstr "チェックしたどの言語の辞書にもない単語に下線が引かれます。"
 
 #: src/app/screens/settings/settings_dialog.cpp
+msgid "Formatting"
+msgstr "書式"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Slack (*bold*, _italic_)"
+msgstr "Slack（*太字*、_斜体_）"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid "Markdown (**bold**, *italic*)"
+msgstr "Markdown（**太字**、*斜体*）"
+
+#: src/app/screens/settings/settings_dialog.cpp
+msgid ""
+"How the message box reads what you type.\n"
+"Messages are sent in Slack's format either way."
+msgstr ""
+"入力した記号の読み方です。\n"
+"どちらの場合も、メッセージは Slack の書式で送信されます。"
+
+#: src/app/screens/settings/settings_dialog.cpp
 msgid "Conversations"
 msgstr "会話"
 
