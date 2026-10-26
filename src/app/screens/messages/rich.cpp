@@ -241,6 +241,9 @@ void RichLabel::windowChanged() {
 }
 
 uint8_t RichLabel::cursorAt(ui::PointF local) const {
+    // Code copies on a click: the hand over it.
+    if (!linkAt(local) && !codeAt(mapToWindow(local)).empty())
+        return uint8_t(plat::Cursor::Hand);
     if (_selectable && !linkAt(local))
         return uint8_t(plat::Cursor::IBeam);
     return ui::Label::cursorAt(local);
@@ -262,6 +265,34 @@ void RichLabel::lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const {
     const float y = local.y - textOrigin().y;
     *from         = l->hitTest({-1e6f, y}).offset;
     *to           = l->hitTest({1e6f, y}).offset;
+}
+
+std::string RichLabel::codeAt(ui::PointF wp) const {
+    if (_codeBlock)
+        return windowRect().contains(wp) ? text() : std::string();
+    const text::Layout         *l = textLayout();
+    const text::AttributedText *t = richText();
+    if (!l || !t)
+        return {};
+    // Inline code: each run of mono spans (a style change inside code
+    // splits it), hit by its highlight boxes.
+    const ui::PointF o = textOrigin();
+    const ui::PointF p = mapFromWindow(wp);
+    const ui::PointF at{p.x - o.x, p.y - o.y};
+    for (size_t i = 0; i < t->spans.size();) {
+        if (!t->spans[i].style.mono) {
+            ++i;
+            continue;
+        }
+        const uint32_t from = t->spans[i].start;
+        while (i + 1 < t->spans.size() && t->spans[i + 1].style.mono)
+            ++i;
+        const uint32_t to = t->spans[i++].end;
+        for (const gfx::RectF &r : l->selectionRects(from, to))
+            if (r.contains(at))
+                return t->text.substr(from, to - from);
+    }
+    return {};
 }
 
 void RichLabel::setContent(
@@ -309,6 +340,27 @@ bool RichLabel::onEvent(ui::Event &e) {
         }
         return ui::Label::onEvent(e);
     }
+    // A click on code copies it; on message text the list's selection
+    // handles the press instead (MessageList), so a drag still selects.
+    case ui::EventType::PointerDown:
+        if (!_selectable && e.button == plat::Button::Left && !linkAt(e.pos)) {
+            _pressedCode = codeAt(e.windowPos);
+            if (!_pressedCode.empty())
+                return true;
+        }
+        return ui::Label::onEvent(e);
+    case ui::EventType::PointerUp:
+        if (!_pressedCode.empty()) {
+            std::string code = std::move(_pressedCode);
+            _pressedCode.clear();
+            if (codeAt(e.windowPos) == code)
+                copyCode(_ctx, code, window(), e.windowPos);
+            return true;
+        }
+        return ui::Label::onEvent(e);
+    case ui::EventType::PointerCancel:
+        _pressedCode.clear();
+        return ui::Label::onEvent(e);
     case ui::EventType::ContextMenu: {
         // The link menu, for links only (mentions, channels: nothing), and
         // only from a right click (raw set) — no Menu key or long press.
@@ -647,12 +699,17 @@ uint32_t walkBody(
                 box = parent->add<ui::View>();
                 box->setBackground(ui::C::CodeBg, 4);
                 box->setBorder(ui::C::Border);
-                box->style().padding(10, 8).margins(0, 2, 0, 2);
+                box->style().margins(0, 2, 0, 2);
             }
             text::Style mono = ui::font(ui::Font::Mono);
             mono.color       = ui::themed(o.color);
             t.append(std::string_view(r.text).substr(bl.start, bl.end - bl.start), mono);
             RichLabel *l = label(box);
+            if (l) {
+                // The padding is the label's: a click anywhere on the box copies.
+                l->style().padding(10, 8);
+                l->setCodeBlock(true);
+            }
             finish(l, t, false);
             if (last && o.edited)
                 edited();
@@ -716,6 +773,12 @@ void flashCopied(Context &ctx, ui::Button *copy, std::weak_ptr<char> alive) {
         if (!alive.expired())
             copy->setLabel(i18n::tr("Copy"));
     });
+}
+
+void copyCode(Context &ctx, const std::string &code, ui::Window *w, ui::PointF at) {
+    ctx.app.platform().setClipboardText(code);
+    if (w)
+        showClickToast(ctx, *w, i18n::tr("Copied"), 1200, at);
 }
 
 // ── Links ───────────────────────────────────────────────────────────────────

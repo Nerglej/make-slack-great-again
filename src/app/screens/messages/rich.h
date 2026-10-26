@@ -26,16 +26,19 @@ namespace screens {
 // (TableView). Offsets are bytes of its text (selectableTexts' part).
 class SelectableText {
 public:
-    virtual ui::View &textView()                             = 0; // its geometry
-    virtual uint32_t  textSize() const                       = 0;
+    virtual ui::View   &textView()                             = 0; // its geometry
+    virtual uint32_t    textSize() const                       = 0;
     // The highlighted range (from == to: none).
-    virtual void      selectText(uint32_t from, uint32_t to) = 0;
+    virtual void        selectText(uint32_t from, uint32_t to) = 0;
     // The offset nearest to a point in textView()'s coordinates.
-    virtual uint32_t  textOffsetAt(ui::PointF local) const   = 0;
+    virtual uint32_t    textOffsetAt(ui::PointF local) const   = 0;
     // Double click: the word around an offset; triple click: the line
     // (a table's row) under a point. [*from, *to).
-    virtual void      wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const  = 0;
-    virtual void      lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const = 0;
+    virtual void        wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const  = 0;
+    virtual void        lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const = 0;
+    // What a click at a window point copies: the inline code under it, or a
+    // whole code block; "" for none.
+    virtual std::string codeAt(ui::PointF) const { return {}; }
 
 protected:
     ~SelectableText() = default;
@@ -113,13 +116,17 @@ public:
     // Message text the list selects across: the I-beam over plain text.
     void setSelectable(bool on) { _selectable = on; }
     bool selectable() const { return _selectable; }
+    // The text of a code block (filling the block's box): a click anywhere
+    // on it copies all of it.
+    void setCodeBlock(bool on) { _codeBlock = on; }
 
-    ui::View &textView() override { return *this; }
-    uint32_t  textSize() const override { return uint32_t(text().size()); }
-    void      selectText(uint32_t from, uint32_t to) override { setSelection(from, to); }
-    uint32_t  textOffsetAt(ui::PointF local) const override { return offsetAt(local); }
-    void      wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const override;
-    void      lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const override;
+    ui::View   &textView() override { return *this; }
+    uint32_t    textSize() const override { return uint32_t(text().size()); }
+    void        selectText(uint32_t from, uint32_t to) override { setSelection(from, to); }
+    uint32_t    textOffsetAt(ui::PointF local) const override { return offsetAt(local); }
+    void        wordAt(uint32_t offset, uint32_t *from, uint32_t *to) const override;
+    void        lineAt(ui::PointF local, uint32_t *from, uint32_t *to) const override;
+    std::string codeAt(ui::PointF windowPos) const override;
 
     void        paint(gfx::Painter &p) override;
     // Hover on a mention or name: the profile card; right click on a link:
@@ -141,6 +148,8 @@ private:
     TargetHover              _hover;
     plat::TimerId            _animTimer  = 0; // the next frame of an animated emoji
     bool                     _selectable = false;
+    bool                     _codeBlock  = false;
+    std::string              _pressedCode; // a press on code (not selectable): copied on release
 };
 
 struct RichOptions {
@@ -221,6 +230,9 @@ void openLink(Context &ctx, const std::string &url, ui::Window *w, ui::PointF at
 
 // A tooltip chip above a click for `ms`.
 void showClickToast(Context &ctx, ui::Window &w, const std::string &text, int ms, ui::PointF at);
+
+// A click on code: copies `code` and shows "Copied" above the click.
+void copyCode(Context &ctx, const std::string &code, ui::Window *w, ui::PointF at);
 
 // A dialog's Copy button once clicked: "Copied" for 1.4 s, then "Copy"
 // again (while `alive` lasts).

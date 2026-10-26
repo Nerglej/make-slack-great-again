@@ -108,6 +108,8 @@ public:
     void        select(TextPos anchor, TextPos focus);
     // The position under a window point (ts 0: not over message text).
     TextPos     textPosAt(ui::PointF windowPos) const;
+    // The code under a window point in message text (SelectableText::codeAt).
+    std::string codeAt(ui::PointF windowPos) const;
 
     // Scroll so the message is visible (search hits, permalinks); `flash`
     // briefly highlights it.

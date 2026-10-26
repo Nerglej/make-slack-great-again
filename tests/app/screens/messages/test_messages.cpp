@@ -37,7 +37,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <new>
+#include <thread>
 #include <cmath>
 #include <cstring>
 #include <ctime>
@@ -2741,6 +2743,67 @@ TEST("selection: a pointer drag runs from one message's text into the next ones"
     h->injectButton(e.win->native(), plat::Button::Left, false);
     pump(2);
     CHECK_STR(e.list->selectedText(), "first message here\nsecond one\nthird text");
+}
+
+TEST("selection: a click copies inline code or a whole code block; a drag still selects") {
+    Env                         e(false);
+    const int64_t               t0 = base::nowSecs() - 3600;
+    std::vector<model::Message> ms;
+    ms.push_back(msg(0, t0, "run `npm i` first\n```cd app\nmake test```"));
+    const ConvRef c = addConv(e.store, std::move(ms));
+    e.list->showConversation(c);
+    pump(8);
+    const Ts a     = t0 * 1000000;
+    auto    *para  = static_cast<RichLabel *>(findLeaf(e.row(a), "npm i"));
+    auto    *block = static_cast<RichLabel *>(findLeaf(e.row(a), "make test"));
+    REQUIRE(para != nullptr && block != nullptr);
+    auto      *h      = app().platform().testHooks();
+    // Past the double-click time: each press a single click.
+    const auto settle = [] {
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(app().platform().doubleClickMs() + 50)
+        );
+    };
+    const auto click = [&](ui::PointF p) {
+        settle();
+        h->injectPointerMove(e.win->native(), {p.x, p.y});
+        pump(2);
+        h->injectButton(e.win->native(), plat::Button::Left, true);
+        pump(1);
+        h->injectButton(e.win->native(), plat::Button::Left, false);
+        pump(2);
+    };
+    // Inline code: its highlight box; the hand over it, the I-beam beside.
+    const std::vector<gfx::RectF> boxes = para->textLayout()->selectionRects(4, 9);
+    REQUIRE(!boxes.empty());
+    const ui::PointF o  = para->textOrigin();
+    const ui::PointF in = {o.x + boxes[0].x + boxes[0].w / 2, o.y + boxes[0].y + boxes[0].h / 2};
+    CHECK(para->cursorAt(in) == uint8_t(plat::Cursor::Hand));
+    CHECK(para->cursorAt({o.x + 1, in.y}) == uint8_t(plat::Cursor::IBeam));
+    app().platform().setClipboardText("before");
+    click(para->mapToWindow({o.x + 1, in.y})); // plain text: nothing
+    CHECK_STR(clipboard(), "before");
+    click(para->mapToWindow(in));
+    CHECK_STR(clipboard(), "npm i");
+    CHECK_FALSE(e.list->hasSelection());
+    // A code block: anywhere on its box, its padding too.
+    const ui::RectF br = block->windowRect();
+    CHECK(block->cursorAt({2, 2}) == uint8_t(plat::Cursor::Hand));
+    click({br.x + 3, br.y + 3});
+    CHECK_STR(clipboard(), "cd app\nmake test");
+    // A drag over code selects instead of copying.
+    app().platform().setClipboardText("before");
+    settle();
+    h->injectPointerMove(e.win->native(), {br.x + 12, br.y + br.h / 2});
+    pump(2);
+    h->injectButton(e.win->native(), plat::Button::Left, true);
+    pump(1);
+    h->injectPointerMove(e.win->native(), {br.x + br.w - 4, br.y + br.h / 2});
+    pump(2);
+    h->injectButton(e.win->native(), plat::Button::Left, false);
+    pump(2);
+    CHECK(e.list->hasSelection());
+    CHECK_STR(clipboard(), "before");
 }
 
 TEST("selection: a drag held past the list's top scrolls it up, selecting on") {

@@ -1418,8 +1418,12 @@ bool MessageList::onEvent(ui::Event &e) {
             return false;
         _selDragging = false;
         stopDragScroll();
-        if (_selAnchor == _selFocus) // a plain click: no selection
+        if (_selAnchor == _selFocus) { // a plain click: no selection; on code, copies it
             clearSelection();
+            if (e.type == ui::EventType::PointerUp)
+                if (const std::string code = codeAt(e.windowPos); !code.empty())
+                    copyCode(_ctx, code, window(), e.windowPos);
+        }
         return true;
     case ui::EventType::KeyDown:
         if (!hasSelection())
@@ -2180,6 +2184,25 @@ MessageList::TextPos MessageList::textPosAt(ui::PointF wp) const {
             {std::max(wp.x, lr.x), std::clamp(wp.y, lr.y, lr.y + std::max(0.f, lr.h - 1))}
         );
         return {row->ts(), base + l->textOffsetAt(p)};
+    }
+    return {};
+}
+
+std::string MessageList::codeAt(ui::PointF wp) const {
+    const int first = _list->firstVisible(), last = _list->lastVisible();
+    for (int i = std::max(0, first); first >= 0 && i <= last; ++i) {
+        if (_items[size_t(i)].kind != Kind::Message)
+            continue;
+        auto *row = static_cast<MessageRow *>(_list->viewFor(i));
+        if (!row)
+            continue;
+        const ui::RectF r = row->windowRect();
+        if (wp.y < r.y || wp.y >= r.y + r.h)
+            continue;
+        for (SelectableText *l : row->selectionLabels())
+            if (std::string code = l->codeAt(wp); !code.empty())
+                return code;
+        return {};
     }
     return {};
 }
