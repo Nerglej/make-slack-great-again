@@ -287,12 +287,14 @@ public:
 private:
     void run() {
         for (;;) {
+            // Clear before taking: a command queued in between still leaves
+            // its ping, so poll() can't sleep on it.
+            _s->wake.clear();
             std::vector<PlayerShared::Cmd> cmds;
             {
                 std::lock_guard lock(_s->m);
                 cmds.swap(_s->cmds);
             }
-            _s->wake.clear();
             for (const auto &c : cmds) {
                 switch (c.op) {
                 case PlayerShared::Op::Load:
@@ -906,13 +908,14 @@ private:
             return;
         }
         for (;;) {
+            // Clear before reading (as the player does).
+            _s->wake.clear();
             bool stop, cancel;
             {
                 std::lock_guard lock(_s->m);
                 stop   = _s->stop;
                 cancel = _s->cancel;
             }
-            _s->wake.clear();
             if (cancel)
                 return;
             if (stop && !_stopping) {

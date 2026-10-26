@@ -21,6 +21,7 @@
 #include "plat/plat.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <memory>
@@ -385,7 +386,9 @@ SlackBackend::Read::~Read() {
 }
 
 void SlackBackend::Read::later(int64_t ms, std::function<void()> fn) {
-    timers.after(int(std::max<int64_t>(ms / speed, 0)), std::move(fn));
+    // Clamped to what the timer takes: a due time weeks away (a scheduled
+    // message) would otherwise wrap and fire at once. It re-arms then.
+    timers.after(int(std::clamp<int64_t>(ms / speed, 0, INT32_MAX)), std::move(fn));
 }
 
 void SlackBackend::Read::call(

@@ -14,6 +14,8 @@
 #include "net/net.h"
 #include "plat/plat.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
@@ -174,7 +176,9 @@ SlackBackend::Live::~Live() {
 }
 
 void SlackBackend::Live::later(int64_t ms, std::function<void()> fn) {
-    timers.after(int(std::max<int64_t>(ms / speed, 0)), std::move(fn));
+    // Clamped to what the timer takes: a due time weeks away (a scheduled
+    // message) would otherwise wrap and fire at once. It re-arms then.
+    timers.after(int(std::clamp<int64_t>(ms / speed, 0, INT32_MAX)), std::move(fn));
 }
 
 // ── Socket Mode ─────────────────────────────────────────────────────────────
