@@ -198,7 +198,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     const std::string path = testPath();
     file::remove(path);
     const shell::Settings def = shell::Settings::load(path);
-    CHECK(def.closeToTray);
+    CHECK(def.useTray);
     CHECK(def.notifications);
     CHECK(def.fontSize == 1);
     CHECK(def.paletteLight == int(ui::Palette::Purple));
@@ -229,6 +229,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     s.notifySound                = false;
     s.cacheLimitMb               = 600;
     s.minimizeToTray             = true;
+    s.useTray                    = false;
     s.presence                   = 2;
     s.slackSession               = false;
     s.slackClientId              = "123.456";
@@ -265,6 +266,7 @@ TEST("settings: every value survives the file, which is owner-only") {
     CHECK_FALSE(r.notifySound);
     CHECK(r.cacheLimitMb == 600);
     CHECK(r.minimizeToTray);
+    CHECK_FALSE(r.useTray);
     CHECK(r.presence == 2);
     CHECK_FALSE(r.slackSession);
     CHECK_STR(r.slackClientId, "123.456");
@@ -388,8 +390,9 @@ TEST("settings: the pages and their sections, in order") {
           "Check for updates automatically",
           "Check for updates",
 #endif
-#ifndef __APPLE__ // macOS minimizes to the Dock: no Window section
           "Window",
+          "Use tray",
+#ifndef __APPLE__ // macOS minimizes to the Dock
           "Minimize to tray",
 #endif
           "Presence",
@@ -846,6 +849,21 @@ TEST("settings: System and Storage controls persist at once") {
 #ifndef __APPLE__ // not offered on macOS
     h.click(d.find("Minimize to tray"));
     CHECK(h.settings.minimizeToTray);
+    // Without the tray it is greyed out and shown off, the choice kept.
+    auto *minimize = static_cast<ui::CheckBox *>(d.find("Minimize to tray"));
+    h.click(d.find("Use tray"));
+    CHECK_FALSE(h.settings.useTray);
+    CHECK_FALSE(minimize->enabled());
+    CHECK_FALSE(minimize->checked());
+    CHECK(h.settings.minimizeToTray);
+    h.click(d.find("Use tray"));
+    CHECK(h.settings.useTray);
+    CHECK(minimize->enabled());
+    CHECK(minimize->checked());
+#else
+    h.click(d.find("Use tray"));
+    CHECK_FALSE(h.settings.useTray);
+    h.click(d.find("Use tray"));
 #endif
     h.click(d.find("Leave my presence to the official Slack apps"));
     CHECK(h.settings.presence == 2);

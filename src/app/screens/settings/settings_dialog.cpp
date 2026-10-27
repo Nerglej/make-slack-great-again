@@ -576,6 +576,9 @@ void SettingsDialog::buildAppearance() {
             _s.customTrayIcon = _draft.customTrayIcon = on;
             changed();
         };
+        // Nothing to draw it in with System → Use tray off.
+        custom->setEnabled(_s.useTray);
+        _p->trayChange->setEnabled(_s.useTray);
     }
 
     saveButton(&SettingsDialog::saveAppearance);

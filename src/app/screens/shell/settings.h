@@ -38,7 +38,7 @@ struct Settings {
     bool          maximized   = false;
     ui::ThemeMode theme       = ui::ThemeMode::System;
     int           threadWidth = 360;  // thread panel width, px
-    bool          closeToTray = true; // the window's close hides it to the tray
+    bool          useTray     = true; // the tray icon; the window's close hides it there
 
     // ── Appearance ──────────────────────────────────────────────────────────
     int                      paletteLight = 0, paletteDark = 1; // ui::Palette per content mode

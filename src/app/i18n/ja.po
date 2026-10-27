@@ -2109,6 +2109,10 @@ msgid "Window"
 msgstr "ウィンドウ"
 
 #: src/app/screens/settings/settings_pages.cpp
+msgid "Use tray"
+msgstr "トレイを使用"
+
+#: src/app/screens/settings/settings_pages.cpp
 msgid "Minimize to tray"
 msgstr "トレイに最小化"
 

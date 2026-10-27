@@ -263,8 +263,8 @@ TEST("window: hidden to the tray or minimised, the backend polls as hidden; show
     h.sh->restore();
     pump();
     CHECK(h.backend.windowVisible);
-    // To the tray (close with Settings → Close to tray), then back.
-    h.settings.closeToTray = true;
+    // To the tray (the window's close while Settings → Use tray is on), then back.
+    h.settings.useTray = true;
     REQUIRE(h.sh->hideToTray());
     pump();
     CHECK_FALSE(h.backend.windowVisible);
@@ -276,6 +276,34 @@ TEST("window: hidden to the tray or minimised, the backend polls as hidden; show
     h.win->native().setMaximized(true);
     pump();
     CHECK_FALSE(h.backend.windowVisible); // not told again: nothing changed for it
+}
+
+TEST("window: Use tray off takes the icon away; close and minimize no longer hide") {
+    Harness h;
+    REQUIRE(h.sh->tray() != nullptr);
+    // Turned off while hidden to the tray: the window comes back first.
+    REQUIRE(h.sh->hideToTray());
+    pump();
+    h.settings.useTray        = false;
+    h.settings.minimizeToTray = true;
+    h.sh->applySettings();
+    pump();
+    CHECK(h.sh->tray() == nullptr);
+    CHECK(h.backend.windowVisible);
+    CHECK_FALSE(h.sh->hideToTray()); // the caller quits instead
+    h.sh->minimize();                // to the taskbar, not hidden
+    pump();
+    CHECK(h.sh->tray() == nullptr);
+    h.sh->restore();
+    pump();
+    // Back on: the icon returns.
+    h.settings.useTray = true;
+    h.sh->applySettings();
+    pump();
+    REQUIRE(h.sh->tray() != nullptr);
+    CHECK(h.sh->hideToTray());
+    h.sh->restore();
+    pump();
 }
 
 TEST("sidebar: a presence flip restyles rows in place; a roster-shape change rebuilds") {

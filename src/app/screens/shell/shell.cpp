@@ -964,11 +964,6 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
     };
 
     win.native().setHitTest([this](plat::Point p) { return hitTest(p); });
-    _tray = ctx.app.platform().createTray();
-    if (_tray) {
-        _tray->setTooltip("MSGA");
-        rebuildTrayMenu();
-    }
 #ifdef MSGA_HAVE_MESSAGES
     // The emoji picker's "Frequently used" and skin tone.
     screens::EmojiPicker::restoreState(_settings.emojiRecent, _settings.emojiSkinTone);
@@ -980,7 +975,7 @@ Shell::Shell(screens::Context &ctx, Window &win, Settings &settings, std::string
         }
     );
 #endif
-    applySettings();
+    applySettings(); // creates the tray icon too
     // The saved size was measured on whatever monitor was attached last time.
     fitToScreen();
 }
@@ -2269,8 +2264,9 @@ void Shell::fitToScreen() {
 bool Shell::hideToTray() {
     // Closing the window keeps msga running in the tray
     // for badges and notifications — but only while a tray host actually
-    // shows our icon, or there would be no way back.
-    return _settings.closeToTray && hideWindow();
+    // shows our icon (none with Settings → Use tray off), or there would be
+    // no way back.
+    return hideWindow();
 }
 
 void Shell::minimize() {
@@ -3104,7 +3100,20 @@ void Shell::applySettings() {
     _sidebar->setFilters(f);
     for (const auto &r : _running)
         r->dirty = true; // the default level decides what counts
-    _lastTray = -1;      // the tray picture may have changed
+    // Settings → System → Use tray: the icon comes and goes at once. Without
+    // it the window's close quits and minimizing leaves it on the taskbar.
+    if (_settings.useTray && !_tray) {
+        _tray = _ctx.app.platform().createTray();
+        if (_tray) {
+            _tray->setTooltip("MSGA");
+            rebuildTrayMenu();
+        }
+    } else if (!_settings.useTray && _tray) {
+        if (_hidden)
+            restore(); // never left hidden with no icon to bring it back
+        _tray.reset();
+    }
+    _lastTray = -1; // the tray picture may have changed
     updateAttention();
 }
 

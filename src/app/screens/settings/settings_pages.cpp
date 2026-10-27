@@ -774,18 +774,34 @@ void SettingsDialog::buildSystem() {
 #endif
     }
 
-#ifndef __APPLE__ // macOS minimizes to the Dock; hiding the window there would surprise
     heading(_content, tr("Window"));
     {
-        auto *g = group(_content);
-        check(g, tr("Minimize to tray"), &_s.minimizeToTray, false);
-        caption(
+        auto *g       = group(_content);
+        auto *useTray = check(g, tr("Use tray"), &_s.useTray, false);
+#ifndef __APPLE__ // macOS minimizes to the Dock; hiding the window there would surprise
+        // Needs the tray: greyed out and shown off without one, the choice
+        // kept for when it is back.
+        auto *minimize = check(g, tr("Minimize to tray"), &_s.minimizeToTray, false);
+        auto *desc     = caption(
             g,
             tr("When on, minimizing hides the window to the tray instead of the taskbar.\n"
                "Click the tray icon to bring it back.")
         );
-    }
+        auto sync = [this, minimize, desc](bool tray) {
+            minimize->setEnabled(tray);
+            minimize->setChecked(tray && _s.minimizeToTray);
+            desc->setColor(tray ? C::FormTextMuted : C::FormTextFaint);
+        };
+        sync(_s.useTray);
+        useTray->onChange = [this, sync](bool on) {
+            _s.useTray = on;
+            sync(on);
+            changed();
+        };
+#else
+        (void)useTray;
 #endif
+    }
 
     heading(_content, tr("Presence"));
     {

@@ -29,7 +29,7 @@ const struct {
     const char *key;
     bool Settings::*field;
 } kBools[] = {
-    {"closeToTray", &Settings::closeToTray},
+    {"useTray", &Settings::useTray},
     {"use24h", &Settings::use24h},
     {"threadsInline", &Settings::threadsInline},
     {"linkPreviews", &Settings::linkPreviews},
