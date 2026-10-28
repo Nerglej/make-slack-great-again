@@ -683,7 +683,9 @@ uint32_t walkBody(
                 row->style().row().margins(float(bl.indent) * 22, 0, 0, 0);
                 std::string marker = bl.ordinal ? str::number(bl.ordinal) + "." : "•";
                 auto       *m      = row->add<ui::Label>(std::move(marker), o.font, o.color);
-                m->style().width(22).noShrink();
+                // At the top: stretched to a wrapped item's height, the label
+                // would centre the bullet halfway down it.
+                m->style().width(22).noShrink().alignSelf(ui::Align::Start);
                 l = label(row);
                 l->style().flex(1);
             }

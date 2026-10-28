@@ -1021,6 +1021,33 @@ TEST("thread: an agent's thread of a link has a chip back to the Slack thread") 
     CHECK_FALSE(panel->linkChip()->visible());
 }
 
+TEST("rich: a list item's bullet sits on its first line, however many lines it wraps to") {
+    Env   e(false);
+    auto *col = e.win->root().add<ui::View>();
+    col->style().width(220);
+    screens::buildBody(
+        e.ctx,
+        col,
+        "\xE2\x80\xA2 Despawning a ship despawns nested objects but tells them they don't need "
+        "to destroy, since an ancestor is coming down anyway\n\xE2\x80\xA2 short",
+        {},
+        nullptr
+    );
+    pump();
+    REQUIRE(col->childCount() == 2);
+    for (size_t i = 0; i < 2; ++i) {
+        const ui::View *row = col->child(i);
+        REQUIRE(row->childCount() == 2);
+        const ui::View *bullet = row->child(0), *text = row->child(1);
+        CHECK_STR(static_cast<const ui::Label *>(bullet)->text(), "\xE2\x80\xA2");
+        // Its own line's height at the top, not stretched to the item and
+        // centred (the bullet halfway down a long item).
+        CHECK(bullet->frame().y == text->frame().y);
+        CHECK(bullet->height() <= text->height());
+    }
+    CHECK(col->child(0)->child(0)->height() < col->child(0)->child(1)->height() / 2);
+}
+
 TEST("thread: day dividers, the root and its replies; the summary opens the thread") {
     Env           e(true);
     const ConvRef design = e.conv("C0DESIGN");
